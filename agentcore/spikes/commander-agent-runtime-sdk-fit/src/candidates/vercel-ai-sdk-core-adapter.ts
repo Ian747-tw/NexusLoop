@@ -28,7 +28,10 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
     supports_usage: true,
     supports_openai_compatible: true,
     async executeOneStep(request: CommanderModelStepRequest) {
-      if (!provider) return normalizeFixtureResult("vercel_ai_sdk_core", request, fixtureCase(request), 1)
+      if (!provider) {
+        await maybeWaitForAbort(request)
+        return normalizeFixtureResult("vercel_ai_sdk_core", request, fixtureCase(request), 1)
+      }
       try {
         const result = await generateText({
           model: provider.chatModel(request.model_id),
@@ -182,6 +185,17 @@ function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "requ
   if (request.tool_choice === "required") return "required"
   if (request.tool_choice === "none") return "none"
   return "auto"
+}
+
+async function maybeWaitForAbort(request: CommanderModelStepRequest): Promise<void> {
+  if (!request.messages.some((message) => message.content.toLowerCase().includes("slow"))) return
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 50)
+    request.abort_signal?.addEventListener("abort", () => {
+      clearTimeout(timer)
+      resolve()
+    }, { once: true })
+  })
 }
 
 function chatMessages(request: CommanderModelStepRequest): ModelMessage[] {

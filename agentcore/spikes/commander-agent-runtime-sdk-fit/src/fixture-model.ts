@@ -110,6 +110,13 @@ export async function* fixtureStream(candidateId: CandidateId, request: Commande
     yield { type: "error", error: "request was cancelled" }
     return
   }
+  if (kind === "slow") {
+    await waitForAbortWindow(request)
+    if (request.abort_signal?.aborted) {
+      yield { type: "error", error: "request was cancelled" }
+      return
+    }
+  }
   if (kind === "stream_tool") {
     yield { type: "tool_call_start", tool_call_id: "call_memory", tool_id: "memory.search" }
     yield { type: "tool_call_arguments_delta", tool_call_id: "call_memory", delta: "{\"query\":\"research" }
@@ -137,4 +144,14 @@ export function reportedUsage() {
 
 export function missingUsage() {
   return { provider_reported: false }
+}
+
+async function waitForAbortWindow(request: CommanderModelStepRequest): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 50)
+    request.abort_signal?.addEventListener("abort", () => {
+      clearTimeout(timer)
+      resolve()
+    }, { once: true })
+  })
 }
