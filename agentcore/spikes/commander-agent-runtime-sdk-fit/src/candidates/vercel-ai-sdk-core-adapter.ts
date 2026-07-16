@@ -42,6 +42,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           maxOutputTokens: request.max_output_tokens,
           temperature: request.temperature,
           abortSignal: request.abort_signal,
+          maxRetries: 0,
         })
         const toolCalls = (result.toolCalls ?? []).map((call) => {
           const schema = toolForSdkName(request.tools, call.toolName)
@@ -88,6 +89,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           maxOutputTokens: request.max_output_tokens,
           temperature: request.temperature,
           abortSignal: request.abort_signal,
+          maxRetries: 0,
         })
         let text = ""
         let finishReason: string | undefined
@@ -100,7 +102,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             streamError = stringifyStreamError(part.error)
             yield { type: "error", error: streamError }
           }
-          if (event.type === "text-delta") {
+          if (part.type === "text" || part.type === "text-delta") {
             const delta = typeof part.text === "string" ? part.text : typeof part.delta === "string" ? part.delta : ""
             text += delta
             yield { type: "text_delta", text: delta }

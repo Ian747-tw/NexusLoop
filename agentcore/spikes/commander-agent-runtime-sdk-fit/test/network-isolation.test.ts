@@ -28,7 +28,10 @@ describe("network isolation", () => {
       const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
       const events = []
       for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "stream" }] }))) events.push(event)
+      expect(events.some((event) => event.type === "text_delta" && event.text === "plain ")).toBe(true)
       expect(events.some((event) => event.type === "completed")).toBe(true)
+      const completed = events.find((event) => event.type === "completed")
+      if (completed?.type === "completed") expect(completed.result.text).toBe("plain fixture")
       expect(server.requests.length).toBe(1)
       expect(guard.attempted).toEqual([])
     } finally {
@@ -55,6 +58,29 @@ describe("network isolation", () => {
       expect(server.requests.length).toBe(1)
       expect(guard.attempted).toEqual([])
     } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
+  test("provider-backed retryable failures are not retried by the adapter", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "http_429")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    const originalConsoleError = console.error
+    try {
+      console.error = () => {}
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const result = await adapter.executeOneStep(baseRequest({ messages: [{ role: "user", content: "429" }] }))
+      expect(result.status).toBe("failed")
+      expect(server.requests.length).toBe(1)
+
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "429 stream" }] }))) events.push(event)
+      expect(events.some((event) => event.type === "error")).toBe(true)
+      expect(server.requests.length).toBe(2)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      console.error = originalConsoleError
       guard.restore()
       await server.close()
     }
