@@ -106,6 +106,45 @@ describe("network isolation", () => {
     }
   })
 
+  test("provider-backed stream cancellation does not complete with partial text", async () => {
+    const controller = new AbortController()
+    let requestCount = 0
+    const fetchFixture = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestCount += 1
+      const encoder = new TextEncoder()
+      return new Response(new ReadableStream<Uint8Array>({
+        start(streamController) {
+          streamController.enqueue(encoder.encode(`data: ${JSON.stringify({
+            id: "chatcmpl_abort",
+            object: "chat.completion.chunk",
+            choices: [{ index: 0, delta: { role: "assistant", content: "partial" }, finish_reason: null }],
+          })}\n\n`))
+          const timer = setTimeout(() => {
+            streamController.enqueue(encoder.encode(`data: ${JSON.stringify({
+              id: "chatcmpl_abort",
+              object: "chat.completion.chunk",
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            })}\n\ndata: [DONE]\n\n`))
+            streamController.close()
+          }, 1000)
+          init?.signal?.addEventListener("abort", () => {
+            clearTimeout(timer)
+            streamController.error(new DOMException("request was cancelled", "AbortError"))
+          }, { once: true })
+        },
+      }), { status: 200, headers: { "content-type": "text/event-stream" } })
+    }) as typeof fetch
+    const adapter = createVercelAiSdkCoreAdapter({ baseURL: "http://127.0.0.1:18181/v1", apiKey: "fixture-key", fetch: fetchFixture })
+    const events = []
+    const stream = adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "slow stream" }], abort_signal: controller.signal }))
+    setTimeout(() => controller.abort(), 10)
+    for await (const event of stream) events.push(event)
+    expect(events.some((event) => event.type === "error" && event.error.toLowerCase().includes("cancel"))).toBe(true)
+    expect(events.some((event) => event.type === "completed")).toBe(false)
+    expect(requestCount).toBe(1)
+  })
+
   test("provider-backed retryable failures are not retried by the adapter", async () => {
     const server = await startMockOpenAICompatibleServer(() => "http_429")
     const guard = installNetworkGuard([new URL(server.url).origin])

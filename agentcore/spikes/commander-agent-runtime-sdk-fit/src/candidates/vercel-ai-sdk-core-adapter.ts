@@ -113,6 +113,10 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             streamError = stringifyStreamError(part.error)
             yield { type: "error", error: streamError }
           }
+          if (eventType === "abort") {
+            streamError = "request was cancelled"
+            yield { type: "error", error: streamError }
+          }
           if (eventType === "text" || eventType === "text-delta") {
             const delta = typeof part.text === "string" ? part.text : typeof part.delta === "string" ? part.delta : ""
             text += delta
