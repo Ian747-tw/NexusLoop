@@ -93,11 +93,56 @@ describe("network isolation", () => {
       }))) events.push(event)
       const completed = events.find((event) => event.type === "completed")
       expect(completed?.type).toBe("completed")
-      if (completed?.type === "completed") expect(completed.result.provider_metadata.request_count).toBe(server.requests.length)
+      if (completed?.type === "completed") {
+        expect(completed.result.provider_metadata.request_count).toBe(server.requests.length)
+        expect(completed.result.provider_metadata.structured_output).toBe("validated")
+        expect(completed.result.text).toContain("structured fixture")
+      }
       const body = JSON.stringify(server.requests[0].body)
       expect(body).toContain("response_format")
       expect(body).toContain("nexusloop_structured_output")
       expect(body).toContain("summary")
+      expect(server.requests.length).toBe(1)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
+  test("provider-backed streaming rejects invalid structured output instead of accepting raw text", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "text")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({
+        messages: [{ role: "user", content: "plain stream" }],
+        structured_output_schema: {
+          schema_version: "nxl-commander-tool-v1",
+          type: "object",
+          required: ["type", "final"],
+          additionalProperties: false,
+          properties: {
+            type: { type: "string", enum: ["final"] },
+            final: {
+              type: "object",
+              required: ["summary"],
+              additionalProperties: false,
+              properties: {
+                summary: { type: "string", maxLength: 200 },
+              },
+            } as never,
+          },
+        },
+      }))) events.push(event)
+      const completed = events.find((event) => event.type === "completed")
+      expect(completed?.type).toBe("completed")
+      if (completed?.type === "completed") {
+        expect(completed.result.status).toBe("malformed")
+        expect(completed.result.provider_metadata.structured_output).toBe("validation_failed")
+        expect(completed.result.text).toContain("plain fixture")
+      }
       expect(server.requests.length).toBe(1)
       expect(guard.attempted).toEqual([])
     } finally {

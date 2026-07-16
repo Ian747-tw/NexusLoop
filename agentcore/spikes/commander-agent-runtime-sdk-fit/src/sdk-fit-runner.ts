@@ -25,7 +25,7 @@ type MatrixEvidence = {
   cold_import_result: "pass" | "fail"
   typecheck_result: "pass" | "fail"
   deterministic_unit_result: "pass" | "fail"
-  local_openai_compatible_result: "pass" | "fail"
+  local_openai_compatible_result: Record<CandidateId, "pass" | "fail" | "not_applicable">
   native_tool_call_result: "pass" | "fail" | "partial"
   json_fallback_result: "pass" | "fail"
   streaming_result: "pass" | "fail" | "partial"
@@ -39,7 +39,11 @@ const UNVERIFIED_EVIDENCE: MatrixEvidence = {
   cold_import_result: "fail",
   typecheck_result: "fail",
   deterministic_unit_result: "fail",
-  local_openai_compatible_result: "fail",
+  local_openai_compatible_result: {
+    minimal_custom_adapter: "fail",
+    vercel_ai_sdk_core: "fail",
+    openai_agents_core: "not_applicable",
+  },
   native_tool_call_result: "fail",
   json_fallback_result: "fail",
   streaming_result: "fail",
@@ -166,7 +170,7 @@ function row(candidate_id: CandidateId, package_versions: Record<string, string>
     cold_import_result: evidence.cold_import_result,
     typecheck_result: evidence.typecheck_result,
     deterministic_unit_result: evidence.deterministic_unit_result,
-    local_openai_compatible_result: candidate_id === "openai_agents_core" ? "not_applicable" : evidence.local_openai_compatible_result,
+    local_openai_compatible_result: evidence.local_openai_compatible_result[candidate_id],
     native_tool_call_result: evidence.native_tool_call_result,
     json_fallback_result: evidence.json_fallback_result,
     streaming_result: evidence.streaming_result,
@@ -195,7 +199,11 @@ async function collectVerifiedEvidence(): Promise<{ evidence: MatrixEvidence; pr
       cold_import_result: "pass",
       typecheck_result: "pass",
       deterministic_unit_result: "pass",
-      local_openai_compatible_result: "pass",
+      local_openai_compatible_result: {
+        minimal_custom_adapter: "fail",
+        vercel_ai_sdk_core: "pass",
+        openai_agents_core: "not_applicable",
+      },
       native_tool_call_result: "pass",
       json_fallback_result: "pass",
       streaming_result: "pass",

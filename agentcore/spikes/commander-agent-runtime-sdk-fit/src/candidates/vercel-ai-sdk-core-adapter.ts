@@ -196,7 +196,12 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "malformed", text: text.slice(0, 256), tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [], error: fallback.reason }) }
           return
         }
-        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
+        const finalText = completedToolCalls.length ? undefined : await structuredStreamText(request, result, text)
+        if (request.structured_output_schema && !completedToolCalls.length && finalText === null) {
+          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "malformed", text: text.slice(0, 256), tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true, structured_output: "validation_failed" }, duration_ms: 1, warnings: [], error: "streamed structured output failed SDK validation" }) }
+          return
+        }
+        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: finalText ?? undefined, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true, structured_output: request.structured_output_schema ? "validated" : undefined }, duration_ms: 1, warnings: [] }) }
       } catch (error) {
         yield { type: "error", error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK stream failed" }
       }
@@ -250,6 +255,15 @@ function structuredOutput(request: CommanderModelStepRequest) {
     schema: jsonSchema(request.structured_output_schema),
     name: "nexusloop_structured_output",
   }) : undefined
+}
+
+async function structuredStreamText(request: CommanderModelStepRequest, result: { output: PromiseLike<unknown> }, fallbackText: string): Promise<string | null> {
+  if (!request.structured_output_schema) return fallbackText
+  try {
+    return JSON.stringify(await result.output)
+  } catch {
+    return null
+  }
 }
 
 function fallbackFromText(request: CommanderModelStepRequest, text: string | undefined): ReturnType<typeof runJsonFallbackProbe> | null {

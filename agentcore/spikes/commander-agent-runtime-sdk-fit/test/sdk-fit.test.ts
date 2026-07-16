@@ -459,6 +459,30 @@ describe("isolated SDK spike", () => {
     }
   })
 
+  test("verified matrix keeps OpenAI-compatible transport evidence candidate-specific", async () => {
+    const results = await buildResults({
+      cold_import_result: "pass",
+      typecheck_result: "pass",
+      deterministic_unit_result: "pass",
+      local_openai_compatible_result: {
+        minimal_custom_adapter: "fail",
+        vercel_ai_sdk_core: "pass",
+        openai_agents_core: "not_applicable",
+      },
+      native_tool_call_result: "pass",
+      json_fallback_result: "pass",
+      streaming_result: "pass",
+      cancellation_result: "pass",
+      usage_result: "pass",
+      schema_compatibility_result: "pass",
+      network_isolation_result: "pass",
+    })
+    const byCandidate = Object.fromEntries(results.candidates.map((candidate) => [candidate.candidate_id, candidate]))
+    expect(byCandidate.minimal_custom_adapter.local_openai_compatible_result).toBe("fail")
+    expect(byCandidate.vercel_ai_sdk_core.local_openai_compatible_result).toBe("pass")
+    expect(byCandidate.openai_agents_core.local_openai_compatible_result).toBe("not_applicable")
+  })
+
   test("live smoke placeholder fails closed when explicitly opted in", async () => {
     const proc = Bun.spawn(["bun", "src/probes/live-smoke.ts"], {
       cwd: new URL("..", import.meta.url).pathname,

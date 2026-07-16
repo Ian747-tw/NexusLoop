@@ -22,7 +22,7 @@
       "cold_import_result": "pass",
       "typecheck_result": "pass",
       "deterministic_unit_result": "pass",
-      "local_openai_compatible_result": "pass",
+      "local_openai_compatible_result": "fail",
       "native_tool_call_result": "pass",
       "json_fallback_result": "pass",
       "streaming_result": "pass",
