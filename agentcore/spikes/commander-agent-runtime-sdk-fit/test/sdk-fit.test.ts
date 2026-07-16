@@ -4,7 +4,7 @@ import { join, relative } from "node:path"
 import { createMinimalCustomAdapter } from "../src/candidates/minimal-custom-adapter"
 import { createOpenAIAgentsCoreAdapter, runControlledAgentsModelProbe, runControlledAgentsStreamingProbe, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
 import { createVercelAiSdkCoreAdapter } from "../src/candidates/vercel-ai-sdk-core-adapter"
-import { baseRequest, finalizeResult, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
+import { baseRequest, finalizeResult, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter, type CommanderToolJsonSchema } from "../src/contracts"
 import { fixtureCase } from "../src/fixture-model"
 import { startMockOpenAICompatibleServer } from "../src/mock-openai-compatible-server"
 import { runBunImportProbe } from "../src/probes/bun-import-probe"
@@ -16,7 +16,7 @@ import { runSchemaCompatibilityProbe } from "../src/probes/schema-compatibility-
 import { runStreamingProbe } from "../src/probes/streaming-probe"
 import { runTextStepProbe } from "../src/probes/text-step-probe"
 import { runUsageProbe } from "../src/probes/usage-probe"
-import { buildResults, runProbes, validateProbeResults } from "../src/sdk-fit-runner"
+import { buildResults, dependencyFootprint, runProbes, validateProbeResults } from "../src/sdk-fit-runner"
 
 const adapters = [
   createMinimalCustomAdapter(),
@@ -86,6 +86,17 @@ describe("isolated SDK spike", () => {
     expect(toolForSdkName(tools, "repo__git_diff")?.tool_id).toBe("repo.git_diff")
     expect(toolForSdkName(tools, "repo__read_lines")?.tool_id).toBe("repo.read_lines")
     expect(toolForSdkName(tools, "repo__search_text")?.tool_id).toBe("repo.search_text")
+  })
+
+  test("dependency footprint includes installed transitive package closure", async () => {
+    const footprint = await dependencyFootprint(["ai", "@ai-sdk/openai-compatible"])
+    expect(footprint.direct).toBe(2)
+    expect(footprint.transitive).toBeGreaterThan(6)
+    expect(footprint.size).toBeGreaterThan(0)
+    const results = await buildResults()
+    const aiSdk = results.candidates.find((candidate) => candidate.candidate_id === "vercel_ai_sdk_core")!
+    expect(aiSdk.transitive_package_count).toBe(footprint.transitive)
+    expect(aiSdk.installed_size_bytes).toBe(footprint.size)
   })
 
   test("AI SDK provider adapter preserves tool result messages for an explicit next step", async () => {
@@ -257,13 +268,39 @@ describe("isolated SDK spike", () => {
   })
 
   test("OpenAI Agents candidate exercises the controlled SDK ModelProvider surface", async () => {
-    const probe = await runControlledAgentsModelProbe(baseRequest({ tool_choice: "required", messages: [{ role: "user", content: "tool" }] }))
+    const structuredSchema: CommanderToolJsonSchema = {
+      schema_version: "nxl-commander-tool-v1",
+      type: "object",
+      required: ["type", "final"],
+      additionalProperties: false,
+      properties: {
+        type: { type: "string", enum: ["final"] },
+        final: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", maxLength: 200 },
+          },
+        } as never,
+      },
+    }
+    const probe = await runControlledAgentsModelProbe(baseRequest({ tool_choice: "required", messages: [{ role: "user", content: "tool" }], structured_output_schema: structuredSchema }))
     expect(probe.sdk_model_provider_used).toBe(true)
     expect(probe.request_count).toBe(1)
     expect(probe.output_types).toContain("function_call")
     expect(probe.tool_choice).toBe("required")
     expect(probe.tool_names).toContain("memory__search")
     expect(probe.tool_names).toContain("repo__git_diff")
+    expect(probe.output_type).toMatchObject({
+      type: "json_schema",
+      name: "nexusloop_structured_output",
+      strict: true,
+      schema: {
+        type: "object",
+        required: ["type", "final"],
+      },
+    })
     expect(probe.tracing_disabled_by_api).toBe(true)
   })
 

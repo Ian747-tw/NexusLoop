@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto"
 import type { CommanderToolDescriptor, CommanderToolJsonSchema } from "../../../runtime/src/commander-tools/commander-tool-types"
+
+export type { CommanderToolJsonSchema }
 import { COMMANDER_TOOL_REGISTRY } from "../../../runtime/src/commander-tools/commander-tool-registry"
 
 export type CandidateId = "minimal_custom_adapter" | "vercel_ai_sdk_core" | "openai_agents_core"

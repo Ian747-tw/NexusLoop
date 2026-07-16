@@ -60,8 +60,8 @@
         "@ai-sdk/openai-compatible": "Apache-2.0"
       },
       "direct_dependency_count": 2,
-      "transitive_package_count": 6,
-      "installed_size_bytes": 8842250,
+      "transitive_package_count": 9,
+      "installed_size_bytes": 13680763,
       "cold_import_result": "pass",
       "typecheck_result": "pass",
       "deterministic_unit_result": "pass",
@@ -103,8 +103,8 @@
         "zod": "MIT"
       },
       "direct_dependency_count": 2,
-      "transitive_package_count": 30,
-      "installed_size_bytes": 32046875,
+      "transitive_package_count": 98,
+      "installed_size_bytes": 45512741,
       "cold_import_result": "pass",
       "typecheck_result": "pass",
       "deterministic_unit_result": "pass",

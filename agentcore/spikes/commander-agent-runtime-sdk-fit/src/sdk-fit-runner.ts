@@ -1,4 +1,5 @@
-import { stat, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { createMinimalCustomAdapter } from "./candidates/minimal-custom-adapter"
 import { createOpenAIAgentsCoreAdapter, runnerOwnershipProbe } from "./candidates/openai-agents-core-adapter"
@@ -25,7 +26,7 @@ export async function buildResults(): Promise<SpikeResults> {
   const schemaProbe = runSchemaCompatibilityProbe()
   const packageVersions = Object.fromEntries(Object.entries(packageJson.dependencies as Record<string, string>).map(([name, version]) => [name, version]))
   const candidates: CandidateMatrixRow[] = [
-    row("minimal_custom_adapter", {}, {}, 0, 0, 0, {
+    row("minimal_custom_adapter", {}, {}, { direct: 0, transitive: 0, size: 0 }, {
       authority_interception_fit: 5,
       provider_local_model_portability: 2,
       bun_compatibility: 5,
@@ -35,7 +36,7 @@ export async function buildResults(): Promise<SpikeResults> {
       dependency_footprint: 5,
       license_maintenance_risk: 4,
     }, ["Would require NexusLoop to own provider quirks, streaming normalization, native tool-call variants, and error taxonomy."], []),
-    row("vercel_ai_sdk_core", { ai: packageVersions.ai, "@ai-sdk/openai-compatible": packageVersions["@ai-sdk/openai-compatible"] }, { ai: "Apache-2.0", "@ai-sdk/openai-compatible": "Apache-2.0" }, 2, 6, await installedSize(["ai", "@ai-sdk"]), {
+    row("vercel_ai_sdk_core", { ai: packageVersions.ai, "@ai-sdk/openai-compatible": packageVersions["@ai-sdk/openai-compatible"] }, { ai: "Apache-2.0", "@ai-sdk/openai-compatible": "Apache-2.0" }, await dependencyFootprint(["ai", "@ai-sdk/openai-compatible"]), {
       authority_interception_fit: 5,
       provider_local_model_portability: 5,
       bun_compatibility: 5,
@@ -45,7 +46,7 @@ export async function buildResults(): Promise<SpikeResults> {
       dependency_footprint: 4,
       license_maintenance_risk: 5,
     }, ["AI SDK Core should be used as one-step model transport only; ToolLoopAgent or stopWhen loops remain out of scope."], []),
-    row("openai_agents_core", { "@openai/agents": packageVersions["@openai/agents"], zod: packageVersions.zod }, { "@openai/agents": "MIT", zod: "MIT" }, 2, 30, await installedSize(["@openai", "openai", "zod"]), {
+    row("openai_agents_core", { "@openai/agents": packageVersions["@openai/agents"], zod: packageVersions.zod }, { "@openai/agents": "MIT", zod: "MIT" }, await dependencyFootprint(["@openai/agents", "zod"]), {
       authority_interception_fit: 3,
       provider_local_model_portability: 2,
       bun_compatibility: 4,
@@ -116,7 +117,13 @@ export function validateProbeResults(probes: ProbeResults): string[] {
   return errors
 }
 
-function row(candidate_id: CandidateId, package_versions: Record<string, string>, licenses: Record<string, string>, direct: number, transitive: number, size: number, scores: Record<string, number>, limitations: string[], disqualification_reasons: string[]): CandidateMatrixRow {
+type DependencyFootprint = {
+  direct: number
+  transitive: number
+  size: number
+}
+
+function row(candidate_id: CandidateId, package_versions: Record<string, string>, licenses: Record<string, string>, footprint: DependencyFootprint, scores: Record<string, number>, limitations: string[], disqualification_reasons: string[]): CandidateMatrixRow {
   const weighted = Object.entries(WEIGHTS).reduce((sum, [key, weight]) => sum + ((scores[key] ?? 0) / 5) * weight, 0)
   const ownership = ownershipReport(candidate_id)
   const disqualified = disqualification_reasons.some((reason) => reason.startsWith("Hard:"))
@@ -125,9 +132,9 @@ function row(candidate_id: CandidateId, package_versions: Record<string, string>
     decision_label: candidate_id === "vercel_ai_sdk_core" ? "selected transport under NexusLoop-owned loop" : "not selected",
     package_versions,
     licenses,
-    direct_dependency_count: direct,
-    transitive_package_count: transitive,
-    installed_size_bytes: size,
+    direct_dependency_count: footprint.direct,
+    transitive_package_count: footprint.transitive,
+    installed_size_bytes: footprint.size,
     cold_import_result: "pass",
     typecheck_result: "pass",
     deterministic_unit_result: "pass",
@@ -148,10 +155,50 @@ function row(candidate_id: CandidateId, package_versions: Record<string, string>
   }
 }
 
-async function installedSize(names: string[]): Promise<number> {
-  let total = 0
-  for (const name of names) total += await directorySize(join(ROOT, "node_modules", name)).catch(() => 0)
-  return total
+export async function dependencyFootprint(rootPackageNames: string[]): Promise<DependencyFootprint> {
+  const visited = new Set<string>()
+  const queue = [...rootPackageNames]
+  while (queue.length) {
+    const name = queue.shift()!
+    if (visited.has(name)) continue
+    const packageJson = await readPackageJson(name)
+    if (!packageJson) continue
+    visited.add(name)
+    for (const dependencyName of dependencyNames(packageJson)) {
+      if (!visited.has(dependencyName)) queue.push(dependencyName)
+    }
+  }
+  let size = 0
+  for (const name of visited) size += await directorySize(packagePath(name)).catch(() => 0)
+  return {
+    direct: rootPackageNames.length,
+    transitive: Math.max(0, visited.size - rootPackageNames.length),
+    size,
+  }
+}
+
+async function readPackageJson(name: string): Promise<Record<string, unknown> | null> {
+  return readFile(join(packagePath(name), "package.json"), "utf8").then((text) => JSON.parse(text) as Record<string, unknown>).catch(() => null)
+}
+
+function dependencyNames(packageJson: Record<string, unknown>): string[] {
+  const names = new Set<string>()
+  for (const key of ["dependencies", "optionalDependencies", "peerDependencies"] as const) {
+    const record = packageJson[key]
+    if (!record || typeof record !== "object" || Array.isArray(record)) continue
+    for (const name of Object.keys(record)) {
+      if (packageExists(name)) names.add(name)
+    }
+  }
+  return [...names].sort()
+}
+
+function packageExists(name: string): boolean {
+  return existsSync(join(packagePath(name), "package.json"))
+}
+
+function packagePath(name: string): string {
+  return join(ROOT, "node_modules", ...name.split("/"))
 }
 
 async function directorySize(path: string): Promise<number> {

@@ -47,4 +47,4 @@ Build a NexusLoop-owned one-step model adapter boundary using AI SDK Core transp
 
 ## Deterministic Result Hash
 
-519019cade20bc0d0a0f4c9f4653d48b1f96e058ad7250975dc1b7a28622257f
+b36b3f2aafc573780b2043f105ecf87ab9efa67db6064d6129ff17a4bb8a414b

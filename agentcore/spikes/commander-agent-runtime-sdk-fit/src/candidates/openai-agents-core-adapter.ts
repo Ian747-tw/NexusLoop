@@ -1,6 +1,6 @@
-import { protocol, setTracingDisabled, Usage, type AgentOutputItem, type Model, type ModelProvider, type ModelRequest, type ModelResponse, type StreamEvent } from "@openai/agents"
+import { protocol, setTracingDisabled, Usage, type AgentOutputItem, type JsonSchemaDefinition, type Model, type ModelProvider, type ModelRequest, type ModelResponse, type SerializedOutputType, type StreamEvent } from "@openai/agents"
 import { fixtureCase, normalizeFixtureResult, reportedUsage } from "../fixture-model"
-import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
+import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage, type CommanderToolJsonSchema } from "../contracts"
 
 setTracingDisabled(true)
 
@@ -94,6 +94,7 @@ export async function runControlledAgentsModelProbe(request: CommanderModelStepR
     output_types: response.output.map((item) => item.type),
     tool_choice: toAgentsModelRequest(request).modelSettings.toolChoice,
     tool_names: toAgentsModelRequest(request).tools?.map((tool) => "name" in tool ? tool.name : "unknown_tool") ?? [],
+    output_type: toAgentsModelRequest(request).outputType,
     tracing_disabled_by_api: true,
   }
 }
@@ -230,11 +231,22 @@ function toAgentsModelRequest(request: CommanderModelStepRequest): ModelRequest 
       strict: tool.strict_requested,
     })),
     toolsExplicitlyProvided: true,
-    outputType: "text",
+    outputType: toAgentsOutputType(request.structured_output_schema),
     handoffs: [],
     tracing: false,
     signal: request.abort_signal,
   }
+}
+
+function toAgentsOutputType(schema: CommanderToolJsonSchema | undefined): SerializedOutputType {
+  if (!schema) return "text"
+  const { schema_version: _schemaVersion, ...jsonSchema } = schema
+  return {
+    type: "json_schema",
+    name: "nexusloop_structured_output",
+    strict: true,
+    schema: jsonSchema,
+  } as JsonSchemaDefinition
 }
 
 function extractMessageText(message: AgentOutputItem | undefined): string | undefined {
