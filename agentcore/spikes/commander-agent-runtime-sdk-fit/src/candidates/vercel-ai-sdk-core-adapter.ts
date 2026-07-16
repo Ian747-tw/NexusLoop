@@ -11,18 +11,6 @@ export type AiSdkAdapterOptions = {
 }
 
 export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}): CommanderModelStepAdapter {
-  let providerRequestCount = 0
-  const providerFetch: typeof fetch | undefined = options.baseURL ? (async (input, init) => {
-    providerRequestCount += 1
-    return (options.fetch ?? fetch)(input, init)
-  }) as typeof fetch : undefined
-  const provider = options.baseURL ? createOpenAICompatible({
-    name: "nxl-fixture",
-    baseURL: options.baseURL,
-    apiKey: options.apiKey ?? "fixture-key",
-    fetch: providerFetch,
-    supportsStructuredOutputs: true,
-  }) : null
   return {
     candidate_id: "vercel_ai_sdk_core",
     candidate_version: "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11",
@@ -34,14 +22,14 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
     supports_usage: true,
     supports_openai_compatible: true,
     async executeOneStep(request: CommanderModelStepRequest) {
-      if (!provider) {
+      if (!options.baseURL) {
         await maybeWaitForAbort(request)
         return normalizeFixtureResult("vercel_ai_sdk_core", request, fixtureCase(request), 1)
       }
-      const requestCountStart = providerRequestCount
+      const measured = providerForCall(options)
       try {
         const result = await generateText({
-          model: provider.chatModel(request.model_id),
+          model: measured.provider.chatModel(request.model_id),
           messages: chatMessages(request),
           tools: aiSdkTools(request),
           toolChoice: toolChoice(request),
@@ -64,7 +52,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             tool_calls: [fallback.call],
             finish_reason: result.finishReason,
             usage: aiSdkUsage(result.usage),
-            provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", fallback: "json" },
+            provider_metadata: { request_count: measured.requestCount(), sdk: "ai", fallback: "json" },
             duration_ms: 1,
             warnings: [],
           })
@@ -78,7 +66,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             tool_calls: [],
             finish_reason: result.finishReason,
             usage: aiSdkUsage(result.usage),
-            provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", fallback: "json" },
+            provider_metadata: { request_count: measured.requestCount(), sdk: "ai", fallback: "json" },
             duration_ms: 1,
             warnings: [],
             error: fallback.reason,
@@ -94,12 +82,12 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           tool_calls: toolCalls,
           finish_reason: result.finishReason,
           usage: aiSdkUsage(result.usage),
-          provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai" },
+          provider_metadata: { request_count: measured.requestCount(), sdk: "ai" },
           duration_ms: 1,
           warnings: [],
         })
       } catch (error) {
-        const requestCount = providerRequestCount - requestCountStart
+        const requestCount = measured.requestCount()
         if (request.abort_signal?.aborted) {
           return finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "cancelled", tool_calls: [], usage: { provider_reported: false }, provider_metadata: { request_count: requestCount, sdk: "ai" }, duration_ms: 1, warnings: [], error: "request was cancelled" })
         }
@@ -107,14 +95,14 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
       }
     },
     async *executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
-      if (!provider) {
+      if (!options.baseURL) {
         yield* fixtureStream("vercel_ai_sdk_core", request, fixtureCase(request))
         return
       }
-      const requestCountStart = providerRequestCount
+      const measured = providerForCall(options)
       try {
         const result = streamText({
-          model: provider.chatModel(request.model_id),
+          model: measured.provider.chatModel(request.model_id),
           messages: chatMessages(request),
           tools: aiSdkTools(request),
           toolChoice: toolChoice(request),
@@ -201,14 +189,14 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
         if (fallback?.status === "tool_call") {
           yield { type: "tool_call_start", tool_call_id: fallback.call.tool_call_id, tool_id: fallback.call.tool_id }
           yield { type: "tool_call_complete", tool_call: fallback.call }
-          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "tool_call", tool_calls: [fallback.call], finish_reason: finishReason, usage, provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [] }) }
+          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "tool_call", tool_calls: [fallback.call], finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [] }) }
           return
         }
         if (fallback?.status === "malformed" || fallback?.status === "blocked") {
-          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "malformed", text: text.slice(0, 256), tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [], error: fallback.reason }) }
+          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "malformed", text: text.slice(0, 256), tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [], error: fallback.reason }) }
           return
         }
-        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
+        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: measured.requestCount(), sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
       } catch (error) {
         yield { type: "error", error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK stream failed" }
       }
@@ -227,6 +215,24 @@ type StreamPart = {
   toolName?: string
   input?: unknown
   error?: unknown
+}
+
+function providerForCall(options: AiSdkAdapterOptions) {
+  let requestCount = 0
+  const providerFetch = (async (input, init) => {
+    requestCount += 1
+    return (options.fetch ?? fetch)(input, init)
+  }) as typeof fetch
+  return {
+    provider: createOpenAICompatible({
+      name: "nxl-fixture",
+      baseURL: options.baseURL ?? "",
+      apiKey: options.apiKey ?? "fixture-key",
+      fetch: providerFetch,
+      supportsStructuredOutputs: true,
+    }),
+    requestCount: () => requestCount,
+  }
 }
 
 function aiSdkTools(request: CommanderModelStepRequest) {

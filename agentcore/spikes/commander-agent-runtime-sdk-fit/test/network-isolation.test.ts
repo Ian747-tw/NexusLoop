@@ -135,6 +135,25 @@ describe("network isolation", () => {
     }
   })
 
+  test("provider-backed request counts are isolated per overlapping call", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "text")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const [first, second] = await Promise.all([
+        adapter.executeOneStep(baseRequest({ request_id: "overlap_first", messages: [{ role: "user", content: "plain first" }] })),
+        adapter.executeOneStep(baseRequest({ request_id: "overlap_second", messages: [{ role: "user", content: "plain second" }] })),
+      ])
+      expect(first.provider_metadata.request_count).toBe(1)
+      expect(second.provider_metadata.request_count).toBe(1)
+      expect(server.requests.length).toBe(2)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
   test("provider-backed stream cancellation does not complete with partial text", async () => {
     const controller = new AbortController()
     let requestCount = 0

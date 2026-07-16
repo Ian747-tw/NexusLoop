@@ -5,13 +5,14 @@ export function runJsonFallbackProbe(request: CommanderModelStepRequest, raw: st
   try {
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { status: "malformed" as const, reason: "fallback envelope must be an object" }
-    if (Object.keys(parsed).some((key) => !["type", "tool_id", "arguments", "final"].includes(key))) return { status: "malformed" as const, reason: "unknown keys" }
     if (parsed.type === "tool_call") {
+      if (Object.keys(parsed).some((key) => !["type", "tool_id", "arguments"].includes(key))) return { status: "malformed" as const, reason: "unknown tool_call keys" }
       const tool = request.tools.find((item) => item.tool_id === parsed.tool_id)
       const call = makeToolCall(tool, String(parsed.tool_id ?? ""), JSON.stringify(parsed.arguments ?? {}), "json_fallback")
       return { status: call.arguments_valid ? "tool_call" as const : "malformed" as const, call }
     }
     if (parsed.type === "final") {
+      if (Object.keys(parsed).some((key) => !["type", "final"].includes(key))) return { status: "malformed" as const, reason: "unknown final envelope keys" }
       const final = parsed.final
       if (!final || typeof final !== "object" || Array.isArray(final)) return { status: "malformed" as const, reason: "final payload required" }
       if (Object.keys(final).some((key) => !["summary"].includes(key))) return { status: "malformed" as const, reason: "unknown final keys" }
