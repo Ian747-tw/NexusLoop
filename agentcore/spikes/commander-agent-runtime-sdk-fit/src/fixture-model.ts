@@ -57,13 +57,13 @@ export function fixtureOpenAIResponse(kind: FixtureCase): FixtureResponse {
         id: "call_memory",
         type: "function",
         function: {
-          name: "memory_search",
+          name: "memory__search",
           arguments: kind === "malformed_tool" ? "{\"query\":7}" : JSON.stringify({ query: "research memory", limit: 3 }),
         },
       },
     ]
     if (kind === "multi_tool") {
-      calls.push({ id: "call_git", type: "function", function: { name: "repo_git_status", arguments: "{}" } })
+      calls.push({ id: "call_git", type: "function", function: { name: "repo__git_status", arguments: "{}" } })
     }
     return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: calls } }] } }
   }

@@ -21,6 +21,22 @@ describe("network isolation", () => {
     }
   })
 
+  test("provider-backed streaming completes without issuing a second request", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "text")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "stream" }] }))) events.push(event)
+      expect(events.some((event) => event.type === "completed")).toBe(true)
+      expect(server.requests.length).toBe(1)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
   test("non-loopback network is blocked and redacted", async () => {
     const guard = installNetworkGuard(["http://127.0.0.1:1"])
     try {

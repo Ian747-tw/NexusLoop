@@ -185,8 +185,13 @@ export function toModelTool(tool: CommanderToolDescriptor): CommanderModelToolSc
   }
 }
 
-export function normalizeToolName(name: string): string {
-  return name.replace(/_/g, ".")
+export function toolNameFor(toolId: string): string {
+  return toolId.replace(/\./g, "__")
+}
+
+export function toolForSdkName(tools: CommanderModelToolSchema[], name: string): CommanderModelToolSchema | undefined {
+  return tools.find((tool) => toolNameFor(tool.tool_id) === name)
+    ?? tools.find((tool) => tool.tool_id.replace(".", "_") === name)
 }
 
 export function validateArguments(tool: CommanderModelToolSchema, value: unknown): { valid: boolean; errors: string[]; arguments: Record<string, unknown> } {
@@ -223,7 +228,7 @@ export function makeToolCall(tool: CommanderModelToolSchema | undefined, rawName
   } catch {
     errors.push("tool arguments are not valid JSON")
   }
-  const normalizedId = tool?.tool_id ?? normalizeToolName(rawName)
+  const normalizedId = tool?.tool_id ?? rawName
   const validated = tool ? validateArguments(tool, parsed) : { valid: false, errors: ["unknown tool_id"], arguments: isRecord(parsed) ? parsed : {} }
   return {
     tool_call_id: id,

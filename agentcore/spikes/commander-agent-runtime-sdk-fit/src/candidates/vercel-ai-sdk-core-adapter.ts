@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { generateText, jsonSchema, streamText, tool } from "ai"
 import { fixtureCase, fixtureStream, normalizeFixtureResult } from "../fixture-model"
-import { makeToolCall, normalizeToolName, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent } from "../contracts"
+import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
 
 export type AiSdkAdapterOptions = {
   baseURL?: string
@@ -39,8 +39,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           abortSignal: request.abort_signal,
         })
         const toolCalls = (result.toolCalls ?? []).map((call) => {
-          const toolId = normalizeToolName(call.toolName)
-          const schema = request.tools.find((item) => item.tool_id === toolId)
+          const schema = toolForSdkName(request.tools, call.toolName)
           return makeToolCall(schema, call.toolName, JSON.stringify(call.input ?? {}), "native", call.toolCallId)
         })
         const status = toolCalls.length ? "tool_call" : "final"
@@ -77,8 +76,27 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           toolChoice: request.tool_choice === "none" ? "none" : "auto",
           abortSignal: request.abort_signal,
         })
-        for await (const delta of result.textStream) yield { type: "text_delta", text: delta }
-        yield { type: "completed", result: await this.executeOneStep(request) }
+        let text = ""
+        let finishReason: string | undefined
+        let usage: CommanderModelUsage = { provider_reported: false }
+        for await (const event of result.fullStream) {
+          if (event.type === "text-delta") {
+            text += event.text
+            yield { type: "text_delta", text: event.text }
+          }
+          if (event.type === "finish") {
+            finishReason = event.finishReason
+            usage = {
+              input_tokens: event.totalUsage?.inputTokens,
+              output_tokens: event.totalUsage?.outputTokens,
+              total_tokens: event.totalUsage?.totalTokens,
+              provider_reported: Boolean(event.totalUsage),
+              raw_usage_summary: event.totalUsage ? { inputTokens: event.totalUsage.inputTokens ?? 0, outputTokens: event.totalUsage.outputTokens ?? 0, totalTokens: event.totalUsage.totalTokens ?? 0 } : undefined,
+            }
+            yield { type: "usage", usage }
+          }
+        }
+        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "final", text, tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: 1, sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
       } catch (error) {
         yield { type: "error", error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK stream failed" }
       }
@@ -88,7 +106,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
 
 function aiSdkTools(request: CommanderModelStepRequest) {
   return Object.fromEntries(request.tools.map((item) => [
-    item.tool_id.replace(".", "_"),
+    toolNameFor(item.tool_id),
     tool({
       description: item.description,
       inputSchema: jsonSchema(item.input_schema),

@@ -4,7 +4,7 @@ import { join, relative } from "node:path"
 import { createMinimalCustomAdapter } from "../src/candidates/minimal-custom-adapter"
 import { createOpenAIAgentsCoreAdapter, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
 import { createVercelAiSdkCoreAdapter } from "../src/candidates/vercel-ai-sdk-core-adapter"
-import { baseRequest, hashStable, selectedCommanderTools, toModelTool, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
+import { baseRequest, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
 import { runBunImportProbe } from "../src/probes/bun-import-probe"
 import { runCancellationProbe } from "../src/probes/cancellation-probe"
 import { runJsonFallbackProbe } from "../src/probes/json-fallback-probe"
@@ -72,6 +72,15 @@ describe("isolated SDK spike", () => {
     expect(validateArguments(memory, { query: "x".repeat(301) }).errors).toContain("query exceeds maxLength")
     expect(validateArguments(memory, { query: "memory", limit: 999 }).errors).toContain("limit above maximum")
     expect(validateArguments(memory, { query: "memory", limit: 0 }).errors).toContain("limit below minimum")
+  })
+
+  test("SDK tool names preserve canonical IDs that contain underscores", () => {
+    const tools = selectedCommanderTools().map(toModelTool)
+    expect(toolNameFor("repo.git_status")).toBe("repo__git_status")
+    expect(toolForSdkName(tools, "repo__git_status")?.tool_id).toBe("repo.git_status")
+    expect(toolForSdkName(tools, "repo__git_diff")?.tool_id).toBe("repo.git_diff")
+    expect(toolForSdkName(tools, "repo__read_lines")?.tool_id).toBe("repo.read_lines")
+    expect(toolForSdkName(tools, "repo__search_text")?.tool_id).toBe("repo.search_text")
   })
 
   for (const adapter of adapters) {
