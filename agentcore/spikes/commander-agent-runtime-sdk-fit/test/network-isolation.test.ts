@@ -47,6 +47,8 @@ describe("network isolation", () => {
       const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
       const events = []
       for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "stream tool" }] }))) events.push(event)
+      expect(events.some((event) => event.type === "tool_call_start" && event.tool_id === "memory.search")).toBe(true)
+      expect(events.some((event) => event.type === "tool_call_arguments_delta" && event.delta.length > 0)).toBe(true)
       expect(events.some((event) => event.type === "tool_call_complete")).toBe(true)
       const completed = events.find((event) => event.type === "completed")
       expect(completed?.type).toBe("completed")
