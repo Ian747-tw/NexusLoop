@@ -106,6 +106,35 @@ describe("network isolation", () => {
     }
   })
 
+  test("provider-backed JSON fallback tool calls normalize without execution", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "json_fallback_tool")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const result = await adapter.executeOneStep(baseRequest({ messages: [{ role: "user", content: "fallback tool" }] }))
+      expect(result.status).toBe("tool_call")
+      expect(result.tool_calls[0].tool_id).toBe("memory.search")
+      expect(result.tool_calls[0].source).toBe("json_fallback")
+      expect(result.provider_metadata).toMatchObject({ request_count: 1, fallback: "json" })
+
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "fallback tool stream" }] }))) events.push(event)
+      expect(events.some((event) => event.type === "tool_call_complete" && event.tool_call.source === "json_fallback")).toBe(true)
+      const completed = events.find((event) => event.type === "completed")
+      expect(completed?.type).toBe("completed")
+      if (completed?.type === "completed") {
+        expect(completed.result.status).toBe("tool_call")
+        expect(completed.result.tool_calls[0].source).toBe("json_fallback")
+        expect(completed.result.provider_metadata).toMatchObject({ request_count: 1, streamed: true, fallback: "json" })
+      }
+      expect(server.requests.length).toBe(2)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
   test("provider-backed stream cancellation does not complete with partial text", async () => {
     const controller = new AbortController()
     let requestCount = 0

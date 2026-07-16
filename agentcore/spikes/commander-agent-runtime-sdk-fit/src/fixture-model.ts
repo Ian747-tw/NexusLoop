@@ -9,6 +9,7 @@ export type FixtureCase =
   | "structured"
   | "stream_text"
   | "stream_tool"
+  | "json_fallback_tool"
   | "usage"
   | "slow"
   | "http_429"
@@ -29,6 +30,7 @@ export function fixtureCase(request: CommanderModelStepRequest): FixtureCase {
   if (content.includes("refusal")) return "refusal"
   if (content.includes("structured")) return "structured"
   if (content.includes("usage")) return "usage"
+  if (content.includes("fallback tool")) return "json_fallback_tool"
   if (content.includes("slow")) return "slow"
   if (content.includes("429")) return "http_429"
   if (content.includes("500")) return "http_500"
@@ -67,6 +69,9 @@ export function fixtureOpenAIResponse(kind: FixtureCase): FixtureResponse {
     }
     return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: calls } }] } }
   }
+  if (kind === "json_fallback_tool") {
+    return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "tool_call", tool_id: "memory.search", arguments: { query: "research memory", limit: 3 } }) } }] } }
+  }
   if (kind === "refusal") {
     return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "content_filter", message: { role: "assistant", content: "fixture refusal" } }] } }
   }
@@ -98,6 +103,11 @@ export function normalizeFixtureResult(candidateId: CandidateId, request: Comman
     ]
     if (kind === "multi_tool") calls.push(makeToolCall(git, "repo_git_status", "{}", "native", "call_git"))
     return finalizeResult({ request_id: request.request_id, candidate_id: candidateId, status: "tool_call", tool_calls: calls, finish_reason: "tool_calls", usage: reportedUsage(), provider_metadata: { request_count: requestCount }, duration_ms: durationMs, warnings: [] })
+  }
+  if (kind === "json_fallback_tool") {
+    const tool = request.tools.find((item) => item.tool_id === "memory.search")
+    const call = makeToolCall(tool, "memory.search", JSON.stringify({ query: "research memory", limit: 3 }), "json_fallback", "call_fallback_memory")
+    return finalizeResult({ request_id: request.request_id, candidate_id: candidateId, status: "tool_call", tool_calls: [call], finish_reason: "stop", usage: reportedUsage(), provider_metadata: { request_count: requestCount }, duration_ms: durationMs, warnings: [] })
   }
   if (kind === "structured") {
     return finalizeResult({ request_id: request.request_id, candidate_id: candidateId, status: "final", text: "{\"type\":\"final\",\"final\":{\"summary\":\"structured fixture\"}}", tool_calls: [], finish_reason: "stop", usage: reportedUsage(), provider_metadata: { request_count: requestCount, structured: true }, duration_ms: durationMs, warnings: [] })

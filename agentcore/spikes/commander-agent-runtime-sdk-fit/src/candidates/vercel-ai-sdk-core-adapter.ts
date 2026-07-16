@@ -1,6 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { generateText, jsonSchema, Output, streamText, tool, type ModelMessage } from "ai"
 import { fixtureCase, fixtureStream, normalizeFixtureResult } from "../fixture-model"
+import { runJsonFallbackProbe } from "../probes/json-fallback-probe"
 import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
 
 export type AiSdkAdapterOptions = {
@@ -54,6 +55,35 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           const schema = toolForSdkName(request.tools, call.toolName)
           return makeToolCall(schema, call.toolName, JSON.stringify(call.input ?? {}), "native", call.toolCallId)
         })
+        const fallback = toolCalls.length ? null : fallbackFromText(request, result.text)
+        if (fallback?.status === "tool_call") {
+          return finalizeResult({
+            request_id: request.request_id,
+            candidate_id: "vercel_ai_sdk_core",
+            status: "tool_call",
+            tool_calls: [fallback.call],
+            finish_reason: result.finishReason,
+            usage: aiSdkUsage(result.usage),
+            provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", fallback: "json" },
+            duration_ms: 1,
+            warnings: [],
+          })
+        }
+        if (fallback?.status === "malformed" || fallback?.status === "blocked") {
+          return finalizeResult({
+            request_id: request.request_id,
+            candidate_id: "vercel_ai_sdk_core",
+            status: "malformed",
+            text: result.text?.slice(0, 256),
+            tool_calls: [],
+            finish_reason: result.finishReason,
+            usage: aiSdkUsage(result.usage),
+            provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", fallback: "json" },
+            duration_ms: 1,
+            warnings: [],
+            error: fallback.reason,
+          })
+        }
         const status = toolCalls.length ? "tool_call" : result.finishReason === "content-filter" ? "refusal" : "final"
         const text = toolCalls.length ? undefined : request.structured_output_schema ? JSON.stringify(result.output) : result.text
         return finalizeResult({
@@ -63,13 +93,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           text,
           tool_calls: toolCalls,
           finish_reason: result.finishReason,
-          usage: {
-            input_tokens: result.usage?.inputTokens,
-            output_tokens: result.usage?.outputTokens,
-            total_tokens: result.usage?.totalTokens,
-            provider_reported: Boolean(result.usage),
-            raw_usage_summary: result.usage ? { inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0, totalTokens: result.usage.totalTokens ?? 0 } : undefined,
-          },
+          usage: aiSdkUsage(result.usage),
           provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai" },
           duration_ms: 1,
           warnings: [],
@@ -173,6 +197,17 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
         }
         if (streamError) return
         const completedToolCalls = Array.from(toolCalls.values())
+        const fallback = completedToolCalls.length ? null : fallbackFromText(request, text)
+        if (fallback?.status === "tool_call") {
+          yield { type: "tool_call_start", tool_call_id: fallback.call.tool_call_id, tool_id: fallback.call.tool_id }
+          yield { type: "tool_call_complete", tool_call: fallback.call }
+          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "tool_call", tool_calls: [fallback.call], finish_reason: finishReason, usage, provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [] }) }
+          return
+        }
+        if (fallback?.status === "malformed" || fallback?.status === "blocked") {
+          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "malformed", text: text.slice(0, 256), tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", streamed: true, fallback: "json" }, duration_ms: 1, warnings: [], error: fallback.reason }) }
+          return
+        }
         yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: providerRequestCount - requestCountStart, sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
       } catch (error) {
         yield { type: "error", error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK stream failed" }
@@ -209,6 +244,22 @@ function structuredOutput(request: CommanderModelStepRequest) {
     schema: jsonSchema(request.structured_output_schema),
     name: "nexusloop_structured_output",
   }) : undefined
+}
+
+function fallbackFromText(request: CommanderModelStepRequest, text: string | undefined): ReturnType<typeof runJsonFallbackProbe> | null {
+  const trimmed = text?.trim() ?? ""
+  if (!trimmed.startsWith("{") || !trimmed.includes("\"type\"")) return null
+  return runJsonFallbackProbe(request, trimmed)
+}
+
+function aiSdkUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined): CommanderModelUsage {
+  return {
+    input_tokens: usage?.inputTokens,
+    output_tokens: usage?.outputTokens,
+    total_tokens: usage?.totalTokens,
+    provider_reported: Boolean(usage),
+    raw_usage_summary: usage ? { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0, totalTokens: usage.totalTokens ?? 0 } : undefined,
+  }
 }
 
 function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "required" {

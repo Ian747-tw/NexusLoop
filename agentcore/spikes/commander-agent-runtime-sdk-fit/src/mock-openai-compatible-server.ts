@@ -79,6 +79,14 @@ function streamFixture(kind: FixtureCase): ReadableStream<Uint8Array> {
 
 function openAIStreamChunks(kind: FixtureCase): Record<string, unknown>[] {
   const base = { id: `chatcmpl_stream_${kind}`, object: "chat.completion.chunk", created: 1784160000, model: "fixture-model" }
+  if (kind === "json_fallback_tool") {
+    const fallback = JSON.stringify({ type: "tool_call", tool_id: "memory.search", arguments: { query: "research memory", limit: 3 } })
+    return [
+      { ...base, choices: [{ index: 0, delta: { role: "assistant", content: fallback.slice(0, 42) }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: { content: fallback.slice(42) }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
+    ]
+  }
   if (kind === "tool" || kind === "stream_tool" || kind === "multi_tool" || kind === "malformed_tool") {
     const args = kind === "malformed_tool" ? "{\"query\":7}" : JSON.stringify({ query: "research memory", limit: 3 })
     return [
@@ -112,6 +120,7 @@ function defaultCase(body: unknown): FixtureCase {
   if (serialized.includes("500")) return "http_500"
   if (serialized.includes("invalid json")) return "invalid_json"
   if (serialized.includes("premature")) return "premature_stream"
+  if (serialized.includes("fallback tool")) return "json_fallback_tool"
   if (serialized.includes("stream tool")) return "stream_tool"
   if (serialized.includes("stream")) return "stream_text"
   if (serialized.includes("tool")) return "tool"
