@@ -1,5 +1,6 @@
 import { protocol, setTracingDisabled, Usage, type AgentOutputItem, type JsonSchemaDefinition, type Model, type ModelProvider, type ModelRequest, type ModelResponse, type SerializedOutputType, type StreamEvent } from "@openai/agents"
 import { fixtureCase, normalizeFixtureResult, reportedUsage } from "../fixture-model"
+import { runJsonFallbackProbe } from "../probes/json-fallback-probe"
 import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage, type CommanderToolJsonSchema } from "../contracts"
 
 setTracingDisabled(true)
@@ -28,11 +29,41 @@ export function createOpenAIAgentsCoreAdapter(): CommanderModelStepAdapter {
           return makeToolCall(tool, item.name, item.arguments, "native", item.callId)
         })
       const message = response.output.find((item): item is Extract<AgentOutputItem, { type: "message" }> => item.type === "message")
+      const messageText = extractMessageText(message) ?? normalizeFixtureResult("openai_agents_core", request, fixtureCase(request), 1).text
+      const fallback = toolCalls.length ? null : fallbackFromText(request, messageText)
+      if (fallback?.status === "tool_call") {
+        return finalizeResult({
+          request_id: request.request_id,
+          candidate_id: "openai_agents_core",
+          status: "tool_call",
+          tool_calls: [fallback.call],
+          finish_reason: "stop",
+          usage: usageFromAgents(response.usage),
+          provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, fallback: "json" },
+          duration_ms: 1,
+          warnings: [],
+        })
+      }
+      if (fallback?.status === "malformed" || fallback?.status === "blocked") {
+        return finalizeResult({
+          request_id: request.request_id,
+          candidate_id: "openai_agents_core",
+          status: "malformed",
+          text: messageText?.slice(0, 256),
+          tool_calls: [],
+          finish_reason: "stop",
+          usage: usageFromAgents(response.usage),
+          provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, fallback: "json" },
+          duration_ms: 1,
+          warnings: [],
+          error: fallback.reason,
+        })
+      }
       return finalizeResult({
         request_id: request.request_id,
         candidate_id: "openai_agents_core",
         status: toolCalls.length ? "tool_call" : fixtureCase(request) === "refusal" ? "refusal" : "final",
-        text: toolCalls.length ? undefined : extractMessageText(message) ?? normalizeFixtureResult("openai_agents_core", request, fixtureCase(request), 1).text,
+        text: toolCalls.length ? undefined : messageText,
         tool_calls: toolCalls,
         finish_reason: toolCalls.length ? "tool_calls" : "stop",
         usage: {
@@ -77,6 +108,17 @@ export function createOpenAIAgentsCoreAdapter(): CommanderModelStepAdapter {
           yield { type: "usage", usage }
           const completedToolCalls = Array.from(toolCalls.values())
           const finishReason = typeof response.providerData?.finish_reason === "string" ? response.providerData.finish_reason : completedToolCalls.length ? "tool_calls" : fixtureCase(request) === "refusal" ? "content-filter" : "stop"
+          const fallback = completedToolCalls.length ? null : fallbackFromText(request, text)
+          if (fallback?.status === "tool_call") {
+            yield { type: "tool_call_start", tool_call_id: fallback.call.tool_call_id, tool_id: fallback.call.tool_id }
+            yield { type: "tool_call_complete", tool_call: fallback.call }
+            yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "openai_agents_core", status: "tool_call", tool_calls: [fallback.call], finish_reason: finishReason, usage, provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, streamed: true, fallback: "json" }, duration_ms: 1, warnings: [] }) }
+            continue
+          }
+          if (fallback?.status === "malformed" || fallback?.status === "blocked") {
+            yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "openai_agents_core", status: "malformed", text: text.slice(0, 256), tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, streamed: true, fallback: "json" }, duration_ms: 1, warnings: [], error: fallback.reason }) }
+            continue
+          }
           yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "openai_agents_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, streamed: true }, duration_ms: 1, warnings: [] }) }
         }
       }
@@ -168,7 +210,7 @@ function createControlledModelProvider(): ModelProvider {
               type: "message",
               role: "assistant",
               status: "completed",
-              content: [{ type: "output_text", text: kind === "structured" ? "{\"type\":\"final\",\"final\":{\"summary\":\"structured fixture\"}}" : kind === "refusal" ? "fixture refusal" : "plain fixture response" }],
+              content: [{ type: "output_text", text: kind === "json_fallback_tool" ? JSON.stringify({ type: "tool_call", tool_id: "memory.search", arguments: { query: "research memory", limit: 3 } }) : kind === "structured" ? "{\"type\":\"final\",\"final\":{\"summary\":\"structured fixture\"}}" : kind === "refusal" ? "fixture refusal" : "plain fixture response" }],
             } as AgentOutputItem)
           }
           return {
@@ -213,6 +255,12 @@ function usageFromAgents(usage: Usage): CommanderModelUsage {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value))
+}
+
+function fallbackFromText(request: CommanderModelStepRequest, text: string | undefined): ReturnType<typeof runJsonFallbackProbe> | null {
+  const trimmed = text?.trim() ?? ""
+  if (!trimmed.startsWith("{") || !trimmed.includes("\"type\"")) return null
+  return runJsonFallbackProbe(request, trimmed)
 }
 
 function toAgentsModelRequest(request: CommanderModelStepRequest): ModelRequest {

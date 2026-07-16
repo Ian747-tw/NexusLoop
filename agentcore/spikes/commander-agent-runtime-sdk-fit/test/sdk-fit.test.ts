@@ -386,6 +386,16 @@ describe("isolated SDK spike", () => {
       expect(oversized.status).toBe("blocked")
     })
 
+    test(`${adapter.candidate_id} normalizes JSON fallback tool calls without execution`, async () => {
+      const result = await adapter.executeOneStep(baseRequest({ messages: [{ role: "user", content: "fallback tool" }] }))
+      expect(result.status).toBe("tool_call")
+      expect(result.tool_calls).toHaveLength(1)
+      expect(result.tool_calls[0].tool_id).toBe("memory.search")
+      expect(result.tool_calls[0].source).toBe("json_fallback")
+      expect(result.tool_calls[0].arguments_valid).toBe(true)
+      expect(result.provider_metadata.request_count).toBe(1)
+    })
+
     test(`${adapter.candidate_id} normalizes streaming and cancellation`, async () => {
       expect((await runStreamingProbe(adapter)).status).toBe("pass")
       expect((await runCancellationProbe(adapter)).status).toBe("pass")
@@ -412,6 +422,21 @@ describe("isolated SDK spike", () => {
     expect(probe.production_runner_suitable).toBe(false)
     expect(probe.function_tools_can_auto_execute).toBe(true)
     expect(probe.tracing_disabled_by_api).toBe(true)
+  })
+
+  test("OpenAI Agents streamed fallback tool calls normalize without execution", async () => {
+    const adapter = createOpenAIAgentsCoreAdapter()
+    const events = []
+    for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "fallback tool stream" }] }))) events.push(event)
+    expect(events.some((event) => event.type === "tool_call_complete" && event.tool_call.source === "json_fallback")).toBe(true)
+    const completed = events.find((event) => event.type === "completed")
+    expect(completed?.type).toBe("completed")
+    if (completed?.type === "completed") {
+      expect(completed.result.status).toBe("tool_call")
+      expect(completed.result.tool_calls[0].tool_id).toBe("memory.search")
+      expect(completed.result.tool_calls[0].source).toBe("json_fallback")
+      expect(completed.result.provider_metadata).toMatchObject({ request_count: 1, streamed: true, fallback: "json" })
+    }
   })
 
   test("matrix weights total 100 and select exactly one final decision", async () => {
