@@ -21,12 +21,40 @@ const WEIGHTS = {
   license_maintenance_risk: 5,
 }
 
-export async function buildResults(): Promise<SpikeResults> {
+type MatrixEvidence = {
+  cold_import_result: "pass" | "fail"
+  typecheck_result: "pass" | "fail"
+  deterministic_unit_result: "pass" | "fail"
+  local_openai_compatible_result: "pass" | "fail"
+  native_tool_call_result: "pass" | "fail" | "partial"
+  json_fallback_result: "pass" | "fail"
+  streaming_result: "pass" | "fail" | "partial"
+  cancellation_result: "pass" | "fail" | "partial"
+  usage_result: "pass" | "fail" | "partial"
+  schema_compatibility_result: "pass" | "fail"
+  network_isolation_result: "pass" | "fail"
+}
+
+const UNVERIFIED_EVIDENCE: MatrixEvidence = {
+  cold_import_result: "fail",
+  typecheck_result: "fail",
+  deterministic_unit_result: "fail",
+  local_openai_compatible_result: "fail",
+  native_tool_call_result: "fail",
+  json_fallback_result: "fail",
+  streaming_result: "fail",
+  cancellation_result: "fail",
+  usage_result: "fail",
+  schema_compatibility_result: "fail",
+  network_isolation_result: "fail",
+}
+
+export async function buildResults(evidence: MatrixEvidence = UNVERIFIED_EVIDENCE): Promise<SpikeResults> {
   const packageJson = await import("../package.json", { with: { type: "json" } }).then((module) => module.default)
   const schemaProbe = runSchemaCompatibilityProbe()
   const packageVersions = Object.fromEntries(Object.entries(packageJson.dependencies as Record<string, string>).map(([name, version]) => [name, version]))
   const candidates: CandidateMatrixRow[] = [
-    row("minimal_custom_adapter", {}, {}, { direct: 0, transitive: 0, size: 0 }, {
+    row("minimal_custom_adapter", {}, {}, { direct: 0, transitive: 0, size: 0 }, evidence, {
       authority_interception_fit: 5,
       provider_local_model_portability: 2,
       bun_compatibility: 5,
@@ -36,7 +64,7 @@ export async function buildResults(): Promise<SpikeResults> {
       dependency_footprint: 5,
       license_maintenance_risk: 4,
     }, ["Would require NexusLoop to own provider quirks, streaming normalization, native tool-call variants, and error taxonomy."], []),
-    row("vercel_ai_sdk_core", { ai: packageVersions.ai, "@ai-sdk/openai-compatible": packageVersions["@ai-sdk/openai-compatible"] }, { ai: "Apache-2.0", "@ai-sdk/openai-compatible": "Apache-2.0" }, await dependencyFootprint(["ai", "@ai-sdk/openai-compatible"]), {
+    row("vercel_ai_sdk_core", { ai: packageVersions.ai, "@ai-sdk/openai-compatible": packageVersions["@ai-sdk/openai-compatible"] }, { ai: "Apache-2.0", "@ai-sdk/openai-compatible": "Apache-2.0" }, await dependencyFootprint(["ai", "@ai-sdk/openai-compatible"]), evidence, {
       authority_interception_fit: 5,
       provider_local_model_portability: 5,
       bun_compatibility: 5,
@@ -46,7 +74,7 @@ export async function buildResults(): Promise<SpikeResults> {
       dependency_footprint: 4,
       license_maintenance_risk: 5,
     }, ["AI SDK Core should be used as one-step model transport only; ToolLoopAgent or stopWhen loops remain out of scope."], []),
-    row("openai_agents_core", { "@openai/agents": packageVersions["@openai/agents"], zod: packageVersions.zod }, { "@openai/agents": "MIT", zod: "MIT" }, await dependencyFootprint(["@openai/agents", "zod"]), {
+    row("openai_agents_core", { "@openai/agents": packageVersions["@openai/agents"], zod: packageVersions.zod }, { "@openai/agents": "MIT", zod: "MIT" }, await dependencyFootprint(["@openai/agents", "zod"]), evidence, {
       authority_interception_fit: 3,
       provider_local_model_portability: 2,
       bun_compatibility: 4,
@@ -123,7 +151,7 @@ type DependencyFootprint = {
   size: number
 }
 
-function row(candidate_id: CandidateId, package_versions: Record<string, string>, licenses: Record<string, string>, footprint: DependencyFootprint, scores: Record<string, number>, limitations: string[], disqualification_reasons: string[]): CandidateMatrixRow {
+function row(candidate_id: CandidateId, package_versions: Record<string, string>, licenses: Record<string, string>, footprint: DependencyFootprint, evidence: MatrixEvidence, scores: Record<string, number>, limitations: string[], disqualification_reasons: string[]): CandidateMatrixRow {
   const weighted = Object.entries(WEIGHTS).reduce((sum, [key, weight]) => sum + ((scores[key] ?? 0) / 5) * weight, 0)
   const ownership = ownershipReport(candidate_id)
   const disqualified = disqualification_reasons.some((reason) => reason.startsWith("Hard:"))
@@ -135,24 +163,62 @@ function row(candidate_id: CandidateId, package_versions: Record<string, string>
     direct_dependency_count: footprint.direct,
     transitive_package_count: footprint.transitive,
     installed_size_bytes: footprint.size,
-    cold_import_result: "pass",
-    typecheck_result: "pass",
-    deterministic_unit_result: "pass",
-    local_openai_compatible_result: candidate_id === "openai_agents_core" ? "not_applicable" : "pass",
-    native_tool_call_result: "pass",
-    json_fallback_result: "pass",
-    streaming_result: "pass",
-    cancellation_result: "pass",
-    usage_result: "pass",
-    schema_compatibility_result: "pass",
+    cold_import_result: evidence.cold_import_result,
+    typecheck_result: evidence.typecheck_result,
+    deterministic_unit_result: evidence.deterministic_unit_result,
+    local_openai_compatible_result: candidate_id === "openai_agents_core" ? "not_applicable" : evidence.local_openai_compatible_result,
+    native_tool_call_result: evidence.native_tool_call_result,
+    json_fallback_result: evidence.json_fallback_result,
+    streaming_result: evidence.streaming_result,
+    cancellation_result: evidence.cancellation_result,
+    usage_result: evidence.usage_result,
+    schema_compatibility_result: evidence.schema_compatibility_result,
     authority_ownership_result: ownership.blockers.length ? "fail" : "pass",
-    network_isolation_result: "pass",
+    network_isolation_result: evidence.network_isolation_result,
     scores,
     weighted_score: Math.round(weighted * 100) / 100,
     limitations,
     disqualified,
     disqualification_reasons,
   }
+}
+
+async function collectVerifiedEvidence(): Promise<{ evidence: MatrixEvidence; probes: ProbeResults }> {
+  await runRequiredCommand(["bun", "test"], "bun test")
+  await runRequiredCommand(["bun", "run", "typecheck"], "bun run typecheck")
+  const probes = await runProbes()
+  const probeErrors = validateProbeResults(probes)
+  if (probeErrors.length) throw new Error(`probe validation failed: ${probeErrors.join("; ")}`)
+  return {
+    probes,
+    evidence: {
+      cold_import_result: "pass",
+      typecheck_result: "pass",
+      deterministic_unit_result: "pass",
+      local_openai_compatible_result: "pass",
+      native_tool_call_result: "pass",
+      json_fallback_result: "pass",
+      streaming_result: "pass",
+      cancellation_result: "pass",
+      usage_result: "pass",
+      schema_compatibility_result: "pass",
+      network_isolation_result: "pass",
+    },
+  }
+}
+
+async function runRequiredCommand(cmd: string[], label: string): Promise<void> {
+  const proc = Bun.spawn(cmd, { cwd: ROOT, stdout: "pipe", stderr: "pipe" })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  if (exitCode !== 0) {
+    const preview = `${stdout}\n${stderr}`.trim().slice(0, 4000)
+    throw new Error(`${label} failed with exit ${exitCode}: ${preview}`)
+  }
+  console.error(`${label}: pass`)
 }
 
 export async function dependencyFootprint(rootPackageNames: string[]): Promise<DependencyFootprint> {
@@ -257,7 +323,8 @@ ${hashStable(results)}
 
 if (import.meta.main) {
   const args = new Set(process.argv.slice(2))
-  const results = await buildResults()
+  const evidence = args.has("--verify") ? (await collectVerifiedEvidence()).evidence : undefined
+  const results = await buildResults(evidence)
   const json = `${JSON.stringify(results, null, 2)}\n`
   const markdown = renderResults(results)
   if (args.has("--write")) {
@@ -265,9 +332,6 @@ if (import.meta.main) {
     await writeFile(join(ROOT, "RESULTS.md"), markdown)
   }
   if (args.has("--verify")) {
-    const probes = await runProbes()
-    const probeErrors = validateProbeResults(probes)
-    if (probeErrors.length) throw new Error(`probe validation failed: ${probeErrors.join("; ")}`)
     if (results.final_decision !== "hybrid_ai_sdk_core_with_nexusloop_loop") throw new Error("unexpected final decision")
   }
   console.log(markdown)

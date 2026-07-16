@@ -11,10 +11,12 @@ for (const key of required) {
   }
 }
 
-console.log(JSON.stringify({
-  status: "not_implemented_in_default_validation",
+console.error(JSON.stringify({
+  status: "not_implemented_fail_closed",
   candidate: process.env.NXL_SDK_SPIKE_CANDIDATE,
   base_url_host: new URL(process.env.NXL_SDK_SPIKE_BASE_URL ?? "http://localhost").host,
   model: process.env.NXL_SDK_SPIKE_MODEL,
   api_key_present: true,
+  reason: "9W0 deterministic validation does not implement live provider smoke execution yet",
 }, null, 2))
+process.exit(2)

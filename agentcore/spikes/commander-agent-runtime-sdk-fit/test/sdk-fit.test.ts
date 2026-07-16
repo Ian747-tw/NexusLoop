@@ -450,6 +450,40 @@ describe("isolated SDK spike", () => {
     expect(results.candidates.some((candidate) => candidate.candidate_id === "vercel_ai_sdk_core" && candidate.weighted_score > 90)).toBe(true)
   })
 
+  test("unverified matrix generation fails closed for verifier-backed fields", async () => {
+    const results = await buildResults()
+    for (const candidate of results.candidates) {
+      expect(candidate.typecheck_result).toBe("fail")
+      expect(candidate.deterministic_unit_result).toBe("fail")
+      expect(candidate.network_isolation_result).toBe("fail")
+    }
+  })
+
+  test("live smoke placeholder fails closed when explicitly opted in", async () => {
+    const proc = Bun.spawn(["bun", "src/probes/live-smoke.ts"], {
+      cwd: new URL("..", import.meta.url).pathname,
+      env: {
+        ...process.env,
+        NXL_SDK_SPIKE_LIVE: "1",
+        NXL_SDK_SPIKE_CANDIDATE: "vercel_ai_sdk_core",
+        NXL_SDK_SPIKE_BASE_URL: "http://127.0.0.1:9/v1",
+        NXL_SDK_SPIKE_API_KEY: "fixture-secret-key",
+        NXL_SDK_SPIKE_MODEL: "fixture-model",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    expect(exitCode).toBe(2)
+    expect(stdout).toBe("")
+    expect(stderr).toContain("not_implemented_fail_closed")
+    expect(stderr).not.toContain("fixture-secret-key")
+  })
+
   test("probe output is deterministic and confirms one-step shape", async () => {
     const first = await runProbes()
     const second = await runProbes()
