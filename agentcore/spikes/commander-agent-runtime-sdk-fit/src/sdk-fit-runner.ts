@@ -183,7 +183,7 @@ async function readPackageJson(name: string): Promise<Record<string, unknown> | 
 
 function dependencyNames(packageJson: Record<string, unknown>): string[] {
   const names = new Set<string>()
-  for (const key of ["dependencies", "optionalDependencies", "peerDependencies"] as const) {
+  for (const key of ["dependencies", "optionalDependencies"] as const) {
     const record = packageJson[key]
     if (!record || typeof record !== "object" || Array.isArray(record)) continue
     for (const name of Object.keys(record)) {

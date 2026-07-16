@@ -324,6 +324,18 @@ describe("isolated SDK spike", () => {
     }
   })
 
+  test("OpenAI Agents candidate preserves streamed refusal status", async () => {
+    const adapter = createOpenAIAgentsCoreAdapter()
+    const events = []
+    for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "refusal stream" }] }))) events.push(event)
+    const completed = events.find((event) => event.type === "completed")
+    expect(completed?.type).toBe("completed")
+    if (completed?.type === "completed") {
+      expect(completed.result.status).toBe("refusal")
+      expect(completed.result.finish_reason).toBe("content-filter")
+    }
+  })
+
   for (const adapter of adapters) {
     test(`${adapter.candidate_id} normalizes plain final text`, async () => {
       const result = await runTextStepProbe(adapter)

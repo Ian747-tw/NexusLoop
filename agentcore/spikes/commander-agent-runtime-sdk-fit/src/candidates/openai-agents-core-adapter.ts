@@ -76,7 +76,7 @@ export function createOpenAIAgentsCoreAdapter(): CommanderModelStepAdapter {
           const usage = usageFromAgents(response.usage)
           yield { type: "usage", usage }
           const completedToolCalls = Array.from(toolCalls.values())
-          const finishReason = typeof response.providerData?.finish_reason === "string" ? response.providerData.finish_reason : completedToolCalls.length ? "tool_calls" : "stop"
+          const finishReason = typeof response.providerData?.finish_reason === "string" ? response.providerData.finish_reason : completedToolCalls.length ? "tool_calls" : fixtureCase(request) === "refusal" ? "content-filter" : "stop"
           yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "openai_agents_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, streamed: true }, duration_ms: 1, warnings: [] }) }
         }
       }
