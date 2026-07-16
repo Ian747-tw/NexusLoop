@@ -5,6 +5,7 @@ import { createMinimalCustomAdapter } from "../src/candidates/minimal-custom-ada
 import { createOpenAIAgentsCoreAdapter, runControlledAgentsModelProbe, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
 import { createVercelAiSdkCoreAdapter } from "../src/candidates/vercel-ai-sdk-core-adapter"
 import { baseRequest, finalizeResult, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
+import { fixtureCase } from "../src/fixture-model"
 import { startMockOpenAICompatibleServer } from "../src/mock-openai-compatible-server"
 import { runBunImportProbe } from "../src/probes/bun-import-probe"
 import { runCancellationProbe } from "../src/probes/cancellation-probe"
@@ -15,7 +16,7 @@ import { runSchemaCompatibilityProbe } from "../src/probes/schema-compatibility-
 import { runStreamingProbe } from "../src/probes/streaming-probe"
 import { runTextStepProbe } from "../src/probes/text-step-probe"
 import { runUsageProbe } from "../src/probes/usage-probe"
-import { buildResults, runProbes } from "../src/sdk-fit-runner"
+import { buildResults, runProbes, validateProbeResults } from "../src/sdk-fit-runner"
 
 const adapters = [
   createMinimalCustomAdapter(),
@@ -326,8 +327,20 @@ describe("isolated SDK spike", () => {
     const first = await runProbes()
     const second = await runProbes()
     expect(hashStable(first)).toBe(hashStable(second))
+    expect(validateProbeResults(first)).toEqual([])
     expect(first.one_step.every((item) => item.request_count === 1)).toBe(true)
     expect(first.one_step.every((item) => item.tool_calls === 1)).toBe(true)
+    const broken = structuredClone(first)
+    broken.one_step[0].status = "final"
+    broken.ownership[0].hidden_tool_execution_detected = true
+    expect(validateProbeResults(broken)).toContain("minimal_custom_adapter one-step status was final")
+    expect(validateProbeResults(broken)).toContain("minimal_custom_adapter reported hidden tool execution")
+  })
+
+  test("fixture classifier keeps malformed stream cases before generic streams", () => {
+    expect(fixtureCase(baseRequest({ messages: [{ role: "user", content: "invalid json stream" }] }))).toBe("invalid_json")
+    expect(fixtureCase(baseRequest({ messages: [{ role: "user", content: "premature stream" }] }))).toBe("premature_stream")
+    expect(fixtureCase(baseRequest({ messages: [{ role: "user", content: "stream tool" }] }))).toBe("stream_tool")
   })
 })
 

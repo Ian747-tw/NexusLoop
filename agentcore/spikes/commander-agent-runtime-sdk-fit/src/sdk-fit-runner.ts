@@ -91,6 +91,31 @@ export async function runProbes() {
   }
 }
 
+type ProbeResults = Awaited<ReturnType<typeof runProbes>>
+
+export function validateProbeResults(probes: ProbeResults): string[] {
+  const errors: string[] = []
+  if (probes.schema.status !== "pass") errors.push(`schema probe failed: ${probes.schema.errors.join("; ")}`)
+  for (const item of probes.one_step) {
+    if (item.status !== "tool_call") errors.push(`${item.candidate_id} one-step status was ${item.status}`)
+    if (item.tool_calls !== 1) errors.push(`${item.candidate_id} one-step tool call count was ${item.tool_calls}`)
+    if (item.request_count !== 1) errors.push(`${item.candidate_id} request count was ${item.request_count}`)
+  }
+  for (const item of probes.ownership) {
+    if (item.blockers.length) errors.push(`${item.candidate_id} ownership blockers: ${item.blockers.join("; ")}`)
+    if (!item.nexusloop_owns_tool_execution) errors.push(`${item.candidate_id} does not preserve NexusLoop tool execution ownership`)
+    if (!item.nexusloop_owns_loop) errors.push(`${item.candidate_id} does not preserve NexusLoop loop ownership`)
+    if (!item.nexusloop_owns_persistence) errors.push(`${item.candidate_id} does not preserve NexusLoop persistence ownership`)
+    if (item.hidden_second_request_detected) errors.push(`${item.candidate_id} reported hidden second request`)
+    if (item.hidden_tool_execution_detected) errors.push(`${item.candidate_id} reported hidden tool execution`)
+    if (item.hidden_persistence_detected) errors.push(`${item.candidate_id} reported hidden persistence`)
+    if (item.hidden_network_detected) errors.push(`${item.candidate_id} reported hidden network`)
+  }
+  if (probes.runner.production_runner_suitable) errors.push("OpenAI Agents full Runner was unexpectedly marked production-suitable")
+  if (!probes.runner.tracing_disabled_by_api) errors.push("OpenAI Agents tracing was not disabled by API")
+  return errors
+}
+
 function row(candidate_id: CandidateId, package_versions: Record<string, string>, licenses: Record<string, string>, direct: number, transitive: number, size: number, scores: Record<string, number>, limitations: string[], disqualification_reasons: string[]): CandidateMatrixRow {
   const weighted = Object.entries(WEIGHTS).reduce((sum, [key, weight]) => sum + ((scores[key] ?? 0) / 5) * weight, 0)
   const ownership = ownershipReport(candidate_id)
@@ -194,7 +219,8 @@ if (import.meta.main) {
   }
   if (args.has("--verify")) {
     const probes = await runProbes()
-    if (probes.schema.status !== "pass") throw new Error(`schema probe failed: ${probes.schema.errors.join("; ")}`)
+    const probeErrors = validateProbeResults(probes)
+    if (probeErrors.length) throw new Error(`probe validation failed: ${probeErrors.join("; ")}`)
     if (results.final_decision !== "hybrid_ai_sdk_core_with_nexusloop_loop") throw new Error("unexpected final decision")
   }
   console.log(markdown)
