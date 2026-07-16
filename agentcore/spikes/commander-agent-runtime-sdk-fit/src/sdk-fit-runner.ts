@@ -54,7 +54,7 @@ export async function buildResults(): Promise<SpikeResults> {
       testability_determinism: 3,
       dependency_footprint: 2,
       license_maintenance_risk: 4,
-    }, ["Full Runner ownership conflicts with NexusLoop loop/tool/session authority; lower-level controlled usage is possible but less portable for OpenAI-compatible providers."], ["Full Runner is disqualified as the production Commander controller path, but lower-level controlled usage is not hard-disqualified."]),
+    }, ["Full Runner ownership conflicts with NexusLoop loop/tool/session authority; lower-level controlled usage is possible but less portable for OpenAI-compatible providers."], ["Hard: Full Runner is disqualified as the production Commander controller path; lower-level controlled usage remains measured but did not win."]),
   ]
   const hardDisqualifications = {
     minimal_custom_adapter: [],

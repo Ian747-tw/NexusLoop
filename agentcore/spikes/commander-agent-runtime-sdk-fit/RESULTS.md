@@ -14,7 +14,7 @@ authority checks, and durable state model.
 | --- | ---: | --- | --- | --- |
 | minimal_custom_adapter | 80.00 | no | none | Would require NexusLoop to own provider quirks, streaming normalization, native tool-call variants, and error taxonomy. |
 | vercel_ai_sdk_core | 97.00 | no | ai@7.0.29<br>@ai-sdk/openai-compatible@3.0.11 | AI SDK Core should be used as one-step model transport only; ToolLoopAgent or stopWhen loops remain out of scope. |
-| openai_agents_core | 62.00 | no | @openai/agents@0.13.4<br>zod@4.4.3 | Full Runner ownership conflicts with NexusLoop loop/tool/session authority; lower-level controlled usage is possible but less portable for OpenAI-compatible providers. |
+| openai_agents_core | 62.00 | yes | @openai/agents@0.13.4<br>zod@4.4.3 | Full Runner ownership conflicts with NexusLoop loop/tool/session authority; lower-level controlled usage is possible but less portable for OpenAI-compatible providers. |
 
 ## Weights
 
@@ -47,4 +47,4 @@ Build a NexusLoop-owned one-step model adapter boundary using AI SDK Core transp
 
 ## Deterministic Result Hash
 
-171520791d8768a1b651f7ec504fdc34ce99b91f830664c87605dfa47e774f0e
+519019cade20bc0d0a0f4c9f4653d48b1f96e058ad7250975dc1b7a28622257f

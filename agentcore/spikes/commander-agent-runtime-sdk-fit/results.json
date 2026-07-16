@@ -131,9 +131,9 @@
       "limitations": [
         "Full Runner ownership conflicts with NexusLoop loop/tool/session authority; lower-level controlled usage is possible but less portable for OpenAI-compatible providers."
       ],
-      "disqualified": false,
+      "disqualified": true,
       "disqualification_reasons": [
-        "Full Runner is disqualified as the production Commander controller path, but lower-level controlled usage is not hard-disqualified."
+        "Hard: Full Runner is disqualified as the production Commander controller path; lower-level controlled usage remains measured but did not win."
       ]
     }
   ],

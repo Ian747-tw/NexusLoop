@@ -37,6 +37,29 @@ describe("network isolation", () => {
     }
   })
 
+  test("provider-backed streaming preserves native tool calls", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "tool")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "stream tool" }] }))) events.push(event)
+      expect(events.some((event) => event.type === "tool_call_complete")).toBe(true)
+      const completed = events.find((event) => event.type === "completed")
+      expect(completed?.type).toBe("completed")
+      if (completed?.type === "completed") {
+        expect(completed.result.status).toBe("tool_call")
+        expect(completed.result.tool_calls[0].tool_id).toBe("memory.search")
+        expect(completed.result.provider_metadata.request_count).toBe(1)
+      }
+      expect(server.requests.length).toBe(1)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
   test("non-loopback network is blocked and redacted", async () => {
     const guard = installNetworkGuard(["http://127.0.0.1:1"])
     try {

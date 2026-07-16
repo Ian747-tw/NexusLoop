@@ -28,6 +28,12 @@ export async function startMockOpenAICompatibleServer(selectCase: (body: unknown
         body,
       })
       const response = fixtureOpenAIResponse(selectCase(body))
+      if (isRecord(body) && body.stream === true) {
+        return new Response(streamFixture(selectCase(body)), {
+          status: response.statusCode,
+          headers: { "content-type": "text/event-stream" },
+        })
+      }
       if (typeof response.body === "string") {
         return new Response(response.body, { status: response.statusCode, headers: { "content-type": "application/json" } })
       }
@@ -41,6 +47,36 @@ export async function startMockOpenAICompatibleServer(selectCase: (body: unknown
       await server.stop(true)
     },
   }
+}
+
+function streamFixture(kind: FixtureCase): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  const chunks = openAIStreamChunks(kind).map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+  chunks.push("data: [DONE]\n\n")
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  })
+}
+
+function openAIStreamChunks(kind: FixtureCase): Record<string, unknown>[] {
+  const base = { id: `chatcmpl_stream_${kind}`, object: "chat.completion.chunk", created: 1784160000, model: "fixture-model" }
+  if (kind === "tool" || kind === "stream_tool" || kind === "multi_tool" || kind === "malformed_tool") {
+    const args = kind === "malformed_tool" ? "{\"query\":7}" : JSON.stringify({ query: "research memory", limit: 3 })
+    return [
+      { ...base, choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call_memory", type: "function", function: { name: "memory__search", arguments: "" } }] }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: args.slice(0, 12) } }] }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: args.slice(12) } }] }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
+    ]
+  }
+  return [
+    { ...base, choices: [{ index: 0, delta: { role: "assistant", content: "plain " }, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: { content: "fixture" }, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
+  ]
 }
 
 function defaultCase(body: unknown): FixtureCase {
@@ -66,4 +102,8 @@ function sanitizeHeaders(headers: Headers): Record<string, string> {
     out[key] = /authorization|api[-_]key|token/i.test(key) ? "[REDACTED]" : value.slice(0, 120)
   }
   return out
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value))
 }

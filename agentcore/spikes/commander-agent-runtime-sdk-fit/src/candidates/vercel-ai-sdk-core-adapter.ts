@@ -79,10 +79,40 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
         let text = ""
         let finishReason: string | undefined
         let usage: CommanderModelUsage = { provider_reported: false }
+        const toolCalls = new Map<string, ReturnType<typeof makeToolCall>>()
         for await (const event of result.fullStream) {
+          const part = event as StreamPart
           if (event.type === "text-delta") {
-            text += event.text
-            yield { type: "text_delta", text: event.text }
+            const delta = typeof part.text === "string" ? part.text : typeof part.delta === "string" ? part.delta : ""
+            text += delta
+            yield { type: "text_delta", text: delta }
+          }
+          if (event.type === "tool-input-start") {
+            const toolCallId = part.toolCallId ?? part.id ?? "missing_tool_call_id"
+            const toolName = part.toolName ?? "unknown_tool"
+            yield { type: "tool_call_start", tool_call_id: toolCallId, tool_id: toolForSdkName(request.tools, toolName)?.tool_id ?? toolName }
+          }
+          if (event.type === "tool-input-delta") {
+            const toolCallId = part.toolCallId ?? part.id ?? "missing_tool_call_id"
+            const delta = part.inputTextDelta ?? part.delta ?? ""
+            yield { type: "tool_call_arguments_delta", tool_call_id: toolCallId, delta }
+          }
+          if (part.type === "tool-input-available") {
+            const rawArguments = JSON.stringify(part.input ?? {})
+            const toolName = part.toolName ?? "unknown_tool"
+            const toolCallId = part.toolCallId ?? "missing_tool_call_id"
+            const tool = toolForSdkName(request.tools, toolName)
+            const call = makeToolCall(tool, toolName, rawArguments, "native", toolCallId)
+            toolCalls.set(toolCallId, call)
+            yield { type: "tool_call_complete", tool_call: call }
+          }
+          if (event.type === "tool-call") {
+            const rawArguments = JSON.stringify(event.input ?? {})
+            const tool = toolForSdkName(request.tools, event.toolName)
+            const call = makeToolCall(tool, event.toolName, rawArguments, "native", event.toolCallId)
+            toolCalls.set(event.toolCallId, call)
+            yield { type: "tool_call_start", tool_call_id: event.toolCallId, tool_id: call.tool_id }
+            yield { type: "tool_call_complete", tool_call: call }
           }
           if (event.type === "finish") {
             finishReason = event.finishReason
@@ -96,12 +126,24 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             yield { type: "usage", usage }
           }
         }
-        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "final", text, tool_calls: [], finish_reason: finishReason, usage, provider_metadata: { request_count: 1, sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
+        const completedToolCalls = Array.from(toolCalls.values())
+        yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: 1, sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
       } catch (error) {
         yield { type: "error", error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK stream failed" }
       }
     },
   }
+}
+
+type StreamPart = {
+  type: string
+  text?: string
+  delta?: string
+  inputTextDelta?: string
+  id?: string
+  toolCallId?: string
+  toolName?: string
+  input?: unknown
 }
 
 function aiSdkTools(request: CommanderModelStepRequest) {
