@@ -65,6 +65,47 @@ describe("network isolation", () => {
     }
   })
 
+  test("provider-backed streaming sends structured output schema and reports measured request count", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "structured")
+    const guard = installNetworkGuard([new URL(server.url).origin])
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({
+        messages: [{ role: "user", content: "structured stream" }],
+        structured_output_schema: {
+          schema_version: "nxl-commander-tool-v1",
+          type: "object",
+          required: ["type", "final"],
+          additionalProperties: false,
+          properties: {
+            type: { type: "string", enum: ["final"] },
+            final: {
+              type: "object",
+              required: ["summary"],
+              additionalProperties: false,
+              properties: {
+                summary: { type: "string", maxLength: 200 },
+              },
+            } as never,
+          },
+        },
+      }))) events.push(event)
+      const completed = events.find((event) => event.type === "completed")
+      expect(completed?.type).toBe("completed")
+      if (completed?.type === "completed") expect(completed.result.provider_metadata.request_count).toBe(server.requests.length)
+      const body = JSON.stringify(server.requests[0].body)
+      expect(body).toContain("response_format")
+      expect(body).toContain("nexusloop_structured_output")
+      expect(body).toContain("summary")
+      expect(server.requests.length).toBe(1)
+      expect(guard.attempted).toEqual([])
+    } finally {
+      guard.restore()
+      await server.close()
+    }
+  })
+
   test("provider-backed retryable failures are not retried by the adapter", async () => {
     const server = await startMockOpenAICompatibleServer(() => "http_429")
     const guard = installNetworkGuard([new URL(server.url).origin])
@@ -74,6 +115,7 @@ describe("network isolation", () => {
       const adapter = createVercelAiSdkCoreAdapter({ baseURL: `${server.url}/v1`, apiKey: "fixture-key" })
       const result = await adapter.executeOneStep(baseRequest({ messages: [{ role: "user", content: "429" }] }))
       expect(result.status).toBe("failed")
+      expect(result.provider_metadata.request_count).toBe(server.requests.length)
       expect(server.requests.length).toBe(1)
 
       const events = []
