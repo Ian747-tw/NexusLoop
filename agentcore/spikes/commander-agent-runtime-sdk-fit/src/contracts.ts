@@ -177,7 +177,7 @@ export function toModelTool(tool: CommanderToolDescriptor): CommanderModelToolSc
   if (!tool.input_schema) throw new Error(`missing input schema for ${tool.tool_id}`)
   return {
     tool_id: tool.tool_id,
-    name: tool.tool_id.replace(".", "_"),
+    name: toolNameFor(tool.tool_id),
     description: tool.description,
     input_schema: structuredClone(tool.input_schema),
     strict_requested: true,

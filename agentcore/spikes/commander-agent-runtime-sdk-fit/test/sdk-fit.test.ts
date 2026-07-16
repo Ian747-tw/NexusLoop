@@ -79,6 +79,7 @@ describe("isolated SDK spike", () => {
   test("SDK tool names preserve canonical IDs that contain underscores", () => {
     const tools = selectedCommanderTools().map(toModelTool)
     expect(toolNameFor("repo.git_status")).toBe("repo__git_status")
+    expect(tools.find((tool) => tool.tool_id === "repo.git_status")?.name).toBe("repo__git_status")
     expect(toolForSdkName(tools, "repo__git_status")?.tool_id).toBe("repo.git_status")
     expect(toolForSdkName(tools, "repo__git_diff")?.tool_id).toBe("repo.git_diff")
     expect(toolForSdkName(tools, "repo__read_lines")?.tool_id).toBe("repo.read_lines")
