@@ -73,6 +73,11 @@ GitHub approval, request-changes, CI rerun, and merge are external mutations. Th
 
 9V promotes first-party internal read descriptors for `repo_read` and `continuity.search` to implemented read surfaces. These tools remain manually/runtime callable only; the provider tool loop is still disabled. Repository and Git outputs are untrusted evidence, project-root bounded, redacted, and transient. Git status/diff/log are the only implemented descriptors allowed to create an external process, and only through the fixed read-only Git adapter described in ADR-019.
 
+9W0 evaluates the generic model/tool-call SDK layer for the future Commander
+investigation loop. ADR-020 selects AI SDK Core as a one-step transport/tool-call
+normalization layer under a NexusLoop-owned loop. SDK agents, sessions, traces,
+and approvals are not authoritative NexusLoop state.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.
@@ -80,7 +85,10 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 ## Follow-On Branches
 
 - 9V: first-party Commander internal read tools.
-- 9W: provider-neutral Commander investigation loop.
+- 9W0: Commander agent-runtime SDK fit spike.
+- 9W1: Commander tool bindings and execution kernel.
+- 9W2: bounded provider-neutral Commander investigation loop.
+- 9W3: durable working set and pause/resume/recovery.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.
 - 9Y: Commander research proposal gate.
 - 9Z: GitHub governance intent and approval gate.

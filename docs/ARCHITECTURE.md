@@ -53,10 +53,24 @@ investigation loop; they do not prescribe which query Commander runs first or
 which evidence it must value. Initial Commander bootstrap loads only a small
 core schema set and uses deferred schema discovery for the rest.
 
-Branch 9V implements the first manual internal read surfaces. The future 9W
-provider-neutral investigation loop may select these tools, but 9V itself does
-not call providers, MCPs, networks, execute shell, append read events, create
-proposals, mutate missions, or perform OpenCode actions.
+Branch 9V implements the first manual internal read surfaces. Branch 9W0 selects
+AI SDK Core as the generic model-step transport/tool-call normalization layer
+for future Commander investigation, but only underneath NexusLoop's controller.
+The future 9W1/9W2 provider-neutral investigation loop may select these tools,
+but NexusLoop keeps tool execution, run state, evidence persistence, authority,
+and governance.
+
+```text
+NexusLoop domain control plane
+-> NexusLoop Commander run controller
+-> selected model SDK adapter
+-> NexusLoop tool executor
+```
+
+The model SDK sits below the Commander controller. Tool schemas are derived from
+the NexusLoop registry. The SDK never executes NexusLoop tools directly. SDK
+session memory is not research or operational memory, and SDK tracing is disabled
+or non-authoritative. OpenCode remains the tactical executor.
 
 ## Authority Model
 
