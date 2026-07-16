@@ -4,7 +4,7 @@ import { join, relative } from "node:path"
 import { createMinimalCustomAdapter } from "../src/candidates/minimal-custom-adapter"
 import { createOpenAIAgentsCoreAdapter, runControlledAgentsModelProbe, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
 import { createVercelAiSdkCoreAdapter } from "../src/candidates/vercel-ai-sdk-core-adapter"
-import { baseRequest, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
+import { baseRequest, finalizeResult, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
 import { startMockOpenAICompatibleServer } from "../src/mock-openai-compatible-server"
 import { runBunImportProbe } from "../src/probes/bun-import-probe"
 import { runCancellationProbe } from "../src/probes/cancellation-probe"
@@ -99,6 +99,81 @@ describe("isolated SDK spike", () => {
       expect(JSON.stringify(body.messages)).toContain("tool")
       expect(JSON.stringify(body.messages)).toContain("call_memory")
       expect(JSON.stringify(body.messages)).toContain("matches")
+    } finally {
+      await server.close()
+    }
+  })
+
+  test("AI SDK provider adapter preserves assistant tool calls before tool results", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "text")
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const result = await adapter.executeOneStep(baseRequest({
+        messages: [
+          { role: "user", content: "Use memory." },
+          { role: "assistant", tool_call_id: "call_memory", tool_name: "memory.search", content: "{\"query\":\"research memory\"}" },
+          { role: "tool", tool_call_id: "call_memory", tool_name: "memory.search", content: "{\"matches\":[]}" },
+        ],
+      }))
+      expect(result.provider_metadata.request_count).toBe(1)
+      const body = server.requests[0].body as { messages?: Array<{ role: string }> }
+      const serialized = JSON.stringify(body.messages)
+      expect(serialized).toContain("assistant")
+      expect(serialized).toContain("tool_calls")
+      expect(serialized).toContain("call_memory")
+      expect(serialized).toContain("memory__search")
+      expect(serialized.indexOf("\"role\":\"assistant\"")).toBeLessThan(serialized.indexOf("\"role\":\"tool\""))
+    } finally {
+      await server.close()
+    }
+  })
+
+  test("AI SDK provider adapter sends structured output schema and preserves provider result hash", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "structured")
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const request = baseRequest({
+        messages: [{ role: "user", content: "structured" }],
+        structured_output_schema: {
+          schema_version: "nxl-commander-tool-v1",
+          type: "object",
+          required: ["type", "final"],
+          additionalProperties: false,
+          properties: {
+            type: { type: "string", enum: ["final"] },
+            final: {
+              type: "object",
+              required: ["summary"],
+              additionalProperties: false,
+              properties: {
+                summary: { type: "string", maxLength: 200 },
+              },
+            } as never,
+          },
+        },
+      })
+      const result = await adapter.executeOneStep(request)
+      expect(result.status).toBe("final")
+      expect(result.text).toContain("structured fixture")
+      const body = JSON.stringify(server.requests[0].body)
+      expect(body).toContain("response_format")
+      expect(body).toContain("nexusloop_structured_output")
+      expect(body).toContain("summary")
+
+      const recomputeInput = {
+        request_id: result.request_id,
+        candidate_id: result.candidate_id,
+        status: result.status,
+        text: result.text,
+        tool_calls: result.tool_calls,
+        finish_reason: result.finish_reason,
+        usage: result.usage,
+        provider_metadata: result.provider_metadata,
+        duration_ms: result.duration_ms,
+        warnings: result.warnings,
+      } as const
+      const recomputed = finalizeResult(result.error ? { ...recomputeInput, error: result.error } : recomputeInput)
+      expect(result.result_hash).toBe(recomputed.result_hash)
     } finally {
       await server.close()
     }

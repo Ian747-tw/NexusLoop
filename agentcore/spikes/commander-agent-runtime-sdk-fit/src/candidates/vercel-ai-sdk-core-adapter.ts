@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
-import { generateText, jsonSchema, streamText, tool, type ModelMessage } from "ai"
+import { generateText, jsonSchema, Output, streamText, tool, type ModelMessage } from "ai"
 import { fixtureCase, fixtureStream, normalizeFixtureResult } from "../fixture-model"
 import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
 
@@ -15,6 +15,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
     baseURL: options.baseURL,
     apiKey: options.apiKey ?? "fixture-key",
     fetch: options.fetch,
+    supportsStructuredOutputs: true,
   }) : null
   return {
     candidate_id: "vercel_ai_sdk_core",
@@ -34,6 +35,10 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           messages: chatMessages(request),
           tools: aiSdkTools(request),
           toolChoice: toolChoice(request),
+          output: request.structured_output_schema ? Output.object({
+            schema: jsonSchema(request.structured_output_schema),
+            name: "nexusloop_structured_output",
+          }) : undefined,
           maxOutputTokens: request.max_output_tokens,
           temperature: request.temperature,
           abortSignal: request.abort_signal,
@@ -43,10 +48,12 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           return makeToolCall(schema, call.toolName, JSON.stringify(call.input ?? {}), "native", call.toolCallId)
         })
         const status = toolCalls.length ? "tool_call" : "final"
-        return {
-          ...normalizeFixtureResult("vercel_ai_sdk_core", request, status === "tool_call" ? "tool" : "text", 1),
+        const text = toolCalls.length ? undefined : request.structured_output_schema ? JSON.stringify(result.output) : result.text
+        return finalizeResult({
+          request_id: request.request_id,
+          candidate_id: "vercel_ai_sdk_core",
           status,
-          text: toolCalls.length ? undefined : result.text,
+          text,
           tool_calls: toolCalls,
           finish_reason: result.finishReason,
           usage: {
@@ -57,10 +64,14 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             raw_usage_summary: result.usage ? { inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0, totalTokens: result.usage.totalTokens ?? 0 } : undefined,
           },
           provider_metadata: { request_count: 1, sdk: "ai" },
-        }
+          duration_ms: 1,
+          warnings: [],
+        })
       } catch (error) {
-        if (request.abort_signal?.aborted) return normalizeFixtureResult("vercel_ai_sdk_core", request, "text", 1)
-        return { ...normalizeFixtureResult("vercel_ai_sdk_core", request, "http_500", 1), error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK request failed" }
+        if (request.abort_signal?.aborted) {
+          return finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "cancelled", tool_calls: [], usage: { provider_reported: false }, provider_metadata: { request_count: 1, sdk: "ai" }, duration_ms: 1, warnings: [], error: "request was cancelled" })
+        }
+        return finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: "failed", tool_calls: [], usage: { provider_reported: false }, provider_metadata: { request_count: 1, sdk: "ai" }, duration_ms: 1, warnings: [], error: error instanceof Error ? error.message.slice(0, 240) : "AI SDK request failed" })
       }
     },
     async *executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
@@ -165,6 +176,18 @@ function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "requ
 function chatMessages(request: CommanderModelStepRequest): ModelMessage[] {
   const messages: ModelMessage[] = []
   for (const message of request.messages) {
+    if (message.role === "assistant" && message.tool_call_id && message.tool_name) {
+      messages.push({
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: message.tool_call_id,
+          toolName: toolNameFor(message.tool_name),
+          input: parseToolInput(message.content),
+        }],
+      })
+      continue
+    }
     if (message.role === "system" || message.role === "user" || message.role === "assistant") {
       messages.push({ role: message.role, content: message.content })
       continue
@@ -182,4 +205,13 @@ function chatMessages(request: CommanderModelStepRequest): ModelMessage[] {
     }
   }
   return messages
+}
+
+function parseToolInput(content: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = content ? JSON.parse(content) : {}
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
 }
