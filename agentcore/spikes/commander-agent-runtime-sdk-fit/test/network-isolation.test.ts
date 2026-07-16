@@ -102,6 +102,7 @@ describe("network isolation", () => {
       expect(body).toContain("response_format")
       expect(body).toContain("nexusloop_structured_output")
       expect(body).toContain("summary")
+      expect(body).not.toContain("schema_version")
       expect(server.requests.length).toBe(1)
       expect(guard.attempted).toEqual([])
     } finally {

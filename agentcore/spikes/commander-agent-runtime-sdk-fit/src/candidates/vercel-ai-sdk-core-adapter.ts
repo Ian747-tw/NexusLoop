@@ -2,7 +2,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { generateText, jsonSchema, Output, streamText, tool, type ModelMessage } from "ai"
 import { fixtureCase, fixtureStream, normalizeFixtureResult } from "../fixture-model"
 import { runJsonFallbackProbe } from "../probes/json-fallback-probe"
-import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
+import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelToolSchema, type CommanderModelUsage, type CommanderToolJsonSchema } from "../contracts"
 
 export type AiSdkAdapterOptions = {
   baseURL?: string
@@ -245,16 +245,21 @@ function aiSdkTools(request: CommanderModelStepRequest) {
     toolNameFor(item.tool_id),
     tool({
       description: item.description,
-      inputSchema: jsonSchema(item.input_schema),
+      inputSchema: jsonSchema(providerJsonSchema(item.input_schema)),
     }),
   ]))
 }
 
 function structuredOutput(request: CommanderModelStepRequest) {
   return request.structured_output_schema ? Output.object({
-    schema: jsonSchema(request.structured_output_schema),
+    schema: jsonSchema(providerJsonSchema(request.structured_output_schema)),
     name: "nexusloop_structured_output",
   }) : undefined
+}
+
+function providerJsonSchema(schema: CommanderToolJsonSchema | CommanderModelToolSchema["input_schema"]): Omit<CommanderToolJsonSchema, "schema_version"> {
+  const { schema_version: _schemaVersion, ...providerSchema } = schema
+  return providerSchema
 }
 
 async function structuredStreamText(request: CommanderModelStepRequest, result: { output: PromiseLike<unknown> }, fallbackText: string): Promise<string | null> {
