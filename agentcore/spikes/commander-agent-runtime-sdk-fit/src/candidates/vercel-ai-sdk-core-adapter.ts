@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
-import { generateText, jsonSchema, streamText, tool } from "ai"
+import { generateText, jsonSchema, streamText, tool, type ModelMessage } from "ai"
 import { fixtureCase, fixtureStream, normalizeFixtureResult } from "../fixture-model"
 import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
 
@@ -33,7 +33,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           model: provider.chatModel(request.model_id),
           messages: chatMessages(request),
           tools: aiSdkTools(request),
-          toolChoice: request.tool_choice === "none" ? "none" : "auto",
+          toolChoice: toolChoice(request),
           maxOutputTokens: request.max_output_tokens,
           temperature: request.temperature,
           abortSignal: request.abort_signal,
@@ -73,7 +73,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           model: provider.chatModel(request.model_id),
           messages: chatMessages(request),
           tools: aiSdkTools(request),
-          toolChoice: request.tool_choice === "none" ? "none" : "auto",
+          toolChoice: toolChoice(request),
           abortSignal: request.abort_signal,
         })
         let text = ""
@@ -114,9 +114,30 @@ function aiSdkTools(request: CommanderModelStepRequest) {
   ]))
 }
 
-function chatMessages(request: CommanderModelStepRequest): Array<{ role: "system" | "user" | "assistant"; content: string }> {
-  return request.messages.flatMap((message) => {
-    if (message.role !== "system" && message.role !== "user" && message.role !== "assistant") return []
-    return [{ role: message.role, content: message.content }]
-  })
+function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "required" {
+  if (request.tool_choice === "required") return "required"
+  if (request.tool_choice === "none") return "none"
+  return "auto"
+}
+
+function chatMessages(request: CommanderModelStepRequest): ModelMessage[] {
+  const messages: ModelMessage[] = []
+  for (const message of request.messages) {
+    if (message.role === "system" || message.role === "user" || message.role === "assistant") {
+      messages.push({ role: message.role, content: message.content })
+      continue
+    }
+    if (message.role === "tool") {
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: message.tool_call_id ?? "missing_tool_call_id",
+          toolName: message.tool_name ? toolNameFor(message.tool_name) : "unknown_tool",
+          output: { type: "text", value: message.content },
+        }],
+      })
+    }
+  }
+  return messages
 }

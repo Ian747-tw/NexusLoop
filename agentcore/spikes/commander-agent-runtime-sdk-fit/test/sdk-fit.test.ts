@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { readdir, readFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { createMinimalCustomAdapter } from "../src/candidates/minimal-custom-adapter"
-import { createOpenAIAgentsCoreAdapter, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
+import { createOpenAIAgentsCoreAdapter, runControlledAgentsModelProbe, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
 import { createVercelAiSdkCoreAdapter } from "../src/candidates/vercel-ai-sdk-core-adapter"
 import { baseRequest, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
+import { startMockOpenAICompatibleServer } from "../src/mock-openai-compatible-server"
 import { runBunImportProbe } from "../src/probes/bun-import-probe"
 import { runCancellationProbe } from "../src/probes/cancellation-probe"
 import { runJsonFallbackProbe } from "../src/probes/json-fallback-probe"
@@ -81,6 +82,57 @@ describe("isolated SDK spike", () => {
     expect(toolForSdkName(tools, "repo__git_diff")?.tool_id).toBe("repo.git_diff")
     expect(toolForSdkName(tools, "repo__read_lines")?.tool_id).toBe("repo.read_lines")
     expect(toolForSdkName(tools, "repo__search_text")?.tool_id).toBe("repo.search_text")
+  })
+
+  test("AI SDK provider adapter preserves tool result messages for an explicit next step", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "text")
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const result = await adapter.executeOneStep(baseRequest({
+        messages: [
+          { role: "user", content: "Use memory." },
+          { role: "tool", tool_call_id: "call_memory", tool_name: "memory.search", content: "{\"matches\":[]}" },
+        ],
+      }))
+      expect(result.provider_metadata.request_count).toBe(1)
+      const body = server.requests[0].body as { messages?: Array<{ role: string; content: unknown }> }
+      expect(JSON.stringify(body.messages)).toContain("tool")
+      expect(JSON.stringify(body.messages)).toContain("call_memory")
+      expect(JSON.stringify(body.messages)).toContain("matches")
+    } finally {
+      await server.close()
+    }
+  })
+
+  test("AI SDK provider adapter forwards required tool choice", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "tool")
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const result = await adapter.executeOneStep(baseRequest({
+        tool_choice: "required",
+        messages: [{ role: "user", content: "tool" }],
+      }))
+      expect(result.status).toBe("tool_call")
+      expect(JSON.stringify(server.requests[0].body)).toContain("required")
+
+      const streamEvents = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ tool_choice: "required", messages: [{ role: "user", content: "stream" }] }))) {
+        streamEvents.push(event.type)
+      }
+      expect(streamEvents).toContain("completed")
+      expect(JSON.stringify(server.requests[1].body)).toContain("required")
+    } finally {
+      await server.close()
+    }
+  })
+
+  test("OpenAI Agents candidate exercises the controlled SDK ModelProvider surface", async () => {
+    const probe = await runControlledAgentsModelProbe(baseRequest({ tool_choice: "required", messages: [{ role: "user", content: "tool" }] }))
+    expect(probe.sdk_model_provider_used).toBe(true)
+    expect(probe.request_count).toBe(1)
+    expect(probe.output_types).toContain("function_call")
+    expect(probe.tool_choice).toBe("required")
+    expect(probe.tracing_disabled_by_api).toBe(true)
   })
 
   for (const adapter of adapters) {

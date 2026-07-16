@@ -2,7 +2,7 @@ import { fixtureOpenAIResponse, type FixtureCase } from "./fixture-model"
 
 export type MockServer = {
   url: string
-  requests: Array<{ method: string; pathname: string; headers: Record<string, string>; body_bytes: number }>
+  requests: Array<{ method: string; pathname: string; headers: Record<string, string>; body_bytes: number; body: unknown }>
   close(): Promise<void>
 }
 
@@ -14,18 +14,19 @@ export async function startMockOpenAICompatibleServer(selectCase: (body: unknown
     async fetch(request) {
       const url = new URL(request.url)
       const text = await request.text()
-      requests.push({
-        method: request.method,
-        pathname: url.pathname,
-        headers: sanitizeHeaders(request.headers),
-        body_bytes: Buffer.byteLength(text),
-      })
       let body: unknown = {}
       try {
         body = text ? JSON.parse(text) : {}
       } catch {
         body = {}
       }
+      requests.push({
+        method: request.method,
+        pathname: url.pathname,
+        headers: sanitizeHeaders(request.headers),
+        body_bytes: Buffer.byteLength(text),
+        body,
+      })
       const response = fixtureOpenAIResponse(selectCase(body))
       if (typeof response.body === "string") {
         return new Response(response.body, { status: response.statusCode, headers: { "content-type": "application/json" } })
