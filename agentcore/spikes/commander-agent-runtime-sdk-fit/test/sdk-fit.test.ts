@@ -80,6 +80,8 @@ describe("isolated SDK spike", () => {
     const tools = selectedCommanderTools().map(toModelTool)
     expect(toolNameFor("repo.git_status")).toBe("repo__git_status")
     expect(tools.find((tool) => tool.tool_id === "repo.git_status")?.name).toBe("repo__git_status")
+    expect(tools.find((tool) => tool.tool_id === "memory.search")?.strict_requested).toBe(false)
+    expect(tools.find((tool) => tool.tool_id === "repo.git_diff")?.strict_requested).toBe(false)
     expect(toolForSdkName(tools, "repo__git_status")?.tool_id).toBe("repo.git_status")
     expect(toolForSdkName(tools, "repo__git_diff")?.tool_id).toBe("repo.git_diff")
     expect(toolForSdkName(tools, "repo__read_lines")?.tool_id).toBe("repo.read_lines")
@@ -260,6 +262,8 @@ describe("isolated SDK spike", () => {
     expect(probe.request_count).toBe(1)
     expect(probe.output_types).toContain("function_call")
     expect(probe.tool_choice).toBe("required")
+    expect(probe.tool_names).toContain("memory__search")
+    expect(probe.tool_names).toContain("repo__git_diff")
     expect(probe.tracing_disabled_by_api).toBe(true)
   })
 

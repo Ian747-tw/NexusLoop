@@ -1,6 +1,6 @@
 import { protocol, setTracingDisabled, Usage, type AgentOutputItem, type Model, type ModelProvider, type ModelRequest, type ModelResponse, type StreamEvent } from "@openai/agents"
 import { fixtureCase, normalizeFixtureResult, reportedUsage } from "../fixture-model"
-import { finalizeResult, makeToolCall, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
+import { finalizeResult, makeToolCall, toolForSdkName, toolNameFor, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
 
 setTracingDisabled(true)
 
@@ -24,7 +24,7 @@ export function createOpenAIAgentsCoreAdapter(): CommanderModelStepAdapter {
       const toolCalls = response.output
         .filter((item): item is Extract<AgentOutputItem, { type: "function_call" }> => item.type === "function_call")
         .map((item) => {
-          const tool = request.tools.find((candidate) => candidate.tool_id === item.name)
+          const tool = toolForSdkName(request.tools, item.name) ?? request.tools.find((candidate) => candidate.tool_id === item.name)
           return makeToolCall(tool, item.name, item.arguments, "native", item.callId)
         })
       const message = response.output.find((item): item is Extract<AgentOutputItem, { type: "message" }> => item.type === "message")
@@ -65,7 +65,7 @@ export function createOpenAIAgentsCoreAdapter(): CommanderModelStepAdapter {
           const name = typeof event.event.name === "string" ? event.event.name : "unknown_tool"
           const callId = typeof event.event.callId === "string" ? event.event.callId : "missing_tool_call_id"
           const args = typeof event.event.arguments === "string" ? event.event.arguments : "{}"
-          const tool = request.tools.find((candidate) => candidate.tool_id === name)
+          const tool = toolForSdkName(request.tools, name) ?? request.tools.find((candidate) => candidate.tool_id === name)
           const call = makeToolCall(tool, name, args, "native", callId)
           toolCalls.set(callId, call)
           yield { type: "tool_call_start", tool_call_id: callId, tool_id: call.tool_id }
@@ -93,6 +93,7 @@ export async function runControlledAgentsModelProbe(request: CommanderModelStepR
     request_count: response.usage.requests,
     output_types: response.output.map((item) => item.type),
     tool_choice: toAgentsModelRequest(request).modelSettings.toolChoice,
+    tool_names: toAgentsModelRequest(request).tools?.map((tool) => "name" in tool ? tool.name : "unknown_tool") ?? [],
     tracing_disabled_by_api: true,
   }
 }
@@ -223,7 +224,7 @@ function toAgentsModelRequest(request: CommanderModelStepRequest): ModelRequest 
     },
     tools: request.tools.map((tool) => ({
       type: "function",
-      name: tool.tool_id,
+      name: toolNameFor(tool.tool_id),
       description: tool.description,
       parameters: tool.input_schema,
       strict: tool.strict_requested,

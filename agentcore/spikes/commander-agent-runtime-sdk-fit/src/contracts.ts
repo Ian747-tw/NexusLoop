@@ -175,12 +175,13 @@ export function selectedCommanderTools(): CommanderToolDescriptor[] {
 
 export function toModelTool(tool: CommanderToolDescriptor): CommanderModelToolSchema {
   if (!tool.input_schema) throw new Error(`missing input schema for ${tool.tool_id}`)
+  const propertyNames = Object.keys(tool.input_schema.properties)
   return {
     tool_id: tool.tool_id,
     name: toolNameFor(tool.tool_id),
     description: tool.description,
     input_schema: structuredClone(tool.input_schema),
-    strict_requested: true,
+    strict_requested: propertyNames.length > 0 && propertyNames.every((property) => tool.input_schema!.required.includes(property)),
     schema_hash: hashStable(tool.input_schema),
   }
 }
