@@ -88,6 +88,12 @@ function openAIStreamChunks(kind: FixtureCase): Record<string, unknown>[] {
       { ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
     ]
   }
+  if (kind === "refusal") {
+    return [
+      { ...base, choices: [{ index: 0, delta: { role: "assistant", content: "fixture refusal" }, finish_reason: null }] },
+      { ...base, choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
+    ]
+  }
   return [
     { ...base, choices: [{ index: 0, delta: { role: "assistant", content: "plain " }, finish_reason: null }] },
     { ...base, choices: [{ index: 0, delta: { content: "fixture" }, finish_reason: null }] },

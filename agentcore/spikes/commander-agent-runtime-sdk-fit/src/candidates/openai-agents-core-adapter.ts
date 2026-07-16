@@ -1,6 +1,6 @@
-import { protocol, setTracingDisabled, Usage, type AgentOutputItem, type Model, type ModelProvider, type ModelRequest, type ModelResponse } from "@openai/agents"
-import { fixtureCase, fixtureStream, normalizeFixtureResult } from "../fixture-model"
-import { finalizeResult, makeToolCall, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent } from "../contracts"
+import { protocol, setTracingDisabled, Usage, type AgentOutputItem, type Model, type ModelProvider, type ModelRequest, type ModelResponse, type StreamEvent } from "@openai/agents"
+import { fixtureCase, normalizeFixtureResult, reportedUsage } from "../fixture-model"
+import { finalizeResult, makeToolCall, type CommanderModelStepAdapter, type CommanderModelStepRequest, type CommanderModelStreamEvent, type CommanderModelUsage } from "../contracts"
 
 setTracingDisabled(true)
 
@@ -47,8 +47,39 @@ export function createOpenAIAgentsCoreAdapter(): CommanderModelStepAdapter {
         warnings: [],
       })
     },
-    executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
-      return fixtureStream("openai_agents_core", request, fixtureCase(request))
+    async *executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
+      await maybeWaitForAbort(request)
+      if (request.abort_signal?.aborted) {
+        yield { type: "error", error: "request was cancelled" }
+        return
+      }
+      const model = await provider.getModel(request.model_id)
+      const toolCalls = new Map<string, ReturnType<typeof makeToolCall>>()
+      let text = ""
+      for await (const event of model.getStreamedResponse(toAgentsModelRequest(request))) {
+        if (event.type === "output_text_delta") {
+          text += event.delta
+          yield { type: "text_delta", text: event.delta }
+        }
+        if (event.type === "model" && isRecord(event.event) && event.event.type === "function_call") {
+          const name = typeof event.event.name === "string" ? event.event.name : "unknown_tool"
+          const callId = typeof event.event.callId === "string" ? event.event.callId : "missing_tool_call_id"
+          const args = typeof event.event.arguments === "string" ? event.event.arguments : "{}"
+          const tool = request.tools.find((candidate) => candidate.tool_id === name)
+          const call = makeToolCall(tool, name, args, "native", callId)
+          toolCalls.set(callId, call)
+          yield { type: "tool_call_start", tool_call_id: callId, tool_id: call.tool_id }
+          yield { type: "tool_call_complete", tool_call: call }
+        }
+        if (event.type === "response_done") {
+          const response = event.response as unknown as ModelResponse
+          const usage = usageFromAgents(response.usage)
+          yield { type: "usage", usage }
+          const completedToolCalls = Array.from(toolCalls.values())
+          const finishReason = typeof response.providerData?.finish_reason === "string" ? response.providerData.finish_reason : completedToolCalls.length ? "tool_calls" : "stop"
+          yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "openai_agents_core", status: completedToolCalls.length ? "tool_call" : finishReason === "content-filter" ? "refusal" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: response.usage.requests, sdk: "openai-agents", lower_level_model_interface: true, streamed: true }, duration_ms: 1, warnings: [] }) }
+        }
+      }
     },
   }
 }
@@ -62,6 +93,21 @@ export async function runControlledAgentsModelProbe(request: CommanderModelStepR
     request_count: response.usage.requests,
     output_types: response.output.map((item) => item.type),
     tool_choice: toAgentsModelRequest(request).modelSettings.toolChoice,
+    tracing_disabled_by_api: true,
+  }
+}
+
+export async function runControlledAgentsStreamingProbe(request: CommanderModelStepRequest) {
+  const provider = createControlledModelProvider()
+  const model = await provider.getModel(request.model_id)
+  const events = []
+  for await (const event of model.getStreamedResponse(toAgentsModelRequest(request))) events.push(event)
+  return {
+    sdk_streaming_used: true,
+    event_types: events.map((event) => event.type),
+    text_delta_count: events.filter((event) => event.type === "output_text_delta").length,
+    function_call_count: events.filter((event) => event.type === "model" && isRecord(event.event) && event.event.type === "function_call").length,
+    response_done_count: events.filter((event) => event.type === "response_done").length,
     tracing_disabled_by_api: true,
   }
 }
@@ -98,7 +144,7 @@ function createControlledModelProvider(): ModelProvider {
           const text = typeof request.input === "string" ? request.input : JSON.stringify(request.input)
           const kind = fixtureCase({ ...request, messages: [{ role: "user", content: text }], tools: [], tool_choice: "auto", provider_kind: "fixture", model_id: "fixture", metadata: {}, requested_at: "2026-07-16T00:00:00.000Z", request_id: "agents_fixture" })
           const output: AgentOutputItem[] = []
-          if (kind === "tool" || kind === "multi_tool" || kind === "malformed_tool") {
+          if (kind === "tool" || kind === "stream_tool" || kind === "multi_tool" || kind === "malformed_tool") {
             output.push(protocol.FunctionCallItem.parse({
               type: "function_call",
               callId: "call_memory",
@@ -131,12 +177,40 @@ function createControlledModelProvider(): ModelProvider {
             providerData: { controlled_fixture: true },
           }
         },
-        async *getStreamedResponse(): AsyncIterable<never> {
-          return
+        async *getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
+          const response = await this.getResponse(request)
+          yield { type: "response_started" } as StreamEvent
+          for (const item of response.output) {
+            if (item.type === "function_call") {
+              yield { type: "model", event: item } as StreamEvent
+              continue
+            }
+            if (item.type === "message") {
+              const text = extractMessageText(item) ?? ""
+              const midpoint = Math.max(1, Math.floor(text.length / 2))
+              yield { type: "output_text_delta", delta: text.slice(0, midpoint) } as StreamEvent
+              yield { type: "output_text_delta", delta: text.slice(midpoint) } as StreamEvent
+            }
+          }
+          yield { type: "response_done", response } as unknown as StreamEvent
         },
       }
     },
   }
+}
+
+function usageFromAgents(usage: Usage): CommanderModelUsage {
+  return {
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    total_tokens: usage.totalTokens,
+    provider_reported: true,
+    raw_usage_summary: { requests: usage.requests, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value))
 }
 
 function toAgentsModelRequest(request: CommanderModelStepRequest): ModelRequest {

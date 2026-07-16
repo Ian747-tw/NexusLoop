@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { readdir, readFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { createMinimalCustomAdapter } from "../src/candidates/minimal-custom-adapter"
-import { createOpenAIAgentsCoreAdapter, runControlledAgentsModelProbe, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
+import { createOpenAIAgentsCoreAdapter, runControlledAgentsModelProbe, runControlledAgentsStreamingProbe, runnerOwnershipProbe } from "../src/candidates/openai-agents-core-adapter"
 import { createVercelAiSdkCoreAdapter } from "../src/candidates/vercel-ai-sdk-core-adapter"
 import { baseRequest, finalizeResult, hashStable, selectedCommanderTools, toModelTool, toolForSdkName, toolNameFor, validateArguments, type CommanderModelStepAdapter } from "../src/contracts"
 import { fixtureCase } from "../src/fixture-model"
@@ -217,6 +217,24 @@ describe("isolated SDK spike", () => {
     }
   })
 
+  test("AI SDK provider adapter preserves streamed refusal status", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "refusal")
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "refusal stream" }] }))) events.push(event)
+      const completed = events.find((event) => event.type === "completed")
+      expect(completed?.type).toBe("completed")
+      if (completed?.type === "completed") {
+        expect(completed.result.status).toBe("refusal")
+        expect(completed.result.text).toBe("fixture refusal")
+        expect(completed.result.finish_reason).toBe("content-filter")
+      }
+    } finally {
+      await server.close()
+    }
+  })
+
   test("AI SDK provider stream fixture keeps error cases reachable", async () => {
     const server = await startMockOpenAICompatibleServer()
     const originalConsoleError = console.error
@@ -242,6 +260,26 @@ describe("isolated SDK spike", () => {
     expect(probe.output_types).toContain("function_call")
     expect(probe.tool_choice).toBe("required")
     expect(probe.tracing_disabled_by_api).toBe(true)
+  })
+
+  test("OpenAI Agents candidate exercises the controlled SDK streaming surface", async () => {
+    const probe = await runControlledAgentsStreamingProbe(baseRequest({ tool_choice: "required", messages: [{ role: "user", content: "stream tool" }] }))
+    expect(probe.sdk_streaming_used).toBe(true)
+    expect(probe.event_types).toContain("response_started")
+    expect(probe.function_call_count).toBe(1)
+    expect(probe.response_done_count).toBe(1)
+    expect(probe.tracing_disabled_by_api).toBe(true)
+
+    const adapter = createOpenAIAgentsCoreAdapter()
+    const events = []
+    for await (const event of adapter.executeOneStreamedStep(baseRequest({ tool_choice: "required", messages: [{ role: "user", content: "stream tool" }] }))) events.push(event)
+    expect(events.some((event) => event.type === "tool_call_complete")).toBe(true)
+    const completed = events.find((event) => event.type === "completed")
+    expect(completed?.type).toBe("completed")
+    if (completed?.type === "completed") {
+      expect(completed.result.status).toBe("tool_call")
+      expect(completed.result.provider_metadata.streamed).toBe(true)
+    }
   })
 
   for (const adapter of adapters) {
