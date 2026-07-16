@@ -68,7 +68,7 @@ export function fixtureOpenAIResponse(kind: FixtureCase): FixtureResponse {
     return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: calls } }] } }
   }
   if (kind === "refusal") {
-    return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", refusal: "fixture refusal", content: "" } }] } }
+    return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "content_filter", message: { role: "assistant", content: "fixture refusal" } }] } }
   }
   if (kind === "structured") {
     return { statusCode: 200, body: { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "final", final: { summary: "structured fixture" } }) } }] } }

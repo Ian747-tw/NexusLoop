@@ -51,6 +51,22 @@ export async function startMockOpenAICompatibleServer(selectCase: (body: unknown
 
 function streamFixture(kind: FixtureCase): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
+  if (kind === "invalid_json") {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: {not-json\n\n"))
+        controller.close()
+      },
+    })
+  }
+  if (kind === "premature_stream") {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: "chatcmpl_premature", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }] })}\n\n`))
+        controller.close()
+      },
+    })
+  }
   const chunks = openAIStreamChunks(kind).map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
   chunks.push("data: [DONE]\n\n")
   return new ReadableStream({
@@ -85,13 +101,13 @@ function defaultCase(body: unknown): FixtureCase {
   if (serialized.includes("malformed")) return "malformed_tool"
   if (serialized.includes("refusal")) return "refusal"
   if (serialized.includes("structured")) return "structured"
-  if (serialized.includes("stream tool")) return "stream_tool"
-  if (serialized.includes("stream")) return "stream_text"
   if (serialized.includes("slow")) return "slow"
   if (serialized.includes("429")) return "http_429"
   if (serialized.includes("500")) return "http_500"
   if (serialized.includes("invalid json")) return "invalid_json"
   if (serialized.includes("premature")) return "premature_stream"
+  if (serialized.includes("stream tool")) return "stream_tool"
+  if (serialized.includes("stream")) return "stream_text"
   if (serialized.includes("tool")) return "tool"
   return "text"
 }

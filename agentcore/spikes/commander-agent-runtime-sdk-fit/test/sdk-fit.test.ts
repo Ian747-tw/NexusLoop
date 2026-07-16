@@ -196,7 +196,40 @@ describe("isolated SDK spike", () => {
       }
       expect(streamEvents).toContain("completed")
       expect(JSON.stringify(server.requests[1].body)).toContain("required")
+      expect(JSON.stringify(server.requests[1].body)).toContain("\"max_tokens\":256")
+      expect(JSON.stringify(server.requests[1].body)).toContain("\"temperature\":0")
     } finally {
+      await server.close()
+    }
+  })
+
+  test("AI SDK provider adapter preserves refusal status", async () => {
+    const server = await startMockOpenAICompatibleServer(() => "refusal")
+    try {
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const result = await adapter.executeOneStep(baseRequest({ messages: [{ role: "user", content: "refusal" }] }))
+      expect(result.status).toBe("refusal")
+      expect(result.text).toContain("fixture refusal")
+      expect(result.finish_reason).toBe("content-filter")
+    } finally {
+      await server.close()
+    }
+  })
+
+  test("AI SDK provider stream fixture keeps error cases reachable", async () => {
+    const server = await startMockOpenAICompatibleServer()
+    const originalConsoleError = console.error
+    try {
+      console.error = () => {}
+      const adapter = createVercelAiSdkCoreAdapter({ baseURL: server.url, apiKey: "fixture-key" })
+      const events = []
+      for await (const event of adapter.executeOneStreamedStep(baseRequest({ messages: [{ role: "user", content: "invalid json stream" }] }))) {
+        events.push(event.type)
+      }
+      expect(events).toContain("error")
+      expect(JSON.stringify(server.requests[0].body)).toContain("invalid json stream")
+    } finally {
+      console.error = originalConsoleError
       await server.close()
     }
   })

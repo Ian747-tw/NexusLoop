@@ -47,7 +47,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           const schema = toolForSdkName(request.tools, call.toolName)
           return makeToolCall(schema, call.toolName, JSON.stringify(call.input ?? {}), "native", call.toolCallId)
         })
-        const status = toolCalls.length ? "tool_call" : "final"
+        const status = toolCalls.length ? "tool_call" : result.finishReason === "content-filter" ? "refusal" : "final"
         const text = toolCalls.length ? undefined : request.structured_output_schema ? JSON.stringify(result.output) : result.text
         return finalizeResult({
           request_id: request.request_id,
@@ -85,14 +85,21 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
           messages: chatMessages(request),
           tools: aiSdkTools(request),
           toolChoice: toolChoice(request),
+          maxOutputTokens: request.max_output_tokens,
+          temperature: request.temperature,
           abortSignal: request.abort_signal,
         })
         let text = ""
         let finishReason: string | undefined
         let usage: CommanderModelUsage = { provider_reported: false }
+        let streamError: string | undefined
         const toolCalls = new Map<string, ReturnType<typeof makeToolCall>>()
         for await (const event of result.fullStream) {
           const part = event as StreamPart
+          if (event.type === "error") {
+            streamError = stringifyStreamError(part.error)
+            yield { type: "error", error: streamError }
+          }
           if (event.type === "text-delta") {
             const delta = typeof part.text === "string" ? part.text : typeof part.delta === "string" ? part.delta : ""
             text += delta
@@ -137,6 +144,7 @@ export function createVercelAiSdkCoreAdapter(options: AiSdkAdapterOptions = {}):
             yield { type: "usage", usage }
           }
         }
+        if (streamError) return
         const completedToolCalls = Array.from(toolCalls.values())
         yield { type: "completed", result: finalizeResult({ request_id: request.request_id, candidate_id: "vercel_ai_sdk_core", status: completedToolCalls.length ? "tool_call" : "final", text: completedToolCalls.length ? undefined : text, tool_calls: completedToolCalls, finish_reason: finishReason, usage, provider_metadata: { request_count: 1, sdk: "ai", streamed: true }, duration_ms: 1, warnings: [] }) }
       } catch (error) {
@@ -155,6 +163,7 @@ type StreamPart = {
   toolCallId?: string
   toolName?: string
   input?: unknown
+  error?: unknown
 }
 
 function aiSdkTools(request: CommanderModelStepRequest) {
@@ -214,4 +223,12 @@ function parseToolInput(content: string): Record<string, unknown> {
   } catch {
     return {}
   }
+}
+
+function stringifyStreamError(error: unknown): string {
+  if (error instanceof Error) return error.message.slice(0, 240)
+  if (error && typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message.slice(0, 240)
+  }
+  return "AI SDK stream failed"
 }
