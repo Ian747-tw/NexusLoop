@@ -43,7 +43,8 @@ export class CommanderToolExecutor {
         now: this.now,
       }, validated.arguments))
       const raw = await Promise.race([handler, timeoutHandle])
-      return this.result(request, descriptor, "ready", true, raw, started, generatedAt, [])
+      const outcome = handlerOutcome(raw)
+      return this.result(request, descriptor, outcome.status, true, raw, started, generatedAt, outcome.blockers, undefined, outcome.warnings)
     } catch (error) {
       const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|cancel/i.test(error.message))
       return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, undefined, started, generatedAt, [], error)
@@ -76,7 +77,7 @@ export class CommanderToolExecutor {
     return blockers
   }
 
-  private result(request: CommanderToolExecutionRequest, descriptor: typeof this.options.descriptors[number] | undefined, status: CommanderToolExecutionResult["status"], invoked: boolean, rawResult: unknown, started: number, generatedAt: string, blockers: string[], error?: unknown): CommanderToolExecutionResult {
+  private result(request: CommanderToolExecutionRequest, descriptor: typeof this.options.descriptors[number] | undefined, status: CommanderToolExecutionResult["status"], invoked: boolean, rawResult: unknown, started: number, generatedAt: string, blockers: string[], error?: unknown, handlerWarnings: string[] = []): CommanderToolExecutionResult {
     const maxOutputBytes = descriptor?.max_output_bytes ?? 8_000
     const safeResult = rawResult === undefined ? undefined : redactValue(rawResult)
     const bytes = safeResult === undefined ? 0 : Buffer.byteLength(JSON.stringify(safeResult))
@@ -112,6 +113,7 @@ export class CommanderToolExecutor {
       blockers: blockers.map(redactText),
       warnings: [
         "Commander tool output is transient evidence only and instruction_semantics=none.",
+        ...handlerWarnings.map(redactText),
         ...(oversized ? [`Commander tool output exceeded max_output_bytes=${maxOutputBytes}; oversized result omitted`] : []),
       ],
       error: error ? redactText(error instanceof Error ? error.message : String(error)).slice(0, 300) : oversized ? "Commander tool output exceeded descriptor max_output_bytes" : undefined,
@@ -157,6 +159,17 @@ function extractEvidence(value: unknown) {
 
 function gitInvoked(value: unknown): boolean {
   return !!value && typeof value === "object" && (value as { git_process_invoked?: unknown }).git_process_invoked === true
+}
+
+function handlerOutcome(value: unknown): { status: CommanderToolExecutionResult["status"]; blockers: string[]; warnings: string[] } {
+  if (!value || typeof value !== "object") return { status: "ready", blockers: [], warnings: [] }
+  const raw = value as { status?: unknown; blockers?: unknown; warnings?: unknown }
+  const blockers = Array.isArray(raw.blockers) ? raw.blockers.filter((item): item is string => typeof item === "string") : []
+  const warnings = Array.isArray(raw.warnings) ? raw.warnings.filter((item): item is string => typeof item === "string") : []
+  if (raw.status === "blocked") return { status: "blocked", blockers, warnings }
+  if (raw.status === "failed") return { status: "failed", blockers, warnings }
+  if (raw.status === "cancelled") return { status: "cancelled", blockers, warnings }
+  return { status: "ready", blockers, warnings }
 }
 
 function defaultTimeout(ms: number, signal?: AbortSignal): Promise<never> {

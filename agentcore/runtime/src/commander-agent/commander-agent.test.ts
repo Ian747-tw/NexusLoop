@@ -244,6 +244,23 @@ describe("Commander tool executor", () => {
     expect(Buffer.byteLength(message.content)).toBeLessThanOrEqual(12_000)
   })
 
+  test("executor propagates handler blockers instead of masking them as ready", async () => {
+    const { executor } = executorFixture({ blockedTool: "memory.search" })
+    const result = await executor.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" }, tool_call_id: "call_blocked" }))
+    expect(result).toMatchObject({ status: "blocked", handler_invoked: true, result: undefined })
+    expect(result.blockers).toContain("handler denied bounded read")
+    expect(result.warnings).toContain("handler warning")
+    const message = toCommanderToolResultMessage(result)
+    expect(message.tool_call_id).toBe("call_blocked")
+    expect(message.content).toContain("\"status\":\"blocked\"")
+    expect(message.content).toContain("handler denied bounded read")
+  })
+
+  test("executor treats handler empty results as successful bounded execution", async () => {
+    const { executor } = executorFixture({ emptyTool: "memory.search" })
+    await expect(executor.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))).resolves.toMatchObject({ status: "ready", handler_invoked: true })
+  })
+
   test("executor allows only fixed Git status and diff process-backed bindings", async () => {
     const { executor } = executorFixture()
     await expect(executor.execute(baseExecution({ tool_id: "repo.git_status", phase: "proposal_investigation", arguments: {} }))).resolves.toMatchObject({ status: "ready", external_process_invoked: true, process_policy: "fixed_git_read_only" })
@@ -362,16 +379,21 @@ function streamBody(kind: string) {
   return new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: "chunk", object: "chat.completion.chunk", created: 1, model: "fixture-model", ...chunk })}\n\n`)); controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close() } })
 }
 
-function testBindingRegistry(options: { failTool?: string; oversizedTool?: string; calls?: string[] } = {}) {
+function testBindingRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; calls?: string[] } = {}) {
   const calls = options.calls ?? []
   return createPatchedRegistry(options, calls)
 }
 
-function createPatchedRegistry(options: { failTool?: string; oversizedTool?: string }, calls: string[]) {
+function createPatchedRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string }, calls: string[]) {
   const registry = createCommanderToolBindingRegistry({
     commanderToolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
     commandAuthorityService: new CommandAuthorityService(),
-    researchMemoryService: { preview: () => { if (options.failTool === "memory.search") throw new Error("boom secret-api-key"); return options.oversizedTool === "memory.search" ? { value: "x".repeat(100_000) } : { tool_id: "memory.search", evidence: [] } } } as unknown as ResearchMemoryService,
+    researchMemoryService: { preview: () => {
+      if (options.failTool === "memory.search") throw new Error("boom secret-api-key")
+      if (options.blockedTool === "memory.search") return { status: "blocked", blockers: ["handler denied bounded read"], warnings: ["handler warning"], evidence: [] }
+      if (options.emptyTool === "memory.search") return { status: "empty", blockers: [], warnings: ["empty warning"], evidence: [] }
+      return options.oversizedTool === "memory.search" ? { value: "x".repeat(100_000) } : { tool_id: "memory.search", evidence: [] }
+    } } as unknown as ResearchMemoryService,
     operationalMemorySearchService: { search: async () => new Promise((resolve) => setTimeout(() => resolve({ tool_id: "continuity.search" }), 5)) } as unknown as CommanderOperationalMemorySearchService,
     repoReadService: {
       searchText: async () => ({ tool_id: "repo.search_text", result: { matches: [] }, git_process_invoked: false, evidence: [] }),
@@ -383,7 +405,7 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
   return registry
 }
 
-function executorFixture(options: { failTool?: string; oversizedTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> } = {}) {
+function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> } = {}) {
   const calls: string[] = []
   const registry = createPatchedRegistry(options, calls)
   return { calls, executor: new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: registry, timeout: options.timeout }) }
