@@ -152,9 +152,14 @@ stability.
 
 ## Consequences
 
-9W1 should implement the NexusLoop-owned Commander model-step boundary and tool
-binding layer around an AI SDK Core adapter. It should not implement a provider
-loop, durable working set, or proposal gate yet.
+9W1 implements the NexusLoop-owned Commander model-step boundary and explicit
+tool-binding execution kernel around an AI SDK Core adapter. Production uses
+only `ai@7.0.29` and `@ai-sdk/openai-compatible@3.0.11`; the spike package
+remains isolated evidence. Full OpenAI Agents Runner remains excluded, and the
+lower-level OpenAI Agents candidate was evaluated but not selected.
+
+9W1 still does not implement a provider loop, durable working set, or proposal
+gate.
 
 9W2 should implement the bounded provider-neutral investigation loop on top of
 that boundary.

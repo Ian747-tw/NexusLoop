@@ -173,6 +173,9 @@ import type { WakeSchedulerNavigationCheckpointWriteRunPreview, WakeSchedulerNav
 import { WakeSchedulerNavigationCheckpointWriteCompareService, readWakeSchedulerNavigationCheckpointApprovalUsageInput, readWakeSchedulerNavigationCheckpointWriteCompareInput, readWakeSchedulerNavigationCheckpointWriteGroupInput, readWakeSchedulerNavigationCheckpointWriteHistoryInput, readWakeSchedulerNavigationCheckpointWriteStaleInput } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-service"
 import type { WakeSchedulerNavigationCheckpointApprovalUsageSummary, WakeSchedulerNavigationCheckpointWriteGroup, WakeSchedulerNavigationCheckpointWriteHistory, WakeSchedulerNavigationCheckpointWritePairComparison, WakeSchedulerNavigationCheckpointWriteStaleItem } from "./schedules/wake-scheduler-navigation-checkpoint-write-compare-types"
 import { CommandAuthorityService } from "./authority/command-authority-service"
+import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-registry"
+import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
+import { createCommanderToolBindingRegistry, CommanderToolExecutor, type CommanderToolBindingRegistry, type CommanderToolExecutionRequest, type CommanderToolExecutionResult } from "./commander-agent"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -384,6 +387,8 @@ export class RuntimeServer {
   private commanderToolServiceInstance: CommanderToolService | null = null
   private commanderOperationalMemorySearchServiceInstance: CommanderOperationalMemorySearchService | null = null
   private commanderRepoReadServiceInstance: CommanderRepoReadService | null = null
+  private commanderToolBindingRegistryInstance: CommanderToolBindingRegistry | null = null
+  private commanderToolExecutorInstance: CommanderToolExecutor | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -2602,6 +2607,10 @@ export class RuntimeServer {
     return this.commanderRepoReadService().dependencyManifest(input)
   }
 
+  executeCommanderBoundReadTool(input: CommanderToolExecutionRequest): Promise<CommanderToolExecutionResult> {
+    return this.commanderToolExecutor().execute(input)
+  }
+
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
     return this.commanderContinuityService().proposal(input)
   }
@@ -4541,6 +4550,27 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderRepoReadServiceInstance
+  }
+
+  private commanderToolBindingRegistry(): CommanderToolBindingRegistry {
+    this.commanderToolBindingRegistryInstance ??= createCommanderToolBindingRegistry({
+      commanderToolService: this.commanderToolService(),
+      commandAuthorityService: new CommandAuthorityService(this.researchSynthesisNow ? () => this.researchSynthesisNow!().toISOString() : undefined),
+      researchMemoryService: this.researchMemoryService(),
+      operationalMemorySearchService: this.commanderOperationalMemorySearchService(),
+      repoReadService: this.commanderRepoReadService(),
+    })
+    return this.commanderToolBindingRegistryInstance
+  }
+
+  private commanderToolExecutor(): CommanderToolExecutor {
+    this.commanderToolExecutorInstance ??= new CommanderToolExecutor({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      authorityRecords: COMMAND_AUTHORITY_REGISTRY,
+      bindingRegistry: this.commanderToolBindingRegistry(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderToolExecutorInstance
   }
 
   private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {

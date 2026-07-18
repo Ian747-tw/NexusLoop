@@ -28,6 +28,9 @@ export type CommanderToolJsonSchemaProperty = {
   minimum?: number
   maximum?: number
   items?: CommanderToolJsonSchemaProperty
+  properties?: Record<string, CommanderToolJsonSchemaProperty>
+  required?: string[]
+  additionalProperties?: false
 }
 
 export type CommanderToolJsonSchema = {

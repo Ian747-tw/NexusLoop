@@ -318,6 +318,7 @@ export { COMMANDER_TOOL_REGISTRY, COMMANDER_TOOL_NAMESPACES, COMMANDER_TOOL_PHAS
 export { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput } from "./commander-tools/commander-operational-memory-search-service"
 export { CommanderRepoReadService } from "./commander-tools/commander-repo-read-service"
 export { RestrictedGitReadAdapter } from "./commander-tools/restricted-git-read-adapter"
+export * from "./commander-agent"
 export type {
   CommanderToolAvailability,
   CommanderToolBootstrapPreview,
