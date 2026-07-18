@@ -269,6 +269,7 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
       const expectedToolId = toolCallIds.get(message.tool_call_id)
       if (!expectedToolId) throw new Error("tool result message does not follow matching assistant tool call")
       if (expectedToolId !== message.tool_id) throw new Error("tool result message tool_id does not match originating assistant tool call")
+      // AI SDK v7 ModelMessage tool-result parts use `output`; the OpenAI-compatible transport serializes it to provider tool-message content.
       messages.push({ role: "tool", content: [{ type: "tool-result", toolCallId: message.tool_call_id, toolName: providerToolNameFromRequest(request, message.tool_id), output: { type: "text", value: message.content } }] } as ModelMessage)
     }
   }

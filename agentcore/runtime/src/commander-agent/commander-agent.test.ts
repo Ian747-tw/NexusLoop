@@ -250,8 +250,10 @@ describe("Commander AI SDK model adapter", () => {
     })
     await request.adapter.executeOneStep(request.request)
     expect(mock.requests).toHaveLength(1)
-    const body = mock.requests[0].body as { messages: Array<{ tool_calls?: Array<{ function?: { arguments?: string } }> }> }
+    const body = mock.requests[0].body as { messages: Array<{ tool_calls?: Array<{ function?: { arguments?: string } }>; role?: string; content?: string; tool_call_id?: string }> }
     expect(body.messages[1].tool_calls?.[0].function?.arguments).toBe(JSON.stringify({ query: "x" }))
+    expect(body.messages[2]).toMatchObject({ role: "tool", tool_call_id: "call_a", content: "{}" })
+    expect(body.messages[3]).toMatchObject({ role: "tool", tool_call_id: "call_b", content: "{}" })
     const bad = baseRequest({ baseUrl: mock.url, overrides: { messages: [{ role: "tool", tool_call_id: "missing", tool_id: "memory.search", content: "{}", content_hash: "x", truncated: false }] } })
     await expect(bad.adapter.executeOneStep(bad.request)).resolves.toMatchObject({ status: "failed" })
     const wrongTool = baseRequest({ baseUrl: mock.url, overrides: {
