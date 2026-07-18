@@ -259,21 +259,26 @@ function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { t
 
 function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   const messages: ModelMessage[] = []
-  const toolCallIds = new Map<string, string>()
+  let pendingToolCalls = new Map<string, string>()
   for (const message of request.messages) {
-    if (message.role === "system" || message.role === "user") messages.push({ role: message.role, content: message.content })
+    if (message.role === "system" || message.role === "user") {
+      pendingToolCalls = new Map()
+      messages.push({ role: message.role, content: message.content })
+    }
     if (message.role === "assistant") {
+      pendingToolCalls = new Map()
       const content = message.content.map((part) => {
         if (part.type === "text") return { type: "text", text: part.text }
-        toolCallIds.set(part.tool_call_id, part.tool_id)
+        pendingToolCalls.set(part.tool_call_id, part.tool_id)
         return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments, args: part.arguments }
       })
       messages.push({ role: "assistant", content } as ModelMessage)
     }
     if (message.role === "tool") {
-      const expectedToolId = toolCallIds.get(message.tool_call_id)
+      const expectedToolId = pendingToolCalls.get(message.tool_call_id)
       if (!expectedToolId) throw new Error("tool result message does not follow matching assistant tool call")
       if (expectedToolId !== message.tool_id) throw new Error("tool result message tool_id does not match originating assistant tool call")
+      pendingToolCalls.delete(message.tool_call_id)
       // AI SDK v7 ModelMessage tool-result parts use `output`; the OpenAI-compatible transport serializes it to provider tool-message content.
       messages.push({ role: "tool", content: [{ type: "tool-result", toolCallId: message.tool_call_id, toolName: providerToolNameFromRequest(request, message.tool_id), output: { type: "text", value: message.content } }] } as ModelMessage)
     }
@@ -318,9 +323,12 @@ function finalizeStep(request: CommanderModelStepRequest, status: CommanderModel
   return result
 }
 
-function aiSdkUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number } | undefined): CommanderModelUsage {
-  const providerReported = usage !== undefined && [usage.inputTokens, usage.outputTokens, usage.totalTokens, usage.cachedInputTokens].some((value) => typeof value === "number")
-  return { input_tokens: usage?.inputTokens, output_tokens: usage?.outputTokens, total_tokens: usage?.totalTokens, cached_input_tokens: usage?.cachedInputTokens, provider_reported: providerReported, raw_usage_summary: providerReported ? { inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0, totalTokens: usage?.totalTokens ?? 0 } : undefined }
+function aiSdkUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } } | undefined): CommanderModelUsage {
+  const cacheReadTokens = usage?.inputTokenDetails?.cacheReadTokens
+  const cacheWriteTokens = usage?.inputTokenDetails?.cacheWriteTokens
+  const cachedInputTokens = usage?.cachedInputTokens ?? cacheReadTokens
+  const providerReported = usage !== undefined && [usage.inputTokens, usage.outputTokens, usage.totalTokens, cachedInputTokens, cacheWriteTokens].some((value) => typeof value === "number")
+  return { input_tokens: usage?.inputTokens, output_tokens: usage?.outputTokens, total_tokens: usage?.totalTokens, cached_input_tokens: cachedInputTokens, provider_reported: providerReported, raw_usage_summary: providerReported ? { inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0, totalTokens: usage?.totalTokens ?? 0, cacheReadTokens: cacheReadTokens ?? 0, cacheWriteTokens: cacheWriteTokens ?? 0 } : undefined }
 }
 
 function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "required" {

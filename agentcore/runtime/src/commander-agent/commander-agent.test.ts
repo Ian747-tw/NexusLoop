@@ -129,6 +129,12 @@ describe("Commander AI SDK model adapter", () => {
     expect(noUsageResult.usage.provider_reported).toBe(false)
     expect(noUsageResult.usage.total_tokens).toBeUndefined()
 
+    const cacheUsage = startMockServer("cache_usage")
+    const cacheUsageRequest = baseRequest({ baseUrl: cacheUsage.url })
+    const cacheUsageResult = await cacheUsageRequest.adapter.executeOneStep(cacheUsageRequest.request)
+    expect(cacheUsageResult.usage.cached_input_tokens).toBe(5)
+    expect(cacheUsageResult.usage.raw_usage_summary).toMatchObject({ cacheReadTokens: 5 })
+
     const structuredRate = startMockServer("http_429")
     const structuredRateRequest = baseRequest({ baseUrl: structuredRate.url, overrides: { structured_output_schema: modelTool("memory.search").input_schema } })
     const structuredRateResult = await structuredRateRequest.adapter.executeOneStep(structuredRateRequest.request)
@@ -270,6 +276,24 @@ describe("Commander AI SDK model adapter", () => {
       tools: [tool1, tool2],
     } })
     await expect(wrongTool.adapter.executeOneStep(wrongTool.request)).resolves.toMatchObject({ status: "failed" })
+    const stale = baseRequest({ baseUrl: mock.url, overrides: {
+      messages: [
+        { role: "assistant", content: [{ type: "tool_call", tool_call_id: "call_a", tool_id: "memory.search", arguments: { query: "x" }, arguments_valid: true, validation_errors: [], call_hash: "h1" }] },
+        { role: "user", content: "intervening turn" },
+        { role: "tool", tool_call_id: "call_a", tool_id: "memory.search", content: "{}", content_hash: "stale", truncated: false },
+      ],
+      tools: [tool1, tool2],
+    } })
+    await expect(stale.adapter.executeOneStep(stale.request)).resolves.toMatchObject({ status: "failed" })
+    const duplicate = baseRequest({ baseUrl: mock.url, overrides: {
+      messages: [
+        { role: "assistant", content: [{ type: "tool_call", tool_call_id: "call_a", tool_id: "memory.search", arguments: { query: "x" }, arguments_valid: true, validation_errors: [], call_hash: "h1" }] },
+        { role: "tool", tool_call_id: "call_a", tool_id: "memory.search", content: "{}", content_hash: "first", truncated: false },
+        { role: "tool", tool_call_id: "call_a", tool_id: "memory.search", content: "{}", content_hash: "duplicate", truncated: false },
+      ],
+      tools: [tool1, tool2],
+    } })
+    await expect(duplicate.adapter.executeOneStep(duplicate.request)).resolves.toMatchObject({ status: "failed" })
   })
 })
 
@@ -420,7 +444,7 @@ function loopbackFetch(origin: string): typeof fetch {
   }) as typeof fetch
 }
 
-function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage") {
+function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage" | "cache_usage") {
   const requests: Array<{ body: unknown; headers: Record<string, string> }> = []
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -451,6 +475,7 @@ function chatBody(kind: string) {
   if (kind === "structured_invalid") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "{}" } }] }
   if (kind === "refusal") return { ...base, choices: [{ index: 0, finish_reason: "content_filter", message: { role: "assistant", content: "" } }] }
   if (kind === "no_usage") return { id: "chatcmpl_no_usage", object: "chat.completion", created: 1784160000, model: "fixture-model", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "plain fixture" } }] }
+  if (kind === "cache_usage") return { ...base, usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_tokens_details: { cached_tokens: 5, cache_write_tokens: 2 } }, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "plain fixture" } }] }
   return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "plain fixture" } }] }
 }
 
