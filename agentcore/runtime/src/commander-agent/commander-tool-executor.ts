@@ -32,14 +32,17 @@ export class CommanderToolExecutor {
       return this.result(request, descriptor, "blocked", false, undefined, started, generatedAt, validated.errors)
     }
     let timeoutHandle: CommanderToolTimeout | undefined
+    const executionAbort = new AbortController()
+    const relayAbort = () => executionAbort.abort()
+    request.abort_signal?.addEventListener("abort", relayAbort, { once: true })
     try {
-      timeoutHandle = this.timeout(descriptor.timeout_ms, request.abort_signal)
+      timeoutHandle = this.timeout(descriptor.timeout_ms, executionAbort.signal)
       timeoutHandle.promise.catch(() => undefined)
       const handler = Promise.resolve(binding.execute({
         phase: request.phase,
         requested_by: request.requested_by,
         call_id: request.call_id,
-        abort_signal: request.abort_signal,
+        abort_signal: executionAbort.signal,
         now: this.now,
       }, validated.arguments))
       const raw = await Promise.race([handler, timeoutHandle.promise])
@@ -47,8 +50,10 @@ export class CommanderToolExecutor {
       return this.result(request, descriptor, outcome.status, true, raw, started, generatedAt, outcome.blockers, undefined, outcome.warnings)
     } catch (error) {
       const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|cancel/i.test(error.message))
+      if (cancelled) executionAbort.abort()
       return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, undefined, started, generatedAt, [], error)
     } finally {
+      request.abort_signal?.removeEventListener("abort", relayAbort)
       timeoutHandle?.cancel()
     }
   }

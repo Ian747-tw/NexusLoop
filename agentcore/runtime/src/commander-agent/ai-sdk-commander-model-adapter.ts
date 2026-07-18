@@ -262,10 +262,12 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   let pendingToolCalls = new Map<string, string>()
   for (const message of request.messages) {
     if (message.role === "system" || message.role === "user") {
+      if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
       pendingToolCalls = new Map()
       messages.push({ role: message.role, content: message.content })
     }
     if (message.role === "assistant") {
+      if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
       pendingToolCalls = new Map()
       const content = message.content.map((part) => {
         if (part.type === "text") return { type: "text", text: part.text }

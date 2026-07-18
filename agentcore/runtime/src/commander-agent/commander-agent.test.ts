@@ -294,6 +294,18 @@ describe("Commander AI SDK model adapter", () => {
       tools: [tool1, tool2],
     } })
     await expect(duplicate.adapter.executeOneStep(duplicate.request)).resolves.toMatchObject({ status: "failed" })
+    const unanswered = baseRequest({ baseUrl: mock.url, overrides: {
+      messages: [
+        { role: "assistant", content: [
+          { type: "tool_call", tool_call_id: "call_a", tool_id: "memory.search", arguments: { query: "x" }, arguments_valid: true, validation_errors: [], call_hash: "h1" },
+          { type: "tool_call", tool_call_id: "call_b", tool_id: "repo.git_status", arguments: {}, arguments_valid: true, validation_errors: [], call_hash: "h2" },
+        ] },
+        { role: "tool", tool_call_id: "call_a", tool_id: "memory.search", content: "{}", content_hash: "first", truncated: false },
+        { role: "user", content: "next turn before call_b result" },
+      ],
+      tools: [tool1, tool2],
+    } })
+    await expect(unanswered.adapter.executeOneStep(unanswered.request)).resolves.toMatchObject({ status: "failed" })
   })
 })
 
@@ -371,9 +383,14 @@ describe("Commander tool executor", () => {
   test("executor blocks pre-aborted signals, timeout, handler exceptions, and oversized results boundedly", async () => {
     const aborted = new AbortController()
     aborted.abort()
-    const { executor } = executorFixture({ timeout: (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout ${ms}`)), 1)) as Promise<never> })
+    let timeoutSignal: AbortSignal | undefined
+    const { executor } = executorFixture({ timeout: (ms, signal) => {
+      timeoutSignal = signal
+      return new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout ${ms}`)), 1)) as Promise<never>
+    } })
     await expect(executor.execute(baseExecution({ tool_id: "memory.search", abort_signal: aborted.signal }))).resolves.toMatchObject({ status: "blocked", handler_invoked: false })
     await expect(executor.execute(baseExecution({ tool_id: "continuity.search" }))).resolves.toMatchObject({ status: "cancelled", handler_invoked: true })
+    expect(timeoutSignal?.aborted).toBe(true)
     const failure = executorFixture({ failTool: "memory.search" }).executor
     await expect(failure.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))).resolves.toMatchObject({ status: "failed", handler_invoked: true })
     const oversized = executorFixture({ oversizedTool: "memory.search" }).executor
