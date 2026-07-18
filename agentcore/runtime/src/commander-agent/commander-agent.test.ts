@@ -168,6 +168,7 @@ describe("Commander AI SDK model adapter", () => {
     const missingTool = startMockServer("json_fallback_final")
     const missingToolReq = baseRequest({ baseUrl: missingTool.url, content: "fallback", overrides: { tool_protocol: "json_fallback", tool_choice: "required" } })
     await expect(missingToolReq.adapter.executeOneStep(missingToolReq.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
+    expect(JSON.stringify(missingTool.requests[0].body)).not.toContain("required")
   })
 
   test("native mode enforces tool_choice postconditions after provider output", async () => {
@@ -191,6 +192,7 @@ describe("Commander AI SDK model adapter", () => {
     const completed = events.find((event) => event.type === "completed")
     expect(completed?.type === "completed" ? completed.result.request_count : 0).toBe(1)
     expect(mock.requests).toHaveLength(1)
+    expect(JSON.stringify(mock.requests[0].body)).toContain("include_usage")
 
     const refusal = startMockServer("stream_refusal")
     const refusalRequest = baseRequest({ baseUrl: refusal.url, overrides: { tool_protocol: "json_fallback" } })

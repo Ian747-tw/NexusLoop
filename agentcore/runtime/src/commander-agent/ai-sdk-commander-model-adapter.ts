@@ -39,7 +39,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
-        toolChoice: toolChoice(request),
+        toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
         output: structuredOutput(request),
         maxOutputTokens: request.max_output_tokens,
         temperature: request.temperature,
@@ -62,10 +62,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         const validation = validateCommanderToolArguments(request.structured_output_schema, result.output)
         if (!validation.valid) return finalizeStep(request, "malformed", { text: result.text?.slice(0, 256), usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: validation.errors.join("; ") })
       }
-      if (request.tool_protocol === "native") {
-        const nativePostcondition = enforceNativeToolChoice(request, toolCalls, result.text ?? "", aiSdkUsage(result.usage), result.finishReason, measured.requestCount(), Date.now() - started)
-        if (nativePostcondition) return nativePostcondition
-      }
+      if (request.tool_protocol === "native") return finalizeNativeStep(request, toolCalls, result.text ?? "", request.structured_output_schema ? JSON.stringify(result.output) : result.text, aiSdkUsage(result.usage), result.finishReason, measured.requestCount(), Date.now() - started)
       const text = toolCalls.length ? undefined : request.structured_output_schema ? JSON.stringify(result.output) : result.text
       const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(result.finishReason) ? "refusal" : "final"
       return finalizeStep(request, status, { text, toolCalls, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
@@ -84,7 +81,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
-        toolChoice: toolChoice(request),
+        toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
         output: structuredOutput(request),
         maxOutputTokens: request.max_output_tokens,
         temperature: request.temperature,
@@ -170,12 +167,9 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         }
       }
       if (request.tool_protocol === "native") {
-        const nativePostcondition = enforceNativeToolChoice(request, toolCalls, text, usage, finishReason, measured.requestCount(), Date.now() - started, true)
-        if (nativePostcondition) {
-          yield { type: "completed", result: nativePostcondition }
-          completed = true
-          return
-        }
+        yield { type: "completed", result: finalizeNativeStep(request, toolCalls, text, text, usage, finishReason, measured.requestCount(), Date.now() - started, true) }
+        completed = true
+        return
       }
       const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(finishReason) ? "refusal" : "final"
       yield { type: "completed", result: finalizeStep(request, status, { text: toolCalls.length ? undefined : text, toolCalls, usage, finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, streamed: true }) }
@@ -204,6 +198,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         apiKey: this.options.api_key,
         headers: this.options.default_headers,
         fetch: guardedFetch,
+        includeUsage: true,
         supportsStructuredOutputs: true,
       }),
       requestCount: () => requestCount,
@@ -226,14 +221,15 @@ function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ t
   return calls.map((call) => makeCommanderToolCall(map.get(call.toolName), call.toolName, call.input ?? {}, call.toolCallId, "native"))
 }
 
-function enforceNativeToolChoice(request: CommanderModelStepRequest, toolCalls: CommanderModelToolCallPart[], text: string, usage: CommanderModelUsage, finishReason: string | undefined, requestCount: number, durationMs: number, streamed = false): CommanderModelStepResult | undefined {
+function finalizeNativeStep(request: CommanderModelStepRequest, toolCalls: CommanderModelToolCallPart[], textForError: string, finalText: string | undefined, usage: CommanderModelUsage, finishReason: string | undefined, requestCount: number, durationMs: number, streamed = false): CommanderModelStepResult {
   if (toolCalls.length > 0 && request.tool_choice === "none") {
-    return finalizeStep(request, "malformed", { text: text.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned tool calls while tool_choice=none", streamed })
+    return finalizeStep(request, "malformed", { text: textForError.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned tool calls while tool_choice=none", streamed })
   }
   if (toolCalls.length === 0 && request.tool_choice === "required" && !isRefusalFinishReason(finishReason)) {
-    return finalizeStep(request, "malformed", { text: text.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned final output while tool_choice=required", streamed })
+    return finalizeStep(request, "malformed", { text: textForError.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned final output while tool_choice=required", streamed })
   }
-  return undefined
+  const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(finishReason) ? "refusal" : "final"
+  return finalizeStep(request, status, { text: toolCalls.length ? undefined : finalText, toolCalls, usage, finishReason, requestCount, durationMs, streamed })
 }
 
 function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { text: string; usage: CommanderModelUsage; finishReason?: string; requestCount: number; durationMs: number; streamed?: boolean }): { status: "tool_call"; call: CommanderModelToolCallPart } | { status: "final" | "refusal" | "malformed"; result: CommanderModelStepResult } {
