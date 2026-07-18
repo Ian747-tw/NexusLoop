@@ -170,6 +170,16 @@ describe("Commander AI SDK model adapter", () => {
     await expect(missingToolReq.adapter.executeOneStep(missingToolReq.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
   })
 
+  test("native mode enforces tool_choice postconditions after provider output", async () => {
+    const ignoredNone = startMockServer("tool")
+    const noTools = baseRequest({ baseUrl: ignoredNone.url, content: "tool despite none", overrides: { tool_choice: "none" } })
+    await expect(noTools.adapter.executeOneStep(noTools.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
+
+    const ignoredRequired = startMockServer("text")
+    const required = baseRequest({ baseUrl: ignoredRequired.url, content: "text despite required", overrides: { tool_choice: "required" } })
+    await expect(required.adapter.executeOneStep(required.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
+  })
+
   test("streaming emits text, tool call events, usage, completed result, and uses the same request", async () => {
     const mock = startMockServer("stream_tool")
     const request = baseRequest({ baseUrl: mock.url, content: "stream tool" })
@@ -188,6 +198,14 @@ describe("Commander AI SDK model adapter", () => {
     for await (const event of refusalRequest.adapter.executeOneStreamedStep(refusalRequest.request)) refusalEvents.push(event)
     const refusalCompleted = refusalEvents.find((event) => event.type === "completed")
     expect(refusalCompleted?.type === "completed" ? refusalCompleted.result.status : "").toBe("refusal")
+
+    const fallbackTool = startMockServer("stream_json_fallback_tool")
+    const fallbackRequest = baseRequest({ baseUrl: fallbackTool.url, overrides: { tool_protocol: "json_fallback" } })
+    const fallbackEvents = []
+    for await (const event of fallbackRequest.adapter.executeOneStreamedStep(fallbackRequest.request)) fallbackEvents.push(event)
+    expect(fallbackEvents.map((event) => event.type)).not.toContain("text_delta")
+    expect(fallbackEvents.map((event) => event.type)).toContain("tool_call_complete")
+    expect(fallbackEvents.filter((event) => event.type === "text_delta").map((event) => event.text).join("")).not.toContain("\"tool_id\"")
   })
 
   test("non-stream and stream provider failures and aborts remain one request", async () => {
@@ -391,7 +409,7 @@ function loopbackFetch(origin: string): typeof fetch {
   }) as typeof fetch
 }
 
-function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage") {
+function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage") {
   const requests: Array<{ body: unknown; headers: Record<string, string> }> = []
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -434,7 +452,14 @@ function streamBody(kind: string) {
         { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: " memory\",\"limit\":3}" } }] }, finish_reason: null }] },
         { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
       ]
-    : kind === "stream_refusal"
+    : kind === "stream_json_fallback_tool"
+      ? [
+        { choices: [{ index: 0, delta: { role: "assistant", content: "{\"type\":\"tool_call\"," }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { content: "\"tool_id\":\"memory.search\"," }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { content: "\"arguments\":{\"query\":\"research memory\"}}" }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
+      ]
+      : kind === "stream_refusal"
       ? [
         { choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] },
         { choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }], usage: { prompt_tokens: 11, completion_tokens: 0, total_tokens: 11 } },

@@ -62,6 +62,10 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         const validation = validateCommanderToolArguments(request.structured_output_schema, result.output)
         if (!validation.valid) return finalizeStep(request, "malformed", { text: result.text?.slice(0, 256), usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: validation.errors.join("; ") })
       }
+      if (request.tool_protocol === "native") {
+        const nativePostcondition = enforceNativeToolChoice(request, toolCalls, result.text ?? "", aiSdkUsage(result.usage), result.finishReason, measured.requestCount(), Date.now() - started)
+        if (nativePostcondition) return nativePostcondition
+      }
       const text = toolCalls.length ? undefined : request.structured_output_schema ? JSON.stringify(result.output) : result.text
       const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(result.finishReason) ? "refusal" : "final"
       return finalizeStep(request, status, { text, toolCalls, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
@@ -98,7 +102,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
           const delta = typeof part.text === "string" ? part.text : typeof part.delta === "string" ? part.delta : ""
           text += delta
           if (Buffer.byteLength(text) > 64_000) throw new Error("stream buffer exceeded maximum bytes")
-          yield { type: "text_delta", text: delta }
+          if (request.tool_protocol !== "json_fallback") yield { type: "text_delta", text: delta }
         }
         if (part.type === "tool-input-start" || part.type === "tool-call-streaming-start") {
           const toolCallId = part.toolCallId ?? part.id ?? "missing_tool_call_id"
@@ -165,6 +169,14 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
           return
         }
       }
+      if (request.tool_protocol === "native") {
+        const nativePostcondition = enforceNativeToolChoice(request, toolCalls, text, usage, finishReason, measured.requestCount(), Date.now() - started, true)
+        if (nativePostcondition) {
+          yield { type: "completed", result: nativePostcondition }
+          completed = true
+          return
+        }
+      }
       const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(finishReason) ? "refusal" : "final"
       yield { type: "completed", result: finalizeStep(request, status, { text: toolCalls.length ? undefined : text, toolCalls, usage, finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, streamed: true }) }
       completed = true
@@ -212,6 +224,16 @@ function structuredOutput(request: CommanderModelStepRequest) {
 function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ toolName: string; input?: unknown; toolCallId: string }>): CommanderModelToolCallPart[] {
   const map = buildProviderToolMap(request.tools)
   return calls.map((call) => makeCommanderToolCall(map.get(call.toolName), call.toolName, call.input ?? {}, call.toolCallId, "native"))
+}
+
+function enforceNativeToolChoice(request: CommanderModelStepRequest, toolCalls: CommanderModelToolCallPart[], text: string, usage: CommanderModelUsage, finishReason: string | undefined, requestCount: number, durationMs: number, streamed = false): CommanderModelStepResult | undefined {
+  if (toolCalls.length > 0 && request.tool_choice === "none") {
+    return finalizeStep(request, "malformed", { text: text.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned tool calls while tool_choice=none", streamed })
+  }
+  if (toolCalls.length === 0 && request.tool_choice === "required" && !isRefusalFinishReason(finishReason)) {
+    return finalizeStep(request, "malformed", { text: text.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned final output while tool_choice=required", streamed })
+  }
+  return undefined
 }
 
 function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { text: string; usage: CommanderModelUsage; finishReason?: string; requestCount: number; durationMs: number; streamed?: boolean }): { status: "tool_call"; call: CommanderModelToolCallPart } | { status: "final" | "refusal" | "malformed"; result: CommanderModelStepResult } {
