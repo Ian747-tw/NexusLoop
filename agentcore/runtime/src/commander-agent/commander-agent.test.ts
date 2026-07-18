@@ -310,6 +310,15 @@ describe("Commander AI SDK model adapter", () => {
       tools: [tool1, tool2],
     } })
     await expect(unanswered.adapter.executeOneStep(unanswered.request)).resolves.toMatchObject({ status: "failed" })
+    const trailingUnanswered = baseRequest({ baseUrl: mock.url, overrides: {
+      messages: [
+        { role: "assistant", content: [
+          { type: "tool_call", tool_call_id: "call_a", tool_id: "memory.search", arguments: { query: "x" }, arguments_valid: true, validation_errors: [], call_hash: "h1" },
+        ] },
+      ],
+      tools: [tool1, tool2],
+    } })
+    await expect(trailingUnanswered.adapter.executeOneStep(trailingUnanswered.request)).resolves.toMatchObject({ status: "failed" })
   })
 })
 

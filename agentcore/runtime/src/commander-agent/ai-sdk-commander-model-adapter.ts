@@ -288,6 +288,7 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
       messages.push({ role: "tool", content: [{ type: "tool-result", toolCallId: message.tool_call_id, toolName: providerToolNameFromRequest(request, message.tool_id), output: { type: "text", value: message.content } }] } as ModelMessage)
     }
   }
+  if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
   return messages
 }
 
