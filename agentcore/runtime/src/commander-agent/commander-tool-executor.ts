@@ -128,7 +128,7 @@ export class CommanderToolExecutor {
       generated_at: generatedAt,
       result_hash: "",
     }
-    result.result_hash = hash({ ...result, duration_ms: 0, generated_at: "" })
+    result.result_hash = hash(normalizeStableExecutionValue({ ...result, duration_ms: 0, generated_at: "" }))
     return redactValue(result)
   }
 }
@@ -228,4 +228,15 @@ function normalizeTimeout(timeout: Promise<never> | CommanderToolTimeout): Comma
 
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
+}
+
+function normalizeStableExecutionValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeStableExecutionValue)
+  if (!value || typeof value !== "object") return value
+  const normalized: Record<string, unknown> = {}
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === "generated_at" || key === "observed_at" || key === "duration_ms") continue
+    normalized[key] = normalizeStableExecutionValue(nested)
+  }
+  return normalized
 }

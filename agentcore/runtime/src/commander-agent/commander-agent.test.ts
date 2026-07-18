@@ -186,6 +186,10 @@ describe("Commander AI SDK model adapter", () => {
     const ignoredRequired = startMockServer("text")
     const required = baseRequest({ baseUrl: ignoredRequired.url, content: "text despite required", overrides: { tool_choice: "required" } })
     await expect(required.adapter.executeOneStep(required.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
+
+    const droppedTool = startMockServer("empty_tool_finish")
+    const dropped = baseRequest({ baseUrl: droppedTool.url, content: "tool finish without call" })
+    await expect(dropped.adapter.executeOneStep(dropped.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
   })
 
   test("streaming emits text, tool call events, usage, completed result, and uses the same request", async () => {
@@ -343,6 +347,14 @@ describe("Commander tool executor", () => {
     expect(Buffer.byteLength(message.content)).toBeLessThanOrEqual(12_000)
   })
 
+  test("executor hashes ignore nested volatile handler timestamps", async () => {
+    const { executor } = executorFixture({ volatileReadLinesTool: "repo.read_lines" })
+    const first = await executor.execute(baseExecution({ tool_id: "repo.read_lines", arguments: { path: "src/index.ts" }, tool_call_id: "call_read" }))
+    const second = await executor.execute(baseExecution({ tool_id: "repo.read_lines", arguments: { path: "src/index.ts" }, tool_call_id: "call_read" }))
+    expect(first.result_hash).toBe(second.result_hash)
+    expect(JSON.stringify(first.result)).not.toBe(JSON.stringify(second.result))
+  })
+
   test("executor propagates handler blockers instead of masking them as ready", async () => {
     const { executor } = executorFixture({ blockedTool: "memory.search" })
     const result = await executor.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" }, tool_call_id: "call_blocked" }))
@@ -461,7 +473,7 @@ function loopbackFetch(origin: string): typeof fetch {
   }) as typeof fetch
 }
 
-function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage" | "cache_usage") {
+function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "empty_tool_finish" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage" | "cache_usage") {
   const requests: Array<{ body: unknown; headers: Record<string, string> }> = []
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -487,6 +499,7 @@ function chatBody(kind: string) {
     if (kind === "multi_tool") tool_calls.push({ id: "call_git", type: "function", function: { name: "repo__git_status", arguments: "{}" } })
     return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: kind === "multi_tool" ? "checking tools" : null, tool_calls } }] }
   }
+  if (kind === "empty_tool_finish") return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [] } }] }
   if (kind === "json_fallback") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "tool_call", tool_id: "memory.search", arguments: { query: "research memory", limit: 3 } }) } }] }
   if (kind === "json_fallback_final") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "final", final: { summary: "done" } }) } }] }
   if (kind === "structured_invalid") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "{}" } }] }
@@ -525,12 +538,13 @@ function streamBody(kind: string) {
   return new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: "chunk", object: "chat.completion.chunk", created: 1, model: "fixture-model", ...chunk })}\n\n`)); controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close() } })
 }
 
-function testBindingRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; staleLowOutputBytesTool?: string; calls?: string[] } = {}) {
+function testBindingRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; staleLowOutputBytesTool?: string; volatileReadLinesTool?: string; calls?: string[] } = {}) {
   const calls = options.calls ?? []
   return createPatchedRegistry(options, calls)
 }
 
-function createPatchedRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; staleLowOutputBytesTool?: string }, calls: string[]) {
+function createPatchedRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; staleLowOutputBytesTool?: string; volatileReadLinesTool?: string }, calls: string[]) {
+  let volatileCounter = 0
   const registry = createCommanderToolBindingRegistry({
     commanderToolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
     commandAuthorityService: new CommandAuthorityService(),
@@ -552,6 +566,10 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
         if (options.staleLowOutputBytesTool === "repo.read_lines") {
           return { tool_id: "repo.read_lines", status: "ready", result: { lines: [{ line_number: 1, text: "x".repeat(100_000) }] }, output_bytes: 1, max_output_bytes: 18_000, git_process_invoked: false, evidence: [], warnings: ["stale low byte count"] }
         }
+        if (options.volatileReadLinesTool === "repo.read_lines") {
+          volatileCounter += 1
+          return { tool_id: "repo.read_lines", result: { generated_at: `2026-07-19T00:00:0${volatileCounter}.000Z`, lines: [{ line_number: 1, text: "x" }] }, git_process_invoked: false, evidence: [{ evidence_id: "ev_read", observed_at: `2026-07-19T00:00:1${volatileCounter}.000Z` }] }
+        }
         return { tool_id: "repo.read_lines", result: { lines: [{ line_number: 1, text: "x" }] }, git_process_invoked: false, evidence: [] }
       },
       gitStatus: async () => ({ tool_id: "repo.git_status", result: { is_git_repository: true }, git_process_invoked: true, evidence: [] }),
@@ -561,7 +579,7 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
   return registry
 }
 
-function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; staleLowOutputBytesTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void } } = {}) {
+function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; staleLowOutputBytesTool?: string; volatileReadLinesTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void } } = {}) {
   const calls: string[] = []
   const registry = createPatchedRegistry(options, calls)
   return { calls, executor: new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: registry, timeout: options.timeout }) }

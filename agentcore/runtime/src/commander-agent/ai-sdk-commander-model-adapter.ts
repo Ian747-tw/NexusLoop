@@ -233,6 +233,9 @@ function finalizeNativeStep(request: CommanderModelStepRequest, toolCalls: Comma
   if (toolCalls.length === 0 && request.tool_choice === "required" && !isRefusalFinishReason(finishReason)) {
     return finalizeStep(request, "malformed", { text: textForError.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned final output while tool_choice=required", streamed })
   }
+  if (toolCalls.length === 0 && isToolCallsFinishReason(finishReason)) {
+    return finalizeStep(request, "malformed", { text: textForError.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider ended with tool_calls but no valid tool call was normalized", streamed })
+  }
   const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(finishReason) ? "refusal" : "final"
   return finalizeStep(request, status, { text: finalText, toolCalls, usage, finishReason, requestCount, durationMs, streamed })
 }
@@ -339,6 +342,10 @@ function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "requ
 
 function isRefusalFinishReason(reason: string | undefined): boolean {
   return reason === "content-filter" || reason === "content_filter"
+}
+
+function isToolCallsFinishReason(reason: string | undefined): boolean {
+  return reason === "tool-calls" || reason === "tool_calls"
 }
 
 function isStructuredOutputValidationError(error: unknown): boolean {
