@@ -127,6 +127,12 @@ describe("Commander AI SDK model adapter", () => {
     expect(noUsageResult.status).toBe("final")
     expect(noUsageResult.usage.provider_reported).toBe(false)
     expect(noUsageResult.usage.total_tokens).toBeUndefined()
+
+    const structuredRate = startMockServer("http_429")
+    const structuredRateRequest = baseRequest({ baseUrl: structuredRate.url, overrides: { structured_output_schema: modelTool("memory.search").input_schema } })
+    const structuredRateResult = await structuredRateRequest.adapter.executeOneStep(structuredRateRequest.request)
+    expect(structuredRateResult.status).toBe("failed")
+    expect(structuredRateResult.request_count).toBe(1)
   })
 
   test("invalid native arguments are malformed at call level and native mode does not reinterpret JSON finals", async () => {
@@ -150,6 +156,10 @@ describe("Commander AI SDK model adapter", () => {
     expect(result.tool_calls[0]).toMatchObject({ tool_id: "memory.search", arguments_valid: true })
     expect(parseJsonFallback(JSON.stringify({ type: "final", final: { summary: "done" }, extra: true }), req.request.tools)).toMatchObject({ status: "malformed" })
     expect(parseJsonFallback("x".repeat(5000), req.request.tools)).toMatchObject({ status: "malformed" })
+
+    const refusal = startMockServer("refusal")
+    const refusalReq = baseRequest({ baseUrl: refusal.url, overrides: { tool_protocol: "json_fallback" } })
+    await expect(refusalReq.adapter.executeOneStep(refusalReq.request)).resolves.toMatchObject({ status: "refusal", request_count: 1 })
   })
 
   test("streaming emits text, tool call events, usage, completed result, and uses the same request", async () => {
@@ -163,6 +173,13 @@ describe("Commander AI SDK model adapter", () => {
     const completed = events.find((event) => event.type === "completed")
     expect(completed?.type === "completed" ? completed.result.request_count : 0).toBe(1)
     expect(mock.requests).toHaveLength(1)
+
+    const refusal = startMockServer("stream_refusal")
+    const refusalRequest = baseRequest({ baseUrl: refusal.url, overrides: { tool_protocol: "json_fallback" } })
+    const refusalEvents = []
+    for await (const event of refusalRequest.adapter.executeOneStreamedStep(refusalRequest.request)) refusalEvents.push(event)
+    const refusalCompleted = refusalEvents.find((event) => event.type === "completed")
+    expect(refusalCompleted?.type === "completed" ? refusalCompleted.result.status : "").toBe("refusal")
   })
 
   test("non-stream and stream provider failures and aborts remain one request", async () => {
@@ -279,6 +296,18 @@ describe("Commander tool executor", () => {
     await expect(oversized.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))).resolves.toMatchObject({ status: "failed", result: undefined })
   })
 
+  test("executor cancels tool timeout after a fast handler wins", async () => {
+    let cancelled = 0
+    const { executor } = executorFixture({
+      timeout: () => ({
+        promise: new Promise<never>(() => undefined),
+        cancel: () => { cancelled += 1 },
+      }),
+    })
+    await expect(executor.execute(baseExecution({ tool_id: "repo.read_lines", arguments: { path: "src/index.ts" } }))).resolves.toMatchObject({ status: "ready" })
+    expect(cancelled).toBe(1)
+  })
+
   test("RuntimeServer internal executor executes bound reads without appending events and rejects unbound implemented tools", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w1-"))
     await writeFile(join(projectDir, "safe.ts"), "export const safeValue = 1\n")
@@ -329,7 +358,7 @@ function loopbackFetch(origin: string): typeof fetch {
   }) as typeof fetch
 }
 
-function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "stream_tool" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage") {
+function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "json_fallback" | "stream_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage") {
   const requests: Array<{ body: unknown; headers: Record<string, string> }> = []
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -371,7 +400,12 @@ function streamBody(kind: string) {
         { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: " memory\",\"limit\":3}" } }] }, finish_reason: null }] },
         { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
       ]
-    : [
+    : kind === "stream_refusal"
+      ? [
+        { choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }], usage: { prompt_tokens: 11, completion_tokens: 0, total_tokens: 11 } },
+      ]
+      : [
         { choices: [{ index: 0, delta: { role: "assistant", content: "plain " }, finish_reason: null }] },
         { choices: [{ index: 0, delta: { content: "fixture" }, finish_reason: null }] },
         { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } },
@@ -405,7 +439,7 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
   return registry
 }
 
-function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> } = {}) {
+function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void } } = {}) {
   const calls: string[] = []
   const registry = createPatchedRegistry(options, calls)
   return { calls, executor: new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: registry, timeout: options.timeout }) }

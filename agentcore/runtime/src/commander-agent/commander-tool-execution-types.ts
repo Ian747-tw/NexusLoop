@@ -105,5 +105,5 @@ export type CommanderToolExecutorOptions = {
   authorityRecords: CommandAuthorityRecord[]
   bindingRegistry: CommanderToolBindingRegistry
   now?: () => Date
-  timeout?: (ms: number, signal?: AbortSignal) => Promise<never>
+  timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void }
 }

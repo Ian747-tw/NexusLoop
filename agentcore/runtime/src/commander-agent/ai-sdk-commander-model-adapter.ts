@@ -48,6 +48,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       })
       const toolCalls = request.tool_protocol === "native" ? normalizeToolCalls(request, result.toolCalls ?? []) : []
       if (request.tool_protocol === "json_fallback" && toolCalls.length === 0) {
+        if (isRefusalFinishReason(result.finishReason)) return finalizeStep(request, "refusal", { text: result.text, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
         const fallback = parseJsonFallback(result.text ?? "", request.tools)
         if (fallback.status === "tool_call") toolCalls.push(fallback.call)
         else if (fallback.status === "final") return finalizeStep(request, "final", { text: fallback.summary, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
@@ -61,7 +62,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(result.finishReason) ? "refusal" : "final"
       return finalizeStep(request, status, { text, toolCalls, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
     } catch (error) {
-      const status = request.abort_signal?.aborted ? "cancelled" : request.structured_output_schema ? "malformed" : "failed"
+      const status = request.abort_signal?.aborted ? "cancelled" : request.structured_output_schema && isStructuredOutputValidationError(error) ? "malformed" : "failed"
       return finalizeStep(request, status, { usage: { provider_reported: false }, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: boundedError(error, status === "cancelled" ? "request was cancelled" : status === "malformed" ? "structured output failed validation" : "AI SDK request failed") })
     }
   }
@@ -133,6 +134,11 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       }
       const toolCalls = Array.from(calls.values())
       if (request.tool_protocol === "json_fallback" && toolCalls.length === 0) {
+        if (isRefusalFinishReason(finishReason)) {
+          yield { type: "completed", result: finalizeStep(request, "refusal", { text, usage, finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, streamed: true }) }
+          completed = true
+          return
+        }
         const fallback = parseJsonFallback(text, request.tools)
         if (fallback.status === "tool_call") {
           yield { type: "tool_call_start", tool_call_id: fallback.call.tool_call_id, tool_id: fallback.call.tool_id }
@@ -280,6 +286,13 @@ function toolChoice(request: CommanderModelStepRequest): "auto" | "none" | "requ
 
 function isRefusalFinishReason(reason: string | undefined): boolean {
   return reason === "content-filter" || reason === "content_filter"
+}
+
+function isStructuredOutputValidationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const text = `${error.name} ${error.message}`
+  if (/(HTTP|status code|statusCode|429|500|rate limit|fetch failed|network|ECONN|ETIMEDOUT)/i.test(text)) return false
+  return /(structured|schema|validation|NoObjectGenerated|TypeValidation|object generated)/i.test(text)
 }
 
 function validateOptions(options: AiSdkCommanderModelAdapterOptions): void {

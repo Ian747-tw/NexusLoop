@@ -10,11 +10,11 @@ const SAFE_GIT_TOOL_IDS = new Set(["repo.git_status", "repo.git_diff"])
 
 export class CommanderToolExecutor {
   private readonly now: () => Date
-  private readonly timeout: (ms: number, signal?: AbortSignal) => Promise<never>
+  private readonly timeout: (ms: number, signal?: AbortSignal) => CommanderToolTimeout
 
   constructor(private readonly options: CommanderToolExecutorOptions) {
     this.now = options.now ?? (() => new Date())
-    this.timeout = options.timeout ?? defaultTimeout
+    this.timeout = options.timeout ? (ms, signal) => normalizeTimeout(options.timeout!(ms, signal)) : defaultTimeout
   }
 
   async execute(request: CommanderToolExecutionRequest): Promise<CommanderToolExecutionResult> {
@@ -31,10 +31,10 @@ export class CommanderToolExecutor {
     if (!validated.valid) {
       return this.result(request, descriptor, "blocked", false, undefined, started, generatedAt, validated.errors)
     }
-    let timeoutHandle: Promise<never> | undefined
+    let timeoutHandle: CommanderToolTimeout | undefined
     try {
       timeoutHandle = this.timeout(descriptor.timeout_ms, request.abort_signal)
-      timeoutHandle.catch(() => undefined)
+      timeoutHandle.promise.catch(() => undefined)
       const handler = Promise.resolve(binding.execute({
         phase: request.phase,
         requested_by: request.requested_by,
@@ -42,12 +42,14 @@ export class CommanderToolExecutor {
         abort_signal: request.abort_signal,
         now: this.now,
       }, validated.arguments))
-      const raw = await Promise.race([handler, timeoutHandle])
+      const raw = await Promise.race([handler, timeoutHandle.promise])
       const outcome = handlerOutcome(raw)
       return this.result(request, descriptor, outcome.status, true, raw, started, generatedAt, outcome.blockers, undefined, outcome.warnings)
     } catch (error) {
       const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|cancel/i.test(error.message))
       return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, undefined, started, generatedAt, [], error)
+    } finally {
+      timeoutHandle?.cancel()
     }
   }
 
@@ -172,14 +174,41 @@ function handlerOutcome(value: unknown): { status: CommanderToolExecutionResult[
   return { status: "ready", blockers, warnings }
 }
 
-function defaultTimeout(ms: number, signal?: AbortSignal): Promise<never> {
-  return new Promise((_, reject) => {
-    const timer = setTimeout(() => reject(new Error("Commander tool execution timed out")), Math.max(1, ms))
-    signal?.addEventListener("abort", () => {
-      clearTimeout(timer)
+type CommanderToolTimeout = {
+  promise: Promise<never>
+  cancel: () => void
+}
+
+function defaultTimeout(ms: number, signal?: AbortSignal): CommanderToolTimeout {
+  let settled = false
+  let onAbort: (() => void) | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const promise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      settled = true
+      reject(new Error("Commander tool execution timed out"))
+    }, Math.max(1, ms))
+    onAbort = () => {
+      if (timer) clearTimeout(timer)
+      settled = true
       reject(new Error("Commander tool execution cancelled"))
-    }, { once: true })
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
   })
+  return {
+    promise,
+    cancel: () => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      signal && onAbort && signal.removeEventListener("abort", onAbort)
+    },
+  }
+}
+
+function normalizeTimeout(timeout: Promise<never> | CommanderToolTimeout): CommanderToolTimeout {
+  const candidate = timeout as Partial<CommanderToolTimeout>
+  return candidate.promise && typeof candidate.cancel === "function" ? candidate as CommanderToolTimeout : { promise: timeout as Promise<never>, cancel: () => undefined }
 }
 
 function hash(value: unknown): string {
