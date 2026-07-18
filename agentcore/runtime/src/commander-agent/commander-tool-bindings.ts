@@ -32,7 +32,7 @@ export function createCommanderToolBindingRegistry(deps: CommanderToolBindingDep
     make("commander.tool_get", (_ctx, args) => deps.commanderToolService.get(args)),
     make("commander.tool_profile", (_ctx, args) => deps.commanderToolService.profile(args)),
     make("authority.describe", (_ctx, args) => deps.commandAuthorityService.get(String(args.command ?? ""))),
-    make("memory.search", (_ctx, args) => deps.researchMemoryService.preview(args)),
+    make("memory.search", (_ctx, args) => deps.researchMemoryService.preview(memorySearchArgs(args))),
     make("continuity.search", (_ctx, args) => deps.operationalMemorySearchService.search(args)),
     make("repo.search_text", (_ctx, args) => deps.repoReadService.searchText(args)),
     make("repo.read_lines", (_ctx, args) => deps.repoReadService.readLines(args)),
@@ -48,6 +48,15 @@ export function createCommanderToolBindingRegistry(deps: CommanderToolBindingDep
       duplicate_tool_ids: duplicates,
       tool_ids: bindings.map((item) => item.tool_id),
     },
+  }
+}
+
+function memorySearchArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const labels = args.labels
+  if (typeof labels !== "string") return args
+  return {
+    ...args,
+    labels: labels.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 12),
   }
 }
 

@@ -222,6 +222,8 @@ describe("Commander AI SDK model adapter", () => {
     })
     await request.adapter.executeOneStep(request.request)
     expect(mock.requests).toHaveLength(1)
+    const body = mock.requests[0].body as { messages: Array<{ tool_calls?: Array<{ function?: { arguments?: string } }> }> }
+    expect(body.messages[1].tool_calls?.[0].function?.arguments).toBe(JSON.stringify({ query: "x" }))
     const bad = baseRequest({ baseUrl: mock.url, overrides: { messages: [{ role: "tool", tool_call_id: "missing", tool_id: "memory.search", content: "{}", content_hash: "x", truncated: false }] } })
     await expect(bad.adapter.executeOneStep(bad.request)).resolves.toMatchObject({ status: "failed" })
   })
@@ -271,6 +273,12 @@ describe("Commander tool executor", () => {
     expect(message.tool_call_id).toBe("call_blocked")
     expect(message.content).toContain("\"status\":\"blocked\"")
     expect(message.content).toContain("handler denied bounded read")
+  })
+
+  test("memory search binding normalizes descriptor string labels before preview", async () => {
+    const { executor, calls } = executorFixture()
+    await expect(executor.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x", labels: "finding, failure" } }))).resolves.toMatchObject({ status: "ready" })
+    expect(calls).toContain("memory.labels:finding|failure")
   })
 
   test("executor treats handler empty results as successful bounded execution", async () => {
@@ -422,10 +430,11 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
   const registry = createCommanderToolBindingRegistry({
     commanderToolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
     commandAuthorityService: new CommandAuthorityService(),
-    researchMemoryService: { preview: () => {
+    researchMemoryService: { preview: (args: { labels?: unknown }) => {
       if (options.failTool === "memory.search") throw new Error("boom secret-api-key")
       if (options.blockedTool === "memory.search") return { status: "blocked", blockers: ["handler denied bounded read"], warnings: ["handler warning"], evidence: [] }
       if (options.emptyTool === "memory.search") return { status: "empty", blockers: [], warnings: ["empty warning"], evidence: [] }
+      if (Array.isArray(args.labels)) calls.push(`memory.labels:${args.labels.join("|")}`)
       return options.oversizedTool === "memory.search" ? { value: "x".repeat(100_000) } : { tool_id: "memory.search", evidence: [] }
     } } as unknown as ResearchMemoryService,
     operationalMemorySearchService: { search: async () => new Promise((resolve) => setTimeout(() => resolve({ tool_id: "continuity.search" }), 5)) } as unknown as CommanderOperationalMemorySearchService,

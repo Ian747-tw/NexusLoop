@@ -226,7 +226,7 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
       const content = message.content.map((part) => {
         if (part.type === "text") return { type: "text", text: part.text }
         toolCallIds.add(part.tool_call_id)
-        return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments }
+        return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments, args: part.arguments }
       })
       messages.push({ role: "assistant", content } as ModelMessage)
     }
