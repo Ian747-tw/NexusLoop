@@ -146,7 +146,9 @@ export function toCommanderToolResultMessage(executionResult: CommanderToolExecu
   let truncated = false
   if (Buffer.byteLength(content) > maxBytes) {
     truncated = true
-    content = JSON.stringify({ status: executionResult.status, tool_id: executionResult.tool_id, omitted_result: true, warnings: executionResult.warnings.slice(0, 8) })
+    content = JSON.stringify({ status: executionResult.status, tool_id: executionResult.tool_id, omitted_result: true, warnings: executionResult.warnings.slice(0, 8).map((item) => item.slice(0, 200)) })
+    if (Buffer.byteLength(content) > maxBytes) content = JSON.stringify({ status: executionResult.status, tool_id: executionResult.tool_id, omitted_result: true })
+    if (Buffer.byteLength(content) > maxBytes) content = "{}".slice(0, Math.max(0, maxBytes))
   }
   return {
     role: "tool",

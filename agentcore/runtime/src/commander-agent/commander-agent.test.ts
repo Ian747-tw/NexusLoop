@@ -415,7 +415,11 @@ describe("Commander tool executor", () => {
     const failure = executorFixture({ failTool: "memory.search" }).executor
     await expect(failure.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))).resolves.toMatchObject({ status: "failed", handler_invoked: true })
     const oversized = executorFixture({ oversizedTool: "memory.search" }).executor
-    await expect(oversized.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))).resolves.toMatchObject({ status: "failed", result: undefined })
+    const oversizedResult = await oversized.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))
+    expect(oversizedResult).toMatchObject({ status: "failed", result: undefined })
+    const oversizedMessage = toCommanderToolResultMessage({ ...oversizedResult, warnings: ["x".repeat(50_000)] })
+    expect(Buffer.byteLength(oversizedMessage.content)).toBeLessThanOrEqual(12_000)
+    expect(oversizedMessage.truncated).toBe(true)
     const staleLowBytes = executorFixture({ staleLowOutputBytesTool: "repo.read_lines" }).executor
     await expect(staleLowBytes.execute(baseExecution({ tool_id: "repo.read_lines", arguments: { path: "src/index.ts" } }))).resolves.toMatchObject({ status: "failed", result: undefined, output_bytes: 0 })
   })
