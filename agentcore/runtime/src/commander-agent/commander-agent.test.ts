@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { $ } from "bun"
+import { NoSuchToolError } from "ai"
 import { RuntimeServer } from "../server"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
@@ -225,6 +226,10 @@ describe("Commander AI SDK model adapter", () => {
     const cancelled = await promise
     expect(cancelled.status).toBe("cancelled")
     expect(cancelled.request_count).toBeLessThanOrEqual(1)
+
+    const noSuchTool = baseRequest({ baseUrl: "http://127.0.0.1:1" })
+    const adapter = new AiSdkCommanderModelStepAdapter({ provider_name: "fixture_provider", base_url: "http://127.0.0.1:1", api_key: "fixture-key", fetch: (async () => { throw new NoSuchToolError({ toolName: "repo__missing" }) }) as unknown as typeof fetch })
+    await expect(adapter.executeOneStep(noSuchTool.request)).resolves.toMatchObject({ status: "malformed", request_count: 1 })
   })
 
   test("message conversion replays multiple assistant tool calls and rejects mismatched tool results", async () => {

@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
-import { generateText, jsonSchema, Output, streamText, tool, type ModelMessage } from "ai"
+import { generateText, InvalidToolInputError, jsonSchema, NoSuchToolError, Output, streamText, tool, type ModelMessage } from "ai"
 import { redactText, redactValue } from "../security/redaction"
 import { buildProviderToolMap, makeCommanderToolCall, parseJsonFallback, providerJsonSchema, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelToolCallPart, CommanderModelUsage } from "./commander-model-types"
@@ -67,8 +67,9 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(result.finishReason) ? "refusal" : "final"
       return finalizeStep(request, status, { text, toolCalls, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
     } catch (error) {
-      const status = request.abort_signal?.aborted ? "cancelled" : request.structured_output_schema && isStructuredOutputValidationError(error) ? "malformed" : "failed"
-      return finalizeStep(request, status, { usage: { provider_reported: false }, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: boundedError(error, status === "cancelled" ? "request was cancelled" : status === "malformed" ? "structured output failed validation" : "AI SDK request failed") })
+      const toolValidationError = request.tool_protocol === "native" && isAiSdkToolCallValidationError(error)
+      const status = request.abort_signal?.aborted ? "cancelled" : toolValidationError || request.structured_output_schema && isStructuredOutputValidationError(error) ? "malformed" : "failed"
+      return finalizeStep(request, status, { usage: { provider_reported: false }, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: boundedError(error, status === "cancelled" ? "request was cancelled" : toolValidationError ? "native tool call failed validation" : status === "malformed" ? "structured output failed validation" : "AI SDK request failed") })
     }
   }
 
@@ -177,6 +178,10 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     } catch (error) {
       if (request.abort_signal?.aborted) {
         yield { type: "cancelled", error: "request was cancelled" }
+        return
+      }
+      if (request.tool_protocol === "native" && isAiSdkToolCallValidationError(error)) {
+        yield { type: "completed", result: finalizeStep(request, "malformed", { usage: { provider_reported: false }, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: boundedError(error, "native tool call failed validation"), streamed: true }) }
         return
       }
       yield { type: "error", error: boundedError(error, "AI SDK stream failed") }
@@ -331,6 +336,10 @@ function isStructuredOutputValidationError(error: unknown): boolean {
   const text = `${error.name} ${error.message}`
   if (/(HTTP|status code|statusCode|429|500|rate limit|fetch failed|network|ECONN|ETIMEDOUT)/i.test(text)) return false
   return /(structured|schema|validation|NoObjectGenerated|TypeValidation|object generated)/i.test(text)
+}
+
+function isAiSdkToolCallValidationError(error: unknown): boolean {
+  return NoSuchToolError.isInstance(error) || InvalidToolInputError.isInstance(error)
 }
 
 function validateOptions(options: AiSdkCommanderModelAdapterOptions): void {
