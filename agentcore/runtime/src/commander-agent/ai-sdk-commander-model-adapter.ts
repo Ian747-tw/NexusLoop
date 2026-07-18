@@ -48,11 +48,15 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       })
       const toolCalls = request.tool_protocol === "native" ? normalizeToolCalls(request, result.toolCalls ?? []) : []
       if (request.tool_protocol === "json_fallback" && toolCalls.length === 0) {
-        if (isRefusalFinishReason(result.finishReason)) return finalizeStep(request, "refusal", { text: result.text, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
-        const fallback = parseJsonFallback(result.text ?? "", request.tools)
-        if (fallback.status === "tool_call") toolCalls.push(fallback.call)
-        else if (fallback.status === "final") return finalizeStep(request, "final", { text: fallback.summary, usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started })
-        else return finalizeStep(request, "malformed", { text: result.text?.slice(0, 256), usage: aiSdkUsage(result.usage), finishReason: result.finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: fallback.error })
+        const fallback = finalizeJsonFallbackStep(request, {
+          text: result.text ?? "",
+          usage: aiSdkUsage(result.usage),
+          finishReason: result.finishReason,
+          requestCount: measured.requestCount(),
+          durationMs: Date.now() - started,
+        })
+        if (fallback.status !== "tool_call") return fallback.result
+        toolCalls.push(fallback.call)
       }
       if (request.structured_output_schema && toolCalls.length === 0) {
         const validation = validateCommanderToolArguments(request.structured_output_schema, result.output)
@@ -134,22 +138,15 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       }
       const toolCalls = Array.from(calls.values())
       if (request.tool_protocol === "json_fallback" && toolCalls.length === 0) {
-        if (isRefusalFinishReason(finishReason)) {
-          yield { type: "completed", result: finalizeStep(request, "refusal", { text, usage, finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, streamed: true }) }
-          completed = true
-          return
-        }
-        const fallback = parseJsonFallback(text, request.tools)
+        const fallback = finalizeJsonFallbackStep(request, { text, usage, finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, streamed: true })
         if (fallback.status === "tool_call") {
           yield { type: "tool_call_start", tool_call_id: fallback.call.tool_call_id, tool_id: fallback.call.tool_id }
           yield { type: "tool_call_complete", tool_call: fallback.call }
           toolCalls.push(fallback.call)
-        } else if (fallback.status === "malformed") {
-          yield { type: "completed", result: finalizeStep(request, "malformed", { text: text.slice(0, 256), usage, finishReason, requestCount: measured.requestCount(), durationMs: Date.now() - started, error: fallback.error, streamed: true }) }
+        } else {
+          yield { type: "completed", result: fallback.result }
           completed = true
           return
-        } else {
-          text = fallback.summary
         }
       }
       if (request.structured_output_schema && toolCalls.length === 0) {
@@ -215,6 +212,26 @@ function structuredOutput(request: CommanderModelStepRequest) {
 function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ toolName: string; input?: unknown; toolCallId: string }>): CommanderModelToolCallPart[] {
   const map = buildProviderToolMap(request.tools)
   return calls.map((call) => makeCommanderToolCall(map.get(call.toolName), call.toolName, call.input ?? {}, call.toolCallId, "native"))
+}
+
+function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { text: string; usage: CommanderModelUsage; finishReason?: string; requestCount: number; durationMs: number; streamed?: boolean }): { status: "tool_call"; call: CommanderModelToolCallPart } | { status: "final" | "refusal" | "malformed"; result: CommanderModelStepResult } {
+  if (isRefusalFinishReason(input.finishReason)) {
+    return { status: "refusal", result: finalizeStep(request, "refusal", { text: input.text, usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, streamed: input.streamed }) }
+  }
+  const fallback = parseJsonFallback(input.text, request.tools)
+  if (fallback.status === "tool_call") {
+    if (request.tool_choice === "none") {
+      return { status: "malformed", result: finalizeStep(request, "malformed", { text: input.text.slice(0, 256), usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, error: "json_fallback returned a tool_call while tool_choice=none", streamed: input.streamed }) }
+    }
+    return { status: "tool_call", call: fallback.call }
+  }
+  if (fallback.status === "final") {
+    if (request.tool_choice === "required") {
+      return { status: "malformed", result: finalizeStep(request, "malformed", { text: fallback.summary, usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, error: "json_fallback returned final output while tool_choice=required", streamed: input.streamed }) }
+    }
+    return { status: "final", result: finalizeStep(request, "final", { text: fallback.summary, usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, streamed: input.streamed }) }
+  }
+  return { status: "malformed", result: finalizeStep(request, "malformed", { text: input.text.slice(0, 256), usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, error: fallback.error, streamed: input.streamed }) }
 }
 
 function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
