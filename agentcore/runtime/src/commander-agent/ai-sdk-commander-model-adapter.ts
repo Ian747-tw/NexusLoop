@@ -234,7 +234,7 @@ function finalizeNativeStep(request: CommanderModelStepRequest, toolCalls: Comma
     return finalizeStep(request, "malformed", { text: textForError.slice(0, 256), usage, finishReason, requestCount, durationMs, error: "native provider returned final output while tool_choice=required", streamed })
   }
   const status = toolCalls.length ? "tool_call" : isRefusalFinishReason(finishReason) ? "refusal" : "final"
-  return finalizeStep(request, status, { text: toolCalls.length ? undefined : finalText, toolCalls, usage, finishReason, requestCount, durationMs, streamed })
+  return finalizeStep(request, status, { text: finalText, toolCalls, usage, finishReason, requestCount, durationMs, streamed })
 }
 
 function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { text: string; usage: CommanderModelUsage; finishReason?: string; requestCount: number; durationMs: number; streamed?: boolean }): { status: "tool_call"; call: CommanderModelToolCallPart } | { status: "final" | "refusal" | "malformed"; result: CommanderModelStepResult } {

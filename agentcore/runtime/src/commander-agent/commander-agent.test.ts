@@ -66,7 +66,7 @@ describe("Commander AI SDK model adapter", () => {
     const request = baseRequest({ baseUrl: mock.url, content: "multi tool" })
     const result = await request.adapter.executeOneStep(request.request)
     expect(result.status).toBe("tool_call")
-    expect(result.assistant_message?.content.filter((part) => part.type === "tool_call").map((part) => part.tool_call_id)).toEqual(["call_memory", "call_git"])
+    expect(result.assistant_message?.content.map((part) => part.type === "text" ? part.text : part.tool_call_id)).toEqual(["checking tools", "call_memory", "call_git"])
     expect(providerToolNameFor("repo.git_status")).toBe("repo__git_status")
     expect(providerToolNameFor("repo.some_tool")).toBe("repo__some_tool")
   })
@@ -444,7 +444,7 @@ function chatBody(kind: string) {
   if (kind === "tool" || kind === "multi_tool" || kind === "malformed_tool") {
     const tool_calls = [{ id: "call_memory", type: "function", function: { name: "memory__search", arguments: kind === "malformed_tool" ? JSON.stringify({ query: 7 }) : JSON.stringify({ query: "research memory", limit: 3 }) } }]
     if (kind === "multi_tool") tool_calls.push({ id: "call_git", type: "function", function: { name: "repo__git_status", arguments: "{}" } })
-    return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls } }] }
+    return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: kind === "multi_tool" ? "checking tools" : null, tool_calls } }] }
   }
   if (kind === "json_fallback") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "tool_call", tool_id: "memory.search", arguments: { query: "research memory", limit: 3 } }) } }] }
   if (kind === "json_fallback_final") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "final", final: { summary: "done" } }) } }] }

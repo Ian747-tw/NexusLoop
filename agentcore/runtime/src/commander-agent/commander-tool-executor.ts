@@ -164,7 +164,8 @@ function gitInvoked(value: unknown): boolean {
 }
 
 function measuredOutputBytes(value: unknown): number {
-  const serializedBytes = value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value))
+  const payload = value && typeof value === "object" && "result" in value ? (value as { result?: unknown }).result : value
+  const serializedBytes = payload === undefined ? 0 : Buffer.byteLength(JSON.stringify(payload))
   if (value && typeof value === "object") {
     const outputBytes = (value as { output_bytes?: unknown }).output_bytes
     if (typeof outputBytes === "number" && Number.isFinite(outputBytes) && outputBytes >= 0) return Math.max(Math.floor(outputBytes), serializedBytes)
