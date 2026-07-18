@@ -234,6 +234,15 @@ describe("Commander AI SDK model adapter", () => {
     expect(body.messages[1].tool_calls?.[0].function?.arguments).toBe(JSON.stringify({ query: "x" }))
     const bad = baseRequest({ baseUrl: mock.url, overrides: { messages: [{ role: "tool", tool_call_id: "missing", tool_id: "memory.search", content: "{}", content_hash: "x", truncated: false }] } })
     await expect(bad.adapter.executeOneStep(bad.request)).resolves.toMatchObject({ status: "failed" })
+    const wrongTool = baseRequest({ baseUrl: mock.url, overrides: {
+      messages: [
+        { role: "user", content: "call tool" },
+        { role: "assistant", content: [{ type: "tool_call", tool_call_id: "call_a", tool_id: "memory.search", arguments: { query: "x" }, arguments_valid: true, validation_errors: [], call_hash: "h1" }] },
+        { role: "tool", tool_call_id: "call_a", tool_id: "repo.git_status", content: "{}", content_hash: "wrong", truncated: false },
+      ],
+      tools: [tool1, tool2],
+    } })
+    await expect(wrongTool.adapter.executeOneStep(wrongTool.request)).resolves.toMatchObject({ status: "failed" })
   })
 })
 
@@ -292,6 +301,14 @@ describe("Commander tool executor", () => {
   test("executor treats handler empty results as successful bounded execution", async () => {
     const { executor } = executorFixture({ emptyTool: "memory.search" })
     await expect(executor.execute(baseExecution({ tool_id: "memory.search", arguments: { query: "x" } }))).resolves.toMatchObject({ status: "ready", handler_invoked: true })
+  })
+
+  test("executor accepts already bounded domain results near descriptor caps", async () => {
+    const { executor } = executorFixture({ boundedLargeTool: "repo.read_lines" })
+    const result = await executor.execute(baseExecution({ tool_id: "repo.read_lines", arguments: { path: "src/index.ts" } }))
+    expect(result.status).toBe("ready")
+    expect(result.result).toBeDefined()
+    expect(result.output_bytes).toBeLessThanOrEqual(result.max_output_bytes)
   })
 
   test("executor allows only fixed Git status and diff process-backed bindings", async () => {
@@ -430,12 +447,12 @@ function streamBody(kind: string) {
   return new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ id: "chunk", object: "chat.completion.chunk", created: 1, model: "fixture-model", ...chunk })}\n\n`)); controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close() } })
 }
 
-function testBindingRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; calls?: string[] } = {}) {
+function testBindingRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; calls?: string[] } = {}) {
   const calls = options.calls ?? []
   return createPatchedRegistry(options, calls)
 }
 
-function createPatchedRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string }, calls: string[]) {
+function createPatchedRegistry(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string }, calls: string[]) {
   const registry = createCommanderToolBindingRegistry({
     commanderToolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
     commandAuthorityService: new CommandAuthorityService(),
@@ -449,7 +466,13 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
     operationalMemorySearchService: { search: async () => new Promise((resolve) => setTimeout(() => resolve({ tool_id: "continuity.search" }), 5)) } as unknown as CommanderOperationalMemorySearchService,
     repoReadService: {
       searchText: async () => ({ tool_id: "repo.search_text", result: { matches: [] }, git_process_invoked: false, evidence: [] }),
-      readLines: async () => { calls.push("repo.read_lines"); return { tool_id: "repo.read_lines", result: { lines: [{ line_number: 1, text: "x" }] }, git_process_invoked: false, evidence: [] } },
+      readLines: async () => {
+        calls.push("repo.read_lines")
+        if (options.boundedLargeTool === "repo.read_lines") {
+          return { tool_id: "repo.read_lines", status: "ready", result: { lines: [{ line_number: 1, text: "x".repeat(17_000) }] }, output_bytes: 17_900, max_output_bytes: 18_000, git_process_invoked: false, evidence: [], warnings: ["domain result trimmed near cap"] }
+        }
+        return { tool_id: "repo.read_lines", result: { lines: [{ line_number: 1, text: "x" }] }, git_process_invoked: false, evidence: [] }
+      },
       gitStatus: async () => ({ tool_id: "repo.git_status", result: { is_git_repository: true }, git_process_invoked: true, evidence: [] }),
       gitDiff: async () => ({ tool_id: "repo.git_diff", result: { files: [] }, git_process_invoked: true, evidence: [] }),
     } as unknown as CommanderRepoReadService,
@@ -457,7 +480,7 @@ function createPatchedRegistry(options: { failTool?: string; oversizedTool?: str
   return registry
 }
 
-function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void } } = {}) {
+function executorFixture(options: { failTool?: string; oversizedTool?: string; blockedTool?: string; emptyTool?: string; boundedLargeTool?: string; timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void } } = {}) {
   const calls: string[] = []
   const registry = createPatchedRegistry(options, calls)
   return { calls, executor: new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: registry, timeout: options.timeout }) }

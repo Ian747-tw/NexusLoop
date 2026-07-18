@@ -82,7 +82,7 @@ export class CommanderToolExecutor {
   private result(request: CommanderToolExecutionRequest, descriptor: typeof this.options.descriptors[number] | undefined, status: CommanderToolExecutionResult["status"], invoked: boolean, rawResult: unknown, started: number, generatedAt: string, blockers: string[], error?: unknown, handlerWarnings: string[] = []): CommanderToolExecutionResult {
     const maxOutputBytes = descriptor?.max_output_bytes ?? 8_000
     const safeResult = rawResult === undefined ? undefined : redactValue(rawResult)
-    const bytes = safeResult === undefined ? 0 : Buffer.byteLength(JSON.stringify(safeResult))
+    const bytes = measuredOutputBytes(safeResult)
     const oversized = bytes > maxOutputBytes
     const finalStatus = oversized && status === "ready" ? "failed" : status
     const result: CommanderToolExecutionResult = {
@@ -161,6 +161,14 @@ function extractEvidence(value: unknown) {
 
 function gitInvoked(value: unknown): boolean {
   return !!value && typeof value === "object" && (value as { git_process_invoked?: unknown }).git_process_invoked === true
+}
+
+function measuredOutputBytes(value: unknown): number {
+  if (value && typeof value === "object") {
+    const outputBytes = (value as { output_bytes?: unknown }).output_bytes
+    if (typeof outputBytes === "number" && Number.isFinite(outputBytes) && outputBytes >= 0) return Math.floor(outputBytes)
+  }
+  return value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value))
 }
 
 function handlerOutcome(value: unknown): { status: CommanderToolExecutionResult["status"]; blockers: string[]; warnings: string[] } {

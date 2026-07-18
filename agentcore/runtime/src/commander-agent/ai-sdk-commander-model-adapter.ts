@@ -236,19 +236,21 @@ function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { t
 
 function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   const messages: ModelMessage[] = []
-  const toolCallIds = new Set<string>()
+  const toolCallIds = new Map<string, string>()
   for (const message of request.messages) {
     if (message.role === "system" || message.role === "user") messages.push({ role: message.role, content: message.content })
     if (message.role === "assistant") {
       const content = message.content.map((part) => {
         if (part.type === "text") return { type: "text", text: part.text }
-        toolCallIds.add(part.tool_call_id)
+        toolCallIds.set(part.tool_call_id, part.tool_id)
         return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments, args: part.arguments }
       })
       messages.push({ role: "assistant", content } as ModelMessage)
     }
     if (message.role === "tool") {
-      if (!toolCallIds.has(message.tool_call_id)) throw new Error("tool result message does not follow matching assistant tool call")
+      const expectedToolId = toolCallIds.get(message.tool_call_id)
+      if (!expectedToolId) throw new Error("tool result message does not follow matching assistant tool call")
+      if (expectedToolId !== message.tool_id) throw new Error("tool result message tool_id does not match originating assistant tool call")
       messages.push({ role: "tool", content: [{ type: "tool-result", toolCallId: message.tool_call_id, toolName: providerToolNameFromRequest(request, message.tool_id), output: { type: "text", value: message.content } }] } as ModelMessage)
     }
   }
