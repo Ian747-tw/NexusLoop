@@ -218,6 +218,13 @@ Branch 9U defines the Commander tool capability registry and investigation contr
 
 Branch 9V implements the first Commander internal read surfaces behind that registry. Commander may now manually inspect bounded operational continuity through typed projections, repository trees, literal text matches, line ranges, lexical symbol candidates, fixed read-only Git status/diff/log output, and test/dependency manifests. Repository and Git content is untrusted evidence with `instruction_semantics=none`; operational continuity search does not inspect raw event-log text. 9V reads are transient: they append no events, write no files or `research.db`, call no provider/MCP/network, create no proposals or missions, and perform no OpenCode action. The provider-driven tool loop remains future 9W.
 
+Branch 9W0 is an isolated SDK-fit spike for that future loop. It selects AI SDK
+Core as a one-step model transport/tool-call normalization layer beneath the
+NexusLoop Commander controller. SDK sessions are not NexusLoop memory, SDK
+traces are not the event ledger, SDK approvals are not authority, SDK tool
+execution is not NexusLoop tool execution, and SDK agent loops are not the
+Commander run controller.
+
 Future OpenCode launch modes should be explicit:
 
 - `fresh`

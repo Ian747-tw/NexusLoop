@@ -56,3 +56,8 @@ Test and dependency manifest tools inspect direct declarations in bounded manife
 All 9V commands are safe-read, append no events, write no files, write no `research.db`, call no provider/MCP/network, mutate no mission/proposal/review/apply state, and perform no OpenCode launch/prompt/process action.
 
 Future 9W may build a provider-neutral investigation loop on top of these descriptors. 9W must add any durable evidence working set explicitly; it must not infer persistence from 9V transient reads.
+
+Branch 9W0 does not replace these safety boundaries. It selects a lower
+model-step SDK fit only; repository readers, path denial, fixed Git reads,
+evidence redaction, and event-free read semantics remain NexusLoop runtime
+responsibilities.

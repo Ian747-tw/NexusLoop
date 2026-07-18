@@ -1,0 +1,159 @@
+{
+  "final_decision": "hybrid_ai_sdk_core_with_nexusloop_loop",
+  "weights": {
+    "authority_interception_fit": 25,
+    "provider_local_model_portability": 20,
+    "bun_compatibility": 15,
+    "tool_schema_fidelity": 15,
+    "streaming_cancellation_usage_fidelity": 10,
+    "testability_determinism": 5,
+    "dependency_footprint": 5,
+    "license_maintenance_risk": 5
+  },
+  "candidates": [
+    {
+      "candidate_id": "minimal_custom_adapter",
+      "decision_label": "not selected",
+      "package_versions": {},
+      "licenses": {},
+      "direct_dependency_count": 0,
+      "transitive_package_count": 0,
+      "installed_size_bytes": 0,
+      "cold_import_result": "pass",
+      "typecheck_result": "pass",
+      "deterministic_unit_result": "pass",
+      "local_openai_compatible_result": "fail",
+      "native_tool_call_result": "pass",
+      "json_fallback_result": "pass",
+      "streaming_result": "pass",
+      "cancellation_result": "pass",
+      "usage_result": "pass",
+      "schema_compatibility_result": "pass",
+      "authority_ownership_result": "pass",
+      "network_isolation_result": "pass",
+      "scores": {
+        "authority_interception_fit": 5,
+        "provider_local_model_portability": 2,
+        "bun_compatibility": 5,
+        "tool_schema_fidelity": 4,
+        "streaming_cancellation_usage_fidelity": 3,
+        "testability_determinism": 5,
+        "dependency_footprint": 5,
+        "license_maintenance_risk": 4
+      },
+      "weighted_score": 80,
+      "limitations": [
+        "Would require NexusLoop to own provider quirks, streaming normalization, native tool-call variants, and error taxonomy."
+      ],
+      "disqualified": false,
+      "disqualification_reasons": []
+    },
+    {
+      "candidate_id": "vercel_ai_sdk_core",
+      "decision_label": "selected transport under NexusLoop-owned loop",
+      "package_versions": {
+        "ai": "7.0.29",
+        "@ai-sdk/openai-compatible": "3.0.11"
+      },
+      "licenses": {
+        "ai": "Apache-2.0",
+        "@ai-sdk/openai-compatible": "Apache-2.0"
+      },
+      "direct_dependency_count": 2,
+      "transitive_package_count": 8,
+      "installed_size_bytes": 9122641,
+      "cold_import_result": "pass",
+      "typecheck_result": "pass",
+      "deterministic_unit_result": "pass",
+      "local_openai_compatible_result": "pass",
+      "native_tool_call_result": "pass",
+      "json_fallback_result": "pass",
+      "streaming_result": "pass",
+      "cancellation_result": "pass",
+      "usage_result": "pass",
+      "schema_compatibility_result": "pass",
+      "authority_ownership_result": "pass",
+      "network_isolation_result": "pass",
+      "scores": {
+        "authority_interception_fit": 5,
+        "provider_local_model_portability": 5,
+        "bun_compatibility": 5,
+        "tool_schema_fidelity": 5,
+        "streaming_cancellation_usage_fidelity": 4,
+        "testability_determinism": 5,
+        "dependency_footprint": 4,
+        "license_maintenance_risk": 5
+      },
+      "weighted_score": 97,
+      "limitations": [
+        "AI SDK Core should be used as one-step model transport only; ToolLoopAgent or stopWhen loops remain out of scope."
+      ],
+      "disqualified": false,
+      "disqualification_reasons": []
+    },
+    {
+      "candidate_id": "openai_agents_core",
+      "decision_label": "not selected",
+      "package_versions": {
+        "@openai/agents": "0.13.4",
+        "zod": "4.4.3"
+      },
+      "licenses": {
+        "@openai/agents": "MIT",
+        "zod": "MIT"
+      },
+      "direct_dependency_count": 2,
+      "transitive_package_count": 98,
+      "installed_size_bytes": 45512741,
+      "cold_import_result": "pass",
+      "typecheck_result": "pass",
+      "deterministic_unit_result": "pass",
+      "local_openai_compatible_result": "not_applicable",
+      "native_tool_call_result": "pass",
+      "json_fallback_result": "pass",
+      "streaming_result": "pass",
+      "cancellation_result": "pass",
+      "usage_result": "pass",
+      "schema_compatibility_result": "pass",
+      "authority_ownership_result": "pass",
+      "network_isolation_result": "pass",
+      "scores": {
+        "authority_interception_fit": 3,
+        "provider_local_model_portability": 2,
+        "bun_compatibility": 4,
+        "tool_schema_fidelity": 4,
+        "streaming_cancellation_usage_fidelity": 3,
+        "testability_determinism": 3,
+        "dependency_footprint": 2,
+        "license_maintenance_risk": 4
+      },
+      "weighted_score": 62,
+      "limitations": [
+        "Full Runner ownership conflicts with NexusLoop loop/tool/session authority; lower-level controlled usage is possible but less portable for OpenAI-compatible providers."
+      ],
+      "disqualified": true,
+      "disqualification_reasons": [
+        "Hard: Full Runner is disqualified as the production Commander controller path; lower-level controlled usage remains measured but did not win."
+      ]
+    }
+  ],
+  "hard_disqualifications": {
+    "minimal_custom_adapter": [],
+    "vercel_ai_sdk_core": [],
+    "openai_agents_core": [
+      "Full Runner path owns too much loop/tool/session/tracing behavior for NexusLoop; only lower-level controlled usage remains viable."
+    ]
+  },
+  "package_versions": {
+    "@ai-sdk/openai-compatible": "3.0.11",
+    "@openai/agents": "0.13.4",
+    "ai": "7.0.29",
+    "zod": "4.4.3"
+  },
+  "sdk_session_is_not_nexusloop_memory": true,
+  "sdk_trace_is_not_nexusloop_event_ledger": true,
+  "sdk_approval_is_not_nexusloop_authority": true,
+  "sdk_tool_execution_is_not_nexusloop_tool_execution": true,
+  "sdk_agent_loop_is_not_nexusloop_commander_controller": true,
+  "recommendation_9w1": "Build a NexusLoop-owned one-step model adapter boundary using AI SDK Core transport first, with Commander tool execution/kernel state remaining entirely in NexusLoop."
+}
