@@ -57,24 +57,36 @@ Branch 9V implements the first manual internal read surfaces. Branch 9W0 selects
 AI SDK Core as the generic model-step transport/tool-call normalization layer
 for future Commander investigation, but only underneath NexusLoop's controller.
 Branch 9W1 productionizes the AI SDK one-step adapter and NexusLoop-owned
-explicit tool executor. The future 9W2 provider-neutral investigation loop may
-select these tools, but NexusLoop keeps tool execution, run state, evidence
-persistence, authority, and governance.
+explicit tool executor. Branch 9W2A adds a bounded in-memory Commander
+investigation controller that composes bootstrap context, one model step at a
+time, loaded tool schemas, explicit read-tool execution, bounded tool-result
+replay, and stopping conditions. The controller is internal-only in 9W2A:
+provider connector wiring, durable working sets, public commands, and TUI
+activation remain future work.
 
 ```text
 NexusLoop domain control plane
--> future NexusLoop Commander run controller
+-> bounded in-memory Commander controller
 -> production AI SDK one-step adapter
 -> NexusLoop tool executor
 -> typed read services
+-> bounded in-memory working set
 ```
 
 The model SDK sits below the Commander controller. Tool schemas are derived from
-the NexusLoop registry. The SDK never executes NexusLoop tools directly. 9W1
-adds no provider loop, durable investigation run, proposal gate, or external
-read gateway. SDK session memory is not research or operational memory, and SDK
-tracing is disabled or non-authoritative. OpenCode remains the tactical
+the NexusLoop registry. The SDK never executes NexusLoop tools directly. 9W2A
+still adds no public provider loop, durable investigation run, proposal gate, or
+external read gateway. SDK session memory is not research or operational memory,
+and SDK tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
+
+Follow-on sequencing:
+
+- 9W2B: connector-backed provider transport and egress policy.
+- 9W3: durable Commander working set, pause/resume, and recovery.
+- 9X: external GitHub and research read gateway.
+- 9Y: evidence-backed proposal gate.
+- 9Z: GitHub governance intents and approval gate.
 
 ## Authority Model
 

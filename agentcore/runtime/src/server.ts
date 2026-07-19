@@ -175,7 +175,20 @@ import type { WakeSchedulerNavigationCheckpointApprovalUsageSummary, WakeSchedul
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
-import { createCommanderToolBindingRegistry, CommanderToolExecutor, type CommanderToolBindingRegistry, type CommanderToolExecutionRequest, type CommanderToolExecutionResult } from "./commander-agent"
+import {
+  createCommanderToolBindingRegistry,
+  CommanderInvestigationBootstrapService,
+  CommanderInvestigationContextService,
+  CommanderInvestigationController,
+  CommanderToolExecutor,
+  type CommanderInvestigationControlGate,
+  type CommanderInvestigationInput,
+  type CommanderInvestigationResult,
+  type CommanderModelStepAdapter,
+  type CommanderToolBindingRegistry,
+  type CommanderToolExecutionRequest,
+  type CommanderToolExecutionResult,
+} from "./commander-agent"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -269,6 +282,8 @@ export interface RuntimeServerOptions {
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
   commanderQueueNow?: () => Date
+  commanderModelStepAdapter?: CommanderModelStepAdapter
+  commanderInvestigationControlGate?: CommanderInvestigationControlGate
 }
 
 export interface RuntimeResearchDbReader {
@@ -360,6 +375,8 @@ export class RuntimeServer {
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
+  private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
+  private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
@@ -389,6 +406,9 @@ export class RuntimeServer {
   private commanderRepoReadServiceInstance: CommanderRepoReadService | null = null
   private commanderToolBindingRegistryInstance: CommanderToolBindingRegistry | null = null
   private commanderToolExecutorInstance: CommanderToolExecutor | null = null
+  private commanderInvestigationBootstrapServiceInstance: CommanderInvestigationBootstrapService | null = null
+  private commanderInvestigationContextServiceInstance: CommanderInvestigationContextService | null = null
+  private commanderInvestigationControllerInstance: CommanderInvestigationController | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -504,6 +524,8 @@ export class RuntimeServer {
     this.ownsResearchDb = options.researchDb === undefined
     this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir, { allowFtsProjectionRepair: this.runLock.isHeld() }))
     this.commanderQueueNow = options.commanderQueueNow
+    this.commanderModelStepAdapter = options.commanderModelStepAdapter
+    this.commanderInvestigationControlGate = options.commanderInvestigationControlGate
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
       ok: this.researchProjectionMode === "disabled",
@@ -2611,6 +2633,10 @@ export class RuntimeServer {
     return this.commanderToolExecutor().execute(input)
   }
 
+  runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
+    return this.commanderInvestigationController().run(input)
+  }
+
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
     return this.commanderContinuityService().proposal(input)
   }
@@ -4571,6 +4597,36 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderToolExecutorInstance
+  }
+
+  private commanderInvestigationBootstrapService(): CommanderInvestigationBootstrapService {
+    this.commanderInvestigationBootstrapServiceInstance ??= new CommanderInvestigationBootstrapService({
+      continuityService: this.commanderContinuityService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationBootstrapServiceInstance
+  }
+
+  private commanderInvestigationContextService(): CommanderInvestigationContextService {
+    this.commanderInvestigationContextServiceInstance ??= new CommanderInvestigationContextService()
+    return this.commanderInvestigationContextServiceInstance
+  }
+
+  private commanderInvestigationController(): CommanderInvestigationController {
+    this.commanderInvestigationControllerInstance ??= new CommanderInvestigationController({
+      modelAdapter: this.commanderModelStepAdapter,
+      toolExecutor: this.commanderToolExecutor(),
+      toolService: this.commanderToolService(),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
+      bootstrapService: this.commanderInvestigationBootstrapService(),
+      contextService: this.commanderInvestigationContextService(),
+      controlGate: this.commanderInvestigationControlGate,
+      capabilityRegistry: this.modelCapabilityRegistry,
+      contextBudgetService: this.contextBudgetService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationControllerInstance
   }
 
   private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {

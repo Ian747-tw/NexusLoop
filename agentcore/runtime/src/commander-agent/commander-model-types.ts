@@ -96,7 +96,7 @@ export type CommanderModelStreamEvent =
   | { type: "cancelled"; error?: string }
 
 export type CommanderModelStepAdapter = {
-  adapter_id: "ai_sdk_core"
+  adapter_id: string
   adapter_version: string
   supports_streaming: true
   supports_native_tools: true

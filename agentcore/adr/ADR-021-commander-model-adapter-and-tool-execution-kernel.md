@@ -107,6 +107,10 @@ But 9W1 itself has no autonomous provider loop, no Commander run records, no
 proposal generation, no external read gateway, and no user-facing runtime or TUI
 commands.
 
+Branch 9W2A now composes the 9W1 adapter and executor in a bounded in-memory
+controller. Provider connector/egress integration is split into 9W2B, and
+durable working-set/recovery remains 9W3.
+
 Existing one-shot MiniMax provider paths remain compatibility surfaces and are
 not migrated by 9W1.
 

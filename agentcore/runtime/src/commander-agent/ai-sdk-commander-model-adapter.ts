@@ -37,6 +37,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     try {
       const result = await generateText({
         model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
+        instructions: instructionsFromRequest(request),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
@@ -80,6 +81,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     try {
       const result = streamText({
         model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
+        instructions: instructionsFromRequest(request),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
@@ -264,10 +266,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   const messages: ModelMessage[] = []
   let pendingToolCalls = new Map<string, string>()
   for (const message of request.messages) {
-    if (message.role === "system" || message.role === "user") {
+    if (message.role === "system") continue
+    if (message.role === "user") {
       if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
       pendingToolCalls = new Map()
-      messages.push({ role: message.role, content: message.content })
+      messages.push({ role: "user", content: message.content })
     }
     if (message.role === "assistant") {
       if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
@@ -290,6 +293,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   }
   if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
   return messages
+}
+
+function instructionsFromRequest(request: CommanderModelStepRequest): string | undefined {
+  const instructions = request.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n")
+  return instructions ? redactText(instructions).slice(0, 12_000) : undefined
 }
 
 function providerToolNameFromRequest(request: CommanderModelStepRequest, toolId: string): string {
