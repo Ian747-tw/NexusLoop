@@ -78,6 +78,11 @@ investigation loop. ADR-020 selects AI SDK Core as a one-step transport/tool-cal
 normalization layer under a NexusLoop-owned loop. SDK agents, sessions, traces,
 and approvals are not authoritative NexusLoop state.
 
+9W1 productionizes that one-step adapter and adds an explicit binding registry
+for the first model-callable safe-read tools. Implemented descriptors are still
+not automatically model-callable; the binding allowlist is the execution seam.
+`provider_tool_loop_enabled` remains false until 9W2.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.
@@ -86,7 +91,7 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 
 - 9V: first-party Commander internal read tools.
 - 9W0: Commander agent-runtime SDK fit spike.
-- 9W1: Commander tool bindings and execution kernel.
+- 9W1: Commander model adapter and tool execution kernel.
 - 9W2: bounded provider-neutral Commander investigation loop.
 - 9W3: durable working set and pause/resume/recovery.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.

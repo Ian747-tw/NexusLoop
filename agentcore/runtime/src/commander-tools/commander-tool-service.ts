@@ -396,11 +396,11 @@ function scoreTool(tool: CommanderToolDescriptor, query: string, phase?: Command
   }
 }
 
-function isToolAllowedInPhase(tool: CommanderToolDescriptor, phase: CommanderToolPhase): boolean {
+export function isToolAllowedInPhase(tool: CommanderToolDescriptor, phase: CommanderToolPhase): boolean {
   return namespaceByPhase(phase).includes(tool.namespace) && tool.allowed_phases.includes(phase)
 }
 
-function namespaceByPhase(phase: CommanderToolPhase): CommanderToolNamespace[] {
+export function namespaceByPhase(phase: CommanderToolPhase): CommanderToolNamespace[] {
   switch (phase) {
     case "proposal_investigation":
       return ["core", "authority", "memory", "continuity", "runtime_read", "opencode_read", "repo_read", "github_read", "external_research"]
