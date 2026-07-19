@@ -483,6 +483,10 @@ describe("Commander in-memory investigation controller", () => {
     const adapter = new ScriptedCommanderModelStepAdapter([
       { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_search", { query: "research memory", limit: 20 })], assert_request: (request) => {
         expect(request.tools.map((tool) => tool.tool_id)).not.toContain("memory.search")
+        const workingSet = request.messages.find((message) => message.role === "user" && message.content.includes("commander_investigation_working_set"))
+        expect(workingSet?.content).toContain("json_fallback")
+        expect(workingSet?.content).toContain("commander.tool_search")
+        expect(workingSet?.content).toContain("response_contract")
       } },
       { status: "tool_call", tool_calls: [toolCall("c2", "commander.tool_get", { tool_id: "memory.search" })], assert_request: (request) => {
         expect(request.tools.map((tool) => tool.tool_id)).not.toContain("memory.search")
@@ -504,6 +508,24 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.turn_summaries[0].tool_ids).toEqual(["commander.tool_search"])
     expect(result.turn_summaries[1].newly_loaded_tool_ids).toEqual(["memory.search"])
     expect(await eventText(projectDir)).toBe(before)
+  })
+
+  test("tool_get for an ineligible target does not replay descriptor schema", async () => {
+    const adapter = new ScriptedCommanderModelStepAdapter([
+      { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_get", { tool_id: "repo.git_log" })] },
+      { status: "final", text: "chose another path", assert_request: (request) => {
+        const toolResult = request.messages.find((message) => message.role === "tool")
+        expect(toolResult?.content).toContain("not eligible")
+        expect(toolResult?.content).not.toContain("input_schema")
+        expect(toolResult?.content).not.toContain("Git commit history")
+      } },
+    ])
+    const server = new RuntimeServer({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-tool-get-block-")), commanderModelStepAdapter: adapter })
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_tool_get_block" }))
+    expect(result.status).toBe("final")
+    expect(result.loaded_tool_ids).not.toContain("repo.git_log")
+    expect(result.turn_summaries[0].tool_execution_statuses).toEqual(["blocked"])
+    expect(result.turn_summaries[0].newly_loaded_tool_ids).toEqual([])
   })
 
   test("unloaded and off-phase tool calls fail before execution", async () => {
@@ -554,7 +576,8 @@ describe("Commander in-memory investigation controller", () => {
         { status: "tool_call", tool_calls: [toolCall("s2", "commander.tool_search", { query: "b" })] },
       ]),
     })
-    await expect(searchCap.runCommanderInvestigationInMemory(baseInvestigation({ max_tool_search_calls: 1 }))).resolves.toMatchObject({ status: "budget_exhausted", stop_reason: "max_tool_search_calls" })
+    const searchCapResult = await searchCap.runCommanderInvestigationInMemory(baseInvestigation({ max_tool_search_calls: 1 }))
+    expect(searchCapResult).toMatchObject({ status: "budget_exhausted", stop_reason: "max_tool_search_calls", tool_search_call_count: 1, tool_call_count: 1 })
 
     const contextCap = new RuntimeServer({
       projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-context-cap-")),

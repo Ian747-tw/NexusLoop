@@ -253,7 +253,7 @@ export type CommanderInvestigationControllerOptions = {
   descriptors: CommanderToolDescriptor[]
   boundToolIds: readonly string[]
   bootstrapService: { compile(input: CommanderInvestigationInput): Promise<CommanderInvestigationBootstrap> }
-  contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[] }): CommanderInvestigationContext }
+  contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; toolProtocol: CommanderModelToolProtocol; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[] }): CommanderInvestigationContext }
   controlGate?: CommanderInvestigationControlGate
   capabilityRegistry: { get(input: { provider_kind?: string; model_id?: string }): { supports_tools: boolean | "unknown"; warnings: string[] } }
   contextBudgetService: { preview(input: Record<string, unknown>): Promise<{ budget: { budget_id: string; max_context_tokens?: number; max_context_bytes?: number; allocations: Array<{ section: string; max_tokens?: number; max_bytes?: number }> }; warnings: string[]; blockers: string[] }> }

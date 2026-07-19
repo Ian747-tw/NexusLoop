@@ -73,7 +73,7 @@ export class CommanderInvestigationController {
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
       if (Date.now() - started.getTime() > budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
 
-      const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), budget, latestAssistant, latestToolResults })
+      const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
       if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, context.warnings, started)
       const request: CommanderModelStepRequest = {
         request_id: `${investigationId}_turn_${turn}`,
@@ -122,22 +122,27 @@ export class CommanderInvestigationController {
         if (humanToolStop) return this.finish(input, investigationId, "needs_human_review", humanToolStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeTool.summary_preview ?? humanToolStop], humanBeforeTool.warnings, started)
         if (workingSet.tool_call_count >= budget.max_tool_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool calls exhausted"], [], started)
         const args = normalizedControllerArgs(call, input.phase)
-        const execution = await this.options.toolExecutor.execute({
-          execution_id: `${investigationId}_exec_${turn}_${executions.length + 1}`,
-          call_id: `${investigationId}_call_${turn}`,
-          tool_call_id: call.tool_call_id,
-          tool_id: call.tool_id,
-          phase: input.phase,
-          arguments: args,
-          requested_by: input.requested_by,
-          abort_signal: input.abort_signal,
-          source_model_request_id: request.request_id,
-          source_model_result_hash: modelResult.result_hash,
-        })
+        if (call.tool_id === TOOL_SEARCH_ID && workingSet.tool_search_call_count + 1 > budget.max_tool_search_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_search_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool search calls exhausted"], [], started)
+        const executionId = `${investigationId}_exec_${turn}_${executions.length + 1}`
+        const callId = `${investigationId}_call_${turn}`
+        const controllerBlocker = this.controllerPreflightBlocker(call, args, input.phase, loaded, budget)
+        const execution = controllerBlocker
+          ? controllerBlockedExecution(executionId, callId, call, input.phase, controllerBlocker, this.now())
+          : await this.options.toolExecutor.execute({
+            execution_id: executionId,
+            call_id: callId,
+            tool_call_id: call.tool_call_id,
+            tool_id: call.tool_id,
+            phase: input.phase,
+            arguments: args,
+            requested_by: input.requested_by,
+            abort_signal: input.abort_signal,
+            source_model_request_id: request.request_id,
+            source_model_result_hash: modelResult.result_hash,
+          })
         executions.push(execution)
         workingSet.tool_call_count += 1
         if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
-        if (workingSet.tool_search_call_count > budget.max_tool_search_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_search_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool search calls exhausted"], [], started)
         const resultBytesCap = perToolResultCap(execution.max_output_bytes, context.input_bytes, budget, modelResult.tool_calls.length - executions.length + 1)
         const toolMessage = toCommanderToolResultMessage(execution, resultBytesCap)
         latestToolResults.push(toolMessage)
@@ -280,6 +285,24 @@ export class CommanderInvestigationController {
     return { loaded: true, tool: this.options.toolService.get({ tool_id: target, include_schema: true }) }
   }
 
+  private controllerPreflightBlocker(call: CommanderModelToolCallPart, args: Record<string, unknown>, phase: CommanderToolPhase, loaded: Map<string, CommanderToolDescriptor>, budget: CommanderInvestigationBudget): string | undefined {
+    if (call.tool_id !== TOOL_GET_ID) return undefined
+    const target = typeof args.tool_id === "string" ? args.tool_id : undefined
+    if (!target) return "commander.tool_get target tool_id is missing"
+    if (loaded.has(target)) return `tool ${target} is already loaded`
+    const descriptor = this.options.descriptors.find((tool) => tool.tool_id === target)
+    if (!descriptor) return `tool ${target} descriptor missing`
+    if (!this.isEligibleForLoad(descriptor, phase)) return `tool ${target} is not eligible for loading in phase ${phase}`
+    const currentBytes = Array.from(loaded.values()).reduce((sum, tool) => sum + tool.schema_metadata.input_schema_bytes + tool.schema_metadata.output_schema_bytes, 0)
+    const currentTokens = Array.from(loaded.values()).reduce((sum, tool) => sum + tool.schema_metadata.estimated_schema_tokens, 0)
+    const nextBytes = descriptor.schema_metadata.input_schema_bytes + descriptor.schema_metadata.output_schema_bytes
+    const nextTokens = descriptor.schema_metadata.estimated_schema_tokens
+    if (loaded.size + 1 > budget.max_loaded_schemas) return `tool ${target} blocked by max_loaded_schemas`
+    if (budget.tool_schema_allocation_bytes && currentBytes + nextBytes > budget.tool_schema_allocation_bytes) return `tool ${target} blocked by schema byte allocation`
+    if (budget.tool_schema_allocation_tokens && currentTokens + nextTokens > budget.tool_schema_allocation_tokens) return `tool ${target} blocked by schema token allocation`
+    return undefined
+  }
+
   private isEligibleForLoad(tool: CommanderToolDescriptor, phase: CommanderToolPhase): boolean {
     return this.options.boundToolIds.includes(tool.tool_id)
       && tool.availability === "implemented_read_surface"
@@ -404,6 +427,42 @@ function evidenceKey(card: CommanderEvidenceCard): string {
 function perToolResultCap(descriptorCap: number, contextBytes: number, budget: CommanderInvestigationBudget, remainingResults: number): number {
   const remainingContext = Math.max(0, (budget.max_context_bytes ?? 64_000) - contextBytes)
   return Math.max(256, Math.min(12_000, descriptorCap, Math.floor(remainingContext / Math.max(1, remainingResults))))
+}
+
+function controllerBlockedExecution(executionId: string, callId: string, call: CommanderModelToolCallPart, phase: CommanderToolPhase, blocker: string, now: Date): CommanderToolExecutionResult {
+  const result = {
+    execution_id: executionId,
+    call_id: callId,
+    tool_call_id: call.tool_call_id,
+    tool_id: call.tool_id,
+    phase,
+    status: "blocked" as const,
+    trust_class: "runtime_authoritative" as const,
+    instruction_semantics: "none" as const,
+    result: { status: "blocked", blocker },
+    evidence: [],
+    output_bytes: Buffer.byteLength(JSON.stringify({ status: "blocked", blocker })),
+    max_output_bytes: 4096,
+    truncated: false,
+    handler_invoked: false,
+    external_process_invoked: false,
+    process_policy: "none",
+    events_appended: false as const,
+    provider_called: false as const,
+    mcp_called: false as const,
+    network_called: false as const,
+    research_db_written: false as const,
+    mission_mutated: false as const,
+    proposal_mutated: false as const,
+    opencode_action_performed: false as const,
+    blockers: [blocker],
+    warnings: ["descriptor/schema was not replayed because the target is not load-eligible"],
+    duration_ms: 0,
+    generated_at: now.toISOString(),
+    result_hash: "",
+  }
+  result.result_hash = stableHash({ ...result, generated_at: "", duration_ms: 0, result_hash: "" })
+  return result
 }
 
 function turnSummary(turn: number, requestId: string, modelResult: CommanderModelStepResult, context: { input_bytes: number; estimated_tokens: number }, executions: CommanderToolExecutionResult[], loaded: string[], evidence: string[], cumulativeCalls: number, progress: boolean, noProgressReasons: string[], warnings: string[]): CommanderInvestigationTurnSummary {
