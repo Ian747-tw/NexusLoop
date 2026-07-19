@@ -495,6 +495,22 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.loaded_tool_ids).toContain("commander.tool_search")
   })
 
+  test("wall-time budget uses real elapsed time and aborts slow model requests", async () => {
+    const fixedClock = new Date("1970-01-01T00:00:00.000Z")
+    const deterministic = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-wall-clock-")),
+      researchSynthesisNow: () => fixedClock,
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fixed timestamps should not exhaust wall time" }]),
+    })
+    await expect(deterministic.runCommanderInvestigationInMemory(baseInvestigation({ max_wall_time_ms: 1000 }))).resolves.toMatchObject({ status: "final", stop_reason: "model_final", provider_request_count: 1 })
+
+    const slow = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-wall-timeout-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "too late", delay_ms: 50 }]),
+    })
+    await expect(slow.runCommanderInvestigationInMemory(baseInvestigation({ max_wall_time_ms: 1 }))).resolves.toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1 })
+  })
+
   test("discovery search does not autoload and tool_get loads only eligible bound schemas", async () => {
     const adapter = new ScriptedCommanderModelStepAdapter([
       { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_search", { query: "research memory", limit: 20 })], assert_request: (request) => {
