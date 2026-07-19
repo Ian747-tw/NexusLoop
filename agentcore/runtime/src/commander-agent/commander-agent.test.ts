@@ -17,6 +17,8 @@ import { CommanderRepoReadService } from "../commander-tools/commander-repo-read
 import {
   AiSdkCommanderModelStepAdapter,
   COMMANDER_BOUND_TOOL_IDS,
+  CommanderInvestigationContextService,
+  CommanderInvestigationController,
   CommanderToolExecutor,
   ScriptedCommanderModelStepAdapter,
   buildProviderToolMap,
@@ -546,10 +548,12 @@ describe("Commander in-memory investigation controller", () => {
     const adapter = new ScriptedCommanderModelStepAdapter([
       { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_get", { tool_id: "repo.git_log" })] },
       { status: "final", text: "chose another path", assert_request: (request) => {
-        const toolResult = request.messages.find((message) => message.role === "tool")
+        const toolResult = request.messages.find((message) => message.role === "user" && message.content.includes("previous_tool_exchange_summary"))
         expect(toolResult?.content).toContain("not eligible")
+        expect(toolResult?.content).toContain("text_only_json_fallback")
         expect(toolResult?.content).not.toContain("input_schema")
         expect(toolResult?.content).not.toContain("Git commit history")
+        expect(request.messages.some((message) => message.role === "tool")).toBe(false)
       } },
     ])
     const server = new RuntimeServer({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-tool-get-block-")), commanderModelStepAdapter: adapter })
@@ -558,6 +562,86 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.loaded_tool_ids).not.toContain("repo.git_log")
     expect(result.turn_summaries[0].tool_execution_statuses).toEqual(["blocked"])
     expect(result.turn_summaries[0].newly_loaded_tool_ids).toEqual([])
+  })
+
+  test("tool execution receives the investigation wall-time deadline", async () => {
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const descriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_search")
+    if (!descriptor) throw new Error("missing commander.tool_search descriptor")
+    let sawAbort = false
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "tool_call", tool_calls: [toolCall("slow", "commander.tool_search", { query: "research" })] }]),
+      toolExecutor: {
+        execute: async (request) => {
+          await new Promise<void>((resolve) => {
+            request.abort_signal?.addEventListener("abort", () => {
+              sawAbort = true
+              resolve()
+            }, { once: true })
+            setTimeout(resolve, 500)
+          })
+          return {
+            execution_id: request.execution_id,
+            call_id: request.call_id,
+            tool_call_id: request.tool_call_id,
+            tool_id: request.tool_id,
+            phase: request.phase,
+            status: "cancelled",
+            descriptor_version: descriptor.version,
+            authority_id: descriptor.authority_id,
+            trust_class: descriptor.trust_class,
+            instruction_semantics: "none",
+            evidence: [],
+            output_bytes: 0,
+            max_output_bytes: descriptor.max_output_bytes,
+            truncated: false,
+            handler_invoked: true,
+            external_process_invoked: false,
+            process_policy: "none",
+            events_appended: false,
+            provider_called: false,
+            mcp_called: false,
+            network_called: false,
+            research_db_written: false,
+            mission_mutated: false,
+            proposal_mutated: false,
+            opencode_action_performed: false,
+            blockers: ["deadline reached"],
+            warnings: [],
+            duration_ms: 0,
+            generated_at: "2026-07-19T00:00:00.000Z",
+            result_hash: "slow_result",
+          }
+        },
+      },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => ({
+        bootstrap_id: "bootstrap_deadline",
+        phase: "proposal_investigation",
+        objective_preview: "deadline",
+        authority_kernel: "authority kernel",
+        continuity_kind: "summary",
+        readiness: "ready",
+        current_project_summary: "summary",
+        open_loops: [],
+        source_refs: [],
+        blockers: [],
+        warnings: [],
+        estimated_bytes: 10,
+        estimated_tokens: 3,
+        bootstrap_hash: "bootstrap_hash",
+      }) },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const result = await controller.run(baseInvestigation({ max_wall_time_ms: 100 }))
+    expect(result).toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1 })
+    expect(sawAbort).toBe(true)
   })
 
   test("unloaded and off-phase tool calls fail before execution", async () => {
@@ -616,6 +700,29 @@ describe("Commander in-memory investigation controller", () => {
       commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "will not be called" }]),
     })
     await expect(contextCap.runCommanderInvestigationInMemory(baseInvestigation({ max_context_bytes: 1000 }))).resolves.toMatchObject({ status: "budget_exhausted", stop_reason: "context_budget_exhausted", provider_request_count: 0 })
+
+    const repeated = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-repeat-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("r1", "commander.tool_search", { query: "same" })] },
+        { status: "tool_call", tool_calls: [toolCall("r2", "commander.tool_search", { query: "same" })] },
+        { status: "tool_call", tool_calls: [toolCall("r3", "commander.tool_search", { query: "same" })] },
+      ]),
+    })
+    await expect(repeated.runCommanderInvestigationInMemory(baseInvestigation({ max_consecutive_no_progress_turns: 3 }))).resolves.toMatchObject({ status: "no_progress", stop_reason: "repeated_identical_call", tool_call_count: 3 })
+
+    const omittedTurns = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-omitted-turns-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("o1", "commander.tool_get", { tool_id: "memory.search" })] },
+        { status: "tool_call", tool_calls: [toolCall("o2", "commander.tool_get", { tool_id: "continuity.search" })] },
+        { status: "final", text: "done" },
+      ]),
+    })
+    const omitted = await omittedTurns.runCommanderInvestigationInMemory(baseInvestigation({ max_turn_summaries: 1, max_consecutive_no_progress_turns: 3 }))
+    expect(omitted.status).toBe("final")
+    expect(omitted.turn_summaries).toHaveLength(1)
+    expect(omitted.omitted_turn_count).toBe(2)
   })
 
   test("caller abort and human-control stop halt before model or remaining tool execution", async () => {

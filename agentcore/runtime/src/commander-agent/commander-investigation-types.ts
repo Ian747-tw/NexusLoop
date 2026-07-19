@@ -142,6 +142,7 @@ export type CommanderInvestigationWorkingSet = {
   current_warnings: string[]
   omitted_evidence_count: number
   omitted_digest_count: number
+  omitted_turn_count: number
   consecutive_no_progress_turns: number
   cumulative_tool_result_bytes: number
   model_turn_count: number

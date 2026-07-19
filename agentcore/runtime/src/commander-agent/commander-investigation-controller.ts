@@ -78,7 +78,7 @@ export class CommanderInvestigationController {
 
       const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
       if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, context.warnings, started)
-      const deadline = modelDeadlineSignal(input.abort_signal, budget, wallStartedMs)
+      const deadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
       const request: CommanderModelStepRequest = {
         request_id: `${investigationId}_turn_${turn}`,
         provider_id: input.provider_id,
@@ -99,7 +99,7 @@ export class CommanderInvestigationController {
       if (modelResult.request_count > 1) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["model adapter violated one-request contract"], modelResult.warnings, started)
       if (modelResult.status !== "tool_call") {
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings)
-        turns.push(summary)
+        appendTurnSummary(turns, summary, workingSet, budget)
         if (modelResult.status === "final") return this.finish(input, investigationId, "final", "model_final", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [], started, modelResult.text)
         if (modelResult.status === "refusal") return this.finish(input, investigationId, "refused", "model_refusal", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], modelResult.warnings, started)
         if (modelResult.status === "cancelled") return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "model request cancelled"], modelResult.warnings, started)
@@ -110,7 +110,7 @@ export class CommanderInvestigationController {
       const validation = validateToolCalls(modelResult.tool_calls, loaded, budget, workingSet)
       if (validation.blocker) {
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, false, [validation.blocker], modelResult.warnings)
-        turns.push(summary)
+        appendTurnSummary(turns, summary, workingSet, budget)
         return this.finish(input, investigationId, validation.reason === "max_tool_calls_per_turn" || validation.reason === "max_tool_calls" ? "budget_exhausted" : "blocked", validation.reason, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [validation.blocker], modelResult.warnings, started)
       }
 
@@ -131,9 +131,13 @@ export class CommanderInvestigationController {
         const executionId = `${investigationId}_exec_${turn}_${executions.length + 1}`
         const callId = `${investigationId}_call_${turn}`
         const controllerBlocker = this.controllerPreflightBlocker(call, args, input.phase, loaded, budget)
-        const execution = controllerBlocker
-          ? controllerBlockedExecution(executionId, callId, call, input.phase, controllerBlocker, this.now())
-          : await this.options.toolExecutor.execute({
+        let toolDeadlineExpired = false
+        let execution: CommanderToolExecutionResult
+        if (controllerBlocker) {
+          execution = controllerBlockedExecution(executionId, callId, call, input.phase, controllerBlocker, this.now())
+        } else {
+          const toolDeadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
+          execution = await this.options.toolExecutor.execute({
             execution_id: executionId,
             call_id: callId,
             tool_call_id: call.tool_call_id,
@@ -141,10 +145,13 @@ export class CommanderInvestigationController {
             phase: input.phase,
             arguments: args,
             requested_by: input.requested_by,
-            abort_signal: input.abort_signal,
+            abort_signal: toolDeadline.signal,
             source_model_request_id: request.request_id,
             source_model_result_hash: modelResult.result_hash,
-          })
+          }).finally(toolDeadline.cancel)
+          toolDeadlineExpired = toolDeadline.expired()
+        }
+        if (toolDeadlineExpired) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings, started)
         executions.push(execution)
         workingSet.tool_call_count += 1
         if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
@@ -167,7 +174,7 @@ export class CommanderInvestigationController {
         newEvidence.push(...afterEvidence)
         if (afterEvidence.length > 0) progressMade = true
         const callSignature = stableHash({ tool_id: call.tool_id, arguments: args })
-        const resultSignature = stableHash({ callSignature, result_hash: execution.result_hash, evidence: execution.evidence.map((item) => item.evidence_id) })
+        const resultSignature = repeatResultSignature(callSignature, execution)
         const repeatCount = recentResults.get(resultSignature) ?? 0
         recentResults.set(resultSignature, repeatCount + 1)
         if (repeatCount >= 2) return this.finish(input, investigationId, "no_progress", "repeated_identical_call", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["repeated identical tool call/result detected"], [], started)
@@ -198,8 +205,7 @@ export class CommanderInvestigationController {
       workingSet.model_turn_count = turn
       workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
       const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings)
-      turns.push(summary)
-      if (turns.length > budget.max_turn_summaries) turns.shift()
+      appendTurnSummary(turns, summary, workingSet, budget)
       if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return this.finish(input, investigationId, "no_progress", "consecutive_no_progress", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["consecutive no-progress turn limit reached"], [], started)
     }
     return this.finish(input, investigationId, "budget_exhausted", "max_model_turns", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max model turns exhausted"], [], started)
@@ -355,7 +361,7 @@ export class CommanderInvestigationController {
       evidence: workingSet.evidence_cards,
       turn_summaries: turns.slice(-budget.max_turn_summaries),
       omitted_evidence_count: workingSet.omitted_evidence_count,
-      omitted_turn_count: Math.max(0, turns.length - budget.max_turn_summaries),
+      omitted_turn_count: workingSet.omitted_turn_count,
       blockers: blockers.map((item) => preview(item, 300)).slice(0, 16),
       warnings: [...workingSet.current_warnings, ...warnings].map((item) => preview(item, 300)).slice(0, 24),
       started_at: started.toISOString(),
@@ -445,7 +451,7 @@ function elapsedWallMs(startedMs: number): number {
   return Math.max(0, performance.now() - startedMs)
 }
 
-function modelDeadlineSignal(parent: AbortSignal | undefined, budget: CommanderInvestigationBudget, wallStartedMs: number): { signal?: AbortSignal; cancel: () => void; expired: () => boolean } {
+function deadlineSignal(parent: AbortSignal | undefined, budget: CommanderInvestigationBudget, wallStartedMs: number): { signal?: AbortSignal; cancel: () => void; expired: () => boolean } {
   const remaining = budget.max_wall_time_ms - elapsedWallMs(wallStartedMs)
   if (parent?.aborted || remaining <= 0) return { signal: parent, cancel: () => undefined, expired: () => elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms }
   const controller = new AbortController()
@@ -498,6 +504,28 @@ function controllerBlockedExecution(executionId: string, callId: string, call: C
   return result
 }
 
+function repeatResultSignature(callSignature: string, execution: CommanderToolExecutionResult): string {
+  return stableHash({
+    callSignature,
+    status: execution.status,
+    trust_class: execution.trust_class,
+    instruction_semantics: execution.instruction_semantics,
+    result: stableForRepeat(execution.result),
+    evidence: execution.evidence.map((item) => item.evidence_hash || `${item.source_kind}:${item.source_id}`).sort(),
+    blockers: execution.blockers,
+    warnings: execution.warnings,
+    truncated: execution.truncated,
+  })
+}
+
+function stableForRepeat(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableForRepeat)
+  if (!value || typeof value !== "object") return value
+  const omitted = new Set(["execution_id", "call_id", "tool_call_id", "source_execution_id", "generated_at", "duration_ms", "result_hash", "call_hash", "observed_at"])
+  const entries: Array<[string, unknown]> = Object.entries(value as Record<string, unknown>).filter(([key]) => !omitted.has(key)).map(([key, item]) => [key, stableForRepeat(item)])
+  return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
+}
+
 function turnSummary(turn: number, requestId: string, modelResult: CommanderModelStepResult, context: { input_bytes: number; estimated_tokens: number }, executions: CommanderToolExecutionResult[], loaded: string[], evidence: string[], cumulativeCalls: number, progress: boolean, noProgressReasons: string[], warnings: string[]): CommanderInvestigationTurnSummary {
   const summary = {
     turn_index: turn,
@@ -525,6 +553,14 @@ function turnSummary(turn: number, requestId: string, modelResult: CommanderMode
   return summary
 }
 
+function appendTurnSummary(turns: CommanderInvestigationTurnSummary[], summary: CommanderInvestigationTurnSummary, workingSet: CommanderInvestigationWorkingSet, budget: CommanderInvestigationBudget): void {
+  turns.push(summary)
+  if (turns.length > budget.max_turn_summaries) {
+    turns.shift()
+    workingSet.omitted_turn_count += 1
+  }
+}
+
 function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[]): CommanderInvestigationWorkingSet {
   const workingSet = {
     objective_preview: preview(input.objective, 1000),
@@ -537,6 +573,7 @@ function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[]): 
     current_warnings: [],
     omitted_evidence_count: 0,
     omitted_digest_count: 0,
+    omitted_turn_count: 0,
     consecutive_no_progress_turns: 0,
     cumulative_tool_result_bytes: 0,
     model_turn_count: 0,

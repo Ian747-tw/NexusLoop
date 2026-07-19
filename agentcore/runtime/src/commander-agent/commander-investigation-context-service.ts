@@ -93,8 +93,35 @@ function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: C
       json_fallback: toolProtocol === "json_fallback" ? fallbackInstructionBlock(loadedTools) : undefined,
     }) },
   ]
-  if (latestAssistant && latestToolResults.length > 0) messages.push(latestAssistant, ...latestToolResults)
+  if (latestAssistant && latestToolResults.length > 0) {
+    if (toolProtocol === "json_fallback") {
+      messages.push({ role: "user", content: JSON.stringify(fallbackLatestExchange(latestAssistant, latestToolResults)) })
+    } else {
+      messages.push(latestAssistant, ...latestToolResults)
+    }
+  }
   return messages.map((message) => message.role === "system" || message.role === "user" ? { ...message, content: redactText(message.content) } : message)
+}
+
+function fallbackLatestExchange(latestAssistant: CommanderModelAssistantMessage, latestToolResults: CommanderModelToolResultMessage[]): unknown {
+  return {
+    kind: "previous_tool_exchange_summary",
+    assistant_text: latestAssistant.content.filter((part) => part.type === "text").map((part) => part.text).join("\n").slice(0, 1000),
+    tool_calls: latestAssistant.content.filter((part) => part.type === "tool_call").map((part) => ({
+      tool_call_id: part.tool_call_id,
+      tool_id: part.tool_id,
+      arguments_valid: part.arguments_valid,
+      validation_errors: part.validation_errors.slice(0, 6),
+    })),
+    tool_results: latestToolResults.map((result) => ({
+      tool_call_id: result.tool_call_id,
+      tool_id: result.tool_id,
+      content_hash: result.content_hash,
+      truncated: result.truncated,
+      content_preview: result.content.slice(0, 2000),
+    })),
+    replay_mode: "text_only_json_fallback",
+  }
 }
 
 function fallbackInstructionBlock(tools: CommanderToolDescriptor[]): { response_contract: unknown; loaded_tool_schemas: Array<{ tool_id: string; description: string; input_schema: CommanderToolJsonSchema }> } {
