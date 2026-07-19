@@ -506,9 +506,9 @@ describe("Commander in-memory investigation controller", () => {
 
     const slow = new RuntimeServer({
       projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-wall-timeout-")),
-      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "too late", delay_ms: 50 }]),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "too late", delay_ms: 250 }]),
     })
-    await expect(slow.runCommanderInvestigationInMemory(baseInvestigation({ max_wall_time_ms: 1 }))).resolves.toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1 })
+    await expect(slow.runCommanderInvestigationInMemory(baseInvestigation({ max_wall_time_ms: 100 }))).resolves.toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1 })
   })
 
   test("discovery search does not autoload and tool_get loads only eligible bound schemas", async () => {
