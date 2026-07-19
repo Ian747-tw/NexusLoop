@@ -96,6 +96,8 @@ export class CommanderInvestigationController {
       }
       const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
       providerRequests += modelResult.request_count
+      workingSet.model_turn_count = turn
+      if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
       if (deadline.expired()) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
       if (modelResult.request_count > 1) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["model adapter violated one-request contract"], modelResult.warnings, started)
       if (modelResult.status !== "tool_call") {
@@ -153,6 +155,7 @@ export class CommanderInvestigationController {
           }).finally(toolDeadline.cancel)
           toolDeadlineExpired = toolDeadline.expired()
         }
+        if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during tool execution"], execution.warnings, started)
         if (toolDeadlineExpired) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings, started)
         executions.push(execution)
         workingSet.tool_call_count += 1
@@ -204,7 +207,6 @@ export class CommanderInvestigationController {
       } else {
         workingSet.consecutive_no_progress_turns = 0
       }
-      workingSet.model_turn_count = turn
       workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
       const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings)
       appendTurnSummary(turns, summary, workingSet, budget)

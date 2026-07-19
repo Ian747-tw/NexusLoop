@@ -29,6 +29,7 @@ import {
   providerToolNameFor,
   toCommanderToolResultMessage,
   validateCommanderToolArguments,
+  type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
 } from "."
 
@@ -762,6 +763,8 @@ describe("Commander in-memory investigation controller", () => {
     })
     const omitted = await omittedTurns.runCommanderInvestigationInMemory(baseInvestigation({ max_turn_summaries: 1, max_consecutive_no_progress_turns: 3 }))
     expect(omitted.status).toBe("final")
+    expect(omitted.provider_request_count).toBe(3)
+    expect(omitted.model_turn_count).toBe(3)
     expect(omitted.turn_summaries).toHaveLength(1)
     expect(omitted.omitted_turn_count).toBe(2)
   })
@@ -774,6 +777,45 @@ describe("Commander in-memory investigation controller", () => {
       commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "no" }]),
     })
     await expect(aborted.runCommanderInvestigationInMemory(baseInvestigation({ abort_signal: abortedSignal.signal }))).resolves.toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", provider_request_count: 0 })
+
+    const inFlightAbort = new AbortController()
+    const abortIgnoringAdapter: CommanderModelStepAdapter = {
+      adapter_id: "abort_ignoring",
+      adapter_version: "test",
+      supports_streaming: true,
+      supports_native_tools: true,
+      supports_json_fallback: true,
+      supports_structured_output: true,
+      supports_abort_signal: true,
+      supports_usage: true,
+      supports_openai_compatible: true,
+      executeOneStep: async (request) => {
+        inFlightAbort.abort()
+        return {
+          request_id: request.request_id,
+          provider_id: request.provider_id,
+          adapter_id: "abort_ignoring",
+          status: "final",
+          assistant_message: { role: "assistant", content: [{ type: "text", text: "ignored abort" }] },
+          text: "ignored abort",
+          tool_calls: [],
+          finish_reason: "stop",
+          usage: { provider_reported: false },
+          provider_metadata: {},
+          request_count: 1,
+          raw_provider_payload_included: false,
+          duration_ms: 0,
+          warnings: [],
+          result_hash: "ignored_abort_result",
+        }
+      },
+      executeOneStreamedStep: async function* () {},
+    }
+    const abortDuringModel = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-abort-during-model-")),
+      commanderModelStepAdapter: abortIgnoringAdapter,
+    })
+    await expect(abortDuringModel.runCommanderInvestigationInMemory(baseInvestigation({ abort_signal: inFlightAbort.signal }))).resolves.toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", provider_request_count: 1 })
 
     const humanPause = new RuntimeServer({
       projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-human-")),
