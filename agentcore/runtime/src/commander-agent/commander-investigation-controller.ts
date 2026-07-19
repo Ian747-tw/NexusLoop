@@ -49,7 +49,9 @@ export class CommanderInvestigationController {
     if (inputBlockers.length) return this.finish(input, investigationId, "blocked", "controller_error", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], inputBlockers, [], started)
     if (!this.options.modelAdapter) return this.finish(input, investigationId, "blocked", "adapter_not_configured", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], ["Commander investigation model adapter is not configured"], [], started)
 
-    const budget = await this.deriveBudget(input)
+    const budgetResolution = await this.deriveBudget(input)
+    const budget = budgetResolution.budget
+    if (budgetResolution.blockers.length > 0) return this.finish(input, investigationId, "blocked", "context_budget_exhausted", minimalBootstrap(input), budget, "native", [], emptyWorkingSet(input, []), 0, [], budgetResolution.blockers, budget.warnings, started)
     const protocolResolution = this.resolveProtocol(input)
     if (protocolResolution.blocker) return this.finish(input, investigationId, "blocked", protocolResolution.blocker, minimalBootstrap(input), budget, "native", [], emptyWorkingSet(input, []), 0, [], [protocolResolution.blocker], protocolResolution.warnings, started)
     const toolProtocol = protocolResolution.protocol
@@ -200,7 +202,7 @@ export class CommanderInvestigationController {
     return this.finish(input, investigationId, "budget_exhausted", "max_model_turns", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max model turns exhausted"], [], started)
   }
 
-  private async deriveBudget(input: CommanderInvestigationInput): Promise<CommanderInvestigationBudget> {
+  private async deriveBudget(input: CommanderInvestigationInput): Promise<{ budget: CommanderInvestigationBudget; blockers: string[] }> {
     const profile = this.options.toolService.profile({ phase: input.phase })
     const context = await this.options.contextBudgetService.preview({ purpose: "commander_research_decision", role: "commander", provider_kind: input.provider_kind, model_id: input.model_id, max_context_tokens: input.max_context_tokens, max_context_bytes: input.max_context_bytes })
     const allocation = context.budget.allocations.find((item) => item.section === "tool_or_mcp_schema")
@@ -229,7 +231,7 @@ export class CommanderInvestigationController {
       budget_hash: "",
     }
     budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
-    return budget
+    return { budget, blockers: context.blockers.map((item) => preview(item, 300)).slice(0, 8) }
   }
 
   private resolveProtocol(input: CommanderInvestigationInput): { protocol: CommanderModelToolProtocol; warnings: string[]; blocker?: CommanderInvestigationStopReason } {
@@ -257,6 +259,13 @@ export class CommanderInvestigationController {
       const nextBytes = tool.schema_metadata.input_schema_bytes + tool.schema_metadata.output_schema_bytes
       const nextTokens = tool.schema_metadata.estimated_schema_tokens
       if (loaded.length >= budget.max_loaded_schemas || budget.tool_schema_allocation_bytes && bytes + nextBytes > budget.tool_schema_allocation_bytes || budget.tool_schema_allocation_tokens && tokens + nextTokens > budget.tool_schema_allocation_tokens) {
+        if (tool.tool_id === TOOL_SEARCH_ID && loaded.length === 0) {
+          loaded.push(tool)
+          bytes += nextBytes
+          tokens += nextTokens
+          warnings.push("commander.tool_search preserved as the minimum discovery schema despite schema allocation pressure")
+          continue
+        }
         warnings.push(`initial schema ${tool.tool_id} omitted by schema budget`)
         continue
       }

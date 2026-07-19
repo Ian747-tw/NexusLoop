@@ -479,6 +479,22 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.loaded_tool_ids).not.toContain("memory.search")
   })
 
+  test("budget preflight blocks unsupported Commander models and preserves minimum discovery under pressure", async () => {
+    const unsupported = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-budget-block-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "should not run" }]),
+    })
+    await expect(unsupported.runCommanderInvestigationInMemory(baseInvestigation({ provider_kind: "opencode", model_id: "opencode-default" }))).resolves.toMatchObject({ status: "blocked", stop_reason: "context_budget_exhausted", provider_request_count: 0 })
+
+    const constrainedAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "bounded final", assert_request: (request) => {
+      expect(request.tools.map((tool) => tool.tool_id)).toContain("commander.tool_search")
+    } }])
+    const constrained = new RuntimeServer({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-min-discovery-")), commanderModelStepAdapter: constrainedAdapter })
+    const result = await constrained.runCommanderInvestigationInMemory(baseInvestigation({ provider_kind: "local", model_id: "local-small" }))
+    expect(result.status).toBe("final")
+    expect(result.loaded_tool_ids).toContain("commander.tool_search")
+  })
+
   test("discovery search does not autoload and tool_get loads only eligible bound schemas", async () => {
     const adapter = new ScriptedCommanderModelStepAdapter([
       { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_search", { query: "research memory", limit: 20 })], assert_request: (request) => {
