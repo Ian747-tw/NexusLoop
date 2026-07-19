@@ -74,10 +74,11 @@ export class CommanderInvestigationController {
       const humanBeforeModel = await this.checkControl(input, "model_step", turn)
       const humanStop = stopReasonForControl(humanBeforeModel)
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
-      if (elapsedWallMs(wallStartedMs) > budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
+      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
 
       const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
       if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, context.warnings, started)
+      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], context.warnings, started)
       const deadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
       const request: CommanderModelStepRequest = {
         request_id: `${investigationId}_turn_${turn}`,
@@ -131,6 +132,7 @@ export class CommanderInvestigationController {
         const executionId = `${investigationId}_exec_${turn}_${executions.length + 1}`
         const callId = `${investigationId}_call_${turn}`
         const controllerBlocker = this.controllerPreflightBlocker(call, args, input.phase, loaded, budget)
+        if (!controllerBlocker && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before tool execution"], [], started)
         let toolDeadlineExpired = false
         let execution: CommanderToolExecutionResult
         if (controllerBlocker) {
@@ -453,7 +455,8 @@ function elapsedWallMs(startedMs: number): number {
 
 function deadlineSignal(parent: AbortSignal | undefined, budget: CommanderInvestigationBudget, wallStartedMs: number): { signal?: AbortSignal; cancel: () => void; expired: () => boolean } {
   const remaining = budget.max_wall_time_ms - elapsedWallMs(wallStartedMs)
-  if (parent?.aborted || remaining <= 0) return { signal: parent, cancel: () => undefined, expired: () => elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms }
+  if (parent?.aborted) return { signal: parent, cancel: () => undefined, expired: () => elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms }
+  if (remaining <= 0) return { signal: alreadyAbortedSignal("Commander investigation wall-time budget exhausted"), cancel: () => undefined, expired: () => true }
   const controller = new AbortController()
   const parentAbort = () => controller.abort(parent?.reason)
   parent?.addEventListener("abort", parentAbort, { once: true })
@@ -466,6 +469,12 @@ function deadlineSignal(parent: AbortSignal | undefined, budget: CommanderInvest
     },
     expired: () => !parent?.aborted && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms,
   }
+}
+
+function alreadyAbortedSignal(reason: string): AbortSignal {
+  const controller = new AbortController()
+  controller.abort(new Error(reason))
+  return controller.signal
 }
 
 function controllerBlockedExecution(executionId: string, callId: string, call: CommanderModelToolCallPart, phase: CommanderToolPhase, blocker: string, now: Date): CommanderToolExecutionResult {

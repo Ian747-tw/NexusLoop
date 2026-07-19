@@ -511,6 +511,47 @@ describe("Commander in-memory investigation controller", () => {
       commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "too late", delay_ms: 250 }]),
     })
     await expect(slow.runCommanderInvestigationInMemory(baseInvestigation({ max_wall_time_ms: 100 }))).resolves.toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1 })
+
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "must not dispatch" }])
+    const contextService = new CommanderInvestigationContextService()
+    const expiresAfterContext = new CommanderInvestigationController({
+      modelAdapter: adapter,
+      toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => ({
+        bootstrap_id: "bootstrap_context_deadline",
+        phase: "proposal_investigation",
+        objective_preview: "deadline",
+        authority_kernel: "authority kernel",
+        continuity_kind: "summary",
+        readiness: "ready",
+        current_project_summary: "summary",
+        open_loops: [],
+        source_refs: [],
+        blockers: [],
+        warnings: [],
+        estimated_bytes: 10,
+        estimated_tokens: 3,
+        bootstrap_hash: "bootstrap_hash",
+      }) },
+      contextService: {
+        build: (input) => {
+          const started = performance.now()
+          while (performance.now() - started < 20) {}
+          return contextService.build(input)
+        },
+      },
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const expired = await expiresAfterContext.run(baseInvestigation({ max_wall_time_ms: 10 }))
+    expect(expired).toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 0 })
+    expect(adapter.request_summaries).toHaveLength(0)
   })
 
   test("discovery search does not autoload and tool_get loads only eligible bound schemas", async () => {
