@@ -128,6 +128,7 @@ export class CommanderInvestigationController {
       const newEvidence: string[] = []
       const noProgressReasons: string[] = []
       let progressMade = false
+      let currentTurnToolResultBytes = 0
       for (const call of modelResult.tool_calls) {
         const humanBeforeTool = await this.checkControl(input, "tool_execution", turn, call.tool_id)
         const humanToolStop = stopReasonForControl(humanBeforeTool)
@@ -166,10 +167,12 @@ export class CommanderInvestigationController {
         executions.push(execution)
         workingSet.tool_call_count += 1
         if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
-        const resultBytesCap = perToolResultCap(execution.max_output_bytes, context.input_bytes, budget, modelResult.tool_calls.length - executions.length + 1)
+        const resultBytesCap = perToolResultCap(execution.max_output_bytes, context.input_bytes + currentTurnToolResultBytes, budget, modelResult.tool_calls.length - executions.length + 1)
         const toolMessage = toCommanderToolResultMessage(execution, resultBytesCap)
         latestToolResults.push(toolMessage)
-        workingSet.cumulative_tool_result_bytes += Buffer.byteLength(toolMessage.content)
+        const toolMessageBytes = Buffer.byteLength(toolMessage.content)
+        currentTurnToolResultBytes += toolMessageBytes
+        workingSet.cumulative_tool_result_bytes += toolMessageBytes
         if (workingSet.cumulative_tool_result_bytes > budget.max_cumulative_tool_result_bytes) return this.finish(input, investigationId, "budget_exhausted", "max_cumulative_tool_result_bytes", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["cumulative tool-result byte budget exhausted"], [], started)
         const loadedTool = this.maybeLoadTool(call, args, execution, loaded, budget)
         if (loadedTool.loaded) {

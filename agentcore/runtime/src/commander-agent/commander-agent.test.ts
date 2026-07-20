@@ -837,6 +837,95 @@ describe("Commander in-memory investigation controller", () => {
     expect(capturedCallIds[1]).toContain("_call_1_2_second")
   })
 
+  test("same-turn tool-result caps deduct bytes already reserved in the turn", async () => {
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const descriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_search")
+    if (!descriptor) throw new Error("missing commander.tool_search descriptor")
+    let secondTurnToolMessages: Array<{ content: string; truncated: boolean }> = []
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("search_one", "commander.tool_search", { query: "alpha" }), toolCall("search_two", "commander.tool_search", { query: "beta" })] },
+        {
+          status: "final",
+          text: "done",
+          assert_request: (request) => {
+            secondTurnToolMessages = request.messages
+              .flatMap((message) => {
+                if (message.role === "tool") return [{ content: message.content, truncated: message.truncated }]
+                if (message.role !== "user" || !message.content.includes("previous_tool_exchange_summary")) return []
+                const payload = JSON.parse(message.content) as { tool_results?: Array<{ content?: string; content_preview?: string; truncated: boolean }> }
+                return payload.tool_results?.map((result) => ({ content: result.content ?? result.content_preview ?? "", truncated: result.truncated })) ?? []
+              })
+          },
+        },
+      ]),
+      toolExecutor: {
+        execute: async (request) => ({
+          execution_id: request.execution_id,
+          call_id: request.call_id,
+          tool_call_id: request.tool_call_id,
+          tool_id: request.tool_id,
+          phase: request.phase,
+          status: "ready",
+          descriptor_version: descriptor.version,
+          authority_id: descriptor.authority_id,
+          trust_class: descriptor.trust_class,
+          instruction_semantics: "none",
+          result: { status: "ready", payload: "x".repeat(1_620) },
+          evidence: [],
+          output_bytes: 1_720,
+          max_output_bytes: descriptor.max_output_bytes,
+          truncated: false,
+          handler_invoked: true,
+          external_process_invoked: false,
+          process_policy: "none",
+          events_appended: false,
+          provider_called: false,
+          mcp_called: false,
+          network_called: false,
+          research_db_written: false,
+          mission_mutated: false,
+          proposal_mutated: false,
+          opencode_action_performed: false,
+          blockers: [],
+          warnings: [],
+          duration_ms: 0,
+          generated_at: "2026-07-19T00:00:00.000Z",
+          result_hash: `result_${request.tool_call_id}`,
+        }),
+      },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => ({
+        bootstrap_id: "bootstrap_same_turn_caps",
+        phase: "proposal_investigation",
+        objective_preview: "same-turn caps",
+        authority_kernel: "authority kernel",
+        continuity_kind: "summary",
+        readiness: "ready",
+        current_project_summary: "summary",
+        open_loops: [],
+        source_refs: [],
+        blockers: [],
+        warnings: [],
+        estimated_bytes: 10,
+        estimated_tokens: 3,
+        bootstrap_hash: "bootstrap_hash",
+      }) },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const result = await controller.run(baseInvestigation({ max_context_bytes: 5_500, max_tool_search_calls: 4, max_consecutive_no_progress_turns: 3 }))
+    expect(result.status).toBe("final")
+    expect(result.provider_request_count).toBe(2)
+    expect(result.tool_call_count).toBe(2)
+    expect(secondTurnToolMessages).toHaveLength(2)
+  })
+
   test("controller executes transient raw arguments while keeping transcript arguments redacted", async () => {
     const secretQuery = "sk-controllerLiteral123456"
     const capabilityRegistry = new ModelCapabilityRegistry()
