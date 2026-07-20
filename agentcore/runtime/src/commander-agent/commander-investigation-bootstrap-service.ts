@@ -36,6 +36,10 @@ export class CommanderInvestigationBootstrapService {
     let openLoops: CommanderInvestigationBootstrap["open_loops"] = []
     let sourceRefs: CommanderInvestigationBootstrap["source_refs"] = []
 
+    if (input.phase === "mid_mission_supervision" && !input.session_id && !input.launch_id) {
+      blockers.push("mid_mission_supervision requires session_id or launch_id")
+    }
+
     if (input.include_continuity !== false) {
       try {
         if (input.phase === "proposal_investigation") {
@@ -61,7 +65,7 @@ export class CommanderInvestigationBootstrapService {
           blockers.push(...packet.blockers.slice(0, 6))
           packet.warnings.slice(0, 8).forEach((item) => warnings.add(item))
         } else if (input.phase === "mid_mission_supervision" || input.phase === "result_review" || input.phase === "emergency_inspection") {
-          if ((input.phase === "mid_mission_supervision" || input.phase === "emergency_inspection") && !input.session_id && !input.launch_id) {
+          if (input.phase === "emergency_inspection" && !input.session_id && !input.launch_id) {
             warnings.add("session_id or launch_id was not supplied; falling back to bounded continuity summary")
           } else if (input.session_id || input.launch_id) {
             continuityKind = "mid_mission"

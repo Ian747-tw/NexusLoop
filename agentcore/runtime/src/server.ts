@@ -93,7 +93,7 @@ import type { CommanderGuidancePreview, CommanderGuidanceRecord, CommanderGuidan
 import { CommanderGuidanceDeliveryService, readCommanderGuidanceDeliveryInput, readCommanderGuidanceDeliveryPreviewInput } from "./opencode-session/opencode-guidance-delivery-service"
 import type { CommanderGuidanceDeliveryPreview, CommanderGuidanceDeliveryRecord, CommanderGuidanceDeliveryResult, CommanderGuidanceDeliverySummary } from "./opencode-session/opencode-guidance-delivery-types"
 import { OpenCodeHumanControlService, readOpenCodeHumanControlPreviewInput, readOpenCodeHumanControlRecordInput } from "./opencode-session/opencode-human-control-service"
-import type { OpenCodeHumanControlPreview, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
+import type { OpenCodeHumanControlPreview, OpenCodeHumanControlProjectionState, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
 import { OpenCodeWakeSupervisorService, readOpenCodeWakeSupervisorPreviewInput, readOpenCodeWakeSupervisorSummaryInput } from "./opencode-session/opencode-wake-supervisor-service"
 import type { OpenCodeWakeSupervisorPreview, OpenCodeWakeSupervisorSummary } from "./opencode-session/opencode-wake-supervisor-types"
 import { OpenCodeWakeSupervisorExecutionService, readOpenCodeWakeSupervisorBatchPreviewInput, readOpenCodeWakeSupervisorBatchRecordInput, readOpenCodeWakeSupervisorExecutionPreviewInput, readOpenCodeWakeSupervisorExecutionRecordInput } from "./opencode-session/opencode-wake-supervisor-execution-service"
@@ -182,6 +182,7 @@ import {
   CommanderInvestigationController,
   CommanderToolExecutor,
   type CommanderInvestigationControlGate,
+  type CommanderInvestigationControlSnapshot,
   type CommanderInvestigationInput,
   type CommanderInvestigationResult,
   type CommanderModelStepAdapter,
@@ -4621,12 +4622,48 @@ export class RuntimeServer {
       boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
       bootstrapService: this.commanderInvestigationBootstrapService(),
       contextService: this.commanderInvestigationContextService(),
-      controlGate: this.commanderInvestigationControlGate,
+      controlGate: this.commanderInvestigationControlGate ?? this.defaultCommanderInvestigationControlGate(),
       capabilityRegistry: this.modelCapabilityRegistry,
       contextBudgetService: this.contextBudgetService(),
       now: this.researchSynthesisNow,
     })
     return this.commanderInvestigationControllerInstance
+  }
+
+  private defaultCommanderInvestigationControlGate(): CommanderInvestigationControlGate {
+    return {
+      check: async (input) => this.readDurableCommanderInvestigationControl(input),
+    }
+  }
+
+  private async readDurableCommanderInvestigationControl(input: Parameters<CommanderInvestigationControlGate["check"]>[0]): Promise<CommanderInvestigationControlSnapshot> {
+    const checkedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    if (!input.session_id && !input.launch_id) return { action: "continue", source_kind: "default", checked_at: checkedAt, warnings: [] }
+    try {
+      const latest = await this.latestOpenCodeHumanControl({ session_id: input.session_id, launch_id: input.launch_id })
+      if (!latest) return { action: "continue", source_kind: "human_control", checked_at: checkedAt, warnings: [] }
+      const action = investigationControlActionForProjection(latest.projected_state_after)
+      const summary = humanControlSummaryPreview(latest)
+      const warnings = investigationControlWarnings(latest.projected_state_after, [])
+      return {
+        action,
+        control_id: latest.control_id,
+        source_kind: "human_control",
+        summary_preview: summary,
+        projected_state: latest.projected_state_after,
+        checked_at: checkedAt,
+        warnings,
+      }
+    } catch (error) {
+      return {
+        action: "needs_human_review",
+        source_kind: "human_control",
+        summary_preview: `durable human-control inspection failed: ${redactText(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
+        projected_state: "escalated",
+        checked_at: checkedAt,
+        warnings: ["human-control inspection failed closed; investigation was not allowed to continue"],
+      }
+    }
   }
 
   private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
@@ -4770,6 +4807,29 @@ export class RuntimeServer {
       cycleId: this.commanderCycleId,
     })
   }
+}
+
+function investigationControlActionForProjection(projectedState: OpenCodeHumanControlProjectionState): CommanderInvestigationControlSnapshot["action"] {
+  if (projectedState === "pause_requested") return "pause"
+  if (projectedState === "stop_requested") return "stop"
+  if (projectedState === "correction_pending" || projectedState === "override_pending" || projectedState === "escalated") return "needs_human_review"
+  return "continue"
+}
+
+function investigationControlWarnings(projectedState: OpenCodeHumanControlProjectionState, warnings: string[]): string[] {
+  const next = warnings.slice(0, 6)
+  if (projectedState === "resume_requested" || projectedState === "report_requested" || projectedState === "noted") {
+    next.push(`latest durable human-control state ${projectedState} does not halt investigation`)
+  }
+  return next.slice(0, 8)
+}
+
+function humanControlSummaryPreview(result: OpenCodeHumanControlResult): string {
+  return redactText([
+    `durable human control ${result.control_kind}`,
+    `state=${result.projected_state_after}`,
+    result.reason_preview ?? result.correction_preview ?? result.override_preview ?? result.human_note_preview,
+  ].filter(Boolean).join("; ")).replace(/\s+/g, " ").trim().slice(0, 300)
 }
 
 class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {

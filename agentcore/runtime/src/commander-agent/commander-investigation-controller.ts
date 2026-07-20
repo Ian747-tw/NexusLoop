@@ -48,6 +48,8 @@ export class CommanderInvestigationController {
     const inputBlockers = validateInput(input)
     const blockedBudget = fallbackBudget(input.phase, "input_blocked")
     if (inputBlockers.length) return this.finish(input, investigationId, "blocked", "controller_error", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], inputBlockers, [], started)
+    const identityBlocker = midMissionIdentityBlocker(input)
+    if (identityBlocker) return this.finish(input, investigationId, "blocked", "bootstrap_blocked", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], [identityBlocker], [], started)
     if (!this.options.modelAdapter) return this.finish(input, investigationId, "blocked", "adapter_not_configured", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], ["Commander investigation model adapter is not configured"], [], started)
 
     const budgetResolution = await this.deriveBudget(input)
@@ -74,6 +76,7 @@ export class CommanderInvestigationController {
       const humanBeforeModel = await this.checkControl(input, "model_step", turn)
       const humanStop = stopReasonForControl(humanBeforeModel)
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
+      if (humanBeforeModel.warnings.length) workingSet.current_warnings.push(...humanBeforeModel.warnings)
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
 
       const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
@@ -95,11 +98,12 @@ export class CommanderInvestigationController {
         metadata: { investigation_id: investigationId, phase: input.phase },
       }
       const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
+      const requestCountBlocker = modelRequestCountBlocker(modelResult)
+      if (requestCountBlocker) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker], modelResult.warnings, started)
       providerRequests += modelResult.request_count
       workingSet.model_turn_count = turn
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
       if (deadline.expired()) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
-      if (modelResult.request_count > 1) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["model adapter violated one-request contract"], modelResult.warnings, started)
       if (modelResult.status !== "tool_call") {
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings)
         appendTurnSummary(turns, summary, workingSet, budget)
@@ -128,6 +132,7 @@ export class CommanderInvestigationController {
         const humanBeforeTool = await this.checkControl(input, "tool_execution", turn, call.tool_id)
         const humanToolStop = stopReasonForControl(humanBeforeTool)
         if (humanToolStop) return this.finish(input, investigationId, "needs_human_review", humanToolStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeTool.summary_preview ?? humanToolStop], humanBeforeTool.warnings, started)
+        if (humanBeforeTool.warnings.length) workingSet.current_warnings.push(...humanBeforeTool.warnings)
         if (workingSet.tool_call_count >= budget.max_tool_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool calls exhausted"], [], started)
         const args = normalizedControllerArgs(call, input.phase)
         if (call.tool_id === TOOL_SEARCH_ID && workingSet.tool_search_call_count + 1 > budget.max_tool_search_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_search_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool search calls exhausted"], [], started)
@@ -173,9 +178,9 @@ export class CommanderInvestigationController {
           progressMade = true
         }
         if (loadedTool.warning) workingSet.recent_load_outcomes.push(loadedTool.warning)
-        const beforeEvidenceCount = workingSet.evidence_cards.length
+        const beforeEvidenceKeys = new Set(workingSet.evidence_cards.map(evidenceKey))
         addEvidence(workingSet, execution.evidence, budget.max_evidence_cards)
-        const afterEvidence = workingSet.evidence_cards.slice(beforeEvidenceCount).map((item) => item.evidence_id)
+        const afterEvidence = workingSet.evidence_cards.filter((item) => !beforeEvidenceKeys.has(evidenceKey(item))).map((item) => item.evidence_id)
         newEvidence.push(...afterEvidence)
         if (afterEvidence.length > 0) progressMade = true
         const callSignature = stableHash({ tool_id: call.tool_id, arguments: args })
@@ -401,6 +406,19 @@ function validateInput(input: CommanderInvestigationInput): string[] {
   return blockers
 }
 
+function midMissionIdentityBlocker(input: CommanderInvestigationInput): string | undefined {
+  return input.phase === "mid_mission_supervision" && !input.session_id && !input.launch_id
+    ? "mid_mission_supervision requires session_id or launch_id"
+    : undefined
+}
+
+function modelRequestCountBlocker(modelResult: CommanderModelStepResult): string | undefined {
+  if (!Number.isInteger(modelResult.request_count) || modelResult.request_count < 0) return "model adapter returned an invalid request_count"
+  if (modelResult.request_count > 1) return "model adapter violated one-request contract"
+  if (modelResult.request_count === 0 && modelResult.status !== "cancelled") return "model adapter returned a zero-request non-cancelled result"
+  return undefined
+}
+
 function validateToolCalls(calls: CommanderModelToolCallPart[], loaded: Map<string, CommanderToolDescriptor>, budget: CommanderInvestigationBudget, workingSet: CommanderInvestigationWorkingSet): { blocker?: string; reason: CommanderInvestigationStopReason } {
   if (calls.length === 0) return { blocker: "model returned tool_call status without tool calls", reason: "invalid_tool_call" }
   if (calls.length > budget.max_tool_calls_per_turn) return { blocker: "model returned more tool calls than max_tool_calls_per_turn", reason: "max_tool_calls_per_turn" }
@@ -462,14 +480,18 @@ function deadlineSignal(parent: AbortSignal | undefined, budget: CommanderInvest
   const controller = new AbortController()
   const parentAbort = () => controller.abort(parent?.reason)
   parent?.addEventListener("abort", parentAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error("Commander investigation wall-time budget exhausted")), Math.max(1, Math.floor(remaining)))
+  let timerExpired = false
+  const timer = setTimeout(() => {
+    timerExpired = true
+    controller.abort(new Error("Commander investigation wall-time budget exhausted"))
+  }, Math.max(1, Math.floor(remaining)))
   return {
     signal: controller.signal,
     cancel: () => {
       clearTimeout(timer)
       parent?.removeEventListener("abort", parentAbort)
     },
-    expired: () => !parent?.aborted && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms,
+    expired: () => timerExpired || !parent?.aborted && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms,
   }
 }
 
