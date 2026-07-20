@@ -1332,6 +1332,15 @@ describe("Commander in-memory investigation controller", () => {
     expect(await eventText(projectDir)).toBe(before)
   })
 
+  test("ordinary RuntimeServer applies session-level human stops to launch-bound investigations", async () => {
+    const { server, sessionId, launchId, projectDir } = await investigationServerWithSession("nxl-9w2a-human-session-stop-")
+    await expect(server.command("runtime.record_opencode_human_control", { sessionId, kind: "stop_request", reason: "session-level operator stop" })).resolves.toMatchObject({ status: "recorded" })
+    const before = await eventText(projectDir)
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ session_id: sessionId, launch_id: launchId }))
+    expect(result).toMatchObject({ status: "needs_human_review", stop_reason: "human_stop", provider_request_count: 0 })
+    expect(await eventText(projectDir)).toBe(before)
+  })
+
   test("ordinary RuntimeServer permits resume and note controls with warnings", async () => {
     for (const item of [
       { kind: "resume_request", payload: { reason: "operator resumes" }, state: "resume_requested" },

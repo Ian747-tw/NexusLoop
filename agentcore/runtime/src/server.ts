@@ -4667,7 +4667,11 @@ export class RuntimeServer {
   }
 
   private async effectiveOpenCodeHumanControl(input: { session_id?: string; launch_id?: string }): Promise<OpenCodeHumanControlRecord | undefined> {
-    const records = await this.listOpenCodeHumanControls({ ...input, limit: 100 })
+    const records = input.session_id && input.launch_id
+      ? (await this.opencodeHumanControlService().listAll({ session_id: input.session_id }))
+        .filter((record) => !record.launch_id || record.launch_id === input.launch_id)
+        .slice(0, 100)
+      : await this.listOpenCodeHumanControls({ ...input, limit: 100 })
     return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
   }
 
