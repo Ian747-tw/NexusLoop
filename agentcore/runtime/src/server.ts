@@ -4667,11 +4667,17 @@ export class RuntimeServer {
   }
 
   private async effectiveOpenCodeHumanControl(input: { session_id?: string; launch_id?: string }): Promise<OpenCodeHumanControlRecord | undefined> {
-    const records = input.session_id && input.launch_id
-      ? (await this.opencodeHumanControlService().listAll({ session_id: input.session_id }))
+    let sessionId = input.session_id
+    if (!sessionId && input.launch_id) {
+      const launch = await this.getOpenCodeSessionLaunch(input.launch_id)
+      if (!launch) throw new Error("launch_id could not be resolved for durable human-control inspection")
+      sessionId = launch.session_id
+    }
+    const records = sessionId && input.launch_id
+      ? (await this.opencodeHumanControlService().listAll({ session_id: sessionId }))
         .filter((record) => !record.launch_id || record.launch_id === input.launch_id)
         .slice(0, 100)
-      : await this.listOpenCodeHumanControls({ ...input, limit: 100 })
+      : await this.listOpenCodeHumanControls({ ...input, session_id: sessionId, limit: 100 })
     return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
   }
 
