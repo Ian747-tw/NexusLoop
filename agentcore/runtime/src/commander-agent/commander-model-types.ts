@@ -6,6 +6,7 @@ export type CommanderModelToolCallPart = {
   tool_call_id: string
   tool_id: string
   arguments: Record<string, unknown>
+  execution_arguments?: Record<string, unknown>
   raw_arguments?: string
   arguments_valid: boolean
   validation_errors: string[]

@@ -307,11 +307,7 @@ function providerToolNameFromRequest(request: CommanderModelStepRequest, toolId:
 }
 
 function finalizeStep(request: CommanderModelStepRequest, status: CommanderModelStepResult["status"], input: { text?: string; toolCalls?: CommanderModelToolCallPart[]; usage: CommanderModelUsage; finishReason?: string; requestCount: number; durationMs: number; error?: string; streamed?: boolean }): CommanderModelStepResult {
-  const toolCalls = (input.toolCalls ?? []).map((call) => ({
-    ...call,
-    arguments: redactValue(call.arguments),
-    raw_arguments: call.raw_arguments ? redactText(call.raw_arguments).slice(0, 4096) : call.raw_arguments,
-  }))
+  const toolCalls = (input.toolCalls ?? []).map(redactedToolCallWithExecutionArguments)
   const assistantMessage: CommanderModelAssistantMessage | undefined = status === "failed" || status === "cancelled"
     ? undefined
     : { role: "assistant", content: [...(input.text ? [{ type: "text" as const, text: redactText(input.text).slice(0, 4000) }] : []), ...toolCalls] }
@@ -335,6 +331,22 @@ function finalizeStep(request: CommanderModelStepRequest, status: CommanderModel
   }
   result.result_hash = stableHash({ ...result, duration_ms: 0 })
   return result
+}
+
+function redactedToolCallWithExecutionArguments(call: CommanderModelToolCallPart): CommanderModelToolCallPart {
+  const { execution_arguments: explicitExecutionArguments, ...rest } = call
+  const safeCall = {
+    ...rest,
+    arguments: redactValue(call.arguments),
+    raw_arguments: call.raw_arguments ? redactText(call.raw_arguments).slice(0, 4096) : call.raw_arguments,
+  }
+  Object.defineProperty(safeCall, "execution_arguments", {
+    value: explicitExecutionArguments ?? call.arguments,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+  return safeCall
 }
 
 function aiSdkUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } } | undefined): CommanderModelUsage {

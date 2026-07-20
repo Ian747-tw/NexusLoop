@@ -66,6 +66,21 @@ describe("Commander AI SDK model adapter", () => {
     expect(JSON.stringify(mock.requests[0].body)).not.toContain("execute")
   })
 
+  test("adapter preserves raw execution arguments without serializing secret-like literals", async () => {
+    const secretQuery = "sk-investigateLiteral123456"
+    const mock = startMockServer("secret_tool")
+    const request = baseRequest({ baseUrl: mock.url, content: "search exact suspected key", overrides: { metadata: { secret_query: secretQuery } } })
+    const result = await request.adapter.executeOneStep(request.request)
+    expect(result.status).toBe("tool_call")
+    const call = result.tool_calls[0]
+    expect(call.tool_id).toBe("repo.search_text")
+    expect(call.arguments.query).toBe("[REDACTED]")
+    expect(call.execution_arguments?.query).toBe(secretQuery)
+    expect(Object.keys(call)).not.toContain("execution_arguments")
+    expect(JSON.stringify(result)).not.toContain(secretQuery)
+    expect(result.result_hash).not.toContain(secretQuery)
+  })
+
   test("native adapter preserves multiple tool calls order ids and canonical underscore IDs", async () => {
     const mock = startMockServer("multi_tool")
     const request = baseRequest({ baseUrl: mock.url, content: "multi tool" })
@@ -822,6 +837,93 @@ describe("Commander in-memory investigation controller", () => {
     expect(capturedCallIds[1]).toContain("_call_1_2_second")
   })
 
+  test("controller executes transient raw arguments while keeping transcript arguments redacted", async () => {
+    const secretQuery = "sk-controllerLiteral123456"
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const call = toolCall("secret", "commander.tool_search", { query: "[REDACTED]" })
+    Object.defineProperty(call, "execution_arguments", {
+      value: { query: secretQuery },
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    })
+    let executedQuery: unknown
+    const descriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_search")
+    if (!descriptor) throw new Error("missing commander.tool_search descriptor")
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [call] },
+        { status: "final", text: "done" },
+      ]),
+      toolExecutor: {
+        execute: async (request) => {
+          executedQuery = request.arguments.query
+          return {
+            execution_id: request.execution_id,
+            call_id: request.call_id,
+            tool_call_id: request.tool_call_id,
+            tool_id: request.tool_id,
+            phase: request.phase,
+            status: "ready",
+            descriptor_version: descriptor.version,
+            authority_id: descriptor.authority_id,
+            trust_class: descriptor.trust_class,
+            instruction_semantics: "none",
+            result: { status: "ready" },
+            evidence: [],
+            output_bytes: 128,
+            max_output_bytes: descriptor.max_output_bytes,
+            truncated: false,
+            handler_invoked: true,
+            external_process_invoked: false,
+            process_policy: "none",
+            events_appended: false,
+            provider_called: false,
+            mcp_called: false,
+            network_called: false,
+            research_db_written: false,
+            mission_mutated: false,
+            proposal_mutated: false,
+            opencode_action_performed: false,
+            blockers: [],
+            warnings: [],
+            duration_ms: 0,
+            generated_at: "2026-07-19T00:00:00.000Z",
+            result_hash: "result_secret_search",
+          }
+        },
+      },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => ({
+        bootstrap_id: "bootstrap_raw_args",
+        phase: "proposal_investigation",
+        objective_preview: "raw args",
+        authority_kernel: "authority kernel",
+        continuity_kind: "summary",
+        readiness: "ready",
+        current_project_summary: "summary",
+        open_loops: [],
+        source_refs: [],
+        blockers: [],
+        warnings: [],
+        estimated_bytes: 10,
+        estimated_tokens: 3,
+        bootstrap_hash: "bootstrap_hash",
+      }) },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const result = await controller.run(baseInvestigation())
+    expect(result.status).toBe("final")
+    expect(executedQuery).toBe(secretQuery)
+    expect(JSON.stringify(result)).not.toContain(secretQuery)
+  })
+
   test("budgets stop search caps context caps duplicate IDs and repeated no-progress", async () => {
     const duplicate = new RuntimeServer({
       projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-duplicate-id-")),
@@ -1126,7 +1228,7 @@ function loopbackFetch(origin: string): typeof fetch {
   }) as typeof fetch
 }
 
-function startMockServer(kind: "text" | "tool" | "multi_tool" | "malformed_tool" | "empty_tool_finish" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage" | "cache_usage") {
+function startMockServer(kind: "text" | "tool" | "secret_tool" | "multi_tool" | "malformed_tool" | "empty_tool_finish" | "json_fallback" | "json_fallback_final" | "stream_tool" | "stream_json_fallback_tool" | "stream_refusal" | "http_429" | "slow" | "structured_invalid" | "refusal" | "no_usage" | "cache_usage") {
   const requests: Array<{ body: unknown; headers: Record<string, string> }> = []
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -1193,6 +1295,9 @@ function chatBody(kind: string) {
     const tool_calls = [{ id: "call_memory", type: "function", function: { name: "memory__search", arguments: kind === "malformed_tool" ? JSON.stringify({ query: 7 }) : JSON.stringify({ query: "research memory", limit: 3 }) } }]
     if (kind === "multi_tool") tool_calls.push({ id: "call_git", type: "function", function: { name: "repo__git_status", arguments: "{}" } })
     return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: kind === "multi_tool" ? "checking tools" : null, tool_calls } }] }
+  }
+  if (kind === "secret_tool") {
+    return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id: "call_secret", type: "function", function: { name: "repo__search_text", arguments: JSON.stringify({ query: "sk-investigateLiteral123456", path: "src", limit: 5 }) } }] } }] }
   }
   if (kind === "empty_tool_finish") return { ...base, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [] } }] }
   if (kind === "json_fallback") return { ...base, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ type: "tool_call", tool_id: "memory.search", arguments: { query: "research memory", limit: 3 } }) } }] }

@@ -171,7 +171,7 @@ export class CommanderInvestigationController {
         latestToolResults.push(toolMessage)
         workingSet.cumulative_tool_result_bytes += Buffer.byteLength(toolMessage.content)
         if (workingSet.cumulative_tool_result_bytes > budget.max_cumulative_tool_result_bytes) return this.finish(input, investigationId, "budget_exhausted", "max_cumulative_tool_result_bytes", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["cumulative tool-result byte budget exhausted"], [], started)
-        const loadedTool = this.maybeLoadTool(call, execution, loaded, budget)
+        const loadedTool = this.maybeLoadTool(call, args, execution, loaded, budget)
         if (loadedTool.loaded) {
           loaded.set(loadedTool.tool.tool_id, loadedTool.tool)
           newlyLoaded.push(loadedTool.tool.tool_id)
@@ -295,9 +295,9 @@ export class CommanderInvestigationController {
     return { loaded, warnings }
   }
 
-  private maybeLoadTool(call: CommanderModelToolCallPart, execution: CommanderToolExecutionResult, loaded: Map<string, CommanderToolDescriptor>, budget: CommanderInvestigationBudget): { loaded: false; warning?: string } | { loaded: true; tool: CommanderToolDescriptor; warning?: string } {
+  private maybeLoadTool(call: CommanderModelToolCallPart, args: Record<string, unknown>, execution: CommanderToolExecutionResult, loaded: Map<string, CommanderToolDescriptor>, budget: CommanderInvestigationBudget): { loaded: false; warning?: string } | { loaded: true; tool: CommanderToolDescriptor; warning?: string } {
     if (call.tool_id !== TOOL_GET_ID || execution.status !== "ready") return { loaded: false }
-    const target = typeof call.arguments.tool_id === "string" ? call.arguments.tool_id : extractToolGetTarget(execution)
+    const target = typeof args.tool_id === "string" ? args.tool_id : extractToolGetTarget(execution)
     if (!target) return { loaded: false, warning: "commander.tool_get did not expose a target tool_id" }
     if (loaded.has(target)) return { loaded: false, warning: `tool ${target} already loaded` }
     const descriptor = this.options.descriptors.find((tool) => tool.tool_id === target)
@@ -431,15 +431,20 @@ function validateToolCalls(calls: CommanderModelToolCallPart[], loaded: Map<stri
     if (!loaded.has(call.tool_id)) return { blocker: `model called unloaded tool ${call.tool_id}`, reason: "unloaded_tool_call" }
     if (!call.arguments_valid) return { blocker: `model produced invalid arguments for ${call.tool_id}`, reason: "invalid_tool_call" }
     const descriptor = loaded.get(call.tool_id)
-    const validated = descriptor?.input_schema ? validateCommanderToolArguments(descriptor.input_schema, call.arguments) : { valid: false, errors: ["missing schema"] }
+    const validated = descriptor?.input_schema ? validateCommanderToolArguments(descriptor.input_schema, executionArguments(call)) : { valid: false, errors: ["missing schema"] }
     if (!validated.valid) return { blocker: `NexusLoop revalidation failed for ${call.tool_id}: ${validated.errors.join("; ")}`, reason: "invalid_tool_call" }
   }
   return { reason: "invalid_tool_call" }
 }
 
 function normalizedControllerArgs(call: CommanderModelToolCallPart, phase: CommanderToolPhase): Record<string, unknown> {
-  if (call.tool_id === TOOL_SEARCH_ID) return { ...call.arguments, phase, implemented_only: true, allowed_in_phase_only: true, include_schema: false, limit: Math.min(Number(call.arguments.limit ?? 10), 10) }
-  return call.arguments
+  const args = executionArguments(call)
+  if (call.tool_id === TOOL_SEARCH_ID) return { ...args, phase, implemented_only: true, allowed_in_phase_only: true, include_schema: false, limit: Math.min(Number(args.limit ?? 10), 10) }
+  return args
+}
+
+function executionArguments(call: CommanderModelToolCallPart): Record<string, unknown> {
+  return call.execution_arguments ?? call.arguments
 }
 
 function extractToolGetTarget(execution: CommanderToolExecutionResult): string | undefined {
