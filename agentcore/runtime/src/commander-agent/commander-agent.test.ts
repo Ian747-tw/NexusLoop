@@ -1176,6 +1176,80 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.turn_summaries[1].progress_made).toBe(true)
   })
 
+  test("context compaction warnings propagate into final investigation results", async () => {
+    const descriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_search")
+    if (!descriptor) throw new Error("missing commander.tool_search descriptor")
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("compact", "commander.tool_search", { query: "compact" })] },
+        { status: "final", text: "done" },
+      ]),
+      toolExecutor: {
+        execute: async (request) => ({
+          execution_id: request.execution_id,
+          call_id: request.call_id,
+          tool_call_id: request.tool_call_id,
+          tool_id: request.tool_id,
+          phase: request.phase,
+          status: "ready",
+          descriptor_version: descriptor.version,
+          authority_id: descriptor.authority_id,
+          trust_class: descriptor.trust_class,
+          instruction_semantics: "none",
+          result: { status: "ready" },
+          evidence: [{ ...evidenceCard("compact_evidence"), summary_preview: "x".repeat(3_000) }],
+          output_bytes: 128,
+          max_output_bytes: descriptor.max_output_bytes,
+          truncated: false,
+          handler_invoked: true,
+          external_process_invoked: false,
+          process_policy: "none",
+          events_appended: false,
+          provider_called: false,
+          mcp_called: false,
+          network_called: false,
+          research_db_written: false,
+          mission_mutated: false,
+          proposal_mutated: false,
+          opencode_action_performed: false,
+          blockers: [],
+          warnings: [],
+          duration_ms: 0,
+          generated_at: "2026-07-19T00:00:00.000Z",
+          result_hash: "result_compact_evidence",
+        }),
+      },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => ({
+        bootstrap_id: "bootstrap_compaction_warning",
+        phase: "proposal_investigation",
+        objective_preview: "compaction warnings",
+        authority_kernel: "authority kernel",
+        continuity_kind: "summary",
+        readiness: "ready",
+        current_project_summary: "summary",
+        open_loops: [],
+        source_refs: [],
+        blockers: [],
+        warnings: [],
+        estimated_bytes: 10,
+        estimated_tokens: 3,
+        bootstrap_hash: "bootstrap_hash",
+      }) },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const result = await controller.run(baseInvestigation({ max_context_bytes: 5_000, max_tool_search_calls: 2, max_consecutive_no_progress_turns: 3 }))
+    expect(result.status).toBe("final")
+    expect(result.warnings.join(" ")).toContain("oldest evidence card omitted during deterministic context compaction")
+  })
+
   test("caller abort and human-control stop halt before model or remaining tool execution", async () => {
     const abortedSignal = new AbortController()
     abortedSignal.abort()
@@ -1245,6 +1319,16 @@ describe("Commander in-memory investigation controller", () => {
       expect(result).toMatchObject({ status: "needs_human_review", stop_reason: item.stop_reason, provider_request_count: 0 })
       expect(await eventText(projectDir)).toBe(before)
     }
+  })
+
+  test("ordinary RuntimeServer does not let later notes mask unresolved stop controls", async () => {
+    const { server, sessionId, launchId, projectDir } = await investigationServerWithSession("nxl-9w2a-human-note-after-stop-")
+    await expect(server.command("runtime.record_opencode_human_control", { sessionId, launchId, kind: "stop_request", reason: "operator stop" })).resolves.toMatchObject({ status: "recorded" })
+    await expect(server.command("runtime.record_opencode_human_control", { sessionId, launchId, kind: "note", note: "operator note after stop" })).resolves.toMatchObject({ status: "recorded" })
+    const before = await eventText(projectDir)
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ session_id: sessionId }))
+    expect(result).toMatchObject({ status: "needs_human_review", stop_reason: "human_stop", provider_request_count: 0 })
+    expect(await eventText(projectDir)).toBe(before)
   })
 
   test("ordinary RuntimeServer permits resume and note controls with warnings", async () => {

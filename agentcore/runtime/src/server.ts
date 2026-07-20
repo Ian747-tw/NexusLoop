@@ -4640,17 +4640,17 @@ export class RuntimeServer {
     const checkedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
     if (!input.session_id && !input.launch_id) return { action: "continue", source_kind: "default", checked_at: checkedAt, warnings: [] }
     try {
-      const latest = await this.latestOpenCodeHumanControl({ session_id: input.session_id, launch_id: input.launch_id })
-      if (!latest) return { action: "continue", source_kind: "human_control", checked_at: checkedAt, warnings: [] }
-      const action = investigationControlActionForProjection(latest.projected_state_after)
-      const summary = humanControlSummaryPreview(latest)
-      const warnings = investigationControlWarnings(latest.projected_state_after, [])
+      const effective = await this.effectiveOpenCodeHumanControl({ session_id: input.session_id, launch_id: input.launch_id })
+      if (!effective) return { action: "continue", source_kind: "human_control", checked_at: checkedAt, warnings: [] }
+      const action = investigationControlActionForProjection(effective.projected_state_after)
+      const summary = humanControlSummaryPreview(effective)
+      const warnings = investigationControlWarnings(effective.projected_state_after, [])
       return {
         action,
-        control_id: latest.control_id,
+        control_id: effective.control_id,
         source_kind: "human_control",
         summary_preview: summary,
-        projected_state: latest.projected_state_after,
+        projected_state: effective.projected_state_after,
         checked_at: checkedAt,
         warnings,
       }
@@ -4664,6 +4664,11 @@ export class RuntimeServer {
         warnings: ["human-control inspection failed closed; investigation was not allowed to continue"],
       }
     }
+  }
+
+  private async effectiveOpenCodeHumanControl(input: { session_id?: string; launch_id?: string }): Promise<OpenCodeHumanControlRecord | undefined> {
+    const records = await this.listOpenCodeHumanControls({ ...input, limit: 100 })
+    return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
   }
 
   private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
@@ -4824,11 +4829,12 @@ function investigationControlWarnings(projectedState: OpenCodeHumanControlProjec
   return next.slice(0, 8)
 }
 
-function humanControlSummaryPreview(result: OpenCodeHumanControlResult): string {
+function humanControlSummaryPreview(result: OpenCodeHumanControlRecord | OpenCodeHumanControlResult): string {
+  const rich = result as Partial<OpenCodeHumanControlResult>
   return redactText([
     `durable human control ${result.control_kind}`,
     `state=${result.projected_state_after}`,
-    result.reason_preview ?? result.correction_preview ?? result.override_preview ?? result.human_note_preview,
+    rich.reason_preview ?? rich.correction_preview ?? rich.override_preview ?? result.human_note_preview,
   ].filter(Boolean).join("; ")).replace(/\s+/g, " ").trim().slice(0, 300)
 }
 
