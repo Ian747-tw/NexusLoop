@@ -486,13 +486,14 @@ describe("Commander in-memory investigation controller", () => {
   })
 
   test("model may finalize on first turn with bounded warning and one provider request", async () => {
-    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "No tools needed for this bounded answer." }])
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "No tools needed for this bounded answer.", warnings: ["adapter degraded mode warning"] }])
     const server = new RuntimeServer({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-final-")), commanderModelStepAdapter: adapter })
     const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_final" }))
     expect(result.status).toBe("final")
     expect(result.stop_reason).toBe("model_final")
     expect(result.provider_request_count).toBe(1)
     expect(result.tool_call_count).toBe(0)
+    expect(result.warnings.join(" ")).toContain("adapter degraded mode warning")
     expect(result.warnings.join(" ")).toContain("without acquired evidence")
     expect(result.loaded_tool_ids).toContain("commander.tool_search")
     expect(result.loaded_tool_ids).not.toContain("memory.search")
