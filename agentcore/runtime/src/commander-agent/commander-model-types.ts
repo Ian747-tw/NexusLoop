@@ -6,6 +6,7 @@ export type CommanderModelToolCallPart = {
   tool_call_id: string
   tool_id: string
   arguments: Record<string, unknown>
+  execution_arguments?: Record<string, unknown>
   raw_arguments?: string
   arguments_valid: boolean
   validation_errors: string[]
@@ -96,7 +97,7 @@ export type CommanderModelStreamEvent =
   | { type: "cancelled"; error?: string }
 
 export type CommanderModelStepAdapter = {
-  adapter_id: "ai_sdk_core"
+  adapter_id: string
   adapter_version: string
   supports_streaming: true
   supports_native_tools: true

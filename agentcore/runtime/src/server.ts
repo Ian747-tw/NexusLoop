@@ -93,7 +93,7 @@ import type { CommanderGuidancePreview, CommanderGuidanceRecord, CommanderGuidan
 import { CommanderGuidanceDeliveryService, readCommanderGuidanceDeliveryInput, readCommanderGuidanceDeliveryPreviewInput } from "./opencode-session/opencode-guidance-delivery-service"
 import type { CommanderGuidanceDeliveryPreview, CommanderGuidanceDeliveryRecord, CommanderGuidanceDeliveryResult, CommanderGuidanceDeliverySummary } from "./opencode-session/opencode-guidance-delivery-types"
 import { OpenCodeHumanControlService, readOpenCodeHumanControlPreviewInput, readOpenCodeHumanControlRecordInput } from "./opencode-session/opencode-human-control-service"
-import type { OpenCodeHumanControlPreview, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
+import type { OpenCodeHumanControlPreview, OpenCodeHumanControlProjectionState, OpenCodeHumanControlRecord, OpenCodeHumanControlResult, OpenCodeHumanControlSummary } from "./opencode-session/opencode-human-control-types"
 import { OpenCodeWakeSupervisorService, readOpenCodeWakeSupervisorPreviewInput, readOpenCodeWakeSupervisorSummaryInput } from "./opencode-session/opencode-wake-supervisor-service"
 import type { OpenCodeWakeSupervisorPreview, OpenCodeWakeSupervisorSummary } from "./opencode-session/opencode-wake-supervisor-types"
 import { OpenCodeWakeSupervisorExecutionService, readOpenCodeWakeSupervisorBatchPreviewInput, readOpenCodeWakeSupervisorBatchRecordInput, readOpenCodeWakeSupervisorExecutionPreviewInput, readOpenCodeWakeSupervisorExecutionRecordInput } from "./opencode-session/opencode-wake-supervisor-execution-service"
@@ -175,7 +175,21 @@ import type { WakeSchedulerNavigationCheckpointApprovalUsageSummary, WakeSchedul
 import { CommandAuthorityService } from "./authority/command-authority-service"
 import { COMMAND_AUTHORITY_REGISTRY } from "./authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
-import { createCommanderToolBindingRegistry, CommanderToolExecutor, type CommanderToolBindingRegistry, type CommanderToolExecutionRequest, type CommanderToolExecutionResult } from "./commander-agent"
+import {
+  createCommanderToolBindingRegistry,
+  CommanderInvestigationBootstrapService,
+  CommanderInvestigationContextService,
+  CommanderInvestigationController,
+  CommanderToolExecutor,
+  type CommanderInvestigationControlGate,
+  type CommanderInvestigationControlSnapshot,
+  type CommanderInvestigationInput,
+  type CommanderInvestigationResult,
+  type CommanderModelStepAdapter,
+  type CommanderToolBindingRegistry,
+  type CommanderToolExecutionRequest,
+  type CommanderToolExecutionResult,
+} from "./commander-agent"
 import { MissionToolRouter } from "./missions/mission-tool-router"
 import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-tool-types"
 import { PolicyService } from "./spec/policy-service"
@@ -269,6 +283,8 @@ export interface RuntimeServerOptions {
   researchDb?: RuntimeResearchDbProjection
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
   commanderQueueNow?: () => Date
+  commanderModelStepAdapter?: CommanderModelStepAdapter
+  commanderInvestigationControlGate?: CommanderInvestigationControlGate
 }
 
 export interface RuntimeResearchDbReader {
@@ -360,6 +376,8 @@ export class RuntimeServer {
   private readonly researchProjectionMode: RuntimeResearchProjectionMode
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
+  private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
+  private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
@@ -389,6 +407,9 @@ export class RuntimeServer {
   private commanderRepoReadServiceInstance: CommanderRepoReadService | null = null
   private commanderToolBindingRegistryInstance: CommanderToolBindingRegistry | null = null
   private commanderToolExecutorInstance: CommanderToolExecutor | null = null
+  private commanderInvestigationBootstrapServiceInstance: CommanderInvestigationBootstrapService | null = null
+  private commanderInvestigationContextServiceInstance: CommanderInvestigationContextService | null = null
+  private commanderInvestigationControllerInstance: CommanderInvestigationController | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -504,6 +525,8 @@ export class RuntimeServer {
     this.ownsResearchDb = options.researchDb === undefined
     this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir, { allowFtsProjectionRepair: this.runLock.isHeld() }))
     this.commanderQueueNow = options.commanderQueueNow
+    this.commanderModelStepAdapter = options.commanderModelStepAdapter
+    this.commanderInvestigationControlGate = options.commanderInvestigationControlGate
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
       ok: this.researchProjectionMode === "disabled",
@@ -2611,6 +2634,10 @@ export class RuntimeServer {
     return this.commanderToolExecutor().execute(input)
   }
 
+  runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
+    return this.commanderInvestigationController().run(input)
+  }
+
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
     return this.commanderContinuityService().proposal(input)
   }
@@ -4573,6 +4600,87 @@ export class RuntimeServer {
     return this.commanderToolExecutorInstance
   }
 
+  private commanderInvestigationBootstrapService(): CommanderInvestigationBootstrapService {
+    this.commanderInvestigationBootstrapServiceInstance ??= new CommanderInvestigationBootstrapService({
+      continuityService: this.commanderContinuityService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationBootstrapServiceInstance
+  }
+
+  private commanderInvestigationContextService(): CommanderInvestigationContextService {
+    this.commanderInvestigationContextServiceInstance ??= new CommanderInvestigationContextService()
+    return this.commanderInvestigationContextServiceInstance
+  }
+
+  private commanderInvestigationController(): CommanderInvestigationController {
+    this.commanderInvestigationControllerInstance ??= new CommanderInvestigationController({
+      modelAdapter: this.commanderModelStepAdapter,
+      toolExecutor: this.commanderToolExecutor(),
+      toolService: this.commanderToolService(),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
+      bootstrapService: this.commanderInvestigationBootstrapService(),
+      contextService: this.commanderInvestigationContextService(),
+      controlGate: this.commanderInvestigationControlGate ?? this.defaultCommanderInvestigationControlGate(),
+      capabilityRegistry: this.modelCapabilityRegistry,
+      contextBudgetService: this.contextBudgetService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationControllerInstance
+  }
+
+  private defaultCommanderInvestigationControlGate(): CommanderInvestigationControlGate {
+    return {
+      check: async (input) => this.readDurableCommanderInvestigationControl(input),
+    }
+  }
+
+  private async readDurableCommanderInvestigationControl(input: Parameters<CommanderInvestigationControlGate["check"]>[0]): Promise<CommanderInvestigationControlSnapshot> {
+    const checkedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    if (!input.session_id && !input.launch_id) return { action: "continue", source_kind: "default", checked_at: checkedAt, warnings: [] }
+    try {
+      const effective = await this.effectiveOpenCodeHumanControl({ session_id: input.session_id, launch_id: input.launch_id })
+      if (!effective) return { action: "continue", source_kind: "human_control", checked_at: checkedAt, warnings: [] }
+      const action = investigationControlActionForProjection(effective.projected_state_after)
+      const summary = humanControlSummaryPreview(effective)
+      const warnings = investigationControlWarnings(effective.projected_state_after, [])
+      return {
+        action,
+        control_id: effective.control_id,
+        source_kind: "human_control",
+        summary_preview: summary,
+        projected_state: effective.projected_state_after,
+        checked_at: checkedAt,
+        warnings,
+      }
+    } catch (error) {
+      return {
+        action: "needs_human_review",
+        source_kind: "human_control",
+        summary_preview: `durable human-control inspection failed: ${redactText(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
+        projected_state: "escalated",
+        checked_at: checkedAt,
+        warnings: ["human-control inspection failed closed; investigation was not allowed to continue"],
+      }
+    }
+  }
+
+  private async effectiveOpenCodeHumanControl(input: { session_id?: string; launch_id?: string }): Promise<OpenCodeHumanControlRecord | undefined> {
+    let sessionId = input.session_id
+    if (!sessionId && input.launch_id) {
+      const launch = await this.getOpenCodeSessionLaunch(input.launch_id)
+      if (!launch) throw new Error("launch_id could not be resolved for durable human-control inspection")
+      sessionId = launch.session_id
+    }
+    const records = sessionId && input.launch_id
+      ? (await this.opencodeHumanControlService().listAll({ session_id: sessionId }))
+        .filter((record) => !record.launch_id || record.launch_id === input.launch_id)
+        .slice(0, 100)
+      : await this.listOpenCodeHumanControls({ ...input, session_id: sessionId, limit: 100 })
+    return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
+  }
+
   private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
     const records: CommanderOperationalMemoryRecord[] = []
     const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
@@ -4714,6 +4822,30 @@ export class RuntimeServer {
       cycleId: this.commanderCycleId,
     })
   }
+}
+
+function investigationControlActionForProjection(projectedState: OpenCodeHumanControlProjectionState): CommanderInvestigationControlSnapshot["action"] {
+  if (projectedState === "pause_requested") return "pause"
+  if (projectedState === "stop_requested") return "stop"
+  if (projectedState === "correction_pending" || projectedState === "override_pending" || projectedState === "escalated") return "needs_human_review"
+  return "continue"
+}
+
+function investigationControlWarnings(projectedState: OpenCodeHumanControlProjectionState, warnings: string[]): string[] {
+  const next = warnings.slice(0, 6)
+  if (projectedState === "resume_requested" || projectedState === "report_requested" || projectedState === "noted") {
+    next.push(`latest durable human-control state ${projectedState} does not halt investigation`)
+  }
+  return next.slice(0, 8)
+}
+
+function humanControlSummaryPreview(result: OpenCodeHumanControlRecord | OpenCodeHumanControlResult): string {
+  const rich = result as Partial<OpenCodeHumanControlResult>
+  return redactText([
+    `durable human control ${result.control_kind}`,
+    `state=${result.projected_state_after}`,
+    rich.reason_preview ?? rich.correction_preview ?? rich.override_preview ?? result.human_note_preview,
+  ].filter(Boolean).join("; ")).replace(/\s+/g, " ").trim().slice(0, 300)
 }
 
 class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {

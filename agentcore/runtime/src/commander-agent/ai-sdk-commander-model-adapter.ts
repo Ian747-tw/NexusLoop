@@ -37,6 +37,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     try {
       const result = await generateText({
         model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
+        instructions: instructionsFromRequest(request),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
@@ -80,6 +81,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     try {
       const result = streamText({
         model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
+        instructions: instructionsFromRequest(request),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
@@ -264,10 +266,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   const messages: ModelMessage[] = []
   let pendingToolCalls = new Map<string, string>()
   for (const message of request.messages) {
-    if (message.role === "system" || message.role === "user") {
+    if (message.role === "system") continue
+    if (message.role === "user") {
       if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
       pendingToolCalls = new Map()
-      messages.push({ role: message.role, content: message.content })
+      messages.push({ role: "user", content: message.content })
     }
     if (message.role === "assistant") {
       if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
@@ -292,6 +295,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   return messages
 }
 
+function instructionsFromRequest(request: CommanderModelStepRequest): string | undefined {
+  const instructions = request.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n")
+  return instructions ? redactText(instructions).slice(0, 12_000) : undefined
+}
+
 function providerToolNameFromRequest(request: CommanderModelStepRequest, toolId: string): string {
   const found = request.tools.find((item) => item.tool_id === toolId)
   if (!found) throw new Error(`unknown message tool_id ${toolId}`)
@@ -299,11 +307,7 @@ function providerToolNameFromRequest(request: CommanderModelStepRequest, toolId:
 }
 
 function finalizeStep(request: CommanderModelStepRequest, status: CommanderModelStepResult["status"], input: { text?: string; toolCalls?: CommanderModelToolCallPart[]; usage: CommanderModelUsage; finishReason?: string; requestCount: number; durationMs: number; error?: string; streamed?: boolean }): CommanderModelStepResult {
-  const toolCalls = (input.toolCalls ?? []).map((call) => ({
-    ...call,
-    arguments: redactValue(call.arguments),
-    raw_arguments: call.raw_arguments ? redactText(call.raw_arguments).slice(0, 4096) : call.raw_arguments,
-  }))
+  const toolCalls = (input.toolCalls ?? []).map(redactedToolCallWithExecutionArguments)
   const assistantMessage: CommanderModelAssistantMessage | undefined = status === "failed" || status === "cancelled"
     ? undefined
     : { role: "assistant", content: [...(input.text ? [{ type: "text" as const, text: redactText(input.text).slice(0, 4000) }] : []), ...toolCalls] }
@@ -327,6 +331,22 @@ function finalizeStep(request: CommanderModelStepRequest, status: CommanderModel
   }
   result.result_hash = stableHash({ ...result, duration_ms: 0 })
   return result
+}
+
+function redactedToolCallWithExecutionArguments(call: CommanderModelToolCallPart): CommanderModelToolCallPart {
+  const { execution_arguments: explicitExecutionArguments, ...rest } = call
+  const safeCall = {
+    ...rest,
+    arguments: redactValue(call.arguments),
+    raw_arguments: call.raw_arguments ? redactText(call.raw_arguments).slice(0, 4096) : call.raw_arguments,
+  }
+  Object.defineProperty(safeCall, "execution_arguments", {
+    value: explicitExecutionArguments ?? call.arguments,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+  return safeCall
 }
 
 function aiSdkUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } } | undefined): CommanderModelUsage {
