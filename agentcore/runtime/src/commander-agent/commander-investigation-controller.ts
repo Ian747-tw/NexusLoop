@@ -136,8 +136,9 @@ export class CommanderInvestigationController {
         if (workingSet.tool_call_count >= budget.max_tool_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool calls exhausted"], [], started)
         const args = normalizedControllerArgs(call, input.phase)
         if (call.tool_id === TOOL_SEARCH_ID && workingSet.tool_search_call_count + 1 > budget.max_tool_search_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_search_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool search calls exhausted"], [], started)
-        const executionId = `${investigationId}_exec_${turn}_${executions.length + 1}`
-        const callId = `${investigationId}_call_${turn}`
+        const callIndex = executions.length + 1
+        const executionId = `${investigationId}_exec_${turn}_${callIndex}`
+        const callId = controllerCallId(investigationId, turn, callIndex, call.tool_call_id)
         const controllerBlocker = this.controllerPreflightBlocker(call, args, input.phase, loaded, budget)
         if (!controllerBlocker && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before tool execution"], [], started)
         let toolDeadlineExpired = false
@@ -688,4 +689,9 @@ function preview(value: string | undefined, max: number): string {
 
 function boundedId(value: unknown): string | undefined {
   return typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(value) ? value : undefined
+}
+
+function controllerCallId(investigationId: string, turn: number, callIndex: number, toolCallId: string): string {
+  const safeToolCallId = toolCallId.replace(/[^a-zA-Z0-9_.:-]/g, "_").slice(0, 80) || "missing_tool_call_id"
+  return `${investigationId}_call_${turn}_${callIndex}_${safeToolCallId}`
 }

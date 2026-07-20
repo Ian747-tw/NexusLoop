@@ -741,6 +741,87 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.turn_summaries[0].tool_execution_statuses).toEqual(["ready", "ready"])
   })
 
+  test("same-turn tool executions receive distinct binding call IDs", async () => {
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const capturedCallIds: string[] = []
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("first", "commander.tool_search", { query: "tools" }), toolCall("second", "commander.tool_profile", { phase: "proposal_investigation" })] },
+        { status: "final", text: "done" },
+      ]),
+      toolExecutor: {
+        execute: async (request) => {
+          capturedCallIds.push(request.call_id)
+          const descriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === request.tool_id)
+          if (!descriptor) throw new Error(`missing descriptor ${request.tool_id}`)
+          return {
+            execution_id: request.execution_id,
+            call_id: request.call_id,
+            tool_call_id: request.tool_call_id,
+            tool_id: request.tool_id,
+            phase: request.phase,
+            status: "ready",
+            descriptor_version: descriptor.version,
+            authority_id: descriptor.authority_id,
+            trust_class: descriptor.trust_class,
+            instruction_semantics: "none",
+            result: { status: "ready", tool_id: request.tool_id },
+            evidence: [],
+            output_bytes: 128,
+            max_output_bytes: descriptor.max_output_bytes,
+            truncated: false,
+            handler_invoked: true,
+            external_process_invoked: false,
+            process_policy: "none",
+            events_appended: false,
+            provider_called: false,
+            mcp_called: false,
+            network_called: false,
+            research_db_written: false,
+            mission_mutated: false,
+            proposal_mutated: false,
+            opencode_action_performed: false,
+            blockers: [],
+            warnings: [],
+            duration_ms: 0,
+            generated_at: "2026-07-19T00:00:00.000Z",
+            result_hash: `result_${request.tool_id}`,
+          }
+        },
+      },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => ({
+        bootstrap_id: "bootstrap_distinct_call_ids",
+        phase: "proposal_investigation",
+        objective_preview: "distinct call ids",
+        authority_kernel: "authority kernel",
+        continuity_kind: "summary",
+        readiness: "ready",
+        current_project_summary: "summary",
+        open_loops: [],
+        source_refs: [],
+        blockers: [],
+        warnings: [],
+        estimated_bytes: 10,
+        estimated_tokens: 3,
+        bootstrap_hash: "bootstrap_hash",
+      }) },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const result = await controller.run(baseInvestigation())
+    expect(result.status).toBe("final")
+    expect(capturedCallIds).toHaveLength(2)
+    expect(capturedCallIds[0]).not.toBe(capturedCallIds[1])
+    expect(capturedCallIds[0]).toContain("_call_1_1_first")
+    expect(capturedCallIds[1]).toContain("_call_1_2_second")
+  })
+
   test("budgets stop search caps context caps duplicate IDs and repeated no-progress", async () => {
     const duplicate = new RuntimeServer({
       projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2a-duplicate-id-")),
