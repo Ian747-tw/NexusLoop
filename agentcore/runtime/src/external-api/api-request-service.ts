@@ -12,7 +12,7 @@ import type {
   ExternalApiRequestResult,
 } from "./api-connector-types"
 import type { ExternalApiConnectorRegistry } from "./api-connector-registry"
-import { isPrivateOrLocalExternalApiAddress, validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
+import { isPrivateOrLocalExternalApiAddress, raceExternalApiAbort, validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
 
 const MAX_BODY_BYTES = 64 * 1024
 const MAX_INTERNAL_RESPONSE_BYTES = 1_000_000
@@ -126,7 +126,7 @@ export class ExternalApiRequestService {
     }
     if (this.options.resolveHostAddresses || this.options.transport.requiresResolvedHostValidation === true) {
       try {
-        await validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp })
+        await raceExternalApiAbort(validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp }), options.abort_signal)
       } catch (error) {
         const result = this.result({
           requestId,

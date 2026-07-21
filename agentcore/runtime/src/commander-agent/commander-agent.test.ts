@@ -279,6 +279,42 @@ describe("Commander AI SDK model adapter", () => {
     expect(events).not.toContain("real-provider-key")
   })
 
+  test("external API internal requests honor abort during service-level host validation", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-service-host-abort-"))
+    let resolverStarted = false
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "ok" }])
+    const requestService = new ExternalApiRequestService({
+      registry: new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1")]),
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      resolveHostAddresses: async () => {
+        resolverStarted = true
+        return new Promise(() => undefined)
+      },
+      requestId: () => "api_service_abort",
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+    })
+    const controller = new AbortController()
+    const promise = requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, { abort_signal: controller.signal })
+    await Promise.resolve()
+    expect(resolverStarted).toBe(true)
+    controller.abort()
+    await expect(promise).rejects.toThrow("cancelled")
+    expect(transport.requests).toHaveLength(0)
+    const events = await eventText(projectDir)
+    expect(events).toContain("external_api_request_failed")
+    expect(events).toContain("external API request cancelled")
+    expect(events).not.toContain("real-provider-key")
+  })
+
   test("fetch external API transport cancels parent aborts without following redirects", async () => {
     const originalFetch = globalThis.fetch
     let capturedSignal: AbortSignal | undefined

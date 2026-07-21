@@ -12345,7 +12345,7 @@ describe("RuntimeServer core", () => {
         streamCanceled = true
       },
     })
-    const responses: Array<string | ReadableStream<Uint8Array>> = ["local-ok", "日本語abc", "😀abc", stream]
+    const responses: Array<string | ReadableStream<Uint8Array>> = ["local-ok", "abcdef", "日本語abc", "😀abc", stream]
     globalThis.fetch = (async () => {
       fetchCalled = true
       return new Response(responses.shift() ?? "", { status: 200 })
@@ -12477,24 +12477,29 @@ describe("RuntimeServer core", () => {
         timeout_ms: 1000,
         max_response_bytes: 6,
       })
+      expect(result.body).toBe("abcdef")
       expect(new TextEncoder().encode(result.body).byteLength).toBeLessThanOrEqual(6)
-      const splitCodepoint = await transport.request({
+      await expect(transport.request({
+        method: "GET",
+        url: "https://api.example.test/multibyte",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })).rejects.toThrow("response exceeded max_response_bytes")
+      await expect(transport.request({
         method: "GET",
         url: "https://api.example.test/emoji",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 1,
-      })
-      expect(splitCodepoint.body).toBe("")
-      expect(new TextEncoder().encode(splitCodepoint.body).byteLength).toBeLessThanOrEqual(1)
-      const streamed = await transport.request({
+      })).rejects.toThrow("response exceeded max_response_bytes")
+      await expect(transport.request({
         method: "GET",
         url: "https://api.example.test/stream",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 3,
-      })
-      expect(streamed.body).toBe("abc")
+      })).rejects.toThrow("response exceeded max_response_bytes")
       expect(streamCanceled).toBe(true)
     } finally {
       globalThis.fetch = originalFetch

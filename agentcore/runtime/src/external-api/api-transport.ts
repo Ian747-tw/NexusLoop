@@ -38,11 +38,11 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
 
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
     const url = new URL(input.url)
-    throwIfAborted(input.abort_signal)
-    await raceAbort(validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
+    throwIfExternalApiAborted(input.abort_signal)
+    await raceExternalApiAbort(validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
       allowLocalTestHost: input.allow_local_test_host === true && url.protocol === "http:" && isLocalTestHost(url.hostname),
     }), input.abort_signal)
-    throwIfAborted(input.abort_signal)
+    throwIfExternalApiAborted(input.abort_signal)
     const controller = new AbortController()
     let timedOut = false
     let parentCancelled = false
@@ -79,13 +79,13 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
   }
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
+export function throwIfExternalApiAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error("external API request cancelled")
 }
 
-function raceAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+export function raceExternalApiAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work
-  throwIfAborted(signal)
+  throwIfExternalApiAborted(signal)
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(new Error("external API request cancelled"))
     signal.addEventListener("abort", onAbort, { once: true })
@@ -171,21 +171,12 @@ async function readBoundedBody(response: Response, maxBytes: number, signal?: Ab
       if (signal?.aborted) throw new Error("external API request cancelled")
       if (done) break
       const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
-      const remaining = Math.max(0, maxBytes - total)
-      if (chunk.byteLength > remaining) {
-        if (remaining > 0) {
-          chunks.push(chunk.slice(0, remaining))
-          total += remaining
-        }
+      if (total + chunk.byteLength > maxBytes) {
         await reader.cancel()
-        break
+        throw new Error(`external API response exceeded max_response_bytes: ${maxBytes}`)
       }
       chunks.push(chunk)
       total += chunk.byteLength
-      if (total >= maxBytes) {
-        await reader.cancel()
-        break
-      }
     }
   } finally {
     signal?.removeEventListener("abort", onAbort)
