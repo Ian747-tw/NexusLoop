@@ -27,6 +27,7 @@ export type ExternalApiConnectorFetchOptions = {
 }
 
 const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key"])
+const MAX_DROPPED_HEADER_NAME_LENGTH = 80
 
 export function createExternalApiConnectorFetch(options: ExternalApiConnectorFetchOptions): { fetch: typeof fetch; metadata: ExternalApiConnectorFetchMetadata } {
   const connector = options.registry.get(options.config.connector_id)
@@ -138,10 +139,16 @@ function filterHeaders(headers: Headers, dropped: Set<string>): Record<string, s
       throw new Error("non-sentinel Authorization header is not allowed")
     }
     if (CREDENTIAL_HEADERS.has(normalized)) throw new Error(`credential header is not allowed: ${redactText(key)}`)
-    dropped.add(key)
+    dropped.add(boundedHeaderName(key))
   })
   if (!out["Content-Type"]) throw new Error("connector model transport requires application/json content type")
   return out
+}
+
+function boundedHeaderName(name: string): string {
+  const normalized = name.toLowerCase().replace(/[^\t\x20-\x7e]/g, "?")
+  if (normalized.length <= MAX_DROPPED_HEADER_NAME_LENGTH) return normalized
+  return `${normalized.slice(0, MAX_DROPPED_HEADER_NAME_LENGTH - 14)}...<truncated>`
 }
 
 function decodeUtf8(bytes: Uint8Array): string {

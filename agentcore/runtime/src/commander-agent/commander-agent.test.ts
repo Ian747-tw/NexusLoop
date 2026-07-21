@@ -115,9 +115,10 @@ describe("Commander AI SDK model adapter", () => {
     await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": "real-secret" }, body: "{}" })).rejects.toThrow("credential header")
     await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json" }, body: new URLSearchParams({ q: "x" }) })).rejects.toThrow("URLSearchParams")
 
+    const longHeaderName = `x-${"a".repeat(200)}`
     const response = await bridgeFetch(expected, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${CONNECTOR_MANAGED_API_KEY_SENTINEL}`, "user-agent": "sdk-test/1", "x-ai-sdk-version": "7" },
+      headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${CONNECTOR_MANAGED_API_KEY_SENTINEL}`, "user-agent": "sdk-test/1", "x-ai-sdk-version": "7", [longHeaderName]: "dropped" },
       body: JSON.stringify({ model: "fixture-model", messages: [{ role: "user", content: "prompt secret_should_not_persist" }] }),
     })
     expect(response.status).toBe(200)
@@ -126,6 +127,10 @@ describe("Commander AI SDK model adapter", () => {
     expect(transport.requests[0].headers.Authorization).toBe("Bearer real-provider-key")
     expect(JSON.stringify(transport.requests[0].headers)).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
     expect(metadata.dropped_header_names).toEqual(expect.arrayContaining(["user-agent", "x-ai-sdk-version"]))
+    const boundedLongHeader = metadata.dropped_header_names.find((name) => name.startsWith("x-aaaa"))
+    expect(boundedLongHeader).toBeDefined()
+    expect(boundedLongHeader!.length).toBeLessThanOrEqual(80)
+    expect(metadata.dropped_header_names.join(" ")).not.toContain("a".repeat(120))
     const events = await eventText(projectDir)
     expect(events).toContain("external_api_request_executed")
     expect(events).not.toContain("secret_should_not_persist")
@@ -311,6 +316,43 @@ describe("Commander AI SDK model adapter", () => {
       expect(capturedSignal?.aborted).toBe(true)
       expect(capturedRedirect).toBe("manual")
       rejectFetch?.(new Error("late reject"))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("fetch external API transport honors abort while resolving connector hosts", async () => {
+    const originalFetch = globalThis.fetch
+    let resolverStarted = false
+    let fetchCalled = false
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      void input
+      void init
+      fetchCalled = true
+      return Promise.reject(new Error("fetch should not start while host resolution is cancelled"))
+    }) as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({
+        resolveHostAddresses: async () => {
+          resolverStarted = true
+          return new Promise(() => undefined)
+        },
+      })
+      const controller = new AbortController()
+      const promise = transport.request({
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        timeout_ms: 5000,
+        max_response_bytes: 100,
+        abort_signal: controller.signal,
+      })
+      await Promise.resolve()
+      expect(resolverStarted).toBe(true)
+      controller.abort()
+      await expect(promise).rejects.toThrow("cancelled")
+      expect(fetchCalled).toBe(false)
     } finally {
       globalThis.fetch = originalFetch
     }

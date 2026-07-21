@@ -38,10 +38,11 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
 
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
     const url = new URL(input.url)
-    await validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
+    throwIfAborted(input.abort_signal)
+    await raceAbort(validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
       allowLocalTestHost: input.allow_local_test_host === true && url.protocol === "http:" && isLocalTestHost(url.hostname),
-    })
-    if (input.abort_signal?.aborted) throw new Error("external API request cancelled")
+    }), input.abort_signal)
+    throwIfAborted(input.abort_signal)
     const controller = new AbortController()
     let timedOut = false
     let parentCancelled = false
@@ -76,6 +77,20 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
       input.abort_signal?.removeEventListener("abort", onAbort)
     }
   }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("external API request cancelled")
+}
+
+function raceAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work
+  throwIfAborted(signal)
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error("external API request cancelled"))
+    signal.addEventListener("abort", onAbort, { once: true })
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort))
+  })
 }
 
 export interface ExternalApiResolvedHostValidationOptions {
