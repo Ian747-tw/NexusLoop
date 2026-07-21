@@ -100,9 +100,13 @@ bounded bootstrap
 The public Commander tool profile remains conservative:
 `provider_tool_loop_enabled=false`. 9W2A adds no public command, slash command,
 TUI surface, durable run record, provider connector setup, or credential path.
+9W2B1 adds only a connector-backed model transport substrate; it does not
+activate live providers inside this controller.
 
-9W2B owns connector-backed provider transport and egress policy. 9W3 owns
-durable working sets, pause/resume, and recovery. 9Y owns proposal generation.
+9W2B2 owns RuntimeServer provider activation, connector preflight, run-lock
+policy, model capability registration, and investigation audit reporting. 9W3
+owns durable working sets, pause/resume, and recovery. 9Y owns proposal
+generation.
 
 Existing one-shot Commander-cycle provider behavior remains a compatibility
 surface.

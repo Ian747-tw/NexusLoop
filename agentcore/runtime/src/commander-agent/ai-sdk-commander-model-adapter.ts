@@ -4,10 +4,14 @@ import { redactText, redactValue } from "../security/redaction"
 import { buildProviderToolMap, makeCommanderToolCall, parseJsonFallback, providerJsonSchema, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelToolCallPart, CommanderModelUsage } from "./commander-model-types"
 
+export const CONNECTOR_MANAGED_API_KEY_SENTINEL = "NEXUSLOOP_CONNECTOR_MANAGED_CREDENTIAL"
+export type AiSdkCommanderCredentialMode = "explicit_api_key" | "connector_managed"
+
 export type AiSdkCommanderModelAdapterOptions = {
   provider_name: string
   base_url: string
-  api_key: string
+  credential_mode?: AiSdkCommanderCredentialMode
+  api_key?: string
   fetch: typeof fetch
   default_headers?: Record<string, string>
   now?: () => Date
@@ -202,7 +206,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       provider: createOpenAICompatible({
         name: boundIdentifier(this.options.provider_name, "provider_name"),
         baseURL: this.options.base_url,
-        apiKey: this.options.api_key,
+        apiKey: this.options.credential_mode === "connector_managed" ? CONNECTOR_MANAGED_API_KEY_SENTINEL : this.options.api_key,
         headers: this.options.default_headers,
         fetch: guardedFetch,
         includeUsage: true,
@@ -385,7 +389,15 @@ function validateOptions(options: AiSdkCommanderModelAdapterOptions): void {
   const parsed = new URL(options.base_url)
   if (parsed.username || parsed.password) throw new Error("AI SDK base_url credentials are not allowed")
   boundIdentifier(options.provider_name, "provider_name")
-  if (!options.api_key || options.api_key.length > 4096) throw new Error("AI SDK api_key is required and bounded")
+  const credentialMode = options.credential_mode ?? "explicit_api_key"
+  if (credentialMode !== "explicit_api_key" && credentialMode !== "connector_managed") throw new Error("AI SDK credential_mode is invalid")
+  if (credentialMode === "explicit_api_key" && (!options.api_key || options.api_key.length > 4096)) throw new Error("AI SDK api_key is required and bounded")
+  if (credentialMode === "connector_managed") {
+    if (options.api_key) throw new Error("connector_managed credential mode must not receive api_key")
+    for (const key of Object.keys(options.default_headers ?? {})) {
+      if (/^(authorization|proxy-authorization|cookie|x-api-key|api-key)$/i.test(key) || /api[_-]?key|token|secret|password|authorization/i.test(key)) throw new Error(`connector_managed credential mode rejects credential-like header: ${key}`)
+    }
+  }
 }
 
 function boundIdentifier(value: string, name: string): string {

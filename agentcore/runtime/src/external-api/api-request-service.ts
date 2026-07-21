@@ -6,6 +6,7 @@ import type {
   ExternalApiConnector,
   ExternalApiInternalRequestResult,
   ExternalApiMethod,
+  ExternalApiPersistedAuditRecord,
   ExternalApiRequestInput,
   ExternalApiRequestPreview,
   ExternalApiRequestResult,
@@ -14,6 +15,7 @@ import type { ExternalApiConnectorRegistry } from "./api-connector-registry"
 import { isPrivateOrLocalExternalApiAddress, validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
 
 const MAX_BODY_BYTES = 64 * 1024
+const MAX_INTERNAL_RESPONSE_BYTES = 1_000_000
 const PREVIEW_BYTES = 512
 const OMITTED_INTERNAL_RESPONSE_PREVIEW = "[internal response preview omitted]"
 const DANGEROUS_USER_HEADERS = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"])
@@ -58,14 +60,44 @@ export class ExternalApiRequestService {
     return this.executeBuilt(input, false, {})
   }
 
-  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean } = {}): Promise<ExternalApiInternalRequestResult> {
+  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void } = {}): Promise<ExternalApiInternalRequestResult> {
     return this.executeBuilt(input, true, options)
   }
 
-  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean }): Promise<ExternalApiInternalRequestResult> {
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void }): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
+    const requestedMaxResponseBytes = options.max_response_bytes
+    if (requestedMaxResponseBytes !== undefined && (!Number.isInteger(requestedMaxResponseBytes) || requestedMaxResponseBytes < 1 || requestedMaxResponseBytes > built.connector.max_response_bytes || requestedMaxResponseBytes > MAX_INTERNAL_RESPONSE_BYTES)) {
+      const result = this.result({
+        requestId,
+        connectorId: built.connector.connector_id,
+        method: built.method,
+        url: built.redactedUrl,
+        ok: false,
+        dryRun: input.dry_run === true,
+        createdAt,
+        error: `max_response_bytes must be positive and no greater than connector limit: ${built.connector.max_response_bytes}`,
+      })
+      if (input.dry_run !== true && options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
+      throw new Error(result.error ?? "external API request blocked")
+    }
+    if (options.abort_signal?.aborted) {
+      const result = this.result({
+        requestId,
+        connectorId: built.connector.connector_id,
+        method: built.method,
+        url: built.redactedUrl,
+        ok: false,
+        dryRun: input.dry_run === true,
+        createdAt,
+        error: "external API request cancelled",
+      })
+      if (input.dry_run !== true && options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
+      throw new Error(result.error ?? "external API request cancelled")
+    }
+    const effectiveMaxResponseBytes = requestedMaxResponseBytes ?? built.connector.max_response_bytes
     if (built.blockers.length > 0) {
       const result = this.result({
         requestId,
@@ -77,7 +109,7 @@ export class ExternalApiRequestService {
         createdAt,
         error: built.blockers.join("; "),
       })
-      if (input.dry_run !== true && options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by)
+      if (input.dry_run !== true && options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
       throw new Error(result.error ?? "external API request blocked")
     }
     if (input.dry_run === true) {
@@ -106,7 +138,7 @@ export class ExternalApiRequestService {
           createdAt,
           error: error instanceof Error ? error.message : String(error),
         })
-        if (options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by)
+        if (options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
         throw new Error(result.error ?? "external API request blocked")
       }
     }
@@ -117,11 +149,12 @@ export class ExternalApiRequestService {
         headers: built.headers,
         body: built.body,
         timeout_ms: options.timeout_ms ?? built.connector.timeout_ms,
-        max_response_bytes: built.connector.max_response_bytes,
+        max_response_bytes: effectiveMaxResponseBytes,
         allow_local_test_host: built.allowedLocalHttp,
+        abort_signal: options.abort_signal,
       })
       const bodyBytes = byteLength(response.body)
-      if (bodyBytes > built.connector.max_response_bytes) throw new Error(`response exceeded max_response_bytes: ${built.connector.max_response_bytes}`)
+      if (bodyBytes > effectiveMaxResponseBytes) throw new Error(`response exceeded max_response_bytes: ${effectiveMaxResponseBytes}`)
       const result = this.result({
         requestId,
         connectorId: built.connector.connector_id,
@@ -133,11 +166,11 @@ export class ExternalApiRequestService {
         createdAt,
         responseBytes: bodyBytes,
         responsePreview: options.omit_response_preview_from_audit === true ? OMITTED_INTERNAL_RESPONSE_PREVIEW : preview(response.body),
-        responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, built.connector.max_response_bytes, options.redact_response_body !== false) : undefined,
-        responseBodyForInternalUseMaxBytes: built.connector.max_response_bytes,
+        responseBodyForInternalUse: includeInternalBody ? internalBody(response.body, effectiveMaxResponseBytes, options.redact_response_body !== false) : undefined,
+        responseBodyForInternalUseMaxBytes: effectiveMaxResponseBytes,
         redactResponseBodyForInternalUse: options.redact_response_body !== false,
       })
-      if (options.persist_audit !== false) await this.writeAudit(result.ok ? "external_api_request_executed" : "external_api_request_failed", result, input.requested_by)
+      if (options.persist_audit !== false) await this.writeAudit(result.ok ? "external_api_request_executed" : "external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
       return result
     } catch (error) {
       const result = this.result({
@@ -150,7 +183,7 @@ export class ExternalApiRequestService {
         createdAt,
         error: error instanceof Error ? error.message : String(error),
       })
-      if (options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by)
+      if (options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
       throw new Error(result.error ?? "external API request failed")
     }
   }
@@ -282,7 +315,7 @@ export class ExternalApiRequestService {
     return result
   }
 
-  private async writeAudit(kind: "external_api_request_executed" | "external_api_request_failed", result: ExternalApiRequestResult, requestedBy: string): Promise<void> {
+  private async writeAudit(kind: "external_api_request_executed" | "external_api_request_failed", result: ExternalApiRequestResult, requestedBy: string, observer?: (record: ExternalApiPersistedAuditRecord) => void): Promise<void> {
     await this.options.eventStore.append({
       kind,
       request_id: result.request_id,
@@ -298,6 +331,26 @@ export class ExternalApiRequestService {
       error: result.error,
       created_at: result.created_at,
     })
+    if (observer) {
+      try {
+        observer(Object.freeze({
+          event_kind: kind,
+          request_id: result.request_id,
+          connector_id: result.connector_id,
+          method: result.method,
+          url: result.url,
+          status_code: result.status_code,
+          ok: result.ok,
+          dry_run: result.dry_run,
+          requested_by: redactText(requestedBy),
+          response_bytes: result.response_bytes,
+          error: result.error,
+          created_at: result.created_at,
+        }))
+      } catch {
+        // Audit observers are diagnostic hooks and must not affect request execution.
+      }
+    }
   }
 }
 

@@ -82,3 +82,8 @@ export interface ExternalApiAuditRecord {
   error?: string
   created_at: string
 }
+
+export interface ExternalApiPersistedAuditRecord extends ExternalApiAuditRecord {
+  event_kind: "external_api_request_executed" | "external_api_request_failed"
+  response_bytes?: number
+}

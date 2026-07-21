@@ -5,6 +5,10 @@ import { tmpdir } from "node:os"
 import { $ } from "bun"
 import { NoSuchToolError } from "ai"
 import { RuntimeServer } from "../server"
+import { EventStore } from "../events/event-store"
+import { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
+import { ExternalApiRequestService } from "../external-api/api-request-service"
+import { FakeExternalApiTransport, FetchExternalApiTransport } from "../external-api/api-transport"
 import { FakeOpenCodeAdapter } from "../opencode/fake-adapter"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
@@ -18,17 +22,22 @@ import { CommanderRepoReadService } from "../commander-tools/commander-repo-read
 import {
   AiSdkCommanderModelStepAdapter,
   COMMANDER_BOUND_TOOL_IDS,
+  CONNECTOR_MANAGED_API_KEY_SENTINEL,
+  ConnectorBackedCommanderModelStepAdapter,
   CommanderInvestigationContextService,
   CommanderInvestigationController,
   CommanderToolExecutor,
   ScriptedCommanderModelStepAdapter,
   buildProviderToolMap,
   commanderToolSchemaFromDescriptor,
+  connectorChatCompletionsUrl,
+  createExternalApiConnectorFetch,
   createCommanderToolBindingRegistry,
   parseJsonFallback,
   providerJsonSchema,
   providerToolNameFor,
   toCommanderToolResultMessage,
+  validateCommanderConnectorModelTransportConfig,
   validateCommanderToolArguments,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
@@ -48,6 +57,263 @@ describe("Commander AI SDK model adapter", () => {
     expect(pkg.dependencies?.["@openai/agents"]).toBeUndefined()
     const grep = await $`bash -lc "rg -n 'commander-agent-runtime-sdk-fit|@openai/agents' src package.json -g '!src/commander-agent/commander-agent.test.ts' || true"`.cwd(process.cwd()).text()
     expect(grep.trim()).toBe("")
+    const serverActivationGrep = await $`bash -lc "rg -n 'ConnectorBackedCommanderModelStepAdapter|commanderInvestigationProviderConfig' src/server.ts src/launch-config.ts || true"`.cwd(process.cwd()).text()
+    expect(serverActivationGrep.trim()).toBe("")
+  })
+
+  test("connector transport config and chat-completions URL policy are strict and credential-free", () => {
+    const config = validateCommanderConnectorModelTransportConfig({
+      transport_kind: "openai_compatible_connector",
+      provider_id: "provider",
+      connector_id: "connector",
+      model_id: "model",
+      timeout_ms: 5000,
+      max_request_bytes: 4096,
+      max_response_bytes: 8192,
+    })
+    expect(config.transport_kind).toBe("openai_compatible_connector")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, api_key: "secret" })).toThrow("unknown")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, base_url: "https://api.example.test" })).toThrow("unknown")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, provider_id: "" })).toThrow("provider_id is required")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, timeout_ms: 120_001 })).toThrow("timeout_ms")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, max_request_bytes: 65_537 })).toThrow("max_request_bytes")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, max_response_bytes: 262_145 })).toThrow("max_response_bytes")
+    expect(connectorChatCompletionsUrl(connector("nested", "https://api.example.test/custom/openai/v1/")).toString()).toBe("https://api.example.test/custom/openai/v1/chat/completions")
+    expect(connectorChatCompletionsUrl(connector("plain", "https://api.example.test/v1")).toString()).toBe("https://api.example.test/v1/chat/completions")
+  })
+
+  test("connector-managed AI SDK credential mode rejects real credentials and uses a non-secret sentinel only internally", () => {
+    expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("api_key is required")
+    expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", api_key: "real-secret", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("must not receive api_key")
+    expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", default_headers: { Authorization: "Bearer real-secret" }, fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("credential-like header")
+    expect(CONNECTOR_MANAGED_API_KEY_SENTINEL).not.toMatch(/sk-|Bearer|token|secret/i)
+  })
+
+  test("connector fetch bridge accepts only exact chat completions JSON POST and strips sentinel credentials", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-bridge-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("bridge ok") }])
+    const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1")])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      requestId: () => "api_bridge",
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+    })
+    const { fetch: bridgeFetch, metadata } = createExternalApiConnectorFetch({
+      registry,
+      requestService,
+      config: connectorConfig(),
+      context: { commander_model_request_id: "req_bridge", requested_by: "tester", provider_id: "fixture_provider", model_id: "fixture-model" },
+    })
+    const expected = "https://api.example.test/v1/chat/completions"
+    await expect(bridgeFetch(expected.replace("/chat/completions", "/responses"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("chat completions")
+    await expect(bridgeFetch(`${expected}?q=1`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("query")
+    await expect(bridgeFetch(expected, { method: "GET", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("POST")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer real-secret" }, body: "{}" })).rejects.toThrow("Authorization")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": "real-secret" }, body: "{}" })).rejects.toThrow("credential header")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json" }, body: new URLSearchParams({ q: "x" }) })).rejects.toThrow("URLSearchParams")
+
+    const response = await bridgeFetch(expected, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${CONNECTOR_MANAGED_API_KEY_SENTINEL}`, "user-agent": "sdk-test/1", "x-ai-sdk-version": "7" },
+      body: JSON.stringify({ model: "fixture-model", messages: [{ role: "user", content: "prompt secret_should_not_persist" }] }),
+    })
+    expect(response.status).toBe(200)
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].url).toBe("https://api.example.test/v1/chat/completions")
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer real-provider-key")
+    expect(JSON.stringify(transport.requests[0].headers)).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+    expect(metadata.dropped_header_names).toEqual(expect.arrayContaining(["user-agent", "x-ai-sdk-version"]))
+    const events = await eventText(projectDir)
+    expect(events).toContain("external_api_request_executed")
+    expect(events).not.toContain("secret_should_not_persist")
+    expect(events).not.toContain("real-provider-key")
+    expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
+  test("connector-backed model adapter normalizes tool calls and carries bounded audit metadata without changing output hash", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-adapter-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(chatBody("tool")) }])
+    const adapter = connectorBackedAdapter(projectDir, transport)
+    const request = baseRequest({ baseUrl: "http://127.0.0.1:1" }).request
+    const result = await adapter.executeOneStep({ ...request, provider_id: "fixture_provider", model_id: "fixture-model", metadata: { requested_by: "tester", investigation_id: "inv_1" } })
+    expect(result.adapter_id).toBe("external_api_connector_ai_sdk_core")
+    expect(result.status).toBe("tool_call")
+    expect(result.request_count).toBe(1)
+    expect(result.tool_calls[0].tool_id).toBe("memory.search")
+    const metadata = result.provider_metadata.nexusloop_transport as { connector_id: string; request_ids: string[]; audit_event_count: number; request_body_persisted: boolean; response_body_persisted: boolean; credentials_persisted: boolean }
+    expect(metadata.connector_id).toBe("openai-test")
+    expect(metadata.request_ids).toEqual(["api_connector_1"])
+    expect(metadata.audit_event_count).toBe(1)
+    expect(metadata.request_body_persisted).toBe(false)
+    expect(metadata.response_body_persisted).toBe(false)
+    expect(metadata.credentials_persisted).toBe(false)
+    const sameOutputDifferentAudit = await connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(chatBody("tool")) }]), "api_connector_2").executeOneStep({ ...request, provider_id: "fixture_provider", model_id: "fixture-model" })
+    expect(sameOutputDifferentAudit.result_hash).toBe(result.result_hash)
+    const events = await eventText(projectDir)
+    expect(events).not.toContain("research memory")
+    expect(events).not.toContain("real-provider-key")
+    expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
+  test("connector-backed adapter mismatch and streaming perform zero connector requests", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-zero-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(chatBody("tool")) }])
+    const adapter = connectorBackedAdapter(projectDir, transport)
+    const request = baseRequest({ baseUrl: "http://127.0.0.1:1" }).request
+    const mismatch = await adapter.executeOneStep({ ...request, provider_id: "wrong" })
+    expect(mismatch.status).toBe("failed")
+    expect(mismatch.request_count).toBe(0)
+    expect(transport.requests).toHaveLength(0)
+    const events = []
+    for await (const event of adapter.executeOneStreamedStep(request)) events.push(event)
+    expect(events).toEqual([{ type: "error", error: "connector-backed Commander model streaming is not enabled for request req_test" }])
+    expect(transport.requests).toHaveLength(0)
+  })
+
+  test("connector-backed loopback integration uses ExternalApiTransport and persists metadata-only audit", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-loopback-"))
+    let serverCredential = ""
+    let serverBody = ""
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        serverCredential = request.headers.get("authorization") ?? ""
+        serverBody = await request.text()
+        return Response.json(chatBody("tool"))
+      },
+    })
+    servers.push(server)
+    const origin = `http://localhost:${server.port}`
+    const registry = new ExternalApiConnectorRegistry([connector("openai-test", `${origin}/v1`, { allowLocalHttp: true, allowedHosts: ["localhost"] })])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport: new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "127.0.0.1" }] }),
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      requestId: () => "api_loopback",
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+    })
+    const adapter = new ConnectorBackedCommanderModelStepAdapter({ config: connectorConfig({ max_response_bytes: 32_000 }), registry, requestService })
+    const request = baseRequest({ baseUrl: "http://127.0.0.1:1", content: "loopback prompt secret_prompt_value" }).request
+    const result = await adapter.executeOneStep({ ...request, provider_id: "fixture_provider", model_id: "fixture-model" })
+    expect(result.status).toBe("tool_call")
+    expect(result.request_count).toBe(1)
+    expect(result.tool_calls).toHaveLength(1)
+    expect(serverCredential).toBe("Bearer real-provider-key")
+    expect(serverBody).toContain("memory__search")
+    const serializedResult = JSON.stringify(result)
+    expect(serializedResult).not.toContain("real-provider-key")
+    expect(serializedResult).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+    const events = await eventText(projectDir)
+    expect(events).toContain("external_api_request_executed")
+    expect(events).toContain("[internal response preview omitted]")
+    expect(events).not.toContain("secret_prompt_value")
+    expect(events).not.toContain("memory__search")
+    expect(events).not.toContain("real-provider-key")
+    expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
+  test("external API internal request extensions cap responses, propagate aborts, and observe persisted audits", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-internal-api-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "ok" }, { status_code: 200, body: "too-large" }])
+    const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1", { maxResponseBytes: 20 })])
+    const observed: string[] = []
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      requestId: () => `api_internal_${observed.length + 1}`,
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+    })
+    const result = await requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, {
+      max_response_bytes: 5,
+      redact_response_body: false,
+      omit_response_preview_from_audit: true,
+      on_audit_persisted: (record) => {
+        observed.push(record.event_kind)
+        throw new Error("observer failure should not corrupt execution")
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(transport.requests[0].max_response_bytes).toBe(5)
+    expect(observed).toEqual(["external_api_request_executed"])
+    await expect(requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, { max_response_bytes: 25, on_audit_persisted: (record) => observed.push(record.event_kind) })).rejects.toThrow("max_response_bytes")
+    const controller = new AbortController()
+    controller.abort()
+    await expect(requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, { abort_signal: controller.signal, on_audit_persisted: (record) => observed.push(record.event_kind) })).rejects.toThrow("cancelled")
+    expect(transport.requests).toHaveLength(1)
+    const events = await eventText(projectDir)
+    expect(events).toContain("external_api_request_executed")
+    expect(events).toContain("external_api_request_failed")
+    expect(events).not.toContain("real-provider-key")
+  })
+
+  test("fetch external API transport cancels parent aborts without following redirects", async () => {
+    const originalFetch = globalThis.fetch
+    let capturedSignal: AbortSignal | undefined
+    let capturedRedirect: RequestRedirect | undefined
+    let rejectFetch: ((error: Error) => void) | undefined
+    let markFetchStarted: (() => void) | undefined
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve
+    })
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined
+      capturedRedirect = init?.redirect
+      markFetchStarted?.()
+      return new Promise<Response>((_resolve, reject) => {
+        rejectFetch = reject
+        init?.signal?.addEventListener("abort", () => reject(new Error("fetch aborted")), { once: true })
+        void input
+      })
+    }) as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const controller = new AbortController()
+      const promise = transport.request({
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        timeout_ms: 5000,
+        max_response_bytes: 100,
+        abort_signal: controller.signal,
+      })
+      await fetchStarted
+      controller.abort()
+      await expect(promise).rejects.toThrow("cancelled")
+      expect(capturedSignal?.aborted).toBe(true)
+      expect(capturedRedirect).toBe("manual")
+      rejectFetch?.(new Error("late reject"))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 
   test("adapter requires injected fetch and performs one native request without executing tools", async () => {
@@ -1392,6 +1658,58 @@ function modelTool(toolId: string) {
   const descriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === toolId)
   if (!descriptor) throw new Error(`missing descriptor ${toolId}`)
   return commanderToolSchemaFromDescriptor(descriptor)
+}
+
+function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: boolean; allowedHosts?: string[]; maxResponseBytes?: number } = {}) {
+  return {
+    connector_id: id,
+    title: "OpenAI-compatible connector",
+    base_url: baseUrl,
+    allowed_hosts: overrides.allowedHosts ?? [new URL(baseUrl).hostname],
+    allowed_methods: ["POST" as const],
+    credential_refs: [{ name: "model-key", source: "env" as const, env_name: "NXL_TEST_MODEL_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }],
+    timeout_ms: 5000,
+    max_response_bytes: overrides.maxResponseBytes ?? 65_536,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+    allow_local_http: overrides.allowLocalHttp === true ? true : undefined,
+  }
+}
+
+function connectorConfig(overrides: Partial<ReturnType<typeof validateCommanderConnectorModelTransportConfig>> = {}) {
+  return validateCommanderConnectorModelTransportConfig({
+    transport_kind: "openai_compatible_connector",
+    provider_id: "fixture_provider",
+    connector_id: "openai-test",
+    model_id: "fixture-model",
+    timeout_ms: 5000,
+    max_request_bytes: 65_536,
+    max_response_bytes: 65_536,
+    ...overrides,
+  })
+}
+
+function connectorBackedAdapter(projectDir: string, transport: FakeExternalApiTransport, requestId = "api_connector_1") {
+  const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1")])
+  const requestService = new ExternalApiRequestService({
+    registry,
+    transport,
+    eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+    env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+    requestId: () => requestId,
+    now: () => new Date("2026-07-21T00:00:00.000Z"),
+  })
+  return new ConnectorBackedCommanderModelStepAdapter({ config: connectorConfig(), registry, requestService })
+}
+
+function chatCompletionText(text: string) {
+  return JSON.stringify({
+    id: "chatcmpl_bridge",
+    object: "chat.completion",
+    created: 1784160000,
+    model: "fixture-model",
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }],
+  })
 }
 
 function baseRequest(input: { baseUrl: string; content?: string; overrides?: Partial<CommanderModelStepRequest> }) {

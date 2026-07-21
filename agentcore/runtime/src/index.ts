@@ -209,6 +209,7 @@ export type {
   ExternalApiConnectorSummary,
   ExternalApiCredentialRef,
   ExternalApiMethod,
+  ExternalApiPersistedAuditRecord,
   ExternalApiRequestInput,
   ExternalApiRequestPreview,
   ExternalApiRequestResult,

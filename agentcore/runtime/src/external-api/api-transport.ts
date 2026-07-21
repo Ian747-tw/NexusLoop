@@ -10,6 +10,7 @@ export interface ExternalApiTransportRequest {
   timeout_ms: number
   max_response_bytes: number
   allow_local_test_host?: boolean
+  abort_signal?: AbortSignal
 }
 
 export interface ExternalApiTransportResult {
@@ -40,8 +41,19 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
     await validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
       allowLocalTestHost: input.allow_local_test_host === true && url.protocol === "http:" && isLocalTestHost(url.hostname),
     })
+    if (input.abort_signal?.aborted) throw new Error("external API request cancelled")
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), input.timeout_ms)
+    let timedOut = false
+    let parentCancelled = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, input.timeout_ms)
+    const onAbort = () => {
+      parentCancelled = true
+      controller.abort()
+    }
+    input.abort_signal?.addEventListener("abort", onAbort, { once: true })
     try {
       const response = await fetch(input.url, {
         method: input.method,
@@ -53,10 +65,15 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
       return {
         status_code: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        body: await readBoundedBody(response, input.max_response_bytes),
+        body: await readBoundedBody(response, input.max_response_bytes, controller.signal),
       }
+    } catch (error) {
+      if (timedOut) throw new Error("external API request timed out")
+      if (parentCancelled || input.abort_signal?.aborted) throw new Error("external API request cancelled")
+      throw error
     } finally {
       clearTimeout(timeout)
+      input.abort_signal?.removeEventListener("abort", onAbort)
     }
   }
 }
@@ -123,13 +140,18 @@ function normalizeHost(host: string): string {
   return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
 }
 
-async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {
+async function readBoundedBody(response: Response, maxBytes: number, signal?: AbortSignal): Promise<string> {
   if (!response.body) return ""
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined)
+  }
+  signal?.addEventListener("abort", onAbort, { once: true })
   try {
     while (true) {
+      if (signal?.aborted) throw new Error("external API request cancelled")
       const { done, value } = await reader.read()
       if (done) break
       const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
@@ -150,6 +172,7 @@ async function readBoundedBody(response: Response, maxBytes: number): Promise<st
       }
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort)
     reader.releaseLock()
   }
   const bytes = new Uint8Array(total)
@@ -179,6 +202,7 @@ export class FakeExternalApiTransport implements ExternalApiTransport {
   constructor(private readonly responses: ExternalApiTransportResult[] = [{ status_code: 200, body: "{\"ok\":true,\"token\":\"fake-secret\"}" }]) {}
 
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
+    if (input.abort_signal?.aborted) throw new Error("external API request cancelled")
     this.requests.push(input)
     return this.responses[Math.min(this.requests.length - 1, this.responses.length - 1)]
   }
