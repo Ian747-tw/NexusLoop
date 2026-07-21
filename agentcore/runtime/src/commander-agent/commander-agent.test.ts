@@ -110,6 +110,7 @@ describe("Commander AI SDK model adapter", () => {
     const expected = "https://api.example.test/v1/chat/completions"
     await expect(bridgeFetch(expected.replace("/chat/completions", "/responses"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("chat completions")
     await expect(bridgeFetch(`${expected}?q=1`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("query")
+    await expect(bridgeFetch(expected.replace("https://", "https://user:secret@"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("URL credentials")
     await expect(bridgeFetch(expected, { method: "GET", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("POST")
     await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer real-secret" }, body: "{}" })).rejects.toThrow("Authorization")
     await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": "real-secret" }, body: "{}" })).rejects.toThrow("credential header")

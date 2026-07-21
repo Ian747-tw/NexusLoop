@@ -111,6 +111,7 @@ async function readAllowedBody(body: BodyInit | null | undefined): Promise<strin
 function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, config: CommanderConnectorModelTransportConfig): void {
   if (request.signal?.aborted) throw new Error("connector model request cancelled before dispatch")
   if (request.method !== "POST") throw new Error("connector model transport requires POST")
+  if (request.url.username || request.url.password) throw new Error("connector model transport URL credentials are not allowed")
   if (request.url.origin !== expectedUrl.origin || request.url.pathname !== expectedUrl.pathname) throw new Error("connector model transport URL does not match chat completions endpoint")
   if (request.url.search) throw new Error("connector model transport query parameters are not allowed")
   if (request.url.hash) throw new Error("connector model transport fragments are not allowed")
