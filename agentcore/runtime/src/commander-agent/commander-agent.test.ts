@@ -316,6 +316,42 @@ describe("Commander AI SDK model adapter", () => {
     }
   })
 
+  test("fetch external API transport throws when abort cancels a stalled response body", async () => {
+    const originalFetch = globalThis.fetch
+    let markFetchStarted: (() => void) | undefined
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve
+    })
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      void input
+      markFetchStarted?.()
+      init?.signal?.throwIfAborted?.()
+      return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+        start() {
+          // Leave the body pending until the parent abort cancels the reader.
+        },
+      }), { status: 200 }))
+    }) as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const controller = new AbortController()
+      const promise = transport.request({
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        timeout_ms: 5000,
+        max_response_bytes: 100,
+        abort_signal: controller.signal,
+      })
+      await fetchStarted
+      controller.abort()
+      await expect(promise).rejects.toThrow("cancelled")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test("adapter requires injected fetch and performs one native request without executing tools", async () => {
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", api_key: "key", fetch: undefined as unknown as typeof fetch })).toThrow()
     const mock = startMockServer("tool")

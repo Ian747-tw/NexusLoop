@@ -153,6 +153,7 @@ async function readBoundedBody(response: Response, maxBytes: number, signal?: Ab
     while (true) {
       if (signal?.aborted) throw new Error("external API request cancelled")
       const { done, value } = await reader.read()
+      if (signal?.aborted) throw new Error("external API request cancelled")
       if (done) break
       const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
       const remaining = Math.max(0, maxBytes - total)
