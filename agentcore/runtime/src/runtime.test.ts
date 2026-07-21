@@ -12536,6 +12536,33 @@ describe("RuntimeServer core", () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  test("fetch external API transport cancels exact-limit bodies without waiting for EOF", async () => {
+    const originalFetch = globalThis.fetch
+    let cancelled = false
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("abc"))
+      },
+      cancel() {
+        cancelled = true
+      },
+    }), { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const result = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+      })
+      expect(result.body).toBe("abc")
+      expect(cancelled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
 
 describe("RunLock", () => {
