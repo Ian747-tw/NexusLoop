@@ -112,9 +112,12 @@ describe("Commander AI SDK model adapter", () => {
     await expect(bridgeFetch(`${expected}?q=1`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("query")
     await expect(bridgeFetch(expected.replace("https://", "https://user:secret@"), { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("URL credentials")
     await expect(bridgeFetch(expected, { method: "GET", headers: { "Content-Type": "application/json" }, body: "{}" })).rejects.toThrow("POST")
-    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer real-secret" }, body: "{}" })).rejects.toThrow("Authorization")
-    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": "real-secret" }, body: "{}" })).rejects.toThrow("credential header")
+    const validBody = JSON.stringify({ model: "fixture-model", messages: [] })
+    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer real-secret" }, body: validBody })).rejects.toThrow("Authorization")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": "real-secret" }, body: validBody })).rejects.toThrow("credential header")
     await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json" }, body: new URLSearchParams({ q: "x" }) })).rejects.toThrow("URLSearchParams")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "other-model", messages: [] }) })).rejects.toThrow("model_id")
+    expect(transport.requests).toHaveLength(0)
 
     const longHeaderName = `x-${"a".repeat(200)}`
     const response = await bridgeFetch(expected, {

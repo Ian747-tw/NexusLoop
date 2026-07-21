@@ -118,7 +118,10 @@ function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, c
   if (!request.body) throw new Error("connector model transport body is required")
   const bytes = new TextEncoder().encode(request.body).byteLength
   if (bytes > config.max_request_bytes) throw new Error(`connector model request exceeds max_request_bytes: ${config.max_request_bytes}`)
-  JSON.parse(request.body)
+  const payload = JSON.parse(request.body) as unknown
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("connector model transport body must be a JSON object")
+  const model = (payload as { model?: unknown }).model
+  if (typeof model !== "string" || model !== config.model_id) throw new Error("connector model transport model does not match configured model_id")
 }
 
 function filterHeaders(headers: Headers, dropped: Set<string>): Record<string, string> {
