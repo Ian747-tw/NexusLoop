@@ -164,6 +164,28 @@ describe("Commander AI SDK model adapter", () => {
     expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
   })
 
+  test("connector-backed provider errors return sanitized bodies to the AI SDK", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-sanitized-error-"))
+    const echoedSecret = "prompt-secret-should-not-leak"
+    const transport = new FakeExternalApiTransport([{
+      status_code: 429,
+      body: JSON.stringify({ error: { message: `rate limited after seeing ${echoedSecret}` } }),
+    }])
+    const adapter = connectorBackedAdapter(projectDir, transport)
+    const request = baseRequest({ baseUrl: "http://127.0.0.1:1", content: `objective ${echoedSecret}` }).request
+    const result = await adapter.executeOneStep({ ...request, provider_id: "fixture_provider", model_id: "fixture-model" })
+    expect(result.status).toBe("failed")
+    expect(result.request_count).toBe(1)
+    expect(result.error ?? "").toContain("connector-backed provider request failed")
+    expect(JSON.stringify(result)).not.toContain(echoedSecret)
+    const events = await eventText(projectDir)
+    expect(events).toContain("external_api_request_failed")
+    expect(events).not.toContain(echoedSecret)
+    expect(events).not.toContain("rate limited after seeing")
+    expect(events).not.toContain("real-provider-key")
+    expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
   test("connector-backed adapter mismatch and streaming perform zero connector requests", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-zero-"))
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(chatBody("tool")) }])

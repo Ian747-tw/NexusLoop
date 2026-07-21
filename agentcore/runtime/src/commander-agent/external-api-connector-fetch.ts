@@ -57,7 +57,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
       persist_audit: true,
       on_audit_persisted: (record) => auditRecords.push(record),
     })
-    return new Response(result.response_body_for_internal_use ?? "", {
+    return new Response(providerResponseBody(result), {
       status: result.status_code ?? 500,
       headers: { "Content-Type": "application/json" },
     })
@@ -150,6 +150,19 @@ function boundedHeaderName(name: string): string {
   const normalized = name.toLowerCase().replace(/[^\t\x20-\x7e]/g, "?")
   if (normalized.length <= MAX_DROPPED_HEADER_NAME_LENGTH) return normalized
   return `${normalized.slice(0, MAX_DROPPED_HEADER_NAME_LENGTH - 14)}...<truncated>`
+}
+
+function providerResponseBody(result: { ok: boolean; status_code?: number; request_id: string; response_body_for_internal_use?: string }): string {
+  if (result.ok) return result.response_body_for_internal_use ?? ""
+  const status = typeof result.status_code === "number" ? result.status_code : 500
+  return JSON.stringify({
+    error: {
+      message: `connector-backed provider request failed with HTTP ${status}`,
+      type: "connector_backed_provider_http_error",
+      code: `http_${status}`,
+      request_id: result.request_id,
+    },
+  })
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
