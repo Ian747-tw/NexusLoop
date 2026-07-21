@@ -150,6 +150,7 @@ export class ExternalApiRequestService {
         body: built.body,
         timeout_ms: options.timeout_ms ?? built.connector.timeout_ms,
         max_response_bytes: effectiveMaxResponseBytes,
+        fail_on_response_overflow: requestedMaxResponseBytes !== undefined,
         allow_local_test_host: built.allowedLocalHttp,
         abort_signal: options.abort_signal,
       })

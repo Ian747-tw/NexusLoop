@@ -12479,28 +12479,59 @@ describe("RuntimeServer core", () => {
       })
       expect(result.body).toBe("abcdef")
       expect(new TextEncoder().encode(result.body).byteLength).toBeLessThanOrEqual(6)
-      await expect(transport.request({
+      const multibyte = await transport.request({
         method: "GET",
         url: "https://api.example.test/multibyte",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 6,
-      })).rejects.toThrow("response exceeded max_response_bytes")
-      await expect(transport.request({
+      })
+      expect(multibyte.body).toBe("日本")
+      expect(new TextEncoder().encode(multibyte.body).byteLength).toBeLessThanOrEqual(6)
+      const emoji = await transport.request({
         method: "GET",
         url: "https://api.example.test/emoji",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 1,
-      })).rejects.toThrow("response exceeded max_response_bytes")
-      await expect(transport.request({
+      })
+      expect(emoji.body).toBe("")
+      expect(new TextEncoder().encode(emoji.body).byteLength).toBeLessThanOrEqual(1)
+      const boundedStream = await transport.request({
         method: "GET",
         url: "https://api.example.test/stream",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 3,
-      })).rejects.toThrow("response exceeded max_response_bytes")
+      })
+      expect(boundedStream.body).toBe("abc")
       expect(streamCanceled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("fetch external API transport fails closed on response overflow only when requested", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response("abcdef", { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const publicResult = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+      })
+      expect(publicResult.body).toBe("abc")
+      await expect(transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+        fail_on_response_overflow: true,
+      })).rejects.toThrow("response exceeded max_response_bytes")
     } finally {
       globalThis.fetch = originalFetch
     }

@@ -9,6 +9,7 @@ export interface ExternalApiTransportRequest {
   body?: string
   timeout_ms: number
   max_response_bytes: number
+  fail_on_response_overflow?: boolean
   allow_local_test_host?: boolean
   abort_signal?: AbortSignal
 }
@@ -66,7 +67,7 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
       return {
         status_code: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        body: await readBoundedBody(response, input.max_response_bytes, controller.signal),
+        body: await readBoundedBody(response, input.max_response_bytes, controller.signal, input.fail_on_response_overflow === true),
       }
     } catch (error) {
       if (timedOut) throw new Error("external API request timed out")
@@ -155,7 +156,7 @@ function normalizeHost(host: string): string {
   return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "")
 }
 
-async function readBoundedBody(response: Response, maxBytes: number, signal?: AbortSignal): Promise<string> {
+async function readBoundedBody(response: Response, maxBytes: number, signal?: AbortSignal, failOnOverflow = false): Promise<string> {
   if (!response.body) return ""
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -172,8 +173,14 @@ async function readBoundedBody(response: Response, maxBytes: number, signal?: Ab
       if (done) break
       const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
       if (total + chunk.byteLength > maxBytes) {
+        const remaining = Math.max(0, maxBytes - total)
+        if (!failOnOverflow && remaining > 0) {
+          chunks.push(chunk.slice(0, remaining))
+          total += remaining
+        }
         await reader.cancel()
-        throw new Error(`external API response exceeded max_response_bytes: ${maxBytes}`)
+        if (failOnOverflow) throw new Error(`external API response exceeded max_response_bytes: ${maxBytes}`)
+        break
       }
       chunks.push(chunk)
       total += chunk.byteLength

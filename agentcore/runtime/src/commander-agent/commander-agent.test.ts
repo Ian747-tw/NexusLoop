@@ -254,6 +254,7 @@ describe("Commander AI SDK model adapter", () => {
     })
     expect(result.ok).toBe(true)
     expect(transport.requests[0].max_response_bytes).toBe(5)
+    expect(transport.requests[0].fail_on_response_overflow).toBe(true)
     expect(observed).toEqual(["external_api_request_executed"])
     await expect(requestService.executeForInternalUse({
       connector_id: "openai-test",
