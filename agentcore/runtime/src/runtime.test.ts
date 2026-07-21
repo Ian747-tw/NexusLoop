@@ -12563,6 +12563,35 @@ describe("RuntimeServer core", () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  test("fetch external API transport fail-closed mode reads past exact cap to detect overflow", async () => {
+    const originalFetch = globalThis.fetch
+    let cancelled = false
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        controller.enqueue(encoder.encode("abc"))
+        controller.enqueue(encoder.encode("d"))
+      },
+      cancel() {
+        cancelled = true
+      },
+    }), { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      await expect(transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+        fail_on_response_overflow: true,
+      })).rejects.toThrow("response exceeded max_response_bytes")
+      expect(cancelled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
 
 describe("RunLock", () => {

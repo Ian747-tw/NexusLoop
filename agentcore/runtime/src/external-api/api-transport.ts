@@ -184,7 +184,7 @@ async function readBoundedBody(response: Response, maxBytes: number, signal?: Ab
       }
       chunks.push(chunk)
       total += chunk.byteLength
-      if (total >= maxBytes) {
+      if (!failOnOverflow && total >= maxBytes) {
         await reader.cancel()
         break
       }
