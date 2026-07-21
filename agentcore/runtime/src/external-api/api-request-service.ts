@@ -69,6 +69,21 @@ export class ExternalApiRequestService {
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
     const requestedMaxResponseBytes = options.max_response_bytes
+    const requestedTimeoutMs = options.timeout_ms
+    if (requestedTimeoutMs !== undefined && (!Number.isInteger(requestedTimeoutMs) || requestedTimeoutMs < 1 || requestedTimeoutMs > built.connector.timeout_ms)) {
+      const result = this.result({
+        requestId,
+        connectorId: built.connector.connector_id,
+        method: built.method,
+        url: built.redactedUrl,
+        ok: false,
+        dryRun: input.dry_run === true,
+        createdAt,
+        error: `timeout_ms must be positive and no greater than connector limit: ${built.connector.timeout_ms}`,
+      })
+      if (input.dry_run !== true && options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
+      throw new Error(result.error ?? "external API request blocked")
+    }
     if (requestedMaxResponseBytes !== undefined && (!Number.isInteger(requestedMaxResponseBytes) || requestedMaxResponseBytes < 1 || requestedMaxResponseBytes > built.connector.max_response_bytes || requestedMaxResponseBytes > MAX_INTERNAL_RESPONSE_BYTES)) {
       const result = this.result({
         requestId,
@@ -124,9 +139,11 @@ export class ExternalApiRequestService {
         responsePreview: "dry run: transport not called",
       })
     }
+    const effectiveTimeoutMs = requestedTimeoutMs ?? built.connector.timeout_ms
+    const operation = createExternalApiOperationSignal(effectiveTimeoutMs, options.abort_signal)
     if (this.options.resolveHostAddresses || this.options.transport.requiresResolvedHostValidation === true) {
       try {
-        await raceExternalApiAbort(validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp }), options.abort_signal)
+        await raceExternalApiAbort(validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp }), operation.signal)
       } catch (error) {
         const result = this.result({
           requestId,
@@ -138,6 +155,7 @@ export class ExternalApiRequestService {
           createdAt,
           error: error instanceof Error ? error.message : String(error),
         })
+        operation.dispose()
         if (options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
         throw new Error(result.error ?? "external API request blocked")
       }
@@ -148,11 +166,11 @@ export class ExternalApiRequestService {
         url: built.url.toString(),
         headers: built.headers,
         body: built.body,
-        timeout_ms: options.timeout_ms ?? built.connector.timeout_ms,
+        timeout_ms: effectiveTimeoutMs,
         max_response_bytes: effectiveMaxResponseBytes,
         fail_on_response_overflow: requestedMaxResponseBytes !== undefined,
         allow_local_test_host: built.allowedLocalHttp,
-        abort_signal: options.abort_signal,
+        abort_signal: operation.signal,
       })
       const bodyBytes = byteLength(response.body)
       if (bodyBytes > effectiveMaxResponseBytes) throw new Error(`response exceeded max_response_bytes: ${effectiveMaxResponseBytes}`)
@@ -186,6 +204,8 @@ export class ExternalApiRequestService {
       })
       if (options.persist_audit !== false) await this.writeAudit("external_api_request_failed", result, input.requested_by, options.on_audit_persisted)
       throw new Error(result.error ?? "external API request failed")
+    } finally {
+      operation.dispose()
     }
   }
 
@@ -426,6 +446,24 @@ function requiredString(value: unknown, field: string): string {
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength
+}
+
+function createExternalApiOperationSignal(timeoutMs: number, parent?: AbortSignal): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("external API request timed out"))
+  }, timeoutMs)
+  const onParentAbort = () => {
+    controller.abort(new Error("external API request cancelled"))
+  }
+  parent?.addEventListener("abort", onParentAbort, { once: true })
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout)
+      parent?.removeEventListener("abort", onParentAbort)
+    },
+  }
 }
 
 function preview(value: string): string {

@@ -207,6 +207,27 @@ describe("Commander AI SDK model adapter", () => {
     expect(transport.requests).toHaveLength(0)
   })
 
+  test("connector-backed adapter rejects transport timeouts above connector policy before AI SDK fetch", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-timeout-preflight-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(chatBody("tool")) }])
+    const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1", { timeoutMs: 5 })])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      requestId: () => "api_timeout_preflight",
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+    })
+    const adapter = new ConnectorBackedCommanderModelStepAdapter({ config: connectorConfig({ timeout_ms: 120_000 }), registry, requestService })
+    const request = baseRequest({ baseUrl: "http://127.0.0.1:1" }).request
+    const result = await adapter.executeOneStep({ ...request, provider_id: "fixture_provider", model_id: "fixture-model" })
+    expect(result).toMatchObject({ status: "failed", request_count: 0 })
+    expect(result.error ?? "").toContain("timeout_ms exceeds connector limit")
+    expect(transport.requests).toHaveLength(0)
+    expect(await eventText(projectDir)).toBe("")
+  })
+
   test("connector-backed loopback integration uses ExternalApiTransport and persists metadata-only audit", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-loopback-"))
     let serverCredential = ""
@@ -253,8 +274,8 @@ describe("Commander AI SDK model adapter", () => {
 
   test("external API internal request extensions cap responses, propagate aborts, and observe persisted audits", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-internal-api-"))
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "ok" }, { status_code: 200, body: "too-large" }])
-    const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1", { maxResponseBytes: 20 })])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: "ok" }, { status_code: 200, body: "ok-2" }, { status_code: 200, body: "ok-3" }])
+    const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1", { maxResponseBytes: 20, timeoutMs: 20 })])
     const observed: string[] = []
     const requestService = new ExternalApiRequestService({
       registry,
@@ -264,6 +285,31 @@ describe("Commander AI SDK model adapter", () => {
       requestId: () => `api_internal_${observed.length + 1}`,
       now: () => new Date("2026-07-21T00:00:00.000Z"),
     })
+    await expect(requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, { timeout_ms: 21, on_audit_persisted: (record) => observed.push(record.event_kind) })).rejects.toThrow("timeout_ms")
+    expect(transport.requests).toHaveLength(0)
+    await expect(requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, { timeout_ms: 20, on_audit_persisted: (record) => observed.push(record.event_kind) })).resolves.toMatchObject({ ok: true })
+    await expect(requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    }, { timeout_ms: 5, on_audit_persisted: (record) => observed.push(record.event_kind) })).resolves.toMatchObject({ ok: true })
     const result = await requestService.executeForInternalUse({
       connector_id: "openai-test",
       method: "POST",
@@ -281,9 +327,11 @@ describe("Commander AI SDK model adapter", () => {
       },
     })
     expect(result.ok).toBe(true)
-    expect(transport.requests[0].max_response_bytes).toBe(5)
-    expect(transport.requests[0].fail_on_response_overflow).toBe(true)
-    expect(observed).toEqual(["external_api_request_executed"])
+    expect(transport.requests[0].timeout_ms).toBe(20)
+    expect(transport.requests[1].timeout_ms).toBe(5)
+    expect(transport.requests[2].max_response_bytes).toBe(5)
+    expect(transport.requests[2].fail_on_response_overflow).toBe(true)
+    expect(observed).toEqual(["external_api_request_failed", "external_api_request_executed", "external_api_request_executed", "external_api_request_executed"])
     await expect(requestService.executeForInternalUse({
       connector_id: "openai-test",
       method: "POST",
@@ -302,19 +350,20 @@ describe("Commander AI SDK model adapter", () => {
       body: "{}",
       requested_by: "tester",
     }, { abort_signal: controller.signal, on_audit_persisted: (record) => observed.push(record.event_kind) })).rejects.toThrow("cancelled")
-    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests).toHaveLength(3)
     const events = await eventText(projectDir)
     expect(events).toContain("external_api_request_executed")
     expect(events).toContain("external_api_request_failed")
+    expect((events.match(/external_api_request_failed/g) ?? []).length).toBe(3)
     expect(events).not.toContain("real-provider-key")
   })
 
-  test("external API internal requests honor abort during service-level host validation", async () => {
+  test("external API internal requests honor timeout and abort during service-level host validation", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b1-service-host-abort-"))
     let resolverStarted = false
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: "ok" }])
     const requestService = new ExternalApiRequestService({
-      registry: new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1")]),
+      registry: new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1", { timeoutMs: 5 })]),
       transport,
       eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
       env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
@@ -325,6 +374,19 @@ describe("Commander AI SDK model adapter", () => {
       requestId: () => "api_service_abort",
       now: () => new Date("2026-07-21T00:00:00.000Z"),
     })
+    await expect(requestService.executeForInternalUse({
+      connector_id: "openai-test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      requested_by: "tester",
+    })).rejects.toThrow("timed out")
+    expect(resolverStarted).toBe(true)
+    expect(transport.requests).toHaveLength(0)
+    expect(await eventText(projectDir)).toContain("external API request timed out")
+
+    resolverStarted = false
     const controller = new AbortController()
     const promise = requestService.executeForInternalUse({
       connector_id: "openai-test",
@@ -342,7 +404,58 @@ describe("Commander AI SDK model adapter", () => {
     const events = await eventText(projectDir)
     expect(events).toContain("external_api_request_failed")
     expect(events).toContain("external API request cancelled")
+    expect(events).toContain("external API request timed out")
     expect(events).not.toContain("real-provider-key")
+  })
+
+  test("fetch external API transport bounds DNS validation with timeout and parent cancellation", async () => {
+    const originalFetch = globalThis.fetch
+    let fetchCalled = false
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      void input
+      void init
+      fetchCalled = true
+      return Promise.reject(new Error("fetch should not run after DNS timeout"))
+    }) as typeof fetch
+    try {
+      const timeoutTransport = new FetchExternalApiTransport({
+        resolveHostAddresses: async () => new Promise(() => undefined),
+      })
+      await expect(timeoutTransport.request({
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        timeout_ms: 5,
+        max_response_bytes: 100,
+      })).rejects.toThrow("timed out")
+      expect(fetchCalled).toBe(false)
+
+      let resolverStarted = false
+      const cancelTransport = new FetchExternalApiTransport({
+        resolveHostAddresses: async () => {
+          resolverStarted = true
+          return new Promise(() => undefined)
+        },
+      })
+      const controller = new AbortController()
+      const promise = cancelTransport.request({
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        timeout_ms: 50,
+        max_response_bytes: 100,
+        abort_signal: controller.signal,
+      })
+      await Promise.resolve()
+      expect(resolverStarted).toBe(true)
+      controller.abort()
+      await expect(promise).rejects.toThrow("cancelled")
+      expect(fetchCalled).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 
   test("fetch external API transport cancels parent aborts without following redirects", async () => {
@@ -1804,7 +1917,7 @@ function modelTool(toolId: string) {
   return commanderToolSchemaFromDescriptor(descriptor)
 }
 
-function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: boolean; allowedHosts?: string[]; maxResponseBytes?: number } = {}) {
+function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: boolean; allowedHosts?: string[]; maxResponseBytes?: number; timeoutMs?: number } = {}) {
   return {
     connector_id: id,
     title: "OpenAI-compatible connector",
@@ -1812,7 +1925,7 @@ function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: bo
     allowed_hosts: overrides.allowedHosts ?? [new URL(baseUrl).hostname],
     allowed_methods: ["POST" as const],
     credential_refs: [{ name: "model-key", source: "env" as const, env_name: "NXL_TEST_MODEL_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }],
-    timeout_ms: 5000,
+    timeout_ms: overrides.timeoutMs ?? 5000,
     max_response_bytes: overrides.maxResponseBytes ?? 65_536,
     created_at: "1970-01-01T00:00:00.000Z",
     updated_at: "1970-01-01T00:00:00.000Z",

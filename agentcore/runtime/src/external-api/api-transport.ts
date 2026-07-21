@@ -40,23 +40,23 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
   async request(input: ExternalApiTransportRequest): Promise<ExternalApiTransportResult> {
     const url = new URL(input.url)
     throwIfExternalApiAborted(input.abort_signal)
-    await raceExternalApiAbort(validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
-      allowLocalTestHost: input.allow_local_test_host === true && url.protocol === "http:" && isLocalTestHost(url.hostname),
-    }), input.abort_signal)
-    throwIfExternalApiAborted(input.abort_signal)
     const controller = new AbortController()
     let timedOut = false
     let parentCancelled = false
     const timeout = setTimeout(() => {
       timedOut = true
-      controller.abort()
+      controller.abort(new Error("external API request timed out"))
     }, input.timeout_ms)
     const onAbort = () => {
       parentCancelled = true
-      controller.abort()
+      controller.abort(new Error("external API request cancelled"))
     }
     input.abort_signal?.addEventListener("abort", onAbort, { once: true })
     try {
+      await raceExternalApiAbort(validateResolvedHost(url.hostname, this.options.resolveHostAddresses, {
+        allowLocalTestHost: input.allow_local_test_host === true && url.protocol === "http:" && isLocalTestHost(url.hostname),
+      }), controller.signal)
+      throwIfExternalApiAborted(controller.signal)
       const response = await fetch(input.url, {
         method: input.method,
         headers: input.headers,
@@ -81,14 +81,16 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
 }
 
 export function throwIfExternalApiAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new Error("external API request cancelled")
+  if (!signal?.aborted) return
+  if (signal.reason instanceof Error) throw signal.reason
+  throw new Error("external API request cancelled")
 }
 
 export function raceExternalApiAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work
   throwIfExternalApiAborted(signal)
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error("external API request cancelled"))
+    const onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("external API request cancelled"))
     signal.addEventListener("abort", onAbort, { once: true })
     work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort))
   })

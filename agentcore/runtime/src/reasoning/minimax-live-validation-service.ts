@@ -153,7 +153,7 @@ export class MiniMaxLiveValidationService {
           persist_event: false,
           persist_external_api_audit: false,
           require_real_smoke_gate: false,
-          timeout_ms: preview.timeout_ms,
+          timeout_ms: input.timeout_ms === undefined ? undefined : preview.timeout_ms,
         })
         surfaceResults.push({
           surface,

@@ -38,6 +38,7 @@ export class ConnectorBackedCommanderModelStepAdapter implements CommanderModelS
     if (request.model_id !== this.config.model_id) return failedResult(request, this.adapter_id, "model_id does not match connector transport config")
     const connector = this.options.registry.get(this.config.connector_id)
     if (!connector) return failedResult(request, this.adapter_id, `connector not found: ${this.config.connector_id}`)
+    if (this.config.timeout_ms > connector.timeout_ms) return failedResult(request, this.adapter_id, `transport timeout_ms exceeds connector limit: ${connector.timeout_ms}`)
     let bridge: ReturnType<typeof createExternalApiConnectorFetch>
     try {
       connectorChatCompletionsUrl(connector)
