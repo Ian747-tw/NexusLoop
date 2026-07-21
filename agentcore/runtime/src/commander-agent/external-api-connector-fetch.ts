@@ -142,11 +142,23 @@ function filterHeaders(headers: Headers, dropped: Set<string>): Record<string, s
       if (value === `Bearer ${CONNECTOR_MANAGED_API_KEY_SENTINEL}` || value === CONNECTOR_MANAGED_API_KEY_SENTINEL) return
       throw new Error("non-sentinel Authorization header is not allowed")
     }
-    if (CREDENTIAL_HEADERS.has(normalized)) throw new Error(`credential header is not allowed: ${redactText(key)}`)
+    if (isCredentialLikeHeaderName(normalized)) throw new Error(`credential header is not allowed: ${redactText(key)}`)
     dropped.add(boundedHeaderName(key))
   })
   if (!out["Content-Type"]) throw new Error("connector model transport requires application/json content type")
   return out
+}
+
+function isCredentialLikeHeaderName(normalized: string): boolean {
+  if (CREDENTIAL_HEADERS.has(normalized)) return true
+  const compact = normalized.replace(/[^a-z0-9]/g, "")
+  return (
+    compact.includes("apikey") ||
+    compact.includes("accesstoken") ||
+    compact.includes("authtoken") ||
+    compact.includes("credential") ||
+    compact.includes("secret")
+  )
 }
 
 function boundedHeaderName(name: string): string {
