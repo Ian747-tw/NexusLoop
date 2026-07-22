@@ -682,14 +682,9 @@ function emptyProviderAudit(policy?: CommanderInvestigationProviderAuditPolicy):
 
 function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummary, policy: CommanderInvestigationProviderAuditPolicy | undefined, modelResult: CommanderModelStepResult): { metadata?: CommanderConnectorModelTransportMetadata; blocker?: string; warnings: string[] } {
   summary.provider_request_count += modelResult.request_count
-  if (policy?.required !== true) {
-    summary.all_provider_requests_audited = true
-    return { warnings: [] }
-  }
   const metadata = transportMetadata(modelResult.provider_metadata?.nexusloop_transport)
-  const requiredPolicy = policy as { required: true; transport_kind: "external_api_connector"; connector_id: string }
-  const validation = validateTransportMetadata(metadata, requiredPolicy, modelResult.request_count)
   if (metadata) {
+    summary.transport_kind = "external_api_connector"
     addUniqueCapped(summary.connector_ids, metadata.connector_id, 4)
     for (const requestId of metadata.request_ids) {
       if (summary.audit_request_ids.length < 24) summary.audit_request_ids.push(preview(requestId, 120))
@@ -701,6 +696,12 @@ function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummar
     summary.failed_audit_count += metadata.failed_audit_count
     if (metadata.request_body_persisted || metadata.response_body_persisted || metadata.credentials_persisted) summary.warnings.push("provider transport metadata reported persisted sensitive content")
   }
+  if (policy?.required !== true) {
+    summary.all_provider_requests_audited = metadata ? summary.external_api_audit_event_count === summary.provider_request_count : true
+    return { metadata, warnings: [] }
+  }
+  const requiredPolicy = policy as { required: true; transport_kind: "external_api_connector"; connector_id: string }
+  const validation = validateTransportMetadata(metadata, requiredPolicy, modelResult.request_count)
   summary.all_provider_requests_audited = summary.external_api_audit_event_count === summary.provider_request_count
   summary.warnings = [...summary.warnings, ...validation.warnings].slice(0, 12)
   return { metadata, blocker: validation.blocker, warnings: validation.warnings }

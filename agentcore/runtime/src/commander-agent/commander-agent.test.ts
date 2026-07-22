@@ -2098,6 +2098,37 @@ describe("Commander in-memory investigation controller", () => {
     expect(missing.result_hash).not.toBe(finalA.result_hash)
   })
 
+  test("injected connector-backed adapters count optional external API audits truthfully", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-optional-audit-"))
+    const adapter = connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("optional connector final") }]), "api_optional_audit")
+    const result = await controllerWithOptionalAuditAdapter(adapter).run(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai_compatible", model_id: "fixture-model", tool_protocol: "native" }))
+
+    expect(result).toMatchObject({
+      status: "final",
+      provider_request_count: 1,
+      external_api_audit_events_appended: 1,
+      events_appended: true,
+      investigation_events_appended: false,
+    })
+    expect(result.provider_audit).toMatchObject({
+      audit_required: false,
+      transport_kind: "external_api_connector",
+      provider_request_count: 1,
+      external_api_audit_event_count: 1,
+      successful_audit_count: 1,
+      failed_audit_count: 0,
+      all_provider_requests_audited: true,
+      request_body_persisted: false,
+      response_body_persisted: false,
+      credentials_persisted: false,
+    })
+    const text = await eventText(projectDir)
+    expect(text).toContain("external_api_request_executed")
+    expect(text).not.toContain("optional connector final")
+    expect(text).not.toContain("real-provider-key")
+    expect(text).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
   test("configured RuntimeServer loopback provider runs only after start and records one external API audit per request", async () => {
     const mock = startInvestigationMockServer()
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-loopback-"))
@@ -2257,6 +2288,20 @@ function controllerWithAuditAdapter(modelAdapter: CommanderModelStepAdapter) {
     capabilityRegistry: new ModelCapabilityRegistry(),
     contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }),
     providerAuditPolicy: { required: true, transport_kind: "external_api_connector", connector_id: "openai-test" },
+  })
+}
+
+function controllerWithOptionalAuditAdapter(modelAdapter: CommanderModelStepAdapter) {
+  return new CommanderInvestigationController({
+    modelAdapter,
+    toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
+    toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
+    descriptors: COMMANDER_TOOL_REGISTRY,
+    boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+    bootstrapService: { compile: async () => minimalTestBootstrap() },
+    contextService: new CommanderInvestigationContextService(),
+    capabilityRegistry: new ModelCapabilityRegistry(),
+    contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }),
   })
 }
 
