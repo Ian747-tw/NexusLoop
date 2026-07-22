@@ -2074,6 +2074,16 @@ describe("Commander in-memory investigation controller", () => {
     expect(result).toMatchObject({ status: "failed", stop_reason: "provider_audit_incomplete", provider_request_count: 1, tool_call_count: 0, events_appended: false, external_api_audit_events_appended: 0 })
     expect(calls).toEqual([])
 
+    const abortController = new AbortController()
+    setTimeout(() => abortController.abort(new Error("operator cancelled")), 1)
+    const cancelled = await controllerWithAuditAdapter(new ScriptedCommanderModelStepAdapter([{ status: "final", text: "cancel race", delay_ms: 10 }])).run(baseInvestigation({ abort_signal: abortController.signal }))
+    expect(cancelled).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", provider_request_count: 1, external_api_audit_events_appended: 0 })
+    expect(cancelled.stop_reason).not.toBe("provider_audit_incomplete")
+
+    const timedOut = await controllerWithAuditAdapter(new ScriptedCommanderModelStepAdapter([{ status: "final", text: "timeout race", delay_ms: 15 }])).run(baseInvestigation({ max_wall_time_ms: 5 }))
+    expect(timedOut).toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1, external_api_audit_events_appended: 0 })
+    expect(timedOut.stop_reason).not.toBe("provider_audit_incomplete")
+
     const goodMetadata = { nexusloop_transport: { transport_kind: "external_api_connector", connector_id: "openai-test", request_ids: ["volatile_a"], audit_event_kinds: ["external_api_request_executed"], audit_event_count: 1, successful_audit_count: 1, failed_audit_count: 0, dropped_header_names: [], request_body_persisted: false, response_body_persisted: false, credentials_persisted: false } }
     const badMetadata = { nexusloop_transport: { ...goodMetadata.nexusloop_transport, request_ids: [], audit_event_count: 0 } }
     const finalA = await controllerWithAuditMetadata(goodMetadata, "semantic final").run(baseInvestigation({ investigation_id: "inv_audit_hash" }))
@@ -2232,8 +2242,12 @@ function minimalTestBootstrap() {
 }
 
 function controllerWithAuditMetadata(provider_metadata: Record<string, unknown>, text: string) {
+  return controllerWithAuditAdapter(new ScriptedCommanderModelStepAdapter([{ status: "final", text, provider_metadata }]))
+}
+
+function controllerWithAuditAdapter(modelAdapter: CommanderModelStepAdapter) {
   return new CommanderInvestigationController({
-    modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text, provider_metadata }]),
+    modelAdapter,
     toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
     toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
     descriptors: COMMANDER_TOOL_REGISTRY,

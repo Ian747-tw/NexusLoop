@@ -110,6 +110,9 @@ export class CommanderInvestigationController {
       if (requestCountBlocker) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker], modelResult.warnings, started)
       providerRequests += modelResult.request_count
       workingSet.model_turn_count = turn
+      const transportInterrupted = modelResult.status === "cancelled" || modelResult.status === "failed"
+      if (input.abort_signal?.aborted && transportInterrupted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
+      if (deadline.expired() && transportInterrupted) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
       const audit = observeProviderAudit(workingSet.provider_audit, this.options.providerAuditPolicy, modelResult)
       if (audit.blocker) return this.finish(input, investigationId, "failed", "provider_audit_incomplete", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [audit.blocker], [...modelResult.warnings, ...audit.warnings], started)
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
