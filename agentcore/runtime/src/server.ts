@@ -2707,7 +2707,7 @@ export class RuntimeServer {
     }
     const config = this.commanderInvestigationProviderConfig
     const connector = this.externalApiConnectorRegistry.get(config.connector_id)
-    const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id })
+    const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id, role: "commander" })
     push("config_valid", true, "info", "Commander investigation provider config is valid")
     push("provider_id_match", !input.provider_id || input.provider_id === config.provider_id, "error", "requested provider_id matches configured provider")
     push("provider_kind_match", !input.provider_kind || input.provider_kind === config.provider_kind, "error", "requested provider_kind matches configured provider")

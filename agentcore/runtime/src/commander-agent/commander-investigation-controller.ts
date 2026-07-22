@@ -103,7 +103,7 @@ export class CommanderInvestigationController {
         max_output_tokens: this.modelOutputTokens(input),
         abort_signal: deadline.signal,
         requested_at: this.now().toISOString(),
-        metadata: { investigation_id: investigationId, phase: input.phase },
+        metadata: { investigation_id: investigationId, phase: input.phase, requested_by: input.requested_by },
       }
       const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
       const requestCountBlocker = modelRequestCountBlocker(modelResult)
@@ -267,7 +267,7 @@ export class CommanderInvestigationController {
   }
 
   private resolveProtocol(input: CommanderInvestigationInput): { protocol: CommanderModelToolProtocol; warnings: string[]; blocker?: CommanderInvestigationStopReason } {
-    const capability = this.options.capabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id })
+    const capability = this.options.capabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id, role: "commander" })
     const warnings = capability.warnings.slice(0, 8)
     if (input.tool_protocol === "native") {
       if (capability.supports_tools === false) return { protocol: "native", warnings, blocker: "adapter_not_configured" }
@@ -281,7 +281,7 @@ export class CommanderInvestigationController {
   }
 
   private modelOutputTokens(input: CommanderInvestigationInput): number {
-    const capability = this.options.capabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id })
+    const capability = this.options.capabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id, role: "commander" })
     return Math.min(1024, capability.max_output_tokens ?? 1024)
   }
 

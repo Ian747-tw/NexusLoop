@@ -2005,6 +2005,16 @@ describe("Commander in-memory investigation controller", () => {
     expect(capability).toMatchObject({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", role_support: ["commander"], max_context_bytes: 20_000, max_context_tokens: 8000, max_output_tokens: 512, supports_tools: false, supports_streaming: false, supports_mcp: false })
     const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [capability] })
     expect(registry.get({ provider_kind: "openai", model_id: "fixture-model" }).capability_id).toBe(capability.capability_id)
+    const sharedProviderConfig = validateCommanderInvestigationProviderConfig(providerConfig({ provider_kind: "minimax" }))
+    const sharedCommanderCapability = commanderInvestigationModelCapability(sharedProviderConfig)
+    const sharedRegistry = new ModelCapabilityRegistry({
+      runtimeCapabilities: [sharedCommanderCapability],
+      reasoningProviderConfig: { kind: "minimax", provider_id: "minimax-reasoning", connector_id: "minimax-connector", model: "fixture-model", max_input_bytes: 32_768, max_output_bytes: 4096, enabled_for: ["research_synthesis"] },
+    })
+    expect(sharedRegistry.get({ provider_kind: "minimax", model_id: "fixture-model", role: "commander" }).capability_id).toBe(sharedCommanderCapability.capability_id)
+    expect(sharedRegistry.get({ provider_kind: "minimax", model_id: "fixture-model", role: "research" }).role_support).toContain("research")
+    const researchBudget = await new ContextBudgetService({ registry: sharedRegistry }).preview({ purpose: "research_retrieval", role: "research", provider_kind: "minimax", model_id: "fixture-model" })
+    expect(researchBudget.blockers).not.toContain("selected model capability does not support requested role")
     const captured: CommanderModelStepRequest[] = []
     const server = new RuntimeServer({
       projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2b2-cap-")),
@@ -2092,7 +2102,7 @@ describe("Commander in-memory investigation controller", () => {
     servers.push({ stop: () => server.shutdown() })
     const ready = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
     expect(ready.status).toBe("ready")
-    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_configured_loopback", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_configured_loopback", requested_by: "runtime_provider_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
     expect(result.status).toBe("final")
     expect(result.provider_request_count).toBe(4)
     expect(result.model_turn_count).toBe(4)
@@ -2106,6 +2116,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(mock.requests[2].body)).toContain("memory__search")
     const events = await eventText(projectDir)
     expect((events.match(/external_api_request_executed/g) ?? []).length).toBe(4)
+    expect(events).toContain("runtime_provider_test")
+    expect(events).not.toContain("commander_model_adapter")
     expect(events).not.toContain("Final after dynamic reads")
     expect(events).not.toContain("real-provider-key")
     expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)

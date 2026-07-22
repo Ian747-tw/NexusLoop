@@ -30,7 +30,7 @@ export class ModelCapabilityRegistry {
       .slice(0, limit))
   }
 
-  get(input: { capability_id?: string; provider_kind?: string; model_id?: string } = {}): ModelCapability {
+  get(input: { capability_id?: string; provider_kind?: string; model_id?: string; role?: string } = {}): ModelCapability {
     const capabilityId = optional(input.capability_id)
     if (capabilityId) {
       const found = this.capabilities.find((item) => item.capability_id === capabilityId)
@@ -39,7 +39,9 @@ export class ModelCapabilityRegistry {
     }
     const providerKind = optional(input.provider_kind) ?? "unknown"
     const modelId = optional(input.model_id) ?? "unknown"
-    const found = this.capabilities.find((item) => item.provider_kind === providerKind && item.model_id === modelId)
+    const role = optional(input.role)
+    const found = this.capabilities.find((item) => item.provider_kind === providerKind && item.model_id === modelId && (!role || item.role_support.includes(role as ModelCapabilityRole) || item.role_support.includes("unknown")))
+      ?? this.capabilities.find((item) => item.provider_kind === providerKind && item.model_id === modelId)
     return redactStringsOnly(found ?? fallbackCapability({ provider_kind: providerKind, model_id: modelId }))
   }
 
