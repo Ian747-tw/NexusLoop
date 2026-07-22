@@ -158,6 +158,12 @@ only `ai@7.0.29` and `@ai-sdk/openai-compatible@3.0.11`; the spike package
 remains isolated evidence. Full OpenAI Agents Runner remains excluded, and the
 lower-level OpenAI Agents candidate was evaluated but not selected.
 
+9W2B1 connects the selected AI SDK transport to NexusLoop's existing External
+API connector authority through a strict connector fetch bridge. The SDK still
+does not receive real provider credentials or an unrestricted fetch path; base
+URL, credentials, host policy, response caps, and audit persistence remain
+owned by `ExternalApiRequestService` and `ExternalApiTransport`.
+
 9W1 still does not implement a provider loop, durable working set, or proposal
 gate.
 

@@ -114,5 +114,8 @@ durable working-set/recovery remains 9W3.
 Existing one-shot MiniMax provider paths remain compatibility surfaces and are
 not migrated by 9W1.
 
-Provider egress/audit integration for the new adapter remains future 9W2 wiring;
-9W1 tests use explicit loopback-only injected fetches.
+Branch 9W2B1 adds connector-backed egress for the new adapter without
+activating RuntimeServer provider selection. Direct AI SDK adapter construction
+remains useful for loopback tests, but production connector mode supplies only a
+non-secret sentinel credential to the SDK and routes every HTTP attempt through
+`ExternalApiRequestService`.

@@ -12345,7 +12345,7 @@ describe("RuntimeServer core", () => {
         streamCanceled = true
       },
     })
-    const responses: Array<string | ReadableStream<Uint8Array>> = ["local-ok", "日本語abc", "😀abc", stream]
+    const responses: Array<string | ReadableStream<Uint8Array>> = ["local-ok", "abcdef", "日本語abc", "😀abc", stream]
     globalThis.fetch = (async () => {
       fetchCalled = true
       return new Response(responses.shift() ?? "", { status: 200 })
@@ -12477,25 +12477,117 @@ describe("RuntimeServer core", () => {
         timeout_ms: 1000,
         max_response_bytes: 6,
       })
+      expect(result.body).toBe("abcdef")
       expect(new TextEncoder().encode(result.body).byteLength).toBeLessThanOrEqual(6)
-      const splitCodepoint = await transport.request({
+      const multibyte = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/multibyte",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 6,
+      })
+      expect(multibyte.body).toBe("日本")
+      expect(new TextEncoder().encode(multibyte.body).byteLength).toBeLessThanOrEqual(6)
+      const emoji = await transport.request({
         method: "GET",
         url: "https://api.example.test/emoji",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 1,
       })
-      expect(splitCodepoint.body).toBe("")
-      expect(new TextEncoder().encode(splitCodepoint.body).byteLength).toBeLessThanOrEqual(1)
-      const streamed = await transport.request({
+      expect(emoji.body).toBe("")
+      expect(new TextEncoder().encode(emoji.body).byteLength).toBeLessThanOrEqual(1)
+      const boundedStream = await transport.request({
         method: "GET",
         url: "https://api.example.test/stream",
         headers: {},
         timeout_ms: 1000,
         max_response_bytes: 3,
       })
-      expect(streamed.body).toBe("abc")
+      expect(boundedStream.body).toBe("abc")
       expect(streamCanceled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("fetch external API transport fails closed on response overflow only when requested", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response("abcdef", { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const publicResult = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+      })
+      expect(publicResult.body).toBe("abc")
+      await expect(transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+        fail_on_response_overflow: true,
+      })).rejects.toThrow("response exceeded max_response_bytes")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("fetch external API transport cancels exact-limit bodies without waiting for EOF", async () => {
+    const originalFetch = globalThis.fetch
+    let cancelled = false
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("abc"))
+      },
+      cancel() {
+        cancelled = true
+      },
+    }), { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      const result = await transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+      })
+      expect(result.body).toBe("abc")
+      expect(cancelled).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("fetch external API transport fail-closed mode reads past exact cap to detect overflow", async () => {
+    const originalFetch = globalThis.fetch
+    let cancelled = false
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        controller.enqueue(encoder.encode("abc"))
+        controller.enqueue(encoder.encode("d"))
+      },
+      cancel() {
+        cancelled = true
+      },
+    }), { status: 200 })) as unknown as typeof fetch
+    try {
+      const transport = new FetchExternalApiTransport({ resolveHostAddresses: async () => [{ address: "93.184.216.34" }] })
+      await expect(transport.request({
+        method: "GET",
+        url: "https://api.example.test/text",
+        headers: {},
+        timeout_ms: 1000,
+        max_response_bytes: 3,
+        fail_on_response_overflow: true,
+      })).rejects.toThrow("response exceeded max_response_bytes")
+      expect(cancelled).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
     }

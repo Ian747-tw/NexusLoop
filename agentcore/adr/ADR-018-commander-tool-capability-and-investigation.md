@@ -86,6 +86,10 @@ schema disclosure. The model chooses search/get/read order, but runtime
 validates loaded schemas, phase envelopes, bindings, authority, and budgets.
 Public `provider_tool_loop_enabled` remains false because no public/configured
 provider loop is activated.
+9W2B1 adds the connector-backed model transport substrate beneath that
+controller. It routes OpenAI-compatible chat-completions requests through
+`ExternalApiRequestService`, but still does not expose or activate a public
+provider loop.
 
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
@@ -97,7 +101,8 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9W0: Commander agent-runtime SDK fit spike.
 - 9W1: Commander model adapter and tool execution kernel.
 - 9W2A: bounded in-memory Commander investigation controller.
-- 9W2B: connector-backed provider transport and egress policy.
+- 9W2B1: connector-backed model transport substrate.
+- 9W2B2: RuntimeServer provider activation and audit gate.
 - 9W3: durable working set and pause/resume/recovery.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.
 - 9Y: Commander research proposal gate.

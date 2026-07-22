@@ -99,7 +99,7 @@ export type CommanderModelStreamEvent =
 export type CommanderModelStepAdapter = {
   adapter_id: string
   adapter_version: string
-  supports_streaming: true
+  supports_streaming: boolean
   supports_native_tools: true
   supports_json_fallback: true
   supports_structured_output: true
