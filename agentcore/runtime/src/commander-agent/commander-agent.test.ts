@@ -44,6 +44,7 @@ import {
   validateCommanderToolArguments,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
+  type CommanderModelStepResult,
 } from "."
 
 const servers: Array<{ stop(force?: boolean): Promise<void> | void }> = []
@@ -438,7 +439,7 @@ describe("Commander AI SDK model adapter", () => {
           env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
           resolveHostAddresses: async () => {
             serviceResolverCalls += 1
-            await new Promise((resolve) => setTimeout(resolve, mode === "timeout" ? 15 : 5))
+            await new Promise((resolve) => setTimeout(resolve, 1))
             return [{ address: "93.184.216.34" }]
           },
           requestId: () => `api_cross_layer_${mode}`,
@@ -454,7 +455,7 @@ describe("Commander AI SDK model adapter", () => {
           requested_by: "tester",
         }, { abort_signal: mode === "cancel" ? controller.signal : undefined, omit_response_preview_from_audit: true })
         if (mode === "cancel") {
-          await new Promise((resolve) => setTimeout(resolve, 15))
+          await waitFor(() => transportResolverCalls === 1)
           controller.abort()
         }
         await expect(promise).rejects.toThrow(mode === "timeout" ? "timed out" : "cancelled")
@@ -2026,6 +2027,17 @@ describe("Commander in-memory investigation controller", () => {
     expect(result.tool_protocol).toBe("json_fallback")
     expect(result.budget.max_context_bytes).toBeLessThanOrEqual(20_000)
     expect(captured[0].max_output_tokens).toBe(512)
+
+    const expandedConfig = validateCommanderInvestigationProviderConfig(providerConfig({ max_output_tokens: 4096 }))
+    const expandedRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(expandedConfig)] })
+    const expandedCaptured: CommanderModelStepRequest[] = []
+    const expandedServer = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2b2-cap-expanded-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "expanded final", assert_request: (request) => expandedCaptured.push(request) }]),
+    })
+    ;(expandedServer as unknown as { modelCapabilityRegistry: ModelCapabilityRegistry }).modelCapabilityRegistry = expandedRegistry
+    await expect(expandedServer.runCommanderInvestigationInMemory(baseInvestigation())).resolves.toMatchObject({ status: "final" })
+    expect(expandedCaptured[0].max_output_tokens).toBe(1024)
   })
 
   test("configured provider readiness requires start, active mode, run lock, connector credentials, and exact identity", async () => {
@@ -2096,6 +2108,15 @@ describe("Commander in-memory investigation controller", () => {
     expect(finalA.result_hash).toBe(finalB.result_hash)
     expect(missing).toMatchObject({ status: "failed", stop_reason: "provider_audit_incomplete" })
     expect(missing.result_hash).not.toBe(finalA.result_hash)
+
+    const interruptedAbort = new AbortController()
+    const cancelledWithAudit = await controllerWithAuditAdapter(interruptedAdapter({ status: "cancelled", error: "request cancelled", provider_metadata: goodMetadata, abortController: interruptedAbort })).run(baseInvestigation({ abort_signal: interruptedAbort.signal }))
+    expect(cancelledWithAudit).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", provider_request_count: 1, external_api_audit_events_appended: 1, events_appended: true })
+    expect(cancelledWithAudit.provider_audit).toMatchObject({ audit_required: true, external_api_audit_event_count: 1, successful_audit_count: 1, failed_audit_count: 0, all_provider_requests_audited: true })
+
+    const timedOutWithAudit = await controllerWithAuditAdapter(interruptedAdapter({ status: "failed", error: "request timed out", provider_metadata: { nexusloop_transport: { ...goodMetadata.nexusloop_transport, request_ids: ["volatile_timeout"], audit_event_kinds: ["external_api_request_failed"], successful_audit_count: 0, failed_audit_count: 1 } }, delay_ms: 10 })).run(baseInvestigation({ max_wall_time_ms: 5 }))
+    expect(timedOutWithAudit).toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1, external_api_audit_events_appended: 1, events_appended: true })
+    expect(timedOutWithAudit.provider_audit).toMatchObject({ audit_required: true, external_api_audit_event_count: 1, successful_audit_count: 0, failed_audit_count: 1, all_provider_requests_audited: true })
   })
 
   test("injected connector-backed adapters count optional external API audits truthfully", async () => {
@@ -2274,6 +2295,48 @@ function minimalTestBootstrap() {
 
 function controllerWithAuditMetadata(provider_metadata: Record<string, unknown>, text: string) {
   return controllerWithAuditAdapter(new ScriptedCommanderModelStepAdapter([{ status: "final", text, provider_metadata }]))
+}
+
+function interruptedAdapter(input: { status: "cancelled" | "failed"; error: string; provider_metadata: Record<string, unknown>; abortController?: AbortController; delay_ms?: number }): CommanderModelStepAdapter {
+  return {
+    adapter_id: "interrupted-test",
+    adapter_version: "interrupted-test",
+    supports_streaming: false,
+    supports_native_tools: true,
+    supports_json_fallback: true,
+    supports_structured_output: true,
+    supports_abort_signal: true,
+    supports_usage: true,
+    supports_openai_compatible: true,
+    async executeOneStep(request: CommanderModelStepRequest): Promise<CommanderModelStepResult> {
+      if (input.delay_ms) await new Promise((resolve) => setTimeout(resolve, input.delay_ms))
+      input.abortController?.abort(new Error("operator cancelled"))
+      return {
+        request_id: request.request_id,
+        provider_id: request.provider_id,
+        adapter_id: "interrupted-test",
+        status: input.status,
+        tool_calls: [],
+        usage: { provider_reported: false },
+        provider_metadata: input.provider_metadata,
+        request_count: 1,
+        raw_provider_payload_included: false,
+        duration_ms: 0,
+        warnings: [],
+        error: input.error,
+        result_hash: `interrupted_${input.status}`,
+      }
+    },
+    async *executeOneStreamedStep(): AsyncIterable<never> {},
+  }
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const started = performance.now()
+  while (!predicate()) {
+    if (performance.now() - started > 1000) throw new Error("condition was not reached before timeout")
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
 }
 
 function controllerWithAuditAdapter(modelAdapter: CommanderModelStepAdapter) {

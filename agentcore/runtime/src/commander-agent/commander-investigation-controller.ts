@@ -111,9 +111,9 @@ export class CommanderInvestigationController {
       providerRequests += modelResult.request_count
       workingSet.model_turn_count = turn
       const transportInterrupted = modelResult.status === "cancelled" || modelResult.status === "failed"
-      if (input.abort_signal?.aborted && transportInterrupted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
-      if (deadline.expired() && transportInterrupted) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
       const audit = observeProviderAudit(workingSet.provider_audit, this.options.providerAuditPolicy, modelResult)
+      if (input.abort_signal?.aborted && transportInterrupted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], [...modelResult.warnings, ...audit.warnings], started)
+      if (deadline.expired() && transportInterrupted) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], [...modelResult.warnings, ...audit.warnings], started)
       if (audit.blocker) return this.finish(input, investigationId, "failed", "provider_audit_incomplete", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [audit.blocker], [...modelResult.warnings, ...audit.warnings], started)
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
       if (deadline.expired()) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
@@ -285,6 +285,9 @@ export class CommanderInvestigationController {
 
   private modelOutputTokens(input: CommanderInvestigationInput): number {
     const capability = this.options.capabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id, role: "commander" })
+    // 9W2B2 treats the configured capability value as an upper bound; the
+    // controller keeps the lightweight 1024-token default until a later branch
+    // adds an explicit investigation output override.
     return Math.min(1024, capability.max_output_tokens ?? 1024)
   }
 
