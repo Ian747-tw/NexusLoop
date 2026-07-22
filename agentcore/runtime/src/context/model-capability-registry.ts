@@ -8,6 +8,7 @@ const DEFAULT_SAFETY_MARGIN = 0.18
 
 export type ModelCapabilityRegistryOptions = {
   reasoningProviderConfig?: ReasoningProviderConfig
+  runtimeCapabilities?: ModelCapability[]
 }
 
 export class ModelCapabilityRegistry {
@@ -15,6 +16,7 @@ export class ModelCapabilityRegistry {
 
   constructor(options: ModelCapabilityRegistryOptions = {}) {
     this.capabilities = [
+      ...dedupeRuntimeCapabilities(options.runtimeCapabilities ?? []),
       ...defaultCapabilities(),
       ...runtimeConfigCapabilities(options.reasoningProviderConfig),
     ]
@@ -61,6 +63,18 @@ export class ModelCapabilityRegistry {
       generated_at: now.toISOString(),
     })
   }
+}
+
+function dedupeRuntimeCapabilities(capabilities: ModelCapability[]): ModelCapability[] {
+  const seen = new Set<string>()
+  const out: ModelCapability[] = []
+  for (const capability of capabilities) {
+    const key = `${capability.provider_kind}:${capability.model_id}:${capability.role_support.slice().sort().join(",")}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(capability)
+  }
+  return out
 }
 
 export function defaultCapabilities(): ModelCapability[] {

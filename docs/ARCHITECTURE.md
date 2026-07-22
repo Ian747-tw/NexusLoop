@@ -62,17 +62,23 @@ investigation controller that composes bootstrap context, one model step at a
 time, loaded tool schemas, explicit read-tool execution, bounded tool-result
 replay, and stopping conditions. Branch 9W2B1 adds a connector-backed model
 transport substrate that routes OpenAI-compatible chat-completions requests
-through `ExternalApiRequestService` and `ExternalApiTransport` without
-activating RuntimeServer provider selection.
+through `ExternalApiRequestService` and `ExternalApiTransport`. Branch 9W2B2
+activates that substrate only for RuntimeServer's internal in-memory
+investigation method, behind explicit credential-free provider config,
+readiness checks, active/start/run-lock preflight, and complete external API
+audit accounting.
 
 ```text
 NexusLoop domain control plane
+-> RuntimeServer provider config
+-> readiness/run-lock provider gate
 -> bounded in-memory Commander controller
 -> connector-backed model adapter
 -> production AI SDK one-step adapter
 -> strict connector fetch bridge
 -> ExternalApiRequestService
 -> ExternalApiTransport
+-> external API audit events
 -> NexusLoop tool executor
 -> typed read services
 -> bounded in-memory working set
@@ -82,16 +88,17 @@ The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
 connector-backed mode, AI SDK receives no real provider credential; connector
 configuration owns base URL, host/method policy, credential references, timeout,
-and response caps. 9W2B1 still adds no RuntimeServer provider activation, public
-provider loop, durable investigation run, proposal gate, streaming connector
-transport, environment-based Commander provider config, or external read
+and response caps. Provider calls append existing external API audit events, but
+the Commander transcript and working set are not persisted. The public
+Commander provider loop remains disabled: there is no public investigation
+command, TUI surface, durable investigation run, proposal gate, streaming
+connector transport, provider failover, GitHub/MCP gateway, or external read
 gateway. SDK session memory is not research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
 
 Follow-on sequencing:
 
-- 9W2B1: connector-backed model transport substrate.
 - 9W2B2: RuntimeServer provider activation and audit gate.
 - 9W3: durable Commander working set, pause/resume, and recovery.
 - 9X: external GitHub and research read gateway.

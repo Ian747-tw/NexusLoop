@@ -121,7 +121,8 @@ environment readers, public commands, TUI state, authority records, durable
 investigation records, proposal generation, GitHub/MCP reads, OpenCode
 lifecycle, or existing one-shot MiniMax provider behavior.
 
-9W2B2 owns RuntimeServer provider configuration, provider preflight, model
-capability registration, run-lock enforcement, investigation audit result
-semantics, and internal readiness previews. 9W3 still owns durable
+9W2B2 activates the connector substrate only through RuntimeServer's internal
+in-memory investigation seam. That branch owns provider configuration, provider
+preflight, model capability registration, run-lock enforcement, investigation
+audit result semantics, and internal readiness previews. 9W3 still owns durable
 investigation working sets, pause/resume, and recovery.

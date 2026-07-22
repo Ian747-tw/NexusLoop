@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { $ } from "bun"
 import { NoSuchToolError } from "ai"
 import { RuntimeServer } from "../server"
+import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv } from "../launch-config"
 import { EventStore } from "../events/event-store"
 import { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
 import { ExternalApiRequestService } from "../external-api/api-request-service"
@@ -29,6 +30,7 @@ import {
   CommanderToolExecutor,
   ScriptedCommanderModelStepAdapter,
   buildProviderToolMap,
+  commanderInvestigationModelCapability,
   commanderToolSchemaFromDescriptor,
   connectorChatCompletionsUrl,
   createExternalApiConnectorFetch,
@@ -37,6 +39,7 @@ import {
   providerJsonSchema,
   providerToolNameFor,
   toCommanderToolResultMessage,
+  validateCommanderInvestigationProviderConfig,
   validateCommanderConnectorModelTransportConfig,
   validateCommanderToolArguments,
   type CommanderModelStepAdapter,
@@ -57,8 +60,8 @@ describe("Commander AI SDK model adapter", () => {
     expect(pkg.dependencies?.["@openai/agents"]).toBeUndefined()
     const grep = await $`bash -lc "rg -n 'commander-agent-runtime-sdk-fit|@openai/agents' src package.json -g '!src/commander-agent/commander-agent.test.ts' || true"`.cwd(process.cwd()).text()
     expect(grep.trim()).toBe("")
-    const serverActivationGrep = await $`bash -lc "rg -n 'ConnectorBackedCommanderModelStepAdapter|commanderInvestigationProviderConfig' src/server.ts src/launch-config.ts || true"`.cwd(process.cwd()).text()
-    expect(serverActivationGrep.trim()).toBe("")
+    const noPublicActivationGrep = await $`bash -lc "rg -n 'run_commander_investigation|commander-investigation|provider_tool_loop_enabled: true' src/server.ts src/launch-config.ts ../tui/src || true"`.cwd(process.cwd()).text()
+    expect(noPublicActivationGrep.trim()).toBe("")
   })
 
   test("connector transport config and chat-completions URL policy are strict and credential-free", () => {
@@ -1972,6 +1975,143 @@ describe("Commander in-memory investigation controller", () => {
     }
     expect(await eventText(projectDir)).toBe(before)
   })
+
+  test("Commander provider env config requires explicit opt-in and remains credential-free", () => {
+    expect(readRuntimeServerLaunchOptionsFromEnv({}).commanderInvestigationProviderConfig).toBeUndefined()
+    expect(readRuntimeServerLaunchOptionsFromEnv({ NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "0" }).commanderInvestigationProviderConfig).toBeUndefined()
+    expect(() => readRuntimeServerLaunchOptionsFromEnv({ NXL_COMMANDER_INVESTIGATION_PROVIDER_ID: "provider" })).toThrow("ENABLED")
+    expect(() => readRuntimeServerLaunchOptionsFromEnv({ NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "0", NXL_COMMANDER_INVESTIGATION_PROVIDER_ID: "provider" })).toThrow("cannot be combined")
+    expect(() => readRuntimeServerLaunchOptionsFromEnv({ ...providerEnv(), NXL_COMMANDER_INVESTIGATION_ENABLED_PHASES: "proposal_investigation,,general_read" })).toThrow("blank")
+    expect(() => readRuntimeServerLaunchOptionsFromEnv({ ...providerEnv(), NXL_COMMANDER_INVESTIGATION_SUPPORTS_TOOLS: "maybe" })).toThrow("must be 1, 0, or unknown")
+    const options = readRuntimeServerLaunchOptionsFromEnv(providerEnv())
+    expect(options.commanderInvestigationProviderConfig).toMatchObject({
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      connector_id: "openai-test",
+      model_id: "fixture-model",
+      enabled_phases: ["general_read", "proposal_investigation"],
+      supports_tools: true,
+    })
+    expect(JSON.stringify(options.commanderInvestigationProviderConfig)).not.toContain("real-provider-key")
+    expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, api_key: "secret" })).toThrow("unknown")
+    expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, provider_id: "https://api.example.test" })).toThrow("URLs")
+    expect(() => new RuntimeServer({ projectDir: "/tmp/nxl-conflict", commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "x" }]), commanderInvestigationProviderConfig: options.commanderInvestigationProviderConfig })).toThrow("cannot be combined")
+    expect(() => readRuntimeServerLaunchOptionsFromEnv(providerEnv(), { commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "x" }]) })).toThrow("cannot be combined")
+  })
+
+  test("configured Commander capability is registered and selected for budgets and protocol", async () => {
+    const config = validateCommanderInvestigationProviderConfig(providerConfig({ max_context_bytes: 20_000, max_context_tokens: 8000, max_output_tokens: 512, supports_tools: false }))
+    const capability = commanderInvestigationModelCapability(config)
+    expect(capability).toMatchObject({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", role_support: ["commander"], max_context_bytes: 20_000, max_context_tokens: 8000, max_output_tokens: 512, supports_tools: false, supports_streaming: false, supports_mcp: false })
+    const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [capability] })
+    expect(registry.get({ provider_kind: "openai", model_id: "fixture-model" }).capability_id).toBe(capability.capability_id)
+    const captured: CommanderModelStepRequest[] = []
+    const server = new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2b2-cap-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fallback final", assert_request: (request) => captured.push(request) }]),
+    })
+    ;(server as unknown as { modelCapabilityRegistry: ModelCapabilityRegistry }).modelCapabilityRegistry = registry
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_kind: "openai", model_id: "fixture-model", provider_id: "fixture_provider" }))
+    expect(result.status).toBe("final")
+    expect(result.tool_protocol).toBe("json_fallback")
+    expect(result.budget.max_context_bytes).toBeLessThanOrEqual(20_000)
+    expect(captured[0].max_output_tokens).toBe(512)
+  })
+
+  test("configured provider readiness requires start, active mode, run lock, connector credentials, and exact identity", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-ready-"))
+    await writeApprovedSpec(projectDir)
+    const server = createRuntimeServerFromLaunchConfig({ projectDir, env: providerLaunchEnv("http://localhost:1/v1") })
+    const beforeStart = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(beforeStart.configuration_ready).toBe(true)
+    expect(beforeStart.execution_ready).toBe(false)
+    expect(beforeStart.blockers.join(" ")).toContain("RuntimeServer is started")
+    expect(beforeStart.network_called).toBe(false)
+    expect(beforeStart.events_appended).toBe(false)
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    const ready = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(ready.status).toBe("ready")
+    expect(ready.execution_ready).toBe(true)
+    expect(ready.would_call_network).toBe(true)
+    expect(ready.would_append_external_api_audit).toBe(true)
+    expect(JSON.stringify(ready)).not.toContain("NXL_TEST_MODEL_KEY")
+    expect(JSON.stringify(ready)).not.toContain("real-provider-key")
+    const wrongPhase = server.previewCommanderInvestigationProviderReadiness({ phase: "emergency_inspection", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(wrongPhase.execution_ready).toBe(false)
+    expect(wrongPhase.blockers.join(" ")).toContain("requested phase is enabled")
+    const statusMode = createRuntimeServerFromLaunchConfig({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w2b2-status-")), mode: "status", env: providerLaunchEnv("http://localhost:1/v1") })
+    await statusMode.start()
+    servers.push({ stop: () => statusMode.shutdown() })
+    expect(statusMode.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" }).execution_ready).toBe(false)
+  })
+
+  test("provider audit policy fails closed before tool execution when metadata is missing or malformed", async () => {
+    const calls: string[] = []
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "tool_call", tool_calls: [toolCall("call_search", "commander.tool_search", { query: "research" })], provider_metadata: { scripted: true } }]),
+      toolExecutor: { execute: async () => { calls.push("tool"); throw new Error("must not execute") } },
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => minimalTestBootstrap() },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: new ModelCapabilityRegistry(),
+      contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }),
+      providerAuditPolicy: { required: true, transport_kind: "external_api_connector", connector_id: "openai-test" },
+    })
+    const result = await controller.run(baseInvestigation())
+    expect(result).toMatchObject({ status: "failed", stop_reason: "provider_audit_incomplete", provider_request_count: 1, tool_call_count: 0, events_appended: false, external_api_audit_events_appended: 0 })
+    expect(calls).toEqual([])
+
+    const goodMetadata = { nexusloop_transport: { transport_kind: "external_api_connector", connector_id: "openai-test", request_ids: ["volatile_a"], audit_event_kinds: ["external_api_request_executed"], audit_event_count: 1, successful_audit_count: 1, failed_audit_count: 0, dropped_header_names: [], request_body_persisted: false, response_body_persisted: false, credentials_persisted: false } }
+    const badMetadata = { nexusloop_transport: { ...goodMetadata.nexusloop_transport, request_ids: [], audit_event_count: 0 } }
+    const finalA = await controllerWithAuditMetadata(goodMetadata, "semantic final").run(baseInvestigation({ investigation_id: "inv_audit_hash" }))
+    const finalB = await controllerWithAuditMetadata({ nexusloop_transport: { ...goodMetadata.nexusloop_transport, request_ids: ["volatile_b"] } }, "semantic final").run(baseInvestigation({ investigation_id: "inv_audit_hash" }))
+    const missing = await controllerWithAuditMetadata(badMetadata, "semantic final").run(baseInvestigation({ investigation_id: "inv_audit_hash" }))
+    expect(finalA.status).toBe("final")
+    expect(finalA.events_appended).toBe(true)
+    expect(finalA.external_api_audit_events_appended).toBe(1)
+    expect(finalA.provider_audit.all_provider_requests_audited).toBe(true)
+    expect(finalA.result_hash).toBe(finalB.result_hash)
+    expect(missing).toMatchObject({ status: "failed", stop_reason: "provider_audit_incomplete" })
+    expect(missing.result_hash).not.toBe(finalA.result_hash)
+  })
+
+  test("configured RuntimeServer loopback provider runs only after start and records one external API audit per request", async () => {
+    const mock = startInvestigationMockServer()
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-loopback-"))
+    await writeApprovedSpec(projectDir)
+    const server = createRuntimeServerFromLaunchConfig({ projectDir, env: providerLaunchEnv(`${mock.url.replace("127.0.0.1", "localhost")}/v1`) })
+    expect(mock.requests).toHaveLength(0)
+    const blocked = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(blocked).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0, external_api_audit_events_appended: 0, events_appended: false })
+    expect(mock.requests).toHaveLength(0)
+    expect(await eventText(projectDir)).toBe("")
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    const ready = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(ready.status).toBe("ready")
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_configured_loopback", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(result.status).toBe("final")
+    expect(result.provider_request_count).toBe(4)
+    expect(result.model_turn_count).toBe(4)
+    expect(result.tool_search_call_count).toBe(1)
+    expect(result.loaded_tool_ids).toContain("memory.search")
+    expect(result.provider_audit).toMatchObject({ audit_required: true, transport_kind: "external_api_connector", provider_request_count: 4, external_api_audit_event_count: 4, successful_audit_count: 4, failed_audit_count: 0, all_provider_requests_audited: true, request_body_persisted: false, response_body_persisted: false, credentials_persisted: false })
+    expect(result.events_appended).toBe(true)
+    expect(result.investigation_events_appended).toBe(false)
+    expect(mock.requests).toHaveLength(4)
+    expect(JSON.stringify(mock.requests[0].body)).not.toContain("memory__search")
+    expect(JSON.stringify(mock.requests[2].body)).toContain("memory__search")
+    const events = await eventText(projectDir)
+    expect((events.match(/external_api_request_executed/g) ?? []).length).toBe(4)
+    expect(events).not.toContain("Final after dynamic reads")
+    expect(events).not.toContain("real-provider-key")
+    expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+    await server.shutdown()
+    await expect(server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" }))).resolves.toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0 })
+  })
 })
 
 function modelTool(toolId: string) {
@@ -2006,6 +2146,91 @@ function connectorConfig(overrides: Partial<ReturnType<typeof validateCommanderC
     max_request_bytes: 65_536,
     max_response_bytes: 65_536,
     ...overrides,
+  })
+}
+
+function providerConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    transport_kind: "openai_compatible_connector",
+    provider_id: "fixture_provider",
+    provider_kind: "openai_compatible",
+    connector_id: "openai-test",
+    model_id: "fixture-model",
+    enabled_phases: ["proposal_investigation", "general_read"],
+    timeout_ms: 5000,
+    max_request_bytes: 65_536,
+    max_response_bytes: 65_536,
+    max_context_bytes: 65_536,
+    max_output_tokens: 1024,
+    supports_tools: true,
+    supports_json_schema: "unknown",
+    supports_long_context: "unknown",
+    supports_local_execution: false,
+    ...overrides,
+  }
+}
+
+function providerEnv(overrides: Record<string, string | undefined> = {}) {
+  return {
+    NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "1",
+    NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND: "openai_compatible_connector",
+    NXL_COMMANDER_INVESTIGATION_PROVIDER_ID: "fixture_provider",
+    NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND: "openai_compatible",
+    NXL_COMMANDER_INVESTIGATION_CONNECTOR_ID: "openai-test",
+    NXL_COMMANDER_INVESTIGATION_MODEL_ID: "fixture-model",
+    NXL_COMMANDER_INVESTIGATION_ENABLED_PHASES: "general_read, proposal_investigation",
+    NXL_COMMANDER_INVESTIGATION_TIMEOUT_MS: "5000",
+    NXL_COMMANDER_INVESTIGATION_MAX_REQUEST_BYTES: "65536",
+    NXL_COMMANDER_INVESTIGATION_MAX_RESPONSE_BYTES: "65536",
+    NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_BYTES: "65536",
+    NXL_COMMANDER_INVESTIGATION_MAX_OUTPUT_TOKENS: "1024",
+    NXL_COMMANDER_INVESTIGATION_SUPPORTS_TOOLS: "1",
+    NXL_COMMANDER_INVESTIGATION_SUPPORTS_JSON_SCHEMA: "unknown",
+    NXL_COMMANDER_INVESTIGATION_SUPPORTS_LONG_CONTEXT: "unknown",
+    NXL_COMMANDER_INVESTIGATION_SUPPORTS_LOCAL_EXECUTION: "0",
+    ...overrides,
+  }
+}
+
+function providerLaunchEnv(baseUrl: string) {
+  return {
+    ...providerEnv(),
+    NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connector("openai-test", baseUrl, { allowLocalHttp: baseUrl.startsWith("http://"), allowedHosts: [new URL(baseUrl).hostname], maxResponseBytes: 65_536 })]),
+    NXL_TEST_MODEL_KEY: "real-provider-key",
+  }
+}
+
+function minimalTestBootstrap() {
+  return {
+    bootstrap_id: "bootstrap_provider_audit_test",
+    phase: "proposal_investigation" as const,
+    objective_preview: "provider audit test",
+    authority_kernel: "authority kernel",
+    continuity_kind: "summary" as const,
+    readiness: "ready",
+    current_project_summary: "project",
+    open_loops: [],
+    source_refs: [],
+    blockers: [],
+    warnings: [],
+    estimated_bytes: 100,
+    estimated_tokens: 25,
+    bootstrap_hash: "bootstrap_hash",
+  }
+}
+
+function controllerWithAuditMetadata(provider_metadata: Record<string, unknown>, text: string) {
+  return new CommanderInvestigationController({
+    modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text, provider_metadata }]),
+    toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
+    toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
+    descriptors: COMMANDER_TOOL_REGISTRY,
+    boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+    bootstrapService: { compile: async () => minimalTestBootstrap() },
+    contextService: new CommanderInvestigationContextService(),
+    capabilityRegistry: new ModelCapabilityRegistry(),
+    contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }),
+    providerAuditPolicy: { required: true, transport_kind: "external_api_connector", connector_id: "openai-test" },
   })
 }
 

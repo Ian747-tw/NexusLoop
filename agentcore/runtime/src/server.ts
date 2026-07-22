@@ -118,7 +118,7 @@ import type { ResearchIngestionPreview, ResearchIngestionRecord, ResearchIngesti
 import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readCommanderContinuitySummaryInput, readCommanderContinuityThreadInput, readCommanderMidMissionContinuityInput, readCommanderProposalContinuityInput } from "./continuity/commander-continuity-service"
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
 import { CommanderToolService, readCommanderToolGetInput, readCommanderToolListInput, readCommanderToolSearchInput } from "./commander-tools/commander-tool-service"
-import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchPreview } from "./commander-tools/commander-tool-types"
+import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolPhase, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchPreview } from "./commander-tools/commander-tool-types"
 import { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput, type CommanderOperationalMemoryRecord } from "./commander-tools/commander-operational-memory-search-service"
 import { CommanderRepoReadService } from "./commander-tools/commander-repo-read-service"
 import type { CommanderDependencyManifestResult, CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult, CommanderInternalReadResult, CommanderOperationalMemorySearchPreview, CommanderRepoFileResult, CommanderRepoSearchResult, CommanderRepoSymbolResult, CommanderRepoTreeResult, CommanderTestManifestResult } from "./commander-tools/commander-read-types"
@@ -181,10 +181,21 @@ import {
   CommanderInvestigationContextService,
   CommanderInvestigationController,
   CommanderToolExecutor,
+  ConnectorBackedCommanderModelStepAdapter,
+  commanderInvestigationModelCapability,
+  connectorChatCompletionsUrl,
+  stableHash,
+  validateCommanderInvestigationProviderConfig,
   type CommanderInvestigationControlGate,
   type CommanderInvestigationControlSnapshot,
   type CommanderInvestigationInput,
   type CommanderInvestigationResult,
+  type CommanderInvestigationProviderConfig,
+  type CommanderInvestigationProviderGate,
+  type CommanderInvestigationProviderPreflightSnapshot,
+  type CommanderInvestigationProviderReadiness,
+  type CommanderInvestigationProviderReadinessCheck,
+  type CommanderInvestigationProviderReadinessInput,
   type CommanderModelStepAdapter,
   type CommanderToolBindingRegistry,
   type CommanderToolExecutionRequest,
@@ -284,6 +295,7 @@ export interface RuntimeServerOptions {
   researchDbFactory?: (projectDir: string) => RuntimeResearchDbProjection
   commanderQueueNow?: () => Date
   commanderModelStepAdapter?: CommanderModelStepAdapter
+  commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
 }
 
@@ -377,6 +389,7 @@ export class RuntimeServer {
   private readonly researchDbFactory: (projectDir: string) => RuntimeResearchDbProjection
   private readonly commanderQueueNow?: () => Date
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
+  private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
@@ -476,8 +489,13 @@ export class RuntimeServer {
     this.externalApiResolveHostAddresses = options.externalApiResolveHostAddresses
     this.externalApiNow = options.externalApiNow
     this.externalApiRequestId = options.externalApiRequestId
+    if (options.commanderModelStepAdapter && options.commanderInvestigationProviderConfig) throw new Error("commanderModelStepAdapter cannot be combined with commanderInvestigationProviderConfig")
+    this.commanderInvestigationProviderConfig = options.commanderInvestigationProviderConfig ? validateCommanderInvestigationProviderConfig(options.commanderInvestigationProviderConfig) : undefined
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
-    this.modelCapabilityRegistry = new ModelCapabilityRegistry({ reasoningProviderConfig: this.reasoningProviderConfig })
+    this.modelCapabilityRegistry = new ModelCapabilityRegistry({
+      reasoningProviderConfig: this.reasoningProviderConfig,
+      runtimeCapabilities: this.commanderInvestigationProviderConfig ? [commanderInvestigationModelCapability(this.commanderInvestigationProviderConfig)] : [],
+    })
     const minimaxProvider = this.reasoningProviderConfig.kind === "minimax" ? this.createMiniMaxReasoningProvider() : null
     this.researchSynthesisProvider = options.researchSynthesisProvider ?? (minimaxProvider ?? new FakeResearchSynthesisProvider())
     this.researchSynthesisNow = options.researchSynthesisNow
@@ -525,7 +543,7 @@ export class RuntimeServer {
     this.ownsResearchDb = options.researchDb === undefined
     this.researchDbFactory = options.researchDbFactory ?? ((projectDir) => ResearchDb.open(projectDir, { allowFtsProjectionRepair: this.runLock.isHeld() }))
     this.commanderQueueNow = options.commanderQueueNow
-    this.commanderModelStepAdapter = options.commanderModelStepAdapter
+    this.commanderModelStepAdapter = options.commanderModelStepAdapter ?? this.createConfiguredCommanderModelStepAdapter()
     this.commanderInvestigationControlGate = options.commanderInvestigationControlGate
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
@@ -2638,6 +2656,120 @@ export class RuntimeServer {
     return this.commanderInvestigationController().run(input)
   }
 
+  previewCommanderInvestigationProviderReadiness(input: CommanderInvestigationProviderReadinessInput = {}): CommanderInvestigationProviderReadiness {
+    const generatedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    const checks: CommanderInvestigationProviderReadinessCheck[] = []
+    const warnings: string[] = []
+    const blockers: string[] = []
+    const push = (name: string, ok: boolean, severity: CommanderInvestigationProviderReadinessCheck["severity"], summary: string, redactedDetail?: string) => {
+      checks.push({ name, ok, severity, summary, redacted_detail: redactedDetail ? redactText(redactedDetail).slice(0, 240) : undefined })
+      if (!ok && severity === "error") blockers.push(summary)
+      if (!ok && severity === "warning") warnings.push(summary)
+    }
+    if (!this.commanderInvestigationProviderConfig && !this.commanderModelStepAdapter) {
+      const readiness = providerReadinessResult({
+        status: "disabled",
+        configurationReady: false,
+        executionReady: false,
+        providerSource: "none",
+        runtimeMode: this.mode,
+        runtimeStarted: this.started,
+        runLockRequired: false,
+        runLockHeld: this.runLock.isHeld(),
+        supportsStreaming: false,
+        checks,
+        blockers: ["Commander investigation provider is not configured"],
+        warnings,
+        generatedAt,
+        defaultToolProtocol: "unavailable",
+      })
+      return readiness
+    }
+    if (!this.commanderInvestigationProviderConfig) {
+      warnings.push("Commander model adapter is injected for internal/test use; connector audit authority is not active")
+      return providerReadinessResult({
+        status: this.commanderModelStepAdapter ? "ready" : "disabled",
+        configurationReady: Boolean(this.commanderModelStepAdapter),
+        executionReady: Boolean(this.commanderModelStepAdapter),
+        providerSource: "injected_adapter",
+        runtimeMode: this.mode,
+        runtimeStarted: this.started,
+        runLockRequired: false,
+        runLockHeld: this.runLock.isHeld(),
+        adapterId: this.commanderModelStepAdapter?.adapter_id,
+        supportsStreaming: this.commanderModelStepAdapter?.supports_streaming === true,
+        checks,
+        blockers,
+        warnings,
+        generatedAt,
+        defaultToolProtocol: "unavailable",
+      })
+    }
+    const config = this.commanderInvestigationProviderConfig
+    const connector = this.externalApiConnectorRegistry.get(config.connector_id)
+    const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id })
+    push("config_valid", true, "info", "Commander investigation provider config is valid")
+    push("provider_id_match", !input.provider_id || input.provider_id === config.provider_id, "error", "requested provider_id matches configured provider")
+    push("provider_kind_match", !input.provider_kind || input.provider_kind === config.provider_kind, "error", "requested provider_kind matches configured provider")
+    push("model_id_match", !input.model_id || input.model_id === config.model_id, "error", "requested model_id matches configured model")
+    push("phase_enabled", !input.phase || config.enabled_phases.includes(input.phase), "error", "requested phase is enabled for configured provider")
+    push("connector_exists", Boolean(connector), "error", "configured external API connector exists")
+    if (connector) {
+      try {
+        connectorChatCompletionsUrl(connector)
+        push("chat_completions_url", true, "info", "exact chat-completions URL can be derived")
+      } catch (error) {
+        push("chat_completions_url", false, "error", "exact chat-completions URL could not be derived", error instanceof Error ? error.message : String(error))
+      }
+      push("connector_allows_post", connector.allowed_methods.includes("POST"), "error", "connector permits POST")
+      push("timeout_within_connector", config.timeout_ms <= connector.timeout_ms, "error", "provider timeout is within connector timeout")
+      push("response_cap_within_connector", config.max_response_bytes <= connector.max_response_bytes, "error", "provider response cap is within connector response cap")
+      push("credential_refs_present", (connector.credential_refs ?? []).length > 0, "error", "connector has credential references")
+      const missingCredentials = (connector.credential_refs ?? []).filter((ref) => !this.externalApiEnv[ref.env_name])
+      push("credential_values_present", missingCredentials.length === 0, "error", "connector credential values are present")
+      try {
+        const preview = this.externalApiRequestService().preview({ connector_id: config.connector_id, method: "POST", path: connectorChatCompletionsUrl(connector).pathname, headers: { "Content-Type": "application/json" }, body: "{}", dry_run: true, requested_by: "commander_provider_readiness" })
+        push("external_api_preview", preview.allowed, "error", "ExternalApiRequestService preview allows exact request", preview.blockers.join("; "))
+      } catch (error) {
+        push("external_api_preview", false, "error", "ExternalApiRequestService preview failed", error instanceof Error ? error.message : String(error))
+      }
+    }
+    push("capability_exists", capability.source === "runtime_config", "error", "runtime-config Commander model capability exists")
+    push("capability_commander_role", capability.role_support.includes("commander"), "error", "configured capability supports Commander role")
+    push("context_limits_coherent", config.max_context_bytes <= config.max_request_bytes && (!config.max_context_tokens || config.max_context_tokens > 0), "error", "configured context and request limits are coherent")
+    push("adapter_nonstreaming", this.commanderModelStepAdapter?.adapter_id === "external_api_connector_ai_sdk_core" && this.commanderModelStepAdapter.supports_streaming === false, "error", "configured adapter is connector-backed and nonstreaming")
+    const configurationReady = checks.filter((check) => check.severity === "error").every((check) => check.ok)
+    push("runtime_active_mode", this.mode === "active", "error", "RuntimeServer mode is active")
+    push("runtime_started", this.started, "error", "RuntimeServer is started")
+    push("run_lock_held", this.runLock.isHeld(), "error", "RuntimeServer run lock is held")
+    const executionReady = configurationReady && this.mode === "active" && this.started && this.runLock.isHeld()
+    return providerReadinessResult({
+      status: executionReady ? "ready" : "blocked",
+      configurationReady,
+      executionReady,
+      providerSource: "configured_connector",
+      providerId: config.provider_id,
+      providerKind: config.provider_kind,
+      connectorId: config.connector_id,
+      modelId: config.model_id,
+      enabledPhases: config.enabled_phases,
+      capabilityId: capability.capability_id,
+      runtimeMode: this.mode,
+      runtimeStarted: this.started,
+      runLockRequired: true,
+      runLockHeld: this.runLock.isHeld(),
+      adapterId: this.commanderModelStepAdapter?.adapter_id,
+      supportsStreaming: false,
+      checks,
+      blockers,
+      warnings,
+      generatedAt,
+      defaultToolProtocol: config.supports_tools === true ? "native" : "json_fallback",
+      wouldCallNetwork: true,
+      wouldAppendExternalApiAudit: true,
+    })
+  }
+
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
     return this.commanderContinuityService().proposal(input)
   }
@@ -4623,11 +4755,58 @@ export class RuntimeServer {
       bootstrapService: this.commanderInvestigationBootstrapService(),
       contextService: this.commanderInvestigationContextService(),
       controlGate: this.commanderInvestigationControlGate ?? this.defaultCommanderInvestigationControlGate(),
+      providerGate: this.commanderInvestigationProviderConfig ? this.defaultCommanderInvestigationProviderGate() : undefined,
+      providerAuditPolicy: this.commanderInvestigationProviderConfig ? { required: true, transport_kind: "external_api_connector", connector_id: this.commanderInvestigationProviderConfig.connector_id } : { required: false, transport_kind: "none" },
       capabilityRegistry: this.modelCapabilityRegistry,
       contextBudgetService: this.contextBudgetService(),
       now: this.researchSynthesisNow,
     })
     return this.commanderInvestigationControllerInstance
+  }
+
+  private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {
+    const config = this.commanderInvestigationProviderConfig
+    if (!config) return undefined
+    return new ConnectorBackedCommanderModelStepAdapter({
+      config: {
+        transport_kind: config.transport_kind,
+        provider_id: config.provider_id,
+        connector_id: config.connector_id,
+        model_id: config.model_id,
+        timeout_ms: config.timeout_ms,
+        max_request_bytes: config.max_request_bytes,
+        max_response_bytes: config.max_response_bytes,
+      },
+      registry: this.externalApiConnectorRegistry,
+      requestService: this.externalApiRequestService(),
+      now: this.externalApiNow,
+    })
+  }
+
+  private defaultCommanderInvestigationProviderGate(): CommanderInvestigationProviderGate {
+    return {
+      check: (input) => this.checkCommanderInvestigationProvider(input),
+    }
+  }
+
+  private checkCommanderInvestigationProvider(input: Parameters<CommanderInvestigationProviderGate["check"]>[0]): CommanderInvestigationProviderPreflightSnapshot {
+    const readiness = this.previewCommanderInvestigationProviderReadiness({
+      phase: input.phase,
+      provider_id: input.provider_id,
+      provider_kind: input.provider_kind,
+      model_id: input.model_id,
+    })
+    const snapshot: CommanderInvestigationProviderPreflightSnapshot = {
+      ready: readiness.execution_ready,
+      source_kind: readiness.provider_source,
+      checks: readiness.checks.slice(0, 24),
+      blockers: readiness.blockers.slice(0, 12),
+      warnings: readiness.warnings.slice(0, 12),
+      checked_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString(),
+      snapshot_hash: "",
+    }
+    snapshot.snapshot_hash = stableHash({ ...snapshot, checked_at: "", snapshot_hash: "" })
+    return snapshot
   }
 
   private defaultCommanderInvestigationControlGate(): CommanderInvestigationControlGate {
@@ -4846,6 +5025,74 @@ function humanControlSummaryPreview(result: OpenCodeHumanControlRecord | OpenCod
     `state=${result.projected_state_after}`,
     rich.reason_preview ?? rich.correction_preview ?? rich.override_preview ?? result.human_note_preview,
   ].filter(Boolean).join("; ")).replace(/\s+/g, " ").trim().slice(0, 300)
+}
+
+function providerReadinessResult(input: {
+  status: CommanderInvestigationProviderReadiness["status"]
+  configurationReady: boolean
+  executionReady: boolean
+  providerSource: CommanderInvestigationProviderReadiness["provider_source"]
+  providerId?: string
+  providerKind?: string
+  connectorId?: string
+  modelId?: string
+  enabledPhases?: CommanderToolPhase[]
+  capabilityId?: string
+  defaultToolProtocol: CommanderInvestigationProviderReadiness["default_tool_protocol"]
+  runtimeMode: RuntimeMode
+  runtimeStarted: boolean
+  runLockRequired: boolean
+  runLockHeld: boolean
+  adapterId?: string
+  supportsStreaming: boolean
+  wouldCallNetwork?: boolean
+  wouldAppendExternalApiAudit?: boolean
+  checks: CommanderInvestigationProviderReadinessCheck[]
+  blockers: string[]
+  warnings: string[]
+  generatedAt: string
+}): CommanderInvestigationProviderReadiness {
+  const result: CommanderInvestigationProviderReadiness = {
+    readiness_id: `commander_provider_readiness_${stableHash({
+      status: input.status,
+      provider_source: input.providerSource,
+      provider_id: input.providerId,
+      provider_kind: input.providerKind,
+      connector_id: input.connectorId,
+      model_id: input.modelId,
+      phase_count: input.enabledPhases?.length ?? 0,
+      configuration_ready: input.configurationReady,
+      execution_ready: input.executionReady,
+    }).slice(0, 16)}`,
+    status: input.status,
+    configuration_ready: input.configurationReady,
+    execution_ready: input.executionReady,
+    provider_source: input.providerSource,
+    provider_id: input.providerId,
+    provider_kind: input.providerKind,
+    connector_id: input.connectorId,
+    model_id: input.modelId,
+    enabled_phases: input.enabledPhases ?? [],
+    capability_id: input.capabilityId,
+    default_tool_protocol: input.defaultToolProtocol,
+    runtime_mode: input.runtimeMode,
+    runtime_started: input.runtimeStarted,
+    run_lock_required: input.runLockRequired,
+    run_lock_held: input.runLockHeld,
+    adapter_id: input.adapterId,
+    supports_streaming: input.supportsStreaming,
+    would_call_network: input.wouldCallNetwork === true,
+    would_append_external_api_audit: input.wouldAppendExternalApiAudit === true,
+    checks: input.checks.slice(0, 32),
+    blockers: input.blockers.map((item) => redactText(item).slice(0, 240)).slice(0, 16),
+    warnings: input.warnings.map((item) => redactText(item).slice(0, 240)).slice(0, 16),
+    generated_at: input.generatedAt,
+    network_called: false,
+    events_appended: false,
+    readiness_hash: "",
+  }
+  result.readiness_hash = stableHash({ ...result, generated_at: "", readiness_hash: "" })
+  return redactValue(result)
 }
 
 class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {

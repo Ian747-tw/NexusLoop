@@ -164,8 +164,14 @@ does not receive real provider credentials or an unrestricted fetch path; base
 URL, credentials, host policy, response caps, and audit persistence remain
 owned by `ExternalApiRequestService` and `ExternalApiTransport`.
 
-9W1 still does not implement a provider loop, durable working set, or proposal
-gate.
+9W2B2 connects the selected AI SDK Core path through RuntimeServer's internal
+in-memory investigation method using connector-backed transport and provider
+audit gating. NexusLoop still owns the loop, tool authority, run lock, audit
+semantics, and investigation state; the SDK remains only the one-request
+transport/decoding layer.
+
+9W2B2 still does not implement a public provider loop, durable working set, or
+proposal gate.
 
 9W2 should implement the bounded provider-neutral investigation loop on top of
 that boundary.

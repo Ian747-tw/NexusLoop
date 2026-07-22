@@ -2,6 +2,7 @@ import { RuntimeServer, type RuntimeServerOptions } from "./server"
 import { readOpenCodeAdapterConfigFromEnv } from "./opencode/adapter-config"
 import { readExternalApiConnectorsFromEnv } from "./external-api/api-connector-registry"
 import { readReasoningProviderConfigFromEnv } from "./reasoning/reasoning-provider-config"
+import { readCommanderInvestigationProviderConfigFromEnv } from "./commander-agent"
 import type { WakeSchedulerBootstrapConfig } from "./schedules/wake-scheduler-bootstrap-types"
 
 export interface RuntimeServerLaunchConfig extends RuntimeServerOptions {
@@ -22,6 +23,15 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   if (!options.reasoningProviderConfig) {
     const reasoningProviderConfig = readReasoningProviderConfigFromEnv(env)
     if (reasoningProviderConfig) options.reasoningProviderConfig = reasoningProviderConfig
+  }
+  if (!options.commanderInvestigationProviderConfig) {
+    const commanderInvestigationProviderConfig = readCommanderInvestigationProviderConfigFromEnv(env)
+    if (commanderInvestigationProviderConfig) {
+      if (options.commanderModelStepAdapter) throw new Error("Commander investigation provider env config cannot be combined with an injected commanderModelStepAdapter")
+      options.commanderInvestigationProviderConfig = commanderInvestigationProviderConfig
+    }
+  } else if (options.commanderModelStepAdapter && env.NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED === "1") {
+    throw new Error("Commander investigation provider config cannot be combined with an injected commanderModelStepAdapter")
   }
   if (!options.wakeSchedulerBootstrapConfig) {
     const wakeSchedulerBootstrapConfig = readWakeSchedulerBootstrapConfigFromEnv(env)

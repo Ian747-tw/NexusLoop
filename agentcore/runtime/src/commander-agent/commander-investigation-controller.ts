@@ -5,6 +5,7 @@ import type { CommanderEvidenceCard } from "../commander-tools/commander-read-ty
 import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-tools/commander-tool-types"
 import { commanderToolSchemaFromDescriptor, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelToolCallPart, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
+import type { CommanderConnectorModelTransportMetadata } from "./commander-connector-transport-types"
 import { toCommanderToolResultMessage } from "./commander-tool-executor"
 import type { CommanderToolExecutionResult } from "./commander-tool-execution-types"
 import {
@@ -17,6 +18,7 @@ import {
   type CommanderInvestigationTurnSummary,
   type CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
+import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderPreflightSnapshot } from "./commander-investigation-provider-types"
 
 const HARD_CAPS = {
   max_model_turns: 24,
@@ -47,23 +49,25 @@ export class CommanderInvestigationController {
     const investigationId = boundedId(input.investigation_id) ?? `commander_investigation_${stableHash({ input, started: started.toISOString() }).slice(0, 16)}`
     const inputBlockers = validateInput(input)
     const blockedBudget = fallbackBudget(input.phase, "input_blocked")
-    if (inputBlockers.length) return this.finish(input, investigationId, "blocked", "controller_error", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], inputBlockers, [], started)
+    if (inputBlockers.length) return this.finish(input, investigationId, "blocked", "controller_error", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], inputBlockers, [], started)
     const identityBlocker = midMissionIdentityBlocker(input)
-    if (identityBlocker) return this.finish(input, investigationId, "blocked", "bootstrap_blocked", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], [identityBlocker], [], started)
-    if (!this.options.modelAdapter) return this.finish(input, investigationId, "blocked", "adapter_not_configured", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, []), 0, [], ["Commander investigation model adapter is not configured"], [], started)
+    if (identityBlocker) return this.finish(input, investigationId, "blocked", "bootstrap_blocked", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], [identityBlocker], [], started)
+    if (!this.options.modelAdapter) return this.finish(input, investigationId, "blocked", "adapter_not_configured", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], ["Commander investigation model adapter is not configured"], [], started)
+    const initialProviderGate = await this.checkProvider(input, "investigation")
+    if (initialProviderGate && !initialProviderGate.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", minimalBootstrap(input), blockedBudget, "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], initialProviderGate.blockers, initialProviderGate.warnings, started)
 
     const budgetResolution = await this.deriveBudget(input)
     const budget = budgetResolution.budget
-    if (budgetResolution.blockers.length > 0) return this.finish(input, investigationId, "blocked", "context_budget_exhausted", minimalBootstrap(input), budget, "native", [], emptyWorkingSet(input, []), 0, [], budgetResolution.blockers, budget.warnings, started)
+    if (budgetResolution.blockers.length > 0) return this.finish(input, investigationId, "blocked", "context_budget_exhausted", minimalBootstrap(input), budget, "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], budgetResolution.blockers, budget.warnings, started)
     const protocolResolution = this.resolveProtocol(input)
-    if (protocolResolution.blocker) return this.finish(input, investigationId, "blocked", protocolResolution.blocker, minimalBootstrap(input), budget, "native", [], emptyWorkingSet(input, []), 0, [], [protocolResolution.blocker], protocolResolution.warnings, started)
+    if (protocolResolution.blocker) return this.finish(input, investigationId, "blocked", protocolResolution.blocker, minimalBootstrap(input), budget, "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], [protocolResolution.blocker], protocolResolution.warnings, started)
     const toolProtocol = protocolResolution.protocol
     const bootstrap = await this.options.bootstrapService.compile(input)
-    if (bootstrap.blockers.length > 0) return this.finish(input, investigationId, "blocked", "bootstrap_blocked", bootstrap, budget, toolProtocol, [], emptyWorkingSet(input, []), 0, [], bootstrap.blockers, bootstrap.warnings, started)
+    if (bootstrap.blockers.length > 0) return this.finish(input, investigationId, "blocked", "bootstrap_blocked", bootstrap, budget, toolProtocol, [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], bootstrap.blockers, bootstrap.warnings, started)
 
     const initial = await this.initialLoadedTools(input, budget)
     const loaded = new Map(initial.loaded.map((tool) => [tool.tool_id, tool]))
-    const workingSet = emptyWorkingSet(input, Array.from(loaded.keys()))
+    const workingSet = emptyWorkingSet(input, Array.from(loaded.keys()), this.options.providerAuditPolicy)
     workingSet.current_warnings.push(...protocolResolution.warnings, ...initial.warnings)
     let latestAssistant: CommanderModelAssistantMessage | undefined
     let latestToolResults: CommanderModelToolResultMessage[] = []
@@ -77,6 +81,9 @@ export class CommanderInvestigationController {
       const humanStop = stopReasonForControl(humanBeforeModel)
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
       if (humanBeforeModel.warnings.length) workingSet.current_warnings.push(...humanBeforeModel.warnings)
+      const providerBeforeModel = await this.checkProvider(input, "model_step", turn)
+      if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, providerBeforeModel.warnings, started)
+      if (providerBeforeModel?.warnings.length) workingSet.current_warnings.push(...providerBeforeModel.warnings)
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
 
       const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
@@ -93,7 +100,7 @@ export class CommanderInvestigationController {
         tools: Array.from(loaded.values()).map(commanderToolSchemaFromDescriptor),
         tool_protocol: toolProtocol,
         tool_choice: "auto",
-        max_output_tokens: 1024,
+        max_output_tokens: this.modelOutputTokens(input),
         abort_signal: deadline.signal,
         requested_at: this.now().toISOString(),
         metadata: { investigation_id: investigationId, phase: input.phase },
@@ -103,10 +110,12 @@ export class CommanderInvestigationController {
       if (requestCountBlocker) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker], modelResult.warnings, started)
       providerRequests += modelResult.request_count
       workingSet.model_turn_count = turn
+      const audit = observeProviderAudit(workingSet.provider_audit, this.options.providerAuditPolicy, modelResult)
+      if (audit.blocker) return this.finish(input, investigationId, "failed", "provider_audit_incomplete", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [audit.blocker], [...modelResult.warnings, ...audit.warnings], started)
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
       if (deadline.expired()) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
       if (modelResult.status !== "tool_call") {
-        const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings)
+        const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
         if (modelResult.status === "final") return this.finish(input, investigationId, "final", "model_final", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], [...modelResult.warnings, ...(modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [])], started, modelResult.text)
         if (modelResult.status === "refusal") return this.finish(input, investigationId, "refused", "model_refusal", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], modelResult.warnings, started)
@@ -117,7 +126,7 @@ export class CommanderInvestigationController {
 
       const validation = validateToolCalls(modelResult.tool_calls, loaded, budget, workingSet)
       if (validation.blocker) {
-        const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, false, [validation.blocker], modelResult.warnings)
+        const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, false, [validation.blocker], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
         return this.finish(input, investigationId, validation.reason === "max_tool_calls_per_turn" || validation.reason === "max_tool_calls" ? "budget_exhausted" : "blocked", validation.reason, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [validation.blocker], modelResult.warnings, started)
       }
@@ -218,7 +227,7 @@ export class CommanderInvestigationController {
         workingSet.consecutive_no_progress_turns = 0
       }
       workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
-      const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings)
+      const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings, audit.metadata)
       appendTurnSummary(turns, summary, workingSet, budget)
       if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return this.finish(input, investigationId, "no_progress", "consecutive_no_progress", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["consecutive no-progress turn limit reached"], [], started)
     }
@@ -269,6 +278,11 @@ export class CommanderInvestigationController {
     if (capability.supports_tools === true) return { protocol: "native", warnings }
     warnings.push("model tool support is unknown or unsupported; using json_fallback protocol")
     return { protocol: "json_fallback", warnings }
+  }
+
+  private modelOutputTokens(input: CommanderInvestigationInput): number {
+    const capability = this.options.capabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id })
+    return Math.min(1024, capability.max_output_tokens ?? 1024)
   }
 
   private async initialLoadedTools(input: CommanderInvestigationInput, budget: CommanderInvestigationBudget): Promise<{ loaded: CommanderToolDescriptor[]; warnings: string[] }> {
@@ -347,6 +361,11 @@ export class CommanderInvestigationController {
     return this.options.controlGate.check({ phase: input.phase, session_id: input.session_id, launch_id: input.launch_id, before, turn_index: turnIndex, tool_id: toolId })
   }
 
+  private async checkProvider(input: CommanderInvestigationInput, before: "investigation" | "model_step", turnIndex?: number): Promise<CommanderInvestigationProviderPreflightSnapshot | undefined> {
+    if (!this.options.providerGate) return undefined
+    return this.options.providerGate.check({ phase: input.phase, provider_id: input.provider_id, provider_kind: input.provider_kind, model_id: input.model_id, before, turn_index: turnIndex })
+  }
+
   private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string): CommanderInvestigationResult {
     const completed = this.now()
     const result: CommanderInvestigationResult = {
@@ -376,6 +395,7 @@ export class CommanderInvestigationController {
       turn_summaries: turns.slice(-budget.max_turn_summaries),
       omitted_evidence_count: workingSet.omitted_evidence_count,
       omitted_turn_count: workingSet.omitted_turn_count,
+      provider_audit: workingSet.provider_audit,
       blockers: blockers.map((item) => preview(item, 300)).slice(0, 16),
       warnings: [...workingSet.current_warnings, ...warnings].map((item) => preview(item, 300)).slice(0, 24),
       started_at: started.toISOString(),
@@ -384,7 +404,9 @@ export class CommanderInvestigationController {
       in_memory_only: true,
       transcript_persisted: false,
       working_set_persisted: false,
-      events_appended: false,
+      investigation_events_appended: false,
+      external_api_audit_events_appended: workingSet.provider_audit.external_api_audit_event_count,
+      events_appended: workingSet.provider_audit.external_api_audit_event_count > 0,
       files_written: false,
       research_db_written: false,
       mission_mutated: false,
@@ -569,7 +591,7 @@ function stableForRepeat(value: unknown): unknown {
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
 }
 
-function turnSummary(turn: number, requestId: string, modelResult: CommanderModelStepResult, context: { input_bytes: number; estimated_tokens: number }, executions: CommanderToolExecutionResult[], loaded: string[], evidence: string[], cumulativeCalls: number, progress: boolean, noProgressReasons: string[], warnings: string[]): CommanderInvestigationTurnSummary {
+function turnSummary(turn: number, requestId: string, modelResult: CommanderModelStepResult, context: { input_bytes: number; estimated_tokens: number }, executions: CommanderToolExecutionResult[], loaded: string[], evidence: string[], cumulativeCalls: number, progress: boolean, noProgressReasons: string[], warnings: string[], transport?: CommanderConnectorModelTransportMetadata): CommanderInvestigationTurnSummary {
   const summary = {
     turn_index: turn,
     model_request_id: requestId,
@@ -590,9 +612,15 @@ function turnSummary(turn: number, requestId: string, modelResult: CommanderMode
     progress_made: progress,
     no_progress_reasons: noProgressReasons,
     warnings: warnings.slice(0, 8),
+    provider_transport_kind: transport?.transport_kind,
+    provider_connector_id: transport?.connector_id,
+    provider_audit_request_ids: (transport?.request_ids ?? []).slice(0, 24),
+    provider_audit_event_kinds: (transport?.audit_event_kinds ?? []).slice(0, 24),
+    provider_audit_event_count: transport?.audit_event_count ?? 0,
+    provider_audit_complete: transport ? transport.audit_event_count === modelResult.request_count && transport.request_ids.length === modelResult.request_count : modelResult.request_count === 0,
     turn_hash: "",
   }
-  summary.turn_hash = stableHash({ ...summary, turn_hash: "" })
+  summary.turn_hash = stableHash({ ...summary, provider_audit_request_ids: [], turn_hash: "" })
   return summary
 }
 
@@ -604,7 +632,7 @@ function appendTurnSummary(turns: CommanderInvestigationTurnSummary[], summary: 
   }
 }
 
-function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[]): CommanderInvestigationWorkingSet {
+function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[], auditPolicy?: CommanderInvestigationProviderAuditPolicy): CommanderInvestigationWorkingSet {
   const workingSet = {
     objective_preview: preview(input.objective, 1000),
     phase: input.phase,
@@ -614,6 +642,7 @@ function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[]): 
     recent_load_outcomes: [],
     current_blockers: [],
     current_warnings: [],
+    provider_audit: emptyProviderAudit(auditPolicy),
     omitted_evidence_count: 0,
     omitted_digest_count: 0,
     omitted_turn_count: 0,
@@ -626,6 +655,97 @@ function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[]): 
   }
   workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
   return workingSet
+}
+
+function emptyProviderAudit(policy?: CommanderInvestigationProviderAuditPolicy): CommanderInvestigationProviderAuditSummary {
+  return {
+    audit_required: policy?.required === true,
+    transport_kind: policy?.required === true ? policy.transport_kind : "none",
+    connector_ids: policy?.required === true ? [policy.connector_id] : [],
+    provider_request_count: 0,
+    external_api_audit_event_count: 0,
+    successful_audit_count: 0,
+    failed_audit_count: 0,
+    audit_request_ids: [],
+    audit_event_kinds: [],
+    omitted_request_id_count: 0,
+    all_provider_requests_audited: policy?.required !== true,
+    request_body_persisted: false,
+    response_body_persisted: false,
+    credentials_persisted: false,
+    warnings: [],
+  }
+}
+
+function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummary, policy: CommanderInvestigationProviderAuditPolicy | undefined, modelResult: CommanderModelStepResult): { metadata?: CommanderConnectorModelTransportMetadata; blocker?: string; warnings: string[] } {
+  summary.provider_request_count += modelResult.request_count
+  if (policy?.required !== true) {
+    summary.all_provider_requests_audited = true
+    return { warnings: [] }
+  }
+  const metadata = transportMetadata(modelResult.provider_metadata?.nexusloop_transport)
+  const requiredPolicy = policy as { required: true; transport_kind: "external_api_connector"; connector_id: string }
+  const validation = validateTransportMetadata(metadata, requiredPolicy, modelResult.request_count)
+  if (metadata) {
+    addUniqueCapped(summary.connector_ids, metadata.connector_id, 4)
+    for (const requestId of metadata.request_ids) {
+      if (summary.audit_request_ids.length < 24) summary.audit_request_ids.push(preview(requestId, 120))
+      else summary.omitted_request_id_count += 1
+    }
+    for (const kind of metadata.audit_event_kinds) if (summary.audit_event_kinds.length < 24) summary.audit_event_kinds.push(kind)
+    summary.external_api_audit_event_count += metadata.audit_event_count
+    summary.successful_audit_count += metadata.successful_audit_count
+    summary.failed_audit_count += metadata.failed_audit_count
+    if (metadata.request_body_persisted || metadata.response_body_persisted || metadata.credentials_persisted) summary.warnings.push("provider transport metadata reported persisted sensitive content")
+  }
+  summary.all_provider_requests_audited = summary.external_api_audit_event_count === summary.provider_request_count
+  summary.warnings = [...summary.warnings, ...validation.warnings].slice(0, 12)
+  return { metadata, blocker: validation.blocker, warnings: validation.warnings }
+}
+
+function validateTransportMetadata(metadata: CommanderConnectorModelTransportMetadata | undefined, policy: { required: true; transport_kind: "external_api_connector"; connector_id: string }, requestCount: number): { blocker?: string; warnings: string[] } {
+  if (requestCount === 0) return { warnings: [] }
+  if (requestCount !== 1) return { blocker: "configured provider request_count must be one before audit validation", warnings: [] }
+  if (!metadata) return { blocker: "configured provider result is missing nexusloop transport audit metadata", warnings: [] }
+  if (metadata.transport_kind !== "external_api_connector") return { blocker: "configured provider transport kind is invalid", warnings: [] }
+  if (metadata.connector_id !== policy.connector_id) return { blocker: "configured provider audit connector_id does not match policy", warnings: [] }
+  if (metadata.audit_event_count !== 1) return { blocker: "configured provider request did not produce exactly one external API audit", warnings: [] }
+  if (metadata.request_ids.length !== 1) return { blocker: "configured provider audit request_id is missing", warnings: [] }
+  if (metadata.audit_event_kinds.length !== 1) return { blocker: "configured provider audit event kind is missing", warnings: [] }
+  if (metadata.successful_audit_count + metadata.failed_audit_count !== 1) return { blocker: "configured provider audit success/failure counts are inconsistent", warnings: [] }
+  if (metadata.request_body_persisted || metadata.response_body_persisted || metadata.credentials_persisted) return { blocker: "configured provider audit metadata claims persisted body or credentials", warnings: [] }
+  return { warnings: [] }
+}
+
+function transportMetadata(value: unknown): CommanderConnectorModelTransportMetadata | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const raw = value as Partial<CommanderConnectorModelTransportMetadata>
+  if (raw.transport_kind !== "external_api_connector") return undefined
+  if (typeof raw.connector_id !== "string") return undefined
+  const requestIds = Array.isArray(raw.request_ids) ? raw.request_ids.filter((item): item is string => typeof item === "string").slice(0, 24) : []
+  const kinds = Array.isArray(raw.audit_event_kinds) ? raw.audit_event_kinds.filter((item): item is "external_api_request_executed" | "external_api_request_failed" => item === "external_api_request_executed" || item === "external_api_request_failed").slice(0, 24) : []
+  return {
+    transport_kind: "external_api_connector",
+    connector_id: preview(raw.connector_id, 120),
+    request_ids: requestIds.map((item) => preview(item, 120)),
+    audit_event_kinds: kinds,
+    audit_event_count: integerOrZero(raw.audit_event_count),
+    successful_audit_count: integerOrZero(raw.successful_audit_count),
+    failed_audit_count: integerOrZero(raw.failed_audit_count),
+    dropped_header_names: Array.isArray(raw.dropped_header_names) ? raw.dropped_header_names.filter((item): item is string => typeof item === "string").slice(0, 8).map((item) => preview(item, 80)) : [],
+    request_body_persisted: raw.request_body_persisted === false ? false : true as never,
+    response_body_persisted: raw.response_body_persisted === false ? false : true as never,
+    credentials_persisted: raw.credentials_persisted === false ? false : true as never,
+  }
+}
+
+function integerOrZero(value: unknown): number {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0
+}
+
+function addUniqueCapped(items: string[], value: string, cap: number): void {
+  if (items.includes(value)) return
+  if (items.length < cap) items.push(value)
 }
 
 function minimalBootstrap(input: CommanderInvestigationInput) {
@@ -678,6 +798,7 @@ function stableWorkingSet(value: CommanderInvestigationWorkingSet): unknown {
   return {
     ...value,
     evidence_cards: value.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+    provider_audit: stableProviderAudit(value.provider_audit),
   }
 }
 
@@ -688,7 +809,15 @@ function stableResult(value: CommanderInvestigationResult): unknown {
     completed_at: "",
     duration_ms: 0,
     evidence: value.evidence.map((item) => ({ ...item, observed_at: "" })),
-    turn_summaries: value.turn_summaries.map((item) => ({ ...item })),
+    turn_summaries: value.turn_summaries.map((item) => ({ ...item, model_result_hash: "", provider_audit_request_ids: [], turn_hash: "" })),
+    provider_audit: stableProviderAudit(value.provider_audit),
+  }
+}
+
+function stableProviderAudit(value: CommanderInvestigationProviderAuditSummary): unknown {
+  return {
+    ...value,
+    audit_request_ids: [],
   }
 }
 
