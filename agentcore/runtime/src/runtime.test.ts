@@ -16890,6 +16890,46 @@ describe("Context budget registry", () => {
       max_context_bytes: 24576,
       source: "runtime_config",
     })
+    const sharedModel = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-runtime",
+        connector_id: "minimax-connector",
+        model: "shared-model",
+        max_input_bytes: 24576,
+        max_output_bytes: 8192,
+        enabled_for: ["research_synthesis"],
+      },
+      commanderInvestigationProviderConfig: {
+        transport_kind: "openai_compatible_connector",
+        provider_id: "commander-runtime",
+        provider_kind: "minimax",
+        connector_id: "commander-connector",
+        model_id: "shared-model",
+        enabled_phases: ["proposal_investigation"],
+        timeout_ms: 5000,
+        max_request_bytes: 16000,
+        max_response_bytes: 16000,
+        max_context_bytes: 16000,
+        max_output_tokens: 1024,
+        supports_tools: "unknown",
+        supports_json_schema: "unknown",
+        supports_long_context: "unknown",
+        supports_local_execution: false,
+      },
+    })
+    await expect(sharedModel.command("runtime.get_model_capability", { providerKind: "minimax", modelId: "shared-model" })).resolves.toMatchObject({
+      capability_id: expect.stringContaining("runtime-commander-"),
+      role_support: ["commander"],
+      max_context_bytes: 16000,
+    })
+    await expect(sharedModel.command("runtime.get_model_capability", { providerKind: "minimax", modelId: "shared-model", role: "research" })).resolves.toMatchObject({
+      capability_id: expect.not.stringContaining("runtime-commander-"),
+      role_support: expect.arrayContaining(["research"]),
+      max_context_bytes: 24576,
+    })
     await expect(server.command("runtime.get_model_capability", { providerKind: "vendor-secret=abc123", modelId: "model-secret=abc123" })).resolves.toMatchObject({
       source: "unknown",
       warnings: expect.arrayContaining(["unknown context window; using conservative budget"]),

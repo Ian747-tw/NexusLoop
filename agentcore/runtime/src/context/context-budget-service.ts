@@ -159,12 +159,13 @@ export function readContextBudgetPreviewInput(value: unknown): ContextBudgetPrev
   }
 }
 
-export function readModelCapabilityGetInput(value: unknown): { capability_id?: string; provider_kind?: string; model_id?: string } {
+export function readModelCapabilityGetInput(value: unknown): { capability_id?: string; provider_kind?: string; model_id?: string; role?: string } {
   const input = isRecord(value) ? value : {}
   return {
     capability_id: optional(input.capabilityId ?? input.capability_id),
     provider_kind: optional(input.providerKind ?? input.provider_kind ?? input.provider),
     model_id: optional(input.modelId ?? input.model_id ?? input.model),
+    role: optional(input.role),
   }
 }
 

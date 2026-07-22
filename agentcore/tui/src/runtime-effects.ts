@@ -494,7 +494,7 @@ export type RuntimeUiEffect =
   | { type: "load-opencode-session"; sessionId: string }
   | { type: "load-opencode-session-summary" }
   | { type: "load-model-capabilities"; providerKind?: string; role?: string; limit?: number }
-  | { type: "load-model-capability"; capabilityId?: string; providerKind?: string; modelId?: string }
+  | { type: "load-model-capability"; capabilityId?: string; providerKind?: string; modelId?: string; role?: string }
   | { type: "load-context-budget-summary" }
   | { type: "preview-context-budget"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; maxContextTokens?: number; maxContextBytes?: number }
   | { type: "preview-context-packet"; purpose?: string; role?: string; providerKind?: string; modelId?: string; sessionId?: string; missionId?: string; proposalId?: string; reviewRequestId?: string; applyId?: string; maxContextTokens?: number; maxContextBytes?: number }
@@ -1329,7 +1329,7 @@ export async function applyRuntimeUiEffect(
       case "load-model-capabilities":
         return applyContextBudgetCapabilities(state, await runtime.command("runtime.list_model_capabilities", { providerKind: effect.providerKind, role: effect.role, limit: effect.limit ?? HANDOFF_LIMIT }))
       case "load-model-capability":
-        return applyContextBudgetSelectedCapability(state, await runtime.command("runtime.get_model_capability", { capabilityId: effect.capabilityId, providerKind: effect.providerKind, modelId: effect.modelId }))
+        return applyContextBudgetSelectedCapability(state, await runtime.command("runtime.get_model_capability", { capabilityId: effect.capabilityId, providerKind: effect.providerKind, modelId: effect.modelId, role: effect.role }))
       case "load-context-budget-summary":
         return applyContextBudgetSummary(state, await runtime.command("runtime.context_budget_summary"))
       case "preview-context-budget":
@@ -17696,6 +17696,7 @@ function contextCapabilityGetEffect(args: string[]): Extract<RuntimeUiEffect, { 
     if (key === "capability") effect.capabilityId = value
     else if (key === "provider") effect.providerKind = value
     else if (key === "model") effect.modelId = value
+    else if (key === "role") effect.role = value
     else throw new Error("model capability arg is unsupported")
   }
   if (!effect.capabilityId && (!effect.providerKind || !effect.modelId)) throw new Error("model capability requires capability=<id> or provider=<kind> model=<id>")
