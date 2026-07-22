@@ -408,6 +408,69 @@ describe("Commander AI SDK model adapter", () => {
     expect(events).not.toContain("real-provider-key")
   })
 
+  test("external API operation deadline keeps timeout reason through transport DNS validation", async () => {
+    const originalFetch = globalThis.fetch
+    let fetchCalls = 0
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      void input
+      void init
+      fetchCalls += 1
+      return Promise.reject(new Error("fetch should not run after DNS stop"))
+    }) as typeof fetch
+    try {
+      for (const mode of ["timeout", "cancel"] as const) {
+        const projectDir = await mkdtemp(join(tmpdir(), `nxl-9w2b1-cross-layer-${mode}-`))
+        let serviceResolverCalls = 0
+        let transportResolverCalls = 0
+        const transport = new FetchExternalApiTransport({
+          resolveHostAddresses: async () => {
+            transportResolverCalls += 1
+            return new Promise(() => undefined)
+          },
+        })
+        const requestService = new ExternalApiRequestService({
+          registry: new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1", { timeoutMs: mode === "timeout" ? 20 : 100 })]),
+          transport,
+          eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+          env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+          resolveHostAddresses: async () => {
+            serviceResolverCalls += 1
+            await new Promise((resolve) => setTimeout(resolve, mode === "timeout" ? 15 : 5))
+            return [{ address: "93.184.216.34" }]
+          },
+          requestId: () => `api_cross_layer_${mode}`,
+          now: () => new Date("2026-07-21T00:00:00.000Z"),
+        })
+        const controller = new AbortController()
+        const promise = requestService.executeForInternalUse({
+          connector_id: "openai-test",
+          method: "POST",
+          path: "/v1/chat/completions",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: `secret prompt ${mode}`, api_key: CONNECTOR_MANAGED_API_KEY_SENTINEL }),
+          requested_by: "tester",
+        }, { abort_signal: mode === "cancel" ? controller.signal : undefined, omit_response_preview_from_audit: true })
+        if (mode === "cancel") {
+          await new Promise((resolve) => setTimeout(resolve, 15))
+          controller.abort()
+        }
+        await expect(promise).rejects.toThrow(mode === "timeout" ? "timed out" : "cancelled")
+        expect(serviceResolverCalls).toBe(1)
+        expect(transportResolverCalls).toBe(1)
+        expect(fetchCalls).toBe(0)
+        const events = await eventText(projectDir)
+        expect((events.match(/external_api_request_failed/g) ?? [])).toHaveLength(1)
+        expect(events).toContain(mode === "timeout" ? "external API request timed out" : "external API request cancelled")
+        expect(events).not.toContain(mode === "timeout" ? "external API request cancelled" : "external API request timed out")
+        expect(events).not.toContain("secret prompt")
+        expect(events).not.toContain("real-provider-key")
+        expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+      }
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test("fetch external API transport bounds DNS validation with timeout and parent cancellation", async () => {
     const originalFetch = globalThis.fetch
     let fetchCalled = false

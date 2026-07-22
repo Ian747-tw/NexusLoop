@@ -32,6 +32,27 @@ export interface ExternalApiResolvedAddress {
 
 export type ExternalApiHostResolver = (hostname: string) => Promise<ExternalApiResolvedAddress[]>
 
+const EXTERNAL_API_TIMEOUT_CODE = "NXL_EXTERNAL_API_TIMEOUT"
+const EXTERNAL_API_CANCELLED_CODE = "NXL_EXTERNAL_API_CANCELLED"
+
+type ExternalApiCodedError = Error & { code?: string }
+
+export function externalApiTimeoutError(): Error {
+  const error = new Error("external API request timed out") as ExternalApiCodedError
+  error.code = EXTERNAL_API_TIMEOUT_CODE
+  return error
+}
+
+export function externalApiCancelledError(): Error {
+  const error = new Error("external API request cancelled") as ExternalApiCodedError
+  error.code = EXTERNAL_API_CANCELLED_CODE
+  return error
+}
+
+export function isExternalApiTimeoutReason(reason: unknown): boolean {
+  return reason instanceof Error && (reason as ExternalApiCodedError).code === EXTERNAL_API_TIMEOUT_CODE
+}
+
 export class FetchExternalApiTransport implements ExternalApiTransport {
   readonly requiresResolvedHostValidation = true
 
@@ -42,14 +63,12 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
     throwIfExternalApiAborted(input.abort_signal)
     const controller = new AbortController()
     let timedOut = false
-    let parentCancelled = false
     const timeout = setTimeout(() => {
       timedOut = true
-      controller.abort(new Error("external API request timed out"))
+      controller.abort(externalApiTimeoutError())
     }, input.timeout_ms)
     const onAbort = () => {
-      parentCancelled = true
-      controller.abort(new Error("external API request cancelled"))
+      controller.abort(input.abort_signal?.reason instanceof Error ? input.abort_signal.reason : externalApiCancelledError())
     }
     input.abort_signal?.addEventListener("abort", onAbort, { once: true })
     try {
@@ -70,8 +89,8 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
         body: await readBoundedBody(response, input.max_response_bytes, controller.signal, input.fail_on_response_overflow === true),
       }
     } catch (error) {
-      if (timedOut) throw new Error("external API request timed out")
-      if (parentCancelled || input.abort_signal?.aborted) throw new Error("external API request cancelled")
+      if (timedOut || isExternalApiTimeoutReason(input.abort_signal?.reason)) throw new Error("external API request timed out")
+      if (input.abort_signal?.aborted) throw new Error("external API request cancelled")
       throw error
     } finally {
       clearTimeout(timeout)
@@ -83,14 +102,14 @@ export class FetchExternalApiTransport implements ExternalApiTransport {
 export function throwIfExternalApiAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return
   if (signal.reason instanceof Error) throw signal.reason
-  throw new Error("external API request cancelled")
+  throw externalApiCancelledError()
 }
 
 export function raceExternalApiAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work
   throwIfExternalApiAborted(signal)
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("external API request cancelled"))
+    const onAbort = () => reject(signal.reason instanceof Error ? signal.reason : externalApiCancelledError())
     signal.addEventListener("abort", onAbort, { once: true })
     work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort))
   })

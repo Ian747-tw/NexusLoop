@@ -12,7 +12,7 @@ import type {
   ExternalApiRequestResult,
 } from "./api-connector-types"
 import type { ExternalApiConnectorRegistry } from "./api-connector-registry"
-import { isPrivateOrLocalExternalApiAddress, raceExternalApiAbort, validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
+import { externalApiCancelledError, externalApiTimeoutError, isExternalApiTimeoutReason, isPrivateOrLocalExternalApiAddress, raceExternalApiAbort, validateResolvedHost, type ExternalApiHostResolver, type ExternalApiTransport } from "./api-transport"
 
 const MAX_BODY_BYTES = 64 * 1024
 const MAX_INTERNAL_RESPONSE_BYTES = 1_000_000
@@ -451,10 +451,10 @@ function byteLength(value: string): number {
 function createExternalApiOperationSignal(timeoutMs: number, parent?: AbortSignal): { signal: AbortSignal; dispose: () => void } {
   const controller = new AbortController()
   const timeout = setTimeout(() => {
-    controller.abort(new Error("external API request timed out"))
+    controller.abort(externalApiTimeoutError())
   }, timeoutMs)
   const onParentAbort = () => {
-    controller.abort(new Error("external API request cancelled"))
+    controller.abort(isExternalApiTimeoutReason(parent?.reason) ? parent?.reason : externalApiCancelledError())
   }
   parent?.addEventListener("abort", onParentAbort, { once: true })
   return {
