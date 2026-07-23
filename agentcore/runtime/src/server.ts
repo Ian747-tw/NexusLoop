@@ -559,10 +559,6 @@ export class RuntimeServer {
   }
 
   async start(): Promise<void> {
-    this.lifecycleState = "starting"
-    if (this.commanderInvestigationLifecycleAbort.signal.aborted) {
-      this.commanderInvestigationLifecycleAbort = new AbortController()
-    }
     if (modeRequiresApprovedSpec(this.mode)) {
       this.specSummary = await this.specService.requireApproved()
     } else {
@@ -570,6 +566,10 @@ export class RuntimeServer {
       this.specSummary = current?.status === "approved" ? this.specService.toSummary(current) : null
     }
     await this.runLock.acquire()
+    this.lifecycleState = "starting"
+    if (this.commanderInvestigationLifecycleAbort.signal.aborted) {
+      this.commanderInvestigationLifecycleAbort = new AbortController()
+    }
     try {
       this.ensureResearchProjectionUsable("startup")
       this.started = true
@@ -2780,9 +2780,9 @@ export class RuntimeServer {
     const connector = this.externalApiConnectorRegistry.get(config.connector_id)
     const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id, role: "commander" })
     push("config_valid", true, "info", "Commander investigation provider config is valid")
-    push("provider_id_match", !input.provider_id || input.provider_id === config.provider_id, "error", "requested provider_id matches configured provider")
-    push("provider_kind_match", !input.provider_kind || input.provider_kind === config.provider_kind, "error", "requested provider_kind matches configured provider")
-    push("model_id_match", !input.model_id || input.model_id === config.model_id, "error", "requested model_id matches configured model")
+    push("provider_id_match", input.provider_id === undefined || input.provider_id === config.provider_id, "error", "requested provider_id matches configured provider")
+    push("provider_kind_match", input.provider_kind === undefined || input.provider_kind === config.provider_kind, "error", "requested provider_kind matches configured provider")
+    push("model_id_match", input.model_id === undefined || input.model_id === config.model_id, "error", "requested model_id matches configured model")
     push("phase_enabled", !input.phase || config.enabled_phases.includes(input.phase), "error", "requested phase is enabled for configured provider")
     push("connector_exists", Boolean(connector), "error", "configured external API connector exists")
     if (connector) {

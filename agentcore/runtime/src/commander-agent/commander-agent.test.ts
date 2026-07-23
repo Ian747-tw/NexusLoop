@@ -1674,7 +1674,7 @@ describe("Commander in-memory investigation controller", () => {
         projectDir: await mkdtemp(join(tmpdir(), `nxl-9w2a-bad-count-${String(request_count).replace(".", "-")}-`)),
         commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "bad count", request_count }]),
       }).runCommanderInvestigationInMemory(baseInvestigation())
-      expect(result).toMatchObject({ status: "failed", stop_reason: "controller_error", provider_request_count: 0, tool_call_count: 0 })
+      expect(result).toMatchObject({ status: "failed", stop_reason: "controller_error", provider_request_count: request_count === 2 ? 2 : 0, tool_call_count: 0 })
     }
 
     await expect(new RuntimeServer({
@@ -2059,6 +2059,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(ready.would_append_external_api_audit).toBe(true)
     expect(JSON.stringify(ready)).not.toContain("NXL_TEST_MODEL_KEY")
     expect(JSON.stringify(ready)).not.toContain("real-provider-key")
+    await expect(server.start()).rejects.toThrow("runtime lock already held")
+    const afterDuplicateStart = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(afterDuplicateStart.runtime_lifecycle_state).toBe("ready")
+    expect(afterDuplicateStart.execution_ready).toBe(true)
     const wrongPhase = server.previewCommanderInvestigationProviderReadiness({ phase: "emergency_inspection", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
     expect(wrongPhase.execution_ready).toBe(false)
     expect(wrongPhase.blockers.join(" ")).toContain("requested phase is enabled")
@@ -2143,6 +2147,11 @@ describe("Commander in-memory investigation controller", () => {
     const timedOutWithAudit = await controllerWithAuditAdapter(interruptedAdapter({ status: "failed", error: "request timed out", provider_metadata: { nexusloop_transport: { ...goodMetadata.nexusloop_transport, request_ids: ["volatile_timeout"], audit_event_kinds: ["external_api_request_failed"], successful_audit_count: 0, failed_audit_count: 1 } }, delay_ms: 10 })).run(baseInvestigation({ max_wall_time_ms: 5 }))
     expect(timedOutWithAudit).toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 1, external_api_audit_events_appended: 1, events_appended: true })
     expect(timedOutWithAudit.provider_audit).toMatchObject({ audit_required: true, external_api_audit_event_count: 1, successful_audit_count: 0, failed_audit_count: 1, all_provider_requests_audited: true })
+
+    const overRequestMetadata = { nexusloop_transport: { ...goodMetadata.nexusloop_transport, request_ids: ["volatile_over_a", "volatile_over_b"], audit_event_kinds: ["external_api_request_executed", "external_api_request_failed"], audit_event_count: 2, successful_audit_count: 1, failed_audit_count: 1 } }
+    const overRequestCount = await controllerWithAuditAdapter(new ScriptedCommanderModelStepAdapter([{ status: "final", text: "bad count with audits", request_count: 2, provider_metadata: overRequestMetadata }])).run(baseInvestigation({ investigation_id: "inv_over_request_audit" }))
+    expect(overRequestCount).toMatchObject({ status: "failed", stop_reason: "controller_error", provider_request_count: 2, external_api_audit_events_appended: 2, events_appended: true })
+    expect(overRequestCount.blockers.join(" ")).toContain("one-request contract")
   })
 
   test("injected connector-backed adapters count optional external API audits truthfully", async () => {
@@ -2190,6 +2199,9 @@ describe("Commander in-memory investigation controller", () => {
     servers.push({ stop: () => server.shutdown() })
     const ready = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
     expect(ready.status).toBe("ready")
+    const blankKind = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(blankKind).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0, external_api_audit_events_appended: 0, events_appended: false })
+    expect(mock.requests).toHaveLength(0)
     const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_configured_loopback", requested_by: "runtime_provider_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
     expect(result.status).toBe("final")
     expect(result.provider_request_count).toBe(4)
