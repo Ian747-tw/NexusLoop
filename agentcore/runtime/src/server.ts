@@ -465,6 +465,9 @@ export class RuntimeServer {
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
   private lifecycleState: CommanderRuntimeLifecycleState = "created"
+  private lifecycleStartTask: Promise<void> | null = null
+  private lifecycleShutdownTask: Promise<void> | null = null
+  private lifecycleShutdownRequested = false
   private commanderInvestigationLifecycleAbort = new AbortController()
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
   private started = false
@@ -559,6 +562,18 @@ export class RuntimeServer {
   }
 
   async start(): Promise<void> {
+    if (this.lifecycleShutdownRequested || this.lifecycleState === "stopping") throw new Error("runtime lifecycle is stopping")
+    if (this.lifecycleStartTask) return this.lifecycleStartTask
+    const task = this.startUnserialized()
+    this.lifecycleStartTask = task
+    try {
+      await task
+    } finally {
+      if (this.lifecycleStartTask === task) this.lifecycleStartTask = null
+    }
+  }
+
+  private async startUnserialized(): Promise<void> {
     if (modeRequiresApprovedSpec(this.mode)) {
       this.specSummary = await this.specService.requireApproved()
     } else {
@@ -2667,7 +2682,7 @@ export class RuntimeServer {
 
   runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
     if (!this.commanderInvestigationProviderConfig) return this.commanderInvestigationController().run(input)
-    if (this.lifecycleState !== "ready") return this.commanderInvestigationController().run(input)
+    if (this.lifecycleState !== "ready" || this.lifecycleShutdownRequested) return this.commanderInvestigationController().run(input)
 
     const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
     let tracked: Promise<CommanderInvestigationResult>
@@ -2813,8 +2828,9 @@ export class RuntimeServer {
     push("runtime_active_mode", this.mode === "active", "error", "RuntimeServer mode is active")
     push("runtime_started", this.started, "error", "RuntimeServer is started")
     push("runtime_lifecycle_ready", this.lifecycleState === "ready", "error", "RuntimeServer lifecycle is ready")
+    push("runtime_not_stopping", !this.lifecycleShutdownRequested, "error", "RuntimeServer shutdown is not requested")
     push("run_lock_held", this.runLock.isHeld(), "error", "RuntimeServer run lock is held")
-    const executionReady = configurationReady && this.mode === "active" && this.started && this.lifecycleState === "ready" && this.runLock.isHeld()
+    const executionReady = configurationReady && this.mode === "active" && this.started && this.lifecycleState === "ready" && !this.lifecycleShutdownRequested && this.runLock.isHeld()
     return providerReadinessResult({
       status: executionReady ? "ready" : "blocked",
       configurationReady,
@@ -3524,7 +3540,28 @@ export class RuntimeServer {
   }
 
   async shutdown(reason = "shutdown"): Promise<void> {
+    this.lifecycleShutdownRequested = true
+    if (this.lifecycleShutdownTask) return this.lifecycleShutdownTask
+    const task = this.shutdownSerialized(reason)
+    this.lifecycleShutdownTask = task
+    try {
+      await task
+    } finally {
+      if (this.lifecycleShutdownTask === task) this.lifecycleShutdownTask = null
+      this.lifecycleShutdownRequested = false
+    }
+  }
+
+  private async shutdownSerialized(reason: string): Promise<void> {
     let firstError: unknown = null
+    const startTask = this.lifecycleStartTask
+    if (startTask) {
+      try {
+        await startTask
+      } catch (error) {
+        firstError ??= error
+      }
+    }
     if (this.started || this.runLock.isHeld()) {
       this.lifecycleState = "stopping"
       this.commanderInvestigationLifecycleAbort.abort(new Error("RuntimeServer shutdown cancelled Commander investigation"))

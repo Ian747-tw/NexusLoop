@@ -250,6 +250,31 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
+class DelayedStartAdapter extends LongLivedAdapter {
+  readonly startEntered: Promise<void>
+  private resolveStartEntered!: () => void
+  private releaseStart!: () => void
+
+  constructor() {
+    super()
+    this.startEntered = new Promise((resolve) => {
+      this.resolveStartEntered = resolve
+    })
+  }
+
+  override async startSession(_sessionSpec: SessionSpec): Promise<void> {
+    this.startCalls += 1
+    this.resolveStartEntered()
+    await new Promise<void>((resolve) => {
+      this.releaseStart = resolve
+    })
+  }
+
+  release(): void {
+    this.releaseStart()
+  }
+}
+
 class ThrowingMissionAdapter extends LongLivedAdapter {
   override async sendMissionPacket(_packet: MissionPacket): Promise<void> {
     throw new Error("adapter send failed token=adapter-secret")
@@ -4925,6 +4950,54 @@ describe("RuntimeServer core", () => {
     const result = await Promise.race([server.shutdown().then(() => "shutdown" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
 
     expect(result).toBe("shutdown")
+  })
+
+  test("shutdown during startup serializes lifecycle writes before releasing the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new DelayedStartAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    const startTask = server.start()
+    await adapter.startEntered
+    const shutdownTask = server.shutdown("startup interrupted")
+    await expect(server.start()).rejects.toThrow("runtime lifecycle is stopping")
+
+    const second = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await expect(second.start()).rejects.toThrow("runtime lock already held")
+
+    adapter.release()
+    await Promise.all([startTask, shutdownTask])
+
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    const events = await readJsonlEvents(dir)
+    const kinds = events.map((event) => event.kind)
+    const shutdownIndex = kinds.indexOf("runtime_shutdown")
+    expect(shutdownIndex).toBeGreaterThan(-1)
+    expect(kinds.indexOf("runtime_started")).toBeLessThan(shutdownIndex)
+    expect(kinds.slice(shutdownIndex + 1)).toEqual([])
+    expect(kinds.filter((kind) => kind === "runtime_shutdown")).toHaveLength(1)
+    expect(kinds.filter((kind) => String(kind).startsWith("external_api_request_"))).toHaveLength(0)
+
+    const after = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await after.start()
+    await after.shutdown("after serialized startup shutdown")
+  })
+
+  test("concurrent shutdown calls share one lifecycle operation and append one shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    await Promise.all([server.shutdown("first shutdown"), server.shutdown("second shutdown")])
+
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    const kinds = (await readJsonlEvents(dir)).map((event) => event.kind)
+    const shutdownIndex = kinds.indexOf("runtime_shutdown")
+    expect(shutdownIndex).toBeGreaterThan(-1)
+    expect(kinds.filter((kind) => kind === "runtime_shutdown")).toHaveLength(1)
+    expect(kinds.slice(shutdownIndex + 1)).toEqual([])
   })
 
   test("successful active start appends runtime_started before readiness events", async () => {
