@@ -435,6 +435,7 @@ function validateInput(input: CommanderInvestigationInput): string[] {
   const blockers: string[] = []
   if (!preview(input.objective, 1000)) blockers.push("objective is required")
   if (!preview(input.requested_by, 200)) blockers.push("requested_by is required")
+  if (!preview(input.provider_kind, 80)) blockers.push("provider_kind is required")
   if (!COMMANDER_TOOL_PHASES.includes(input.phase)) blockers.push("Commander tool phase is unsupported")
   for (const [key, value] of Object.entries(input)) {
     if (key.startsWith("max_") && value !== undefined && (!Number.isInteger(value) || Number(value) < 1)) blockers.push(`${key} must be a positive integer`)
