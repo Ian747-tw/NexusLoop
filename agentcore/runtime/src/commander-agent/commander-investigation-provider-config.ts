@@ -63,7 +63,9 @@ export function validateCommanderInvestigationProviderConfig(value: unknown): Co
     max_request_bytes: value.max_request_bytes,
     max_response_bytes: value.max_response_bytes,
   })
-  const providerKind = normalizeProviderKind(boundedString(value.provider_kind, "provider_kind", 80))
+  const rawProviderKind = boundedString(value.provider_kind, "provider_kind", 80)
+  rejectCredentialOrUrlString(rawProviderKind)
+  const providerKind = normalizeProviderKind(rawProviderKind)
   const enabledPhases = normalizePhases(value.enabled_phases)
   const maxContextBytes = positiveInteger(value.max_context_bytes, "max_context_bytes", 65_536)
   if (maxContextBytes > transport.max_request_bytes) throw new Error("max_context_bytes must not exceed max_request_bytes")
@@ -86,6 +88,11 @@ export function validateCommanderInvestigationProviderConfig(value: unknown): Co
     }
   }
   return config
+}
+
+function rejectCredentialOrUrlString(value: string): void {
+  if (/https?:\/\//i.test(value)) throw new Error("Commander investigation provider config must not contain URLs")
+  if (/(sk-|bearer\s+|api[_-]?key|secret|token)/i.test(value)) throw new Error("Commander investigation provider config must not contain credential-looking strings")
 }
 
 export function readCommanderInvestigationProviderConfigFromEnv(env: Record<string, string | undefined>): CommanderInvestigationProviderConfig | undefined {

@@ -1996,6 +1996,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(options.commanderInvestigationProviderConfig)).not.toContain("real-provider-key")
     expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, api_key: "secret" })).toThrow("unknown")
     expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, provider_id: "https://api.example.test" })).toThrow("URLs")
+    expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, provider_kind: "sk-provider-secret" })).toThrow("credential-looking")
+    expect(() => readRuntimeServerLaunchOptionsFromEnv({ ...providerEnv(), NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND: "Bearer provider-secret" })).toThrow("credential-looking")
     expect(() => new RuntimeServer({ projectDir: "/tmp/nxl-conflict", commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "x" }]), commanderInvestigationProviderConfig: options.commanderInvestigationProviderConfig })).toThrow("cannot be combined")
     expect(() => readRuntimeServerLaunchOptionsFromEnv(providerEnv(), { commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "x" }]) })).toThrow("cannot be combined")
   })
