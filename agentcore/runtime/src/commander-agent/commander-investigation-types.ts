@@ -2,6 +2,7 @@ import type { CommanderEvidenceCard } from "../commander-tools/commander-read-ty
 import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-tools/commander-tool-types"
 import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
 import type { CommanderToolExecutionResult } from "./commander-tool-execution-types"
+import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderGate } from "./commander-investigation-provider-types"
 
 export type CommanderInvestigationStatus = "final" | "refused" | "blocked" | "failed" | "cancelled" | "budget_exhausted" | "no_progress" | "needs_human_review"
 
@@ -33,6 +34,8 @@ export type CommanderInvestigationStopReason =
   | "controller_error"
   | "adapter_not_configured"
   | "bootstrap_blocked"
+  | "provider_preflight_blocked"
+  | "provider_audit_incomplete"
 
 export type CommanderInvestigationToolProtocol = "auto" | CommanderModelToolProtocol
 export type CommanderInvestigationControlAction = "continue" | "pause" | "stop" | "needs_human_review"
@@ -140,6 +143,7 @@ export type CommanderInvestigationWorkingSet = {
   recent_load_outcomes: string[]
   current_blockers: string[]
   current_warnings: string[]
+  provider_audit: CommanderInvestigationProviderAuditSummary
   omitted_evidence_count: number
   omitted_digest_count: number
   omitted_turn_count: number
@@ -183,6 +187,12 @@ export type CommanderInvestigationTurnSummary = {
   progress_made: boolean
   no_progress_reasons: string[]
   warnings: string[]
+  provider_transport_kind?: "external_api_connector"
+  provider_connector_id?: string
+  provider_audit_request_ids: string[]
+  provider_audit_event_kinds: string[]
+  provider_audit_event_count: number
+  provider_audit_complete: boolean
   turn_hash: string
 }
 
@@ -223,6 +233,7 @@ export type CommanderInvestigationResult = {
   turn_summaries: CommanderInvestigationTurnSummary[]
   omitted_evidence_count: number
   omitted_turn_count: number
+  provider_audit: CommanderInvestigationProviderAuditSummary
   blockers: string[]
   warnings: string[]
   started_at: string
@@ -231,7 +242,9 @@ export type CommanderInvestigationResult = {
   in_memory_only: true
   transcript_persisted: false
   working_set_persisted: false
-  events_appended: false
+  investigation_events_appended: false
+  external_api_audit_events_appended: number
+  events_appended: boolean
   files_written: false
   research_db_written: false
   mission_mutated: false
@@ -256,7 +269,9 @@ export type CommanderInvestigationControllerOptions = {
   bootstrapService: { compile(input: CommanderInvestigationInput): Promise<CommanderInvestigationBootstrap> }
   contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; toolProtocol: CommanderModelToolProtocol; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[] }): CommanderInvestigationContext }
   controlGate?: CommanderInvestigationControlGate
-  capabilityRegistry: { get(input: { provider_kind?: string; model_id?: string }): { supports_tools: boolean | "unknown"; warnings: string[] } }
+  providerGate?: CommanderInvestigationProviderGate
+  providerAuditPolicy?: CommanderInvestigationProviderAuditPolicy
+  capabilityRegistry: { get(input: { provider_kind?: string; model_id?: string; role?: string }): { supports_tools: boolean | "unknown"; warnings: string[]; max_output_tokens?: number } }
   contextBudgetService: { preview(input: Record<string, unknown>): Promise<{ budget: { budget_id: string; max_context_tokens?: number; max_context_bytes?: number; allocations: Array<{ section: string; max_tokens?: number; max_bytes?: number }> }; warnings: string[]; blockers: string[] }> }
   now?: () => Date
 }

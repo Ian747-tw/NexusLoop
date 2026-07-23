@@ -334,7 +334,7 @@ export interface RuntimeClient {
   command(name: "runtime.get_opencode_session", payload: { session_id: string } | { sessionId: string }): Promise<OpenCodeSessionPlan | null>
   command(name: "runtime.opencode_session_summary", payload?: Record<string, never>): Promise<OpenCodeSessionSummary>
   command(name: "runtime.list_model_capabilities", payload?: { provider_kind?: string; providerKind?: string; provider?: string; role?: string; limit?: number }): Promise<ModelCapability[]>
-  command(name: "runtime.get_model_capability", payload?: { capability_id?: string; capabilityId?: string; provider_kind?: string; providerKind?: string; provider?: string; model_id?: string; modelId?: string; model?: string }): Promise<ModelCapability>
+  command(name: "runtime.get_model_capability", payload?: { capability_id?: string; capabilityId?: string; provider_kind?: string; providerKind?: string; provider?: string; model_id?: string; modelId?: string; model?: string; role?: string }): Promise<ModelCapability>
   command(name: "runtime.context_budget_summary", payload?: Record<string, never>): Promise<ContextBudgetSummary>
   command(name: "runtime.preview_context_budget", payload?: ContextBudgetPreviewInput | {
     purpose?: string

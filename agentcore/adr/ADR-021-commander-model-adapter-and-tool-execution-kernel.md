@@ -114,8 +114,10 @@ durable working-set/recovery remains 9W3.
 Existing one-shot MiniMax provider paths remain compatibility surfaces and are
 not migrated by 9W1.
 
-Branch 9W2B1 adds connector-backed egress for the new adapter without
-activating RuntimeServer provider selection. Direct AI SDK adapter construction
-remains useful for loopback tests, but production connector mode supplies only a
-non-secret sentinel credential to the SDK and routes every HTTP attempt through
-`ExternalApiRequestService`.
+Branch 9W2B1 adds connector-backed egress for the new adapter. Branch 9W2B2
+activates that connector-backed adapter inside RuntimeServer's internal
+investigation method, with provider readiness, run-lock preflight, and one
+persisted external API audit per configured provider request. Direct AI SDK
+adapter construction remains useful for loopback tests, but production
+connector mode supplies only a non-secret sentinel credential to the SDK and
+routes every HTTP attempt through `ExternalApiRequestService`.

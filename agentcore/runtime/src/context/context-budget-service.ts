@@ -36,7 +36,7 @@ export class ContextBudgetService {
     return this.options.registry.list(input)
   }
 
-  getModelCapability(input: { capability_id?: string; provider_kind?: string; model_id?: string } = {}): ModelCapability {
+  getModelCapability(input: { capability_id?: string; provider_kind?: string; model_id?: string; role?: string } = {}): ModelCapability {
     return this.options.registry.get(input)
   }
 
@@ -50,7 +50,7 @@ export class ContextBudgetService {
     const role = readRole(input.role, purpose)
     const providerKind = optional(input.provider_kind) ?? defaultProviderForPurpose(purpose)
     const modelId = optional(input.model_id) ?? defaultModelForPurpose(purpose)
-    const capability = this.options.registry.get({ provider_kind: providerKind, model_id: modelId })
+    const capability = this.options.registry.get({ provider_kind: providerKind, model_id: modelId, role })
     const blockers: string[] = []
     if (purpose === "unknown") blockers.push("context budget preview requires a supported purpose")
     if (!capabilitySupportsRole(capability, role)) {
@@ -159,12 +159,13 @@ export function readContextBudgetPreviewInput(value: unknown): ContextBudgetPrev
   }
 }
 
-export function readModelCapabilityGetInput(value: unknown): { capability_id?: string; provider_kind?: string; model_id?: string } {
+export function readModelCapabilityGetInput(value: unknown): { capability_id?: string; provider_kind?: string; model_id?: string; role?: string } {
   const input = isRecord(value) ? value : {}
   return {
     capability_id: optional(input.capabilityId ?? input.capability_id),
     provider_kind: optional(input.providerKind ?? input.provider_kind ?? input.provider),
     model_id: optional(input.modelId ?? input.model_id ?? input.model),
+    role: optional(input.role),
   }
 }
 

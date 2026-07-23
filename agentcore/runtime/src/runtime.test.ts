@@ -250,6 +250,31 @@ class LongLivedAdapter implements OpenCodeRuntimeAdapter {
   }
 }
 
+class DelayedStartAdapter extends LongLivedAdapter {
+  readonly startEntered: Promise<void>
+  private resolveStartEntered!: () => void
+  private releaseStart!: () => void
+
+  constructor() {
+    super()
+    this.startEntered = new Promise((resolve) => {
+      this.resolveStartEntered = resolve
+    })
+  }
+
+  override async startSession(_sessionSpec: SessionSpec): Promise<void> {
+    this.startCalls += 1
+    this.resolveStartEntered()
+    await new Promise<void>((resolve) => {
+      this.releaseStart = resolve
+    })
+  }
+
+  release(): void {
+    this.releaseStart()
+  }
+}
+
 class ThrowingMissionAdapter extends LongLivedAdapter {
   override async sendMissionPacket(_packet: MissionPacket): Promise<void> {
     throw new Error("adapter send failed token=adapter-secret")
@@ -4925,6 +4950,54 @@ describe("RuntimeServer core", () => {
     const result = await Promise.race([server.shutdown().then(() => "shutdown" as const), timeout(NON_BLOCKING_START_TIMEOUT_MS)])
 
     expect(result).toBe("shutdown")
+  })
+
+  test("shutdown during startup serializes lifecycle writes before releasing the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new DelayedStartAdapter()
+    const server = new RuntimeServer({ projectDir: dir, adapter })
+
+    const startTask = server.start()
+    await adapter.startEntered
+    const shutdownTask = server.shutdown("startup interrupted")
+    await expect(server.start()).rejects.toThrow("runtime lifecycle is stopping")
+
+    const second = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await expect(second.start()).rejects.toThrow("runtime lock already held")
+
+    adapter.release()
+    await Promise.all([startTask, shutdownTask])
+
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    const events = await readJsonlEvents(dir)
+    const kinds = events.map((event) => event.kind)
+    const shutdownIndex = kinds.indexOf("runtime_shutdown")
+    expect(shutdownIndex).toBeGreaterThan(-1)
+    expect(kinds.indexOf("runtime_started")).toBeLessThan(shutdownIndex)
+    expect(kinds.slice(shutdownIndex + 1)).toEqual([])
+    expect(kinds.filter((kind) => kind === "runtime_shutdown")).toHaveLength(1)
+    expect(kinds.filter((kind) => String(kind).startsWith("external_api_request_"))).toHaveLength(0)
+
+    const after = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    await after.start()
+    await after.shutdown("after serialized startup shutdown")
+  })
+
+  test("concurrent shutdown calls share one lifecycle operation and append one shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+
+    await server.start()
+    await Promise.all([server.shutdown("first shutdown"), server.shutdown("second shutdown")])
+
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    const kinds = (await readJsonlEvents(dir)).map((event) => event.kind)
+    const shutdownIndex = kinds.indexOf("runtime_shutdown")
+    expect(shutdownIndex).toBeGreaterThan(-1)
+    expect(kinds.filter((kind) => kind === "runtime_shutdown")).toHaveLength(1)
+    expect(kinds.slice(shutdownIndex + 1)).toEqual([])
   })
 
   test("successful active start appends runtime_started before readiness events", async () => {
@@ -16889,6 +16962,46 @@ describe("Context budget registry", () => {
       model_id: "configured-minimax-model",
       max_context_bytes: 24576,
       source: "runtime_config",
+    })
+    const sharedModel = new RuntimeServer({
+      projectDir: dir,
+      researchProjectionMode: "disabled",
+      reasoningProviderConfig: {
+        kind: "minimax",
+        provider_id: "minimax-runtime",
+        connector_id: "minimax-connector",
+        model: "shared-model",
+        max_input_bytes: 24576,
+        max_output_bytes: 8192,
+        enabled_for: ["research_synthesis"],
+      },
+      commanderInvestigationProviderConfig: {
+        transport_kind: "openai_compatible_connector",
+        provider_id: "commander-runtime",
+        provider_kind: "minimax",
+        connector_id: "commander-connector",
+        model_id: "shared-model",
+        enabled_phases: ["proposal_investigation"],
+        timeout_ms: 5000,
+        max_request_bytes: 16000,
+        max_response_bytes: 16000,
+        max_context_bytes: 16000,
+        max_output_tokens: 1024,
+        supports_tools: "unknown",
+        supports_json_schema: "unknown",
+        supports_long_context: "unknown",
+        supports_local_execution: false,
+      },
+    })
+    await expect(sharedModel.command("runtime.get_model_capability", { providerKind: "minimax", modelId: "shared-model" })).resolves.toMatchObject({
+      capability_id: expect.stringContaining("runtime-commander-"),
+      role_support: ["commander"],
+      max_context_bytes: 16000,
+    })
+    await expect(sharedModel.command("runtime.get_model_capability", { providerKind: "minimax", modelId: "shared-model", role: "research" })).resolves.toMatchObject({
+      capability_id: expect.not.stringContaining("runtime-commander-"),
+      role_support: expect.arrayContaining(["research"]),
+      max_context_bytes: 24576,
     })
     await expect(server.command("runtime.get_model_capability", { providerKind: "vendor-secret=abc123", modelId: "model-secret=abc123" })).resolves.toMatchObject({
       source: "unknown",

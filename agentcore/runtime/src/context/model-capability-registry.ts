@@ -8,6 +8,7 @@ const DEFAULT_SAFETY_MARGIN = 0.18
 
 export type ModelCapabilityRegistryOptions = {
   reasoningProviderConfig?: ReasoningProviderConfig
+  runtimeCapabilities?: ModelCapability[]
 }
 
 export class ModelCapabilityRegistry {
@@ -15,6 +16,7 @@ export class ModelCapabilityRegistry {
 
   constructor(options: ModelCapabilityRegistryOptions = {}) {
     this.capabilities = [
+      ...dedupeRuntimeCapabilities(options.runtimeCapabilities ?? []),
       ...defaultCapabilities(),
       ...runtimeConfigCapabilities(options.reasoningProviderConfig),
     ]
@@ -28,7 +30,7 @@ export class ModelCapabilityRegistry {
       .slice(0, limit))
   }
 
-  get(input: { capability_id?: string; provider_kind?: string; model_id?: string } = {}): ModelCapability {
+  get(input: { capability_id?: string; provider_kind?: string; model_id?: string; role?: string } = {}): ModelCapability {
     const capabilityId = optional(input.capability_id)
     if (capabilityId) {
       const found = this.capabilities.find((item) => item.capability_id === capabilityId)
@@ -37,7 +39,9 @@ export class ModelCapabilityRegistry {
     }
     const providerKind = optional(input.provider_kind) ?? "unknown"
     const modelId = optional(input.model_id) ?? "unknown"
-    const found = this.capabilities.find((item) => item.provider_kind === providerKind && item.model_id === modelId)
+    const role = optional(input.role)
+    const found = this.capabilities.find((item) => item.provider_kind === providerKind && item.model_id === modelId && (!role || item.role_support.includes(role as ModelCapabilityRole) || item.role_support.includes("unknown")))
+      ?? this.capabilities.find((item) => item.provider_kind === providerKind && item.model_id === modelId)
     return redactStringsOnly(found ?? fallbackCapability({ provider_kind: providerKind, model_id: modelId }))
   }
 
@@ -61,6 +65,18 @@ export class ModelCapabilityRegistry {
       generated_at: now.toISOString(),
     })
   }
+}
+
+function dedupeRuntimeCapabilities(capabilities: ModelCapability[]): ModelCapability[] {
+  const seen = new Set<string>()
+  const out: ModelCapability[] = []
+  for (const capability of capabilities) {
+    const key = `${capability.provider_kind}:${capability.model_id}:${capability.role_support.slice().sort().join(",")}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(capability)
+  }
+  return out
 }
 
 export function defaultCapabilities(): ModelCapability[] {

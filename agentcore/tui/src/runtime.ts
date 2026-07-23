@@ -2175,7 +2175,9 @@ export class FakeRuntimeClient implements RuntimeClient {
     const id = optionalString(payload.capabilityId ?? payload.capability_id)
     const provider = optionalString(payload.providerKind ?? payload.provider_kind ?? payload.provider)
     const model = optionalString(payload.modelId ?? payload.model_id ?? payload.model)
-    const found = this.modelCapabilities().find((item) => id ? item.capability_id === id : item.provider_kind === provider && item.model_id === model)
+    const role = optionalString(payload.role)
+    const found = this.modelCapabilities().find((item) => id ? item.capability_id === id : item.provider_kind === provider && item.model_id === model && (!role || item.role_support.includes(role)))
+      ?? this.modelCapabilities().find((item) => id ? item.capability_id === id : item.provider_kind === provider && item.model_id === model)
     if (found) return found
     const modelId = preview(redactText(model ?? id ?? "unknown"))
     return {

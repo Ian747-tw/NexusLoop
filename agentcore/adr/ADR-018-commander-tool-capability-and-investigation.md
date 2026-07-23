@@ -91,6 +91,12 @@ controller. It routes OpenAI-compatible chat-completions requests through
 `ExternalApiRequestService`, but still does not expose or activate a public
 provider loop.
 
+9W2B2 adds an internal configured-provider path for that controller. It requires
+connector-backed transport, provider readiness, active/start/run-lock preflight,
+and complete external API audit metadata. This is not a public user-facing
+activation: `provider_tool_loop_enabled` remains false and no TUI/slash/runtime
+command surface is added.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.

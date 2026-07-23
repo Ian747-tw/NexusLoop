@@ -4990,6 +4990,39 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(state)).not.toContain("abc123")
   })
 
+  test("model capability get forwards role through slash command payload", async () => {
+    const calls: Array<{ name: string; payload: unknown }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: unknown): Promise<unknown> {
+        calls.push({ name, payload })
+        return {
+          capability_id: "research-shared",
+          provider_kind: "minimax",
+          model_id: "shared-model",
+          display_name: "Shared research model",
+          role_support: ["research"],
+          max_context_bytes: 24576,
+          supports_tools: "unknown",
+          supports_json_schema: "unknown",
+          supports_mcp: false,
+          supports_long_context: "unknown",
+          supports_streaming: "unknown",
+          supports_local_execution: false,
+          safety_margin_ratio: 0.18,
+          source: "runtime_config",
+          warnings: [],
+        }
+      },
+    }
+    const state = await applyRuntimeUiEffect(initialState("/tmp/demo"), runtime, { type: "send-command", command: "model-capability", args: ["provider=minimax", "model=shared-model", "role=research"] })
+
+    expect(calls).toEqual([{ name: "runtime.get_model_capability", payload: { capabilityId: undefined, providerKind: "minimax", modelId: "shared-model", role: "research" } }])
+    expect(state.contextBudgets?.selectedCapability).toMatchObject({ capability_id: "research-shared", role_support: ["research"] })
+  })
+
   test("context packet compiler slash commands render bounded packet previews", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = initialState("/tmp/demo")

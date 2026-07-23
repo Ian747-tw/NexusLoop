@@ -57,6 +57,8 @@ def test_user_inspects_context_budget_registry_without_launching_or_mutating(san
         {"type": "submit"},
         {"type": "insert", "text": "/authority-show /context-budget-preview"},
         {"type": "submit"},
+        {"type": "insert", "text": "/model-capability provider=minimax model=minimax-validation-default role=research"},
+        {"type": "submit"},
     ]
     encoded_keys = json.dumps(keys)
     sandbox.env["NXL_TUI_KEYS"] = encoded_keys
@@ -69,6 +71,8 @@ def test_user_inspects_context_budget_registry_without_launching_or_mutating(san
     assert "Context budget registry" in result.stdout
     assert "model_capabilities" in result.stdout
     assert "default-minimax-validation minimax/minimax-validation-default" in result.stdout
+    assert "selected=default-minimax-validation provider=minimax model=minimax-validation-default source=default" in result.stdout
+    assert "selected_support tools=" in result.stdout
     assert "summary total=" in result.stdout
     assert "preview=context_budget_preview_" in result.stdout
     assert "purpose=opencode_executor_session" in result.stdout
