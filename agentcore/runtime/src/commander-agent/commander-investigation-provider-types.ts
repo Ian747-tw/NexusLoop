@@ -16,6 +16,7 @@ export type CommanderInvestigationProviderConfig = CommanderConnectorModelTransp
 export type CommanderInvestigationProviderReadinessStatus = "disabled" | "ready" | "blocked"
 export type CommanderInvestigationProviderSource = "configured_connector" | "injected_adapter" | "none"
 export type CommanderInvestigationProviderDefaultToolProtocol = "native" | "json_fallback" | "unavailable"
+export type CommanderRuntimeLifecycleState = "created" | "starting" | "ready" | "stopping" | "stopped"
 
 export type CommanderInvestigationProviderReadinessCheck = {
   name: string
@@ -39,6 +40,7 @@ export type CommanderInvestigationProviderReadiness = {
   capability_id?: string
   default_tool_protocol: CommanderInvestigationProviderDefaultToolProtocol
   runtime_mode: string
+  runtime_lifecycle_state: CommanderRuntimeLifecycleState
   runtime_started: boolean
   run_lock_required: boolean
   run_lock_held: boolean

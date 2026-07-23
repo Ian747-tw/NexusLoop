@@ -9,7 +9,7 @@ import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFrom
 import { EventStore } from "../events/event-store"
 import { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
 import { ExternalApiRequestService } from "../external-api/api-request-service"
-import { FakeExternalApiTransport, FetchExternalApiTransport } from "../external-api/api-transport"
+import { FakeExternalApiTransport, FetchExternalApiTransport, type ExternalApiTransport } from "../external-api/api-transport"
 import { FakeOpenCodeAdapter } from "../opencode/fake-adapter"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
@@ -2068,6 +2068,32 @@ describe("Commander in-memory investigation controller", () => {
     expect(statusMode.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" }).execution_ready).toBe(false)
   })
 
+  test("configured provider readiness stays blocked until RuntimeServer startup is fully ready", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-start-race-"))
+    await writeApprovedSpec(projectDir)
+    const adapter = new DelayedStartOpenCodeAdapter()
+    const server = configuredProviderRuntimeServer(projectDir, { adapter, transport: new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("should not run during startup") }]) })
+    const start = server.start()
+    await waitFor(() => adapter.startRequested)
+
+    const readiness = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(readiness.runtime_started).toBe(true)
+    expect(readiness.runtime_lifecycle_state).toBe("starting")
+    expect(readiness.execution_ready).toBe(false)
+    expect(readiness.blockers.join(" ")).toContain("RuntimeServer lifecycle is ready")
+
+    const blocked = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(blocked).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0, external_api_audit_events_appended: 0, events_appended: false })
+    expect(await eventText(projectDir)).toBe("")
+
+    adapter.releaseStart()
+    await start
+    servers.push({ stop: () => server.shutdown() })
+    const ready = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
+    expect(ready.runtime_lifecycle_state).toBe("ready")
+    expect(ready.execution_ready).toBe(true)
+  })
+
   test("provider audit policy fails closed before tool execution when metadata is missing or malformed", async () => {
     const calls: string[] = []
     const controller = new CommanderInvestigationController({
@@ -2186,6 +2212,69 @@ describe("Commander in-memory investigation controller", () => {
     await server.shutdown()
     await expect(server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" }))).resolves.toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0 })
   })
+
+  test("configured provider shutdown aborts in-flight request and writes audit before runtime shutdown", async () => {
+    const mock = startStalledInvestigationMockServer()
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-shutdown-drain-"))
+    await writeApprovedSpec(projectDir)
+    const server = createRuntimeServerFromLaunchConfig({ projectDir, env: providerLaunchEnv(`${mock.url.replace("127.0.0.1", "localhost")}/v1`) })
+    await server.start()
+
+    const investigation = server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_shutdown_drain", requested_by: "runtime_shutdown_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    await waitFor(() => mock.requests.length === 1)
+    const shutdown = server.shutdown("shutdown during Commander provider request")
+    const blockedDuringShutdown = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(blockedDuringShutdown).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0, external_api_audit_events_appended: 0, events_appended: false })
+
+    const result = await investigation
+    await shutdown
+    expect(result.status).toBe("cancelled")
+    expect(result.provider_request_count).toBe(1)
+    expect(result.external_api_audit_events_appended).toBe(1)
+    expect(result.events_appended).toBe(true)
+    expect(mock.requests).toHaveLength(1)
+
+    const events = await eventText(projectDir)
+    const kinds = eventKinds(events)
+    expect((events.match(/external_api_request_failed/g) ?? []).length).toBe(1)
+    expect(kinds.indexOf("external_api_request_failed")).toBeGreaterThan(-1)
+    expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    expect(events).toContain("external API request cancelled")
+    expect(events).not.toContain("Investigate bounded Commander reads")
+    expect(events).not.toContain("Final after dynamic reads")
+    expect(events).not.toContain("memory__search")
+    expect(events).not.toContain("real-provider-key")
+    expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
+  test("configured provider shutdown retains run lock until active investigation drain completes", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-lock-drain-"))
+    await writeApprovedSpec(projectDir)
+    let releaseTransport!: () => void
+    const transportReleased = new Promise<void>((resolve) => {
+      releaseTransport = resolve
+    })
+    const transport = delayedAbortTransport(transportReleased)
+    const first = configuredProviderRuntimeServer(projectDir, { transport })
+    await first.start()
+    const investigation = first.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    await waitFor(() => transport.requests === 1)
+
+    const shutdown = first.shutdown("drain lock test")
+    await waitFor(() => transport.aborted)
+    const second = configuredProviderRuntimeServer(projectDir, { transport: new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("second") }]) })
+    await expect(second.start()).rejects.toThrow("runtime lock already held")
+
+    releaseTransport()
+    const result = await investigation
+    await shutdown
+    expect(result).toMatchObject({ status: "cancelled", provider_request_count: 1, external_api_audit_events_appended: 1 })
+    const third = configuredProviderRuntimeServer(projectDir, { transport: new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("third") }]) })
+    await third.start()
+    servers.push({ stop: () => third.shutdown() })
+    expect(third.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" }).execution_ready).toBe(true)
+  })
 })
 
 function modelTool(toolId: string) {
@@ -2272,6 +2361,63 @@ function providerLaunchEnv(baseUrl: string) {
     NXL_EXTERNAL_API_CONNECTORS_JSON: JSON.stringify([connector("openai-test", baseUrl, { allowLocalHttp: baseUrl.startsWith("http://"), allowedHosts: [new URL(baseUrl).hostname], maxResponseBytes: 65_536 })]),
     NXL_TEST_MODEL_KEY: "real-provider-key",
   }
+}
+
+function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport } = {}) {
+  return new RuntimeServer({
+    projectDir,
+    adapter: options.adapter ?? new FakeOpenCodeAdapter(),
+    commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
+    externalApiConnectors: [connector("openai-test", "https://api.example.test/v1")],
+    externalApiTransport: options.transport ?? new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured final") }]),
+    externalApiEnv: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+    externalApiRequestId: (() => {
+      let index = 0
+      return () => {
+        index += 1
+        return `api_configured_${index}`
+      }
+    })(),
+  })
+}
+
+class DelayedStartOpenCodeAdapter extends FakeOpenCodeAdapter {
+  startRequested = false
+  private release?: () => void
+
+  override async startSession(sessionSpec: Parameters<FakeOpenCodeAdapter["startSession"]>[0]): Promise<void> {
+    this.startRequested = true
+    await new Promise<void>((resolve) => {
+      this.release = resolve
+    })
+    await super.startSession(sessionSpec)
+  }
+
+  releaseStart(): void {
+    this.release?.()
+  }
+}
+
+function delayedAbortTransport(released: Promise<void>): ExternalApiTransport & { requests: number; aborted: boolean } {
+  const transport: ExternalApiTransport & { requests: number; aborted: boolean } = {
+    requests: 0,
+    aborted: false,
+    async request(input) {
+      transport.requests += 1
+      await new Promise<void>((resolve) => {
+        const onAbort = () => {
+          transport.aborted = true
+          input.abort_signal?.removeEventListener("abort", onAbort)
+          resolve()
+        }
+        if (input.abort_signal?.aborted) onAbort()
+        else input.abort_signal?.addEventListener("abort", onAbort, { once: true })
+      })
+      await released
+      throw new Error("external API request cancelled")
+    },
+  }
+  return transport
 }
 
 function minimalTestBootstrap() {
@@ -2461,6 +2607,24 @@ function startInvestigationMockServer() {
         return Response.json(openAiToolBody("call_memory", "memory__search", { query: "research memory", limit: 3 }))
       }
       return Response.json({ id: "chatcmpl_final", object: "chat.completion", created: 1784160000, model: "fixture-model", usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 }, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Final after dynamic reads." } }] })
+    },
+  })
+  servers.push(server)
+  return { url: `http://${server.hostname}:${server.port}`, requests }
+}
+
+function startStalledInvestigationMockServer() {
+  const requests: Array<{ body: unknown; headers: Record<string, string> }> = []
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const text = await request.text()
+      const body = text ? JSON.parse(text) : {}
+      requests.push({ body, headers: Object.fromEntries([...request.headers].map(([key, value]) => [key, /authorization/i.test(key) ? "[REDACTED]" : value])) })
+      return new Response(new ReadableStream({
+        start() {},
+      }), { headers: { "content-type": "application/json" } })
     },
   })
   servers.push(server)
@@ -2677,4 +2841,8 @@ async function eventText(projectDir: string): Promise<string> {
   } catch {
     return ""
   }
+}
+
+function eventKinds(text: string): string[] {
+  return text.trim().split(/\n+/).filter(Boolean).map((line) => (JSON.parse(line) as { kind?: string }).kind ?? "")
 }

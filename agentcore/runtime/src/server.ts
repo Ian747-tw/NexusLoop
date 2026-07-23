@@ -196,6 +196,7 @@ import {
   type CommanderInvestigationProviderReadiness,
   type CommanderInvestigationProviderReadinessCheck,
   type CommanderInvestigationProviderReadinessInput,
+  type CommanderRuntimeLifecycleState,
   type CommanderModelStepAdapter,
   type CommanderToolBindingRegistry,
   type CommanderToolExecutionRequest,
@@ -463,6 +464,9 @@ export class RuntimeServer {
   private wakeSchedulerNavigationCheckpointWriteCompareServiceInstance: WakeSchedulerNavigationCheckpointWriteCompareService | null = null
   private researchProjectionHealth: RuntimeResearchProjectionHealth
   private specSummary: SpecSummary | null = null
+  private lifecycleState: CommanderRuntimeLifecycleState = "created"
+  private commanderInvestigationLifecycleAbort = new AbortController()
+  private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -555,6 +559,10 @@ export class RuntimeServer {
   }
 
   async start(): Promise<void> {
+    this.lifecycleState = "starting"
+    if (this.commanderInvestigationLifecycleAbort.signal.aborted) {
+      this.commanderInvestigationLifecycleAbort = new AbortController()
+    }
     if (modeRequiresApprovedSpec(this.mode)) {
       this.specSummary = await this.specService.requireApproved()
     } else {
@@ -576,6 +584,7 @@ export class RuntimeServer {
       const runtimeStartedId = await this.eventStore.append({ kind: "runtime_started", mode: this.mode })
       await this.wakeSchedulerBootstrapService().bootstrapOnRuntimeStart()
       this.emitStartupReadyEvents(recordsBeforeStart.length + 1, runtimeStartedId)
+      this.lifecycleState = "ready"
     } catch (error) {
       await this.cleanupFailedStartup()
       throw error
@@ -639,6 +648,9 @@ export class RuntimeServer {
 
   private async cleanupFailedStartup(): Promise<void> {
     this.executorStreamAbort = true
+    this.lifecycleState = "stopping"
+    this.commanderInvestigationLifecycleAbort.abort(new Error("RuntimeServer startup failed before Commander investigations became ready"))
+    await this.drainConfiguredCommanderInvestigations()
     this.started = false
     try {
       await this.wakeSchedulerServiceInstance?.shutdown("runtime startup failed")
@@ -676,6 +688,7 @@ export class RuntimeServer {
         message: error instanceof Error ? error.message : String(error),
       })
     }
+    this.lifecycleState = "stopped"
   }
 
   async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
@@ -2653,7 +2666,63 @@ export class RuntimeServer {
   }
 
   runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
-    return this.commanderInvestigationController().run(input)
+    if (!this.commanderInvestigationProviderConfig) return this.commanderInvestigationController().run(input)
+    if (this.lifecycleState !== "ready") return this.commanderInvestigationController().run(input)
+
+    const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
+    let tracked: Promise<CommanderInvestigationResult>
+    tracked = this.commanderInvestigationController().run({ ...input, abort_signal: combined.signal }).finally(() => {
+      this.activeConfiguredCommanderInvestigations.delete(tracked)
+      combined.cleanup()
+    })
+    this.activeConfiguredCommanderInvestigations.add(tracked)
+    return tracked
+  }
+
+  private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+    const controller = new AbortController()
+    const runtimeSignal = this.commanderInvestigationLifecycleAbort.signal
+    const abortFrom = (signal: AbortSignal, fallback: string) => {
+      if (controller.signal.aborted) return
+      const reason = signal.reason instanceof Error ? signal.reason : new Error(fallback)
+      controller.abort(reason)
+    }
+    const onRuntimeAbort = () => abortFrom(runtimeSignal, "RuntimeServer shutdown cancelled Commander investigation")
+    const onCallerAbort = () => callerSignal ? abortFrom(callerSignal, "caller cancelled Commander investigation") : undefined
+    runtimeSignal.addEventListener("abort", onRuntimeAbort, { once: true })
+    callerSignal?.addEventListener("abort", onCallerAbort, { once: true })
+    if (runtimeSignal.aborted) onRuntimeAbort()
+    else if (callerSignal?.aborted) onCallerAbort()
+    return {
+      signal: controller.signal,
+      cleanup: () => {
+        runtimeSignal.removeEventListener("abort", onRuntimeAbort)
+        callerSignal?.removeEventListener("abort", onCallerAbort)
+      },
+    }
+  }
+
+  private async drainConfiguredCommanderInvestigations(): Promise<void> {
+    const pending = Array.from(this.activeConfiguredCommanderInvestigations)
+    if (pending.length === 0) return
+    const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    const timedOut = Symbol("commander-provider-drain-timeout")
+    const result = await Promise.race([
+      Promise.allSettled(pending).then(() => undefined),
+      new Promise<typeof timedOut>((resolve) => {
+        timeoutId = setTimeout(() => resolve(timedOut), timeoutMs)
+      }),
+    ])
+    if (timeoutId) clearTimeout(timeoutId)
+    if (result === timedOut) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-commander-provider-drain-timeout",
+        message: "Configured Commander investigations did not settle before the shutdown drain timeout",
+      })
+      throw new Error("configured Commander investigation drain timed out")
+    }
   }
 
   previewCommanderInvestigationProviderReadiness(input: CommanderInvestigationProviderReadinessInput = {}): CommanderInvestigationProviderReadiness {
@@ -2673,6 +2742,7 @@ export class RuntimeServer {
         executionReady: false,
         providerSource: "none",
         runtimeMode: this.mode,
+        runtimeLifecycleState: this.lifecycleState,
         runtimeStarted: this.started,
         runLockRequired: false,
         runLockHeld: this.runLock.isHeld(),
@@ -2693,6 +2763,7 @@ export class RuntimeServer {
         executionReady: Boolean(this.commanderModelStepAdapter),
         providerSource: "injected_adapter",
         runtimeMode: this.mode,
+        runtimeLifecycleState: this.lifecycleState,
         runtimeStarted: this.started,
         runLockRequired: false,
         runLockHeld: this.runLock.isHeld(),
@@ -2741,8 +2812,9 @@ export class RuntimeServer {
     const configurationReady = checks.filter((check) => check.severity === "error").every((check) => check.ok)
     push("runtime_active_mode", this.mode === "active", "error", "RuntimeServer mode is active")
     push("runtime_started", this.started, "error", "RuntimeServer is started")
+    push("runtime_lifecycle_ready", this.lifecycleState === "ready", "error", "RuntimeServer lifecycle is ready")
     push("run_lock_held", this.runLock.isHeld(), "error", "RuntimeServer run lock is held")
-    const executionReady = configurationReady && this.mode === "active" && this.started && this.runLock.isHeld()
+    const executionReady = configurationReady && this.mode === "active" && this.started && this.lifecycleState === "ready" && this.runLock.isHeld()
     return providerReadinessResult({
       status: executionReady ? "ready" : "blocked",
       configurationReady,
@@ -2755,6 +2827,7 @@ export class RuntimeServer {
       enabledPhases: config.enabled_phases,
       capabilityId: capability.capability_id,
       runtimeMode: this.mode,
+      runtimeLifecycleState: this.lifecycleState,
       runtimeStarted: this.started,
       runLockRequired: true,
       runLockHeld: this.runLock.isHeld(),
@@ -3453,6 +3526,9 @@ export class RuntimeServer {
   async shutdown(reason = "shutdown"): Promise<void> {
     let firstError: unknown = null
     if (this.started || this.runLock.isHeld()) {
+      this.lifecycleState = "stopping"
+      this.commanderInvestigationLifecycleAbort.abort(new Error("RuntimeServer shutdown cancelled Commander investigation"))
+      await this.drainConfiguredCommanderInvestigations()
       this.eventBus.emit({ type: "RuntimeShutdown", reason })
       try {
         await this.wakeSchedulerServiceInstance?.shutdown(reason)
@@ -3490,10 +3566,12 @@ export class RuntimeServer {
           await this.runLock.release()
         } finally {
           this.started = false
+          this.lifecycleState = "stopped"
         }
       }
     } else {
       this.executorStreamAbort = true
+      this.lifecycleState = "stopped"
     }
     this.closeOwnedResearchDb(firstError)
     if (firstError) throw firstError
@@ -5040,6 +5118,7 @@ function providerReadinessResult(input: {
   capabilityId?: string
   defaultToolProtocol: CommanderInvestigationProviderReadiness["default_tool_protocol"]
   runtimeMode: RuntimeMode
+  runtimeLifecycleState: CommanderRuntimeLifecycleState
   runtimeStarted: boolean
   runLockRequired: boolean
   runLockHeld: boolean
@@ -5076,6 +5155,7 @@ function providerReadinessResult(input: {
     capability_id: input.capabilityId,
     default_tool_protocol: input.defaultToolProtocol,
     runtime_mode: input.runtimeMode,
+    runtime_lifecycle_state: input.runtimeLifecycleState,
     runtime_started: input.runtimeStarted,
     run_lock_required: input.runLockRequired,
     run_lock_held: input.runLockHeld,

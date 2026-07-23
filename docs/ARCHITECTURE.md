@@ -65,13 +65,13 @@ transport substrate that routes OpenAI-compatible chat-completions requests
 through `ExternalApiRequestService` and `ExternalApiTransport`. Branch 9W2B2
 activates that substrate only for RuntimeServer's internal in-memory
 investigation method, behind explicit credential-free provider config,
-readiness checks, active/start/run-lock preflight, and complete external API
-audit accounting.
+readiness checks, active/ready-lifecycle/run-lock preflight, and complete
+external API audit accounting.
 
 ```text
 NexusLoop domain control plane
 -> RuntimeServer provider config
--> readiness/run-lock provider gate
+-> readiness/lifecycle/run-lock provider gate
 -> bounded in-memory Commander controller
 -> connector-backed model adapter
 -> production AI SDK one-step adapter
@@ -88,8 +88,11 @@ The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
 connector-backed mode, AI SDK receives no real provider credential; connector
 configuration owns base URL, host/method policy, credential references, timeout,
-and response caps. Provider calls append existing external API audit events, but
-the Commander transcript and working set are not persisted. The public
+and response caps. RuntimeServer drains in-flight configured-provider
+investigations before appending `runtime_shutdown` or releasing the run lock, so
+provider audit writes remain inside the owning runtime lifecycle. Provider calls
+append existing external API audit events, but the Commander transcript and
+working set are not persisted. The public
 Commander provider loop remains disabled: there is no public investigation
 command, TUI surface, durable investigation run, proposal gate, streaming
 connector transport, provider failover, GitHub/MCP gateway, or external read

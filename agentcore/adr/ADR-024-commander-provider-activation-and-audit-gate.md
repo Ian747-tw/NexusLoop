@@ -63,12 +63,21 @@ execution readiness.
 Configured-provider execution requires exact provider ID, provider kind, model
 ID, enabled phase, valid connector preview, credential refs and values,
 runtime-config Commander capability, connector-backed nonstreaming adapter,
-active mode, started runtime, and the normal run lock.
+active mode, a fully ready RuntimeServer lifecycle, and the normal run lock.
+The lifecycle is distinct from the legacy `started` boolean: configured
+provider execution is blocked while the runtime is starting or stopping.
 
 The provider gate runs before the investigation and before every model request.
 If readiness is lost between model turns, the investigation stops before another
 provider request. RuntimeServer does not reacquire the run lock inside the
 investigation.
+
+RuntimeServer owns active configured-provider investigation lifetimes. Shutdown
+marks the lifecycle stopping, aborts in-flight configured-provider
+investigations, waits for their external API audit writes to settle, then
+appends `runtime_shutdown` and releases the run lock. If the bounded drain does
+not settle, shutdown fails closed rather than releasing single-writer authority
+while provider work may still append.
 
 ### Audit Completeness
 
