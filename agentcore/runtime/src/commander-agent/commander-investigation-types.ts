@@ -36,6 +36,8 @@ export type CommanderInvestigationStopReason =
   | "bootstrap_blocked"
   | "provider_preflight_blocked"
   | "provider_audit_incomplete"
+  | "persistence_failed"
+  | "durable_state_conflict"
 
 export type CommanderInvestigationToolProtocol = "auto" | CommanderModelToolProtocol
 export type CommanderInvestigationControlAction = "continue" | "pause" | "stop" | "needs_human_review"
@@ -152,7 +154,14 @@ export type CommanderInvestigationWorkingSet = {
   model_turn_count: number
   tool_call_count: number
   tool_search_call_count: number
+  recent_result_signatures: CommanderInvestigationRecentResultSignature[]
   working_set_hash: string
+}
+
+export type CommanderInvestigationRecentResultSignature = {
+  signature_hash: string
+  count: number
+  last_turn_index: number
 }
 
 export type CommanderInvestigationExecutionDigest = {
@@ -239,10 +248,12 @@ export type CommanderInvestigationResult = {
   started_at: string
   completed_at: string
   duration_ms: number
-  in_memory_only: true
+  durability?: CommanderInvestigationDurabilitySummary
+  investigation_event_count: number
+  in_memory_only: boolean
   transcript_persisted: false
-  working_set_persisted: false
-  investigation_events_appended: false
+  working_set_persisted: boolean
+  investigation_events_appended: boolean
   external_api_audit_events_appended: number
   events_appended: boolean
   files_written: false
@@ -254,6 +265,84 @@ export type CommanderInvestigationResult = {
   mcp_called: false
   external_research_called: false
   result_hash: string
+}
+
+export type CommanderInvestigationDurabilitySummary = {
+  mode: "none" | "event_journal"
+  started_persisted: boolean
+  initial_checkpoint_persisted: boolean
+  terminal_persisted: boolean
+  investigation_event_count: number
+  started_event_id?: string
+  latest_checkpoint_event_id?: string
+  finished_event_id?: string
+  latest_checkpoint_id?: string
+  latest_checkpoint_sequence?: number
+  latest_checkpoint_hash?: string
+  checkpoint_count: number
+  pending_model_request_id?: string
+  projection_status?: "ready" | "corrupt" | "unsupported_version"
+  resume_supported: false
+  full_transcript_persisted: false
+  raw_tool_results_persisted: false
+  chain_of_thought_persisted: false
+  original_terminal_status_if_persistence_failed?: CommanderInvestigationStatus
+  warnings: string[]
+  durability_hash: string
+}
+
+export type CommanderInvestigationPersistenceObserver = {
+  onStarted(snapshot: CommanderInvestigationStartedSnapshot): Promise<void> | void
+  onModelStepStarted(snapshot: CommanderInvestigationModelStepStartedSnapshot): Promise<void> | void
+  onCheckpoint(snapshot: CommanderInvestigationCheckpointSnapshot): Promise<void> | void
+}
+
+export type CommanderInvestigationStartedSnapshot = {
+  investigation_id: string
+  input: CommanderInvestigationInput
+  bootstrap: CommanderInvestigationBootstrap
+  budget: CommanderInvestigationBudget
+  tool_protocol: CommanderModelToolProtocol
+  loaded_tools: CommanderToolDescriptor[]
+  working_set: CommanderInvestigationWorkingSet
+  started_at: string
+}
+
+export type CommanderInvestigationModelStepStartedSnapshot = {
+  investigation_id: string
+  input: CommanderInvestigationInput
+  turn_index: number
+  model_request_id: string
+  tool_protocol: CommanderModelToolProtocol
+  base_checkpoint_id?: string
+  base_checkpoint_sequence?: number
+  base_checkpoint_hash?: string
+  working_set_hash: string
+  context_hash: string
+  input_bytes: number
+  estimated_input_tokens: number
+  loaded_tools: CommanderToolDescriptor[]
+  provider_request_count_before: number
+  external_api_audit_count_before: number
+  started_at: string
+}
+
+export type CommanderInvestigationCheckpointSnapshot = {
+  investigation_id: string
+  input: CommanderInvestigationInput
+  bootstrap: CommanderInvestigationBootstrap
+  budget: CommanderInvestigationBudget
+  tool_protocol: CommanderModelToolProtocol
+  turn_index: number
+  next_turn_index: number
+  loaded_tools: CommanderToolDescriptor[]
+  working_set: CommanderInvestigationWorkingSet
+  turn_summaries: CommanderInvestigationTurnSummary[]
+  latest_assistant?: CommanderModelAssistantMessage
+  latest_tool_results: CommanderModelToolResultMessage[]
+  provider_request_count: number
+  elapsed_active_ms: number
+  created_at: string
 }
 
 export type CommanderInvestigationControllerOptions = {
@@ -271,6 +360,7 @@ export type CommanderInvestigationControllerOptions = {
   controlGate?: CommanderInvestigationControlGate
   providerGate?: CommanderInvestigationProviderGate
   providerAuditPolicy?: CommanderInvestigationProviderAuditPolicy
+  persistenceObserver?: CommanderInvestigationPersistenceObserver
   capabilityRegistry: { get(input: { provider_kind?: string; model_id?: string; role?: string }): { supports_tools: boolean | "unknown"; warnings: string[]; max_output_tokens?: number } }
   contextBudgetService: { preview(input: Record<string, unknown>): Promise<{ budget: { budget_id: string; max_context_tokens?: number; max_context_bytes?: number; allocations: Array<{ section: string; max_tokens?: number; max_bytes?: number }> }; warnings: string[]; blockers: string[] }> }
   now?: () => Date

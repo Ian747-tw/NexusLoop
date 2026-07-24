@@ -2294,6 +2294,147 @@ describe("Commander in-memory investigation controller", () => {
     servers.push({ stop: () => third.shutdown() })
     expect(third.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" }).execution_ready).toBe(true)
   })
+
+  test("durable Commander investigation journal writes start model-step checkpoint and terminal records without raw transcript", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-journal-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("durable_search", "commander.tool_search", { query: "durable memory" })] },
+        { status: "final", text: "Durable final summary." },
+      ]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const durableObjective = "Investigate durable records with token=durable-secret"
+    const inMemory = await new RuntimeServer({
+      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w3a-in-memory-compare-")),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("durable_search", "commander.tool_search", { query: "durable memory" })] },
+        { status: "final", text: "Durable final summary." },
+      ]),
+    }).runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_durable_compare", objective: durableObjective, requested_by: "durable_tester" }))
+    const beforeDurableEvents = await eventText(projectDir)
+    expect(beforeDurableEvents).not.toContain("runtime_commander_investigation_")
+
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_durable_journal", objective: durableObjective, requested_by: "durable_tester" }))
+    expect(result).toMatchObject({
+      status: "final",
+      stop_reason: "model_final",
+      in_memory_only: false,
+      working_set_persisted: true,
+      investigation_events_appended: true,
+      transcript_persisted: false,
+      investigation_event_count: 5,
+    })
+    expect(result.events_appended).toBe(true)
+    expect(result.result_hash).toBe(inMemory.result_hash)
+    expect(result.durability).toMatchObject({ mode: "event_journal", started_persisted: true, initial_checkpoint_persisted: true, terminal_persisted: true, checkpoint_count: 2, resume_supported: false })
+
+    const events = await eventText(projectDir)
+    const kinds = eventKinds(events).filter((kind) => kind.startsWith("runtime_commander_investigation_"))
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_checkpointed",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_finished",
+    ])
+    expect(events).toContain("\"journal_sequence\":0")
+    expect(events).toContain("\"checkpoint_sequence\":0")
+    expect(events).toContain("\"checkpoint_kind\":\"initial\"")
+    expect(events).toContain("\"checkpoint_kind\":\"turn_complete\"")
+    expect(events).toContain("\"recent_result_signatures\"")
+    expect(events).toContain("\"durable_summary_only\":true")
+    expect(events).not.toContain("durable-secret")
+    expect(events).not.toContain("execution_arguments")
+    expect(events).not.toContain("raw_provider")
+    expect(events).not.toContain("reasoning_content")
+
+    const record = await server.getCommanderInvestigationRecord("inv_durable_journal")
+    expect(record).toMatchObject({ status: "final", stop_reason: "model_final", checkpoint_available: true, resume_supported: false, recovery_state: "not_required", projection_status: "ready" })
+    expect(record?.investigation_event_count).toBe(5)
+    const checkpoint = await server.getLatestCommanderInvestigationCheckpoint("inv_durable_journal")
+    expect(checkpoint).toMatchObject({ checkpoint_kind: "turn_complete", resume_supported: false, full_transcript_persisted: false, raw_tool_results_persisted: false, chain_of_thought_persisted: false })
+    expect(checkpoint?.loaded_tools.every((tool) => !("input_schema" in tool))).toBe(true)
+    const summary = await server.commanderInvestigationJournalSummary()
+    expect(summary).toMatchObject({ total: 1, final_count: 1, checkpoint_available_count: 1 })
+  })
+
+  test("durable journal rejects duplicate ids and terminal persistence failures leave nonterminal projection", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-failures-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "first final" }, { status: "final", text: "second final" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const first = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_duplicate" }))
+    expect(first.status).toBe("final")
+    const duplicate = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_duplicate" }))
+    expect(duplicate).toMatchObject({ status: "blocked", stop_reason: "durable_state_conflict", provider_request_count: 0 })
+    await server.shutdown()
+
+    const failingServer = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "terminal will fail" }]),
+    })
+    servers.push({ stop: () => failingServer.shutdown() })
+    await failingServer.start()
+    const failingAppend = failingServer.eventStore.append.bind(failingServer.eventStore)
+    failingServer.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_finished") throw new Error("terminal append failed")
+      return failingAppend(event)
+    }
+    const terminalFailure = await failingServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_terminal_fail" }))
+    expect(terminalFailure).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
+    expect(terminalFailure.durability).toMatchObject({ terminal_persisted: false, original_terminal_status_if_persistence_failed: "final" })
+    const projected = await failingServer.getCommanderInvestigationRecord("inv_terminal_fail")
+    expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
+  })
+
+  test("durable Commander investigations are searchable through typed operational memory projection", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-operational-memory-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "completed durable objective summary" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_searchable", objective: "Find prior durable investigation needle", session_id: "session_search", mission_id: "mission_search" }))
+    const search = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(search).toMatchObject({ status: "ready", events_appended: false })
+    expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true, session_id: "session_search" })])
+    expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
+  })
+
+  test("durable shutdown drains terminal journal event before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-shutdown-drain-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "late final", delay_ms: 50 }]),
+    })
+    await server.start()
+    const investigation = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_durable_shutdown" }))
+    await waitForEventText(projectDir, "runtime_commander_investigation_model_step_started")
+    const shutdown = server.shutdown("durable drain")
+    const result = await investigation
+    await shutdown
+    expect(result.investigation_events_appended).toBe(true)
+    const kinds = eventKinds(await eventText(projectDir))
+    expect(kinds.indexOf("runtime_commander_investigation_finished")).toBeGreaterThan(-1)
+    expect(kinds.indexOf("runtime_commander_investigation_finished")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+  })
 })
 
 function modelTool(toolId: string) {
@@ -2500,6 +2641,14 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   const started = performance.now()
   while (!predicate()) {
     if (performance.now() - started > 1000) throw new Error("condition was not reached before timeout")
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+}
+
+async function waitForEventText(projectDir: string, needle: string): Promise<void> {
+  const started = performance.now()
+  while (!(await eventText(projectDir)).includes(needle)) {
+    if (performance.now() - started > 1000) throw new Error(`event text did not contain ${needle}`)
     await new Promise((resolve) => setTimeout(resolve, 1))
   }
 }

@@ -79,6 +79,11 @@ appends `runtime_shutdown` and releases the run lock. If the bounded drain does
 not settle, shutdown fails closed rather than releasing single-writer authority
 while provider work may still append.
 
+9W3A extends the same lifecycle drain to durable Commander investigation
+journal writes. External API audits and Commander investigation lifecycle
+events are distinct durable streams, and shutdown must settle both before
+`runtime_shutdown` or run-lock release.
+
 ### Audit Completeness
 
 Configured connector-backed provider requests must have one persisted external
@@ -119,7 +124,7 @@ RuntimeServer provider config
 ```
 
 The public Commander profile remains conservative:
-`provider_tool_loop_enabled=false`. 9W3 owns durable working-set,
-pause/resume, recovery, and any future public/operator activation decision. 9Y
-owns proposal generation. Existing MiniMax one-shot compatibility paths remain
-unchanged.
+`provider_tool_loop_enabled=false`. 9W3A owns durable journal/checkpoint
+records only. 9W3B owns recovery and human-reviewed resume. 9W3C owns any
+future public/operator activation decision. 9Y owns proposal generation.
+Existing MiniMax one-shot compatibility paths remain unchanged.

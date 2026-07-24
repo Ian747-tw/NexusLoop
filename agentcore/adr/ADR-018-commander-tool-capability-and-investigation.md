@@ -97,6 +97,14 @@ and complete external API audit metadata. This is not a public user-facing
 activation: `provider_tool_loop_enabled` remains false and no TUI/slash/runtime
 command surface is added.
 
+9W3A adds durable Commander investigation records and turn checkpoints as an
+EventStore-backed operational-memory source. Durable records are typed
+projections over investigation lifecycle events, not raw transcript searches.
+They preserve bounded objective previews, evidence references, checkpoint
+hashes, repeat/no-progress guard state, and recovery classification. Capability
+envelopes still do not prescribe investigation order, and public
+`provider_tool_loop_enabled` remains false.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.
@@ -109,7 +117,9 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9W2A: bounded in-memory Commander investigation controller.
 - 9W2B1: connector-backed model transport substrate.
 - 9W2B2: RuntimeServer provider activation and audit gate.
-- 9W3: durable working set and pause/resume/recovery.
+- 9W3A: durable investigation journal and checkpoints.
+- 9W3B: pause/resume and restart recovery.
+- 9W3C: public/operator investigation surface decision.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.
 - 9Y: Commander research proposal gate.
 - 9Z: GitHub governance intent and approval gate.

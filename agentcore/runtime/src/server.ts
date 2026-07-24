@@ -180,6 +180,9 @@ import {
   CommanderInvestigationBootstrapService,
   CommanderInvestigationContextService,
   CommanderInvestigationController,
+  CommanderInvestigationJournalService,
+  CommanderInvestigationJournalConflictError,
+  CommanderInvestigationPersistenceError,
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
   commanderInvestigationModelCapability,
@@ -190,6 +193,10 @@ import {
   type CommanderInvestigationControlSnapshot,
   type CommanderInvestigationInput,
   type CommanderInvestigationResult,
+  type CommanderInvestigationJournalListOptions,
+  type CommanderInvestigationRecord,
+  type CommanderInvestigationCheckpoint,
+  type CommanderInvestigationJournalSummary,
   type CommanderInvestigationProviderConfig,
   type CommanderInvestigationProviderGate,
   type CommanderInvestigationProviderPreflightSnapshot,
@@ -424,6 +431,7 @@ export class RuntimeServer {
   private commanderInvestigationBootstrapServiceInstance: CommanderInvestigationBootstrapService | null = null
   private commanderInvestigationContextServiceInstance: CommanderInvestigationContextService | null = null
   private commanderInvestigationControllerInstance: CommanderInvestigationController | null = null
+  private commanderInvestigationJournalServiceInstance: CommanderInvestigationJournalService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -470,6 +478,7 @@ export class RuntimeServer {
   private lifecycleShutdownRequested = false
   private commanderInvestigationLifecycleAbort = new AbortController()
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
+  private readonly activeDurableCommanderInvestigations = new Set<Promise<unknown>>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2685,13 +2694,79 @@ export class RuntimeServer {
     if (this.lifecycleState !== "ready" || this.lifecycleShutdownRequested) return this.commanderInvestigationController().run(input)
 
     const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
-    let tracked: Promise<CommanderInvestigationResult>
+    let tracked!: Promise<CommanderInvestigationResult>
     tracked = this.commanderInvestigationController().run({ ...input, abort_signal: combined.signal }).finally(() => {
       this.activeConfiguredCommanderInvestigations.delete(tracked)
       combined.cleanup()
     })
     this.activeConfiguredCommanderInvestigations.add(tracked)
     return tracked
+  }
+
+  async runCommanderInvestigationDurable(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
+    if (this.mode !== "active" || !this.started || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
+      const blocked = await this.commanderInvestigationController().run({ ...input, abort_signal: alreadyAbortedSignal("durable Commander investigation requires active ready runtime with run lock") })
+      return {
+        ...blocked,
+        status: "blocked",
+        stop_reason: "provider_preflight_blocked",
+        blockers: ["durable Commander investigation requires active ready runtime with run lock"],
+      }
+    }
+    const journal = this.commanderInvestigationJournalService()
+    const durableInput = { ...input, investigation_id: input.investigation_id ?? this.generatedCommanderInvestigationId(input) }
+    let run
+    try {
+      run = await journal.createObserver(durableInput)
+    } catch (error) {
+      const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation journal conflict") })
+      return {
+        ...blocked,
+        status: error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed",
+        stop_reason: error instanceof CommanderInvestigationJournalConflictError ? "durable_state_conflict" : "persistence_failed",
+        blockers: [error instanceof Error ? redactText(error.message) : String(error)].slice(0, 1),
+      }
+    }
+    const combined = this.commanderInvestigationAbortSignal(durableInput.abort_signal)
+    let tracked!: Promise<CommanderInvestigationResult>
+    tracked = (async () => {
+      try {
+        const result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
+        if (!run.state.started_persisted) return result
+        try {
+          const durability = await journal.finish(run, result)
+          return durableResult(result, durability)
+        } catch (error) {
+          return durablePersistenceFailedResult(result, run.state, error)
+        }
+      } finally {
+        journal.release(run)
+        combined.cleanup()
+        this.activeDurableCommanderInvestigations.delete(tracked)
+      }
+    })()
+    this.activeDurableCommanderInvestigations.add(tracked)
+    return tracked
+  }
+
+  getCommanderInvestigationRecord(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
+    return this.commanderInvestigationJournalService().get(investigationId)
+  }
+
+  listCommanderInvestigationRecords(options: CommanderInvestigationJournalListOptions = {}): Promise<CommanderInvestigationRecord[]> {
+    return this.commanderInvestigationJournalService().list(options)
+  }
+
+  getLatestCommanderInvestigationCheckpoint(investigationId: string): Promise<CommanderInvestigationCheckpoint | undefined> {
+    return this.commanderInvestigationJournalService().latestCheckpoint(investigationId)
+  }
+
+  commanderInvestigationJournalSummary(): Promise<CommanderInvestigationJournalSummary> {
+    return this.commanderInvestigationJournalService().summary()
+  }
+
+  verifyCommanderInvestigationJournal(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
+    return this.commanderInvestigationJournalService().verify(investigationId)
   }
 
   private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
@@ -2717,8 +2792,12 @@ export class RuntimeServer {
     }
   }
 
+  private generatedCommanderInvestigationId(input: CommanderInvestigationInput): string {
+    return `commander_investigation_${stableHash({ input: { ...input, abort_signal: undefined }, generated_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString() }).slice(0, 16)}`
+  }
+
   private async drainConfiguredCommanderInvestigations(): Promise<void> {
-    const pending = Array.from(this.activeConfiguredCommanderInvestigations)
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...Array.from(this.activeDurableCommanderInvestigations)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
@@ -4860,8 +4939,23 @@ export class RuntimeServer {
     return this.commanderInvestigationContextServiceInstance
   }
 
-  private commanderInvestigationController(): CommanderInvestigationController {
+  private commanderInvestigationController(persistenceObserver?: import("./commander-agent").CommanderInvestigationPersistenceObserver): CommanderInvestigationController {
+    if (persistenceObserver) return this.createCommanderInvestigationController(persistenceObserver)
     this.commanderInvestigationControllerInstance ??= new CommanderInvestigationController({
+      ...this.commanderInvestigationControllerOptions(),
+    })
+    return this.commanderInvestigationControllerInstance
+  }
+
+  private createCommanderInvestigationController(persistenceObserver?: import("./commander-agent").CommanderInvestigationPersistenceObserver): CommanderInvestigationController {
+    return new CommanderInvestigationController({
+      ...this.commanderInvestigationControllerOptions(),
+      persistenceObserver,
+    })
+  }
+
+  private commanderInvestigationControllerOptions(): ConstructorParameters<typeof CommanderInvestigationController>[0] {
+    return {
       modelAdapter: this.commanderModelStepAdapter,
       toolExecutor: this.commanderToolExecutor(),
       toolService: this.commanderToolService(),
@@ -4875,8 +4969,15 @@ export class RuntimeServer {
       capabilityRegistry: this.modelCapabilityRegistry,
       contextBudgetService: this.contextBudgetService(),
       now: this.researchSynthesisNow,
+    }
+  }
+
+  private commanderInvestigationJournalService(): CommanderInvestigationJournalService {
+    this.commanderInvestigationJournalServiceInstance ??= new CommanderInvestigationJournalService({
+      eventStore: this.eventStore,
+      now: this.researchSynthesisNow,
     })
-    return this.commanderInvestigationControllerInstance
+    return this.commanderInvestigationJournalServiceInstance
   }
 
   private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {
@@ -5014,6 +5115,36 @@ export class RuntimeServer {
     for (const review of await this.listOpenCodeResultReviews({ limit: 100 })) push({ source_kind: "result_review", source_id: review.review_id, label: "Result review", status: review.review_disposition, summary_preview: `${review.decision}: ${review.rationale_preview}`, session_id: review.session_id, launch_id: review.launch_id, occurred_at: review.recorded_at, fields: { decision: review.decision, next_step: review.next_step, report_id: review.report_id } })
     for (const ingestion of await this.listResearchIngestions({ limit: 100 })) push({ source_kind: "research_ingestion", source_id: ingestion.ingestion_id, label: "Research ingestion", status: ingestion.research_db_written ? "research_db_written" : "not_written", summary_preview: ingestion.research_title_preview, session_id: ingestion.session_id, launch_id: ingestion.launch_id, occurred_at: ingestion.recorded_at, fields: { evidence_kind: ingestion.evidence_kind, review_id: ingestion.review_id, report_id: ingestion.report_id } })
     for (const refresh of await this.listOpenCodeContextRefreshes({ limit: 100 })) push({ source_kind: "context_refresh", source_id: refresh.refresh_id, label: "Context refresh", status: refresh.status, summary_preview: refresh.summary_preview, session_id: refresh.target_session_id, launch_id: refresh.launch_id, occurred_at: refresh.written_at, fields: { mode: refresh.continuity_mode, packet_kind: refresh.packet_kind, previous_refresh_id: refresh.previous_refresh_id } })
+    for (const investigation of await this.listCommanderInvestigationRecords({ limit: 100 })) {
+      push({
+        source_kind: "commander_investigation",
+        source_id: investigation.investigation_id,
+        label: "Commander investigation",
+        status: investigation.status,
+        summary_preview: [
+          investigation.objective_preview,
+          `phase ${investigation.phase}`,
+          investigation.stop_reason ? `stop ${investigation.stop_reason}` : "running",
+          `evidence ${investigation.evidence_count}`,
+          `recovery ${investigation.recovery_state}`,
+        ].filter(Boolean).join("; "),
+        session_id: investigation.session_id,
+        launch_id: investigation.launch_id,
+        mission_id: investigation.mission_id,
+        occurred_at: investigation.updated_at,
+        fields: {
+          phase: investigation.phase,
+          stop_reason: investigation.stop_reason,
+          provider_id: investigation.provider_id,
+          model_id: investigation.model_id,
+          latest_checkpoint_id: investigation.latest_checkpoint_id,
+          recovery_state: investigation.recovery_state,
+          evidence_count: String(investigation.evidence_count),
+          model_turn_count: String(investigation.model_turn_count),
+          tool_call_count: String(investigation.tool_call_count),
+        },
+      })
+    }
     return records
   }
 
@@ -5470,6 +5601,64 @@ function readRebuildProjectionOptions(value: unknown): { force: boolean } {
   if (!isRecord(value)) throw new Error("options must be an object")
   if (value.force !== undefined && typeof value.force !== "boolean") throw new Error("force must be a boolean")
   return { force: value.force ?? false }
+}
+
+function alreadyAbortedSignal(reason: string): AbortSignal {
+  const controller = new AbortController()
+  controller.abort(new Error(reason))
+  return controller.signal
+}
+
+function durableResult(result: CommanderInvestigationResult, durability: import("./commander-agent").CommanderInvestigationDurabilitySummary): CommanderInvestigationResult {
+  return {
+    ...result,
+    durability,
+    investigation_event_count: durability.investigation_event_count,
+    in_memory_only: false,
+    working_set_persisted: true,
+    investigation_events_appended: durability.investigation_event_count > 0,
+    events_appended: result.external_api_audit_events_appended > 0 || durability.investigation_event_count > 0,
+  }
+}
+
+function durablePersistenceFailedResult(result: CommanderInvestigationResult, state: import("./commander-agent").CommanderInvestigationJournalRunState, error: unknown): CommanderInvestigationResult {
+  const message = error instanceof Error ? redactText(error.message) : redactText(String(error))
+  const durability = {
+    mode: "event_journal" as const,
+    started_persisted: state.started_persisted,
+    initial_checkpoint_persisted: state.checkpoint_count > 0,
+    terminal_persisted: false,
+    investigation_event_count: state.investigation_event_count,
+    started_event_id: state.started_event_id,
+    latest_checkpoint_event_id: state.latest_checkpoint_event_id,
+    latest_checkpoint_id: state.latest_checkpoint?.checkpoint_id,
+    latest_checkpoint_sequence: state.latest_checkpoint?.checkpoint_sequence,
+    latest_checkpoint_hash: state.latest_checkpoint?.checkpoint_hash,
+    checkpoint_count: state.checkpoint_count,
+    pending_model_request_id: state.pending_model_request_id,
+    projection_status: "ready" as const,
+    resume_supported: false as const,
+    full_transcript_persisted: false as const,
+    raw_tool_results_persisted: false as const,
+    chain_of_thought_persisted: false as const,
+    original_terminal_status_if_persistence_failed: result.status,
+    warnings: [message].filter(Boolean),
+    durability_hash: "",
+  }
+  durability.durability_hash = stableHash({ ...durability, started_event_id: "", latest_checkpoint_event_id: "", durability_hash: "" })
+  return {
+    ...result,
+    status: "failed",
+    stop_reason: "persistence_failed",
+    blockers: [message || "Commander investigation terminal persistence failed"],
+    durability,
+    investigation_event_count: state.investigation_event_count,
+    in_memory_only: false,
+    working_set_persisted: state.checkpoint_count > 0,
+    investigation_events_appended: state.investigation_event_count > 0,
+    events_appended: result.external_api_audit_events_appended > 0 || state.investigation_event_count > 0,
+    result_hash: stableHash({ semantic: result.result_hash, status: "failed", stop_reason: "persistence_failed", blocker: message }),
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -10,6 +10,7 @@ import { toCommanderToolResultMessage } from "./commander-tool-executor"
 import type { CommanderToolExecutionResult } from "./commander-tool-execution-types"
 import {
   type CommanderInvestigationBudget,
+  type CommanderInvestigationBootstrap,
   type CommanderInvestigationControllerOptions,
   type CommanderInvestigationControlSnapshot,
   type CommanderInvestigationInput,
@@ -19,6 +20,7 @@ import {
   type CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
 import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderPreflightSnapshot } from "./commander-investigation-provider-types"
+import { CommanderInvestigationJournalConflictError } from "./commander-investigation-journal-service"
 
 const HARD_CAPS = {
   max_model_turns: 24,
@@ -73,7 +75,9 @@ export class CommanderInvestigationController {
     let latestToolResults: CommanderModelToolResultMessage[] = []
     const turns: CommanderInvestigationTurnSummary[] = []
     let providerRequests = 0
-    const recentResults = new Map<string, number>()
+    const recentResults = new Map<string, { count: number; last_turn_index: number }>()
+    const startedObserved = await this.observeStarted(input, investigationId, bootstrap, budget, toolProtocol, Array.from(loaded.values()), workingSet, started.toISOString())
+    if (startedObserved.blocker) return this.finish(input, investigationId, startedObserved.status!, startedObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [startedObserved.blocker], [], started)
 
     for (let turn = 1; turn <= budget.max_model_turns; turn += 1) {
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation"], [], started)
@@ -105,6 +109,8 @@ export class CommanderInvestigationController {
         requested_at: this.now().toISOString(),
         metadata: { investigation_id: investigationId, phase: input.phase, requested_by: input.requested_by },
       }
+      const observedModelStep = await this.observeModelStepStarted(input, investigationId, turn, request.request_id, toolProtocol, context, workingSet, Array.from(loaded.values()), providerRequests)
+      if (observedModelStep.blocker) return this.finish(input, investigationId, observedModelStep.status!, observedModelStep.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [observedModelStep.blocker], [], started)
       const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
       const requestCountBlocker = modelRequestCountBlocker(modelResult)
       if (!Number.isInteger(modelResult.request_count) || modelResult.request_count < 0) {
@@ -205,8 +211,10 @@ export class CommanderInvestigationController {
         if (afterEvidence.length > 0) progressMade = true
         const callSignature = stableHash({ tool_id: call.tool_id, arguments: args })
         const resultSignature = repeatResultSignature(callSignature, execution)
-        const repeatCount = recentResults.get(resultSignature) ?? 0
-        recentResults.set(resultSignature, repeatCount + 1)
+        const repeat = recentResults.get(resultSignature) ?? { count: 0, last_turn_index: turn }
+        const repeatCount = repeat.count
+        recentResults.set(resultSignature, { count: repeatCount + 1, last_turn_index: turn })
+        updateRecentResultSignatures(workingSet, recentResults)
         if (repeatCount >= 2) return this.finish(input, investigationId, "no_progress", "repeated_identical_call", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["repeated identical tool call/result detected"], [], started)
         if (execution.status === "cancelled") return this.finish(input, investigationId, "cancelled", "tool_execution_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["tool execution cancelled"], execution.warnings, started)
         if (execution.result_hash && repeatCount === 0) progressMade = progressMade || execution.status === "ready" || execution.status === "blocked" || execution.status === "failed"
@@ -235,6 +243,8 @@ export class CommanderInvestigationController {
       workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
       const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings, audit.metadata)
       appendTurnSummary(turns, summary, workingSet, budget)
+      const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
+      if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started)
       if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return this.finish(input, investigationId, "no_progress", "consecutive_no_progress", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["consecutive no-progress turn limit reached"], [], started)
     }
     return this.finish(input, investigationId, "budget_exhausted", "max_model_turns", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max model turns exhausted"], [], started)
@@ -375,6 +385,66 @@ export class CommanderInvestigationController {
     return this.options.providerGate.check({ phase: input.phase, provider_id: input.provider_id, provider_kind: input.provider_kind, model_id: input.model_id, before, turn_index: turnIndex })
   }
 
+  private async observeStarted(input: CommanderInvestigationInput, investigationId: string, bootstrap: CommanderInvestigationBootstrap, budget: CommanderInvestigationBudget, toolProtocol: CommanderModelToolProtocol, loadedTools: CommanderToolDescriptor[], workingSet: CommanderInvestigationWorkingSet, startedAt: string): Promise<ObserverOutcome> {
+    if (!this.options.persistenceObserver) return {}
+    try {
+      await this.options.persistenceObserver.onStarted({ investigation_id: investigationId, input, bootstrap, budget, tool_protocol: toolProtocol, loaded_tools: loadedTools, working_set: workingSet, started_at: startedAt })
+      return {}
+    } catch (error) {
+      return observerOutcome(error)
+    }
+  }
+
+  private async observeModelStepStarted(input: CommanderInvestigationInput, investigationId: string, turn: number, requestId: string, toolProtocol: CommanderModelToolProtocol, context: { input_bytes: number; estimated_tokens: number; messages: CommanderModelMessage[] }, workingSet: CommanderInvestigationWorkingSet, loadedTools: CommanderToolDescriptor[], providerRequests: number): Promise<ObserverOutcome> {
+    if (!this.options.persistenceObserver) return {}
+    try {
+      await this.options.persistenceObserver.onModelStepStarted({
+        investigation_id: investigationId,
+        input,
+        turn_index: turn,
+        model_request_id: requestId,
+        tool_protocol: toolProtocol,
+        working_set_hash: workingSet.working_set_hash,
+        context_hash: stableHash({ messages: context.messages, input_bytes: context.input_bytes, estimated_tokens: context.estimated_tokens }),
+        input_bytes: context.input_bytes,
+        estimated_input_tokens: context.estimated_tokens,
+        loaded_tools: loadedTools,
+        provider_request_count_before: providerRequests,
+        external_api_audit_count_before: workingSet.provider_audit.external_api_audit_event_count,
+        started_at: this.now().toISOString(),
+      })
+      return {}
+    } catch (error) {
+      return observerOutcome(error)
+    }
+  }
+
+  private async observeCheckpoint(input: CommanderInvestigationInput, investigationId: string, bootstrap: CommanderInvestigationBootstrap, budget: CommanderInvestigationBudget, toolProtocol: CommanderModelToolProtocol, turn: number, loaded: Map<string, CommanderToolDescriptor>, workingSet: CommanderInvestigationWorkingSet, turns: CommanderInvestigationTurnSummary[], latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[], providerRequests: number, wallStartedMs: number): Promise<ObserverOutcome> {
+    if (!this.options.persistenceObserver) return {}
+    try {
+      await this.options.persistenceObserver.onCheckpoint({
+        investigation_id: investigationId,
+        input,
+        bootstrap,
+        budget,
+        tool_protocol: toolProtocol,
+        turn_index: turn,
+        next_turn_index: turn + 1,
+        loaded_tools: Array.from(loaded.values()),
+        working_set: workingSet,
+        turn_summaries: turns,
+        latest_assistant: latestAssistant,
+        latest_tool_results: latestToolResults,
+        provider_request_count: providerRequests,
+        elapsed_active_ms: elapsedWallMs(wallStartedMs),
+        created_at: this.now().toISOString(),
+      })
+      return {}
+    } catch (error) {
+      return observerOutcome(error)
+    }
+  }
+
   private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string): CommanderInvestigationResult {
     const completed = this.now()
     const result: CommanderInvestigationResult = {
@@ -410,6 +480,21 @@ export class CommanderInvestigationController {
       started_at: started.toISOString(),
       completed_at: completed.toISOString(),
       duration_ms: Math.max(0, completed.getTime() - started.getTime()),
+      durability: {
+        mode: "none",
+        started_persisted: false,
+        initial_checkpoint_persisted: false,
+        terminal_persisted: false,
+        investigation_event_count: 0,
+        checkpoint_count: 0,
+        resume_supported: false,
+        full_transcript_persisted: false,
+        raw_tool_results_persisted: false,
+        chain_of_thought_persisted: false,
+        warnings: [],
+        durability_hash: stableHash({ mode: "none" }),
+      },
+      investigation_event_count: 0,
       in_memory_only: true,
       transcript_persisted: false,
       working_set_persisted: false,
@@ -429,6 +514,14 @@ export class CommanderInvestigationController {
     result.result_hash = stableHash(stableResult(result))
     return redactValue(result)
   }
+}
+
+type ObserverOutcome = { blocker?: string; status?: "blocked" | "failed"; reason?: CommanderInvestigationStopReason }
+
+function observerOutcome(error: unknown): ObserverOutcome {
+  const message = error instanceof Error ? error.message : String(error)
+  if (error instanceof CommanderInvestigationJournalConflictError) return { blocker: preview(message, 300), status: "blocked", reason: "durable_state_conflict" }
+  return { blocker: preview(message, 300), status: "failed", reason: "persistence_failed" }
 }
 
 function validateInput(input: CommanderInvestigationInput): string[] {
@@ -661,10 +754,18 @@ function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[], a
     model_turn_count: 0,
     tool_call_count: 0,
     tool_search_call_count: 0,
+    recent_result_signatures: [],
     working_set_hash: "",
   }
   workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
   return workingSet
+}
+
+function updateRecentResultSignatures(workingSet: CommanderInvestigationWorkingSet, recentResults: Map<string, { count: number; last_turn_index: number }>): void {
+  workingSet.recent_result_signatures = Array.from(recentResults.entries())
+    .map(([signature_hash, value]) => ({ signature_hash, count: value.count, last_turn_index: value.last_turn_index }))
+    .sort((a, b) => a.last_turn_index - b.last_turn_index || a.signature_hash.localeCompare(b.signature_hash))
+    .slice(-64)
 }
 
 function emptyProviderAudit(policy?: CommanderInvestigationProviderAuditPolicy): CommanderInvestigationProviderAuditSummary {
@@ -816,11 +917,30 @@ function stableWorkingSet(value: CommanderInvestigationWorkingSet): unknown {
 function stableResult(value: CommanderInvestigationResult): unknown {
   return {
     ...value,
+    investigation_id: "",
+    bootstrap_id: "",
+    bootstrap_hash: "",
+    context_budget_id: "",
+    budget: {
+      ...value.budget,
+      budget_id: "",
+      source_profile_id: "",
+      source_context_budget_id: "",
+      warnings: [],
+      budget_hash: "",
+    },
     started_at: "",
     completed_at: "",
     duration_ms: 0,
+    durability: undefined,
+    investigation_event_count: 0,
+    in_memory_only: true,
+    working_set_persisted: false,
+    investigation_events_appended: false,
+    events_appended: value.external_api_audit_events_appended > 0,
     evidence: value.evidence.map((item) => ({ ...item, observed_at: "" })),
-    turn_summaries: value.turn_summaries.map((item) => ({ ...item, model_result_hash: "", provider_audit_request_ids: [], turn_hash: "" })),
+    warnings: [],
+    turn_summaries: value.turn_summaries.map((item) => ({ ...item, model_request_id: "", model_result_hash: "", tool_execution_ids: [], provider_audit_request_ids: [], warnings: [], turn_hash: "" })),
     provider_audit: stableProviderAudit(value.provider_audit),
   }
 }

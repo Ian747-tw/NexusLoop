@@ -1,0 +1,218 @@
+import type { JsonlEvent } from "../events/event-types"
+import { stableHash } from "./commander-model-schema"
+import {
+  COMMANDER_INVESTIGATION_EVENT_KINDS,
+  type CommanderInvestigationCheckpoint,
+  type CommanderInvestigationCheckpointedPayload,
+  type CommanderInvestigationFinishedPayload,
+  type CommanderInvestigationJournalEventKind,
+  type CommanderInvestigationJournalLastTransition,
+  type CommanderInvestigationJournalProjectionStatus,
+  type CommanderInvestigationModelStepStartedPayload,
+  type CommanderInvestigationRecord,
+  type CommanderInvestigationRecoveryState,
+  type CommanderInvestigationStartedPayload,
+} from "./commander-investigation-journal-types"
+
+export type CommanderInvestigationJournalProjection = {
+  records: CommanderInvestigationRecord[]
+  checkpoints: CommanderInvestigationCheckpoint[]
+}
+
+export function projectCommanderInvestigationJournal(events: JsonlEvent[]): CommanderInvestigationJournalProjection {
+  const groups = new Map<string, JsonlEvent[]>()
+  for (const event of events) {
+    if (!isCommanderInvestigationKind(event.kind)) continue
+    const investigationId = typeof event.investigation_id === "string" ? event.investigation_id : ""
+    if (!investigationId) continue
+    const current = groups.get(investigationId) ?? []
+    current.push(event)
+    groups.set(investigationId, current)
+  }
+  const records: CommanderInvestigationRecord[] = []
+  const checkpoints: CommanderInvestigationCheckpoint[] = []
+  for (const [investigationId, group] of groups) {
+    const projected = projectOne(investigationId, group)
+    records.push(projected.record)
+    checkpoints.push(...projected.checkpoints)
+  }
+  records.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.investigation_id.localeCompare(b.investigation_id))
+  checkpoints.sort((a, b) => a.investigation_id.localeCompare(b.investigation_id) || a.checkpoint_sequence - b.checkpoint_sequence)
+  return { records, checkpoints }
+}
+
+function projectOne(investigationId: string, events: JsonlEvent[]): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[] } {
+  const integrity: string[] = []
+  let projectionStatus: CommanderInvestigationJournalProjectionStatus = "ready"
+  let unsupportedVersion = false
+  let started: CommanderInvestigationStartedPayload | undefined
+  let terminal: CommanderInvestigationFinishedPayload | undefined
+  let pendingModel: CommanderInvestigationModelStepStartedPayload | undefined
+  const checkpoints: CommanderInvestigationCheckpoint[] = []
+  let lastTransition: CommanderInvestigationJournalLastTransition = "started"
+  const seenRequests = new Set<string>()
+
+  events.forEach((event, index) => {
+    if (event.schema_version !== 1) unsupportedVersion = true
+    if (event.journal_sequence !== index) integrity.push(`journal sequence gap at ${index}`)
+    if (!verifyPayloadHash(event)) integrity.push(`payload hash mismatch at sequence ${event.journal_sequence}`)
+    if (terminal) integrity.push("investigation event appears after terminal event")
+    if (event.kind === "runtime_commander_investigation_started") {
+      if (index !== 0) integrity.push("started event is not first")
+      if (started) integrity.push("duplicate started event")
+      started = event as CommanderInvestigationStartedPayload
+      checkpoints.push(started.initial_checkpoint)
+      if (!verifyCheckpoint(started.initial_checkpoint)) integrity.push("initial checkpoint hash mismatch")
+      lastTransition = "started"
+    } else if (event.kind === "runtime_commander_investigation_model_step_started") {
+      const model = event as CommanderInvestigationModelStepStartedPayload
+      if (seenRequests.has(model.model_request_id)) integrity.push(`duplicate model request ${model.model_request_id}`)
+      seenRequests.add(model.model_request_id)
+      pendingModel = model
+      lastTransition = "model_step_started"
+    } else if (event.kind === "runtime_commander_investigation_checkpointed") {
+      const checkpoint = (event as CommanderInvestigationCheckpointedPayload).checkpoint
+      const previous = checkpoints.at(-1)
+      if (checkpoint.checkpoint_sequence !== checkpoints.length) integrity.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
+      if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) integrity.push("checkpoint previous reference mismatch")
+      if (!verifyCheckpoint(checkpoint)) integrity.push(`checkpoint hash mismatch at ${checkpoint.checkpoint_sequence}`)
+      checkpoints.push(checkpoint)
+      pendingModel = undefined
+      lastTransition = "checkpointed"
+    } else if (event.kind === "runtime_commander_investigation_finished") {
+      if (terminal) integrity.push("duplicate terminal event")
+      terminal = event as CommanderInvestigationFinishedPayload
+      const previous = checkpoints.at(-1)
+      if (terminal.terminal.last_checkpoint_id !== previous?.checkpoint_id || terminal.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) integrity.push("terminal last-checkpoint reference mismatch")
+      if (!verifyTerminal(terminal.terminal)) integrity.push("terminal hash mismatch")
+      pendingModel = undefined
+      lastTransition = "finished"
+    }
+  })
+
+  if (!started) {
+    projectionStatus = unsupportedVersion ? "unsupported_version" : "corrupt"
+    return corruptRecord(investigationId, events, ["missing started event", ...integrity], projectionStatus)
+  }
+  if (unsupportedVersion) projectionStatus = "unsupported_version"
+  if (integrity.length && projectionStatus === "ready") projectionStatus = "corrupt"
+  const latestCheckpoint = checkpoints.at(-1)
+  const terminalRecord = terminal?.terminal
+  const uncertain = Boolean(pendingModel && !terminalRecord)
+  const recoveryState = recovery(latestCheckpoint, uncertain, Boolean(terminalRecord))
+  const record: CommanderInvestigationRecord = {
+    investigation_id: investigationId,
+    status: terminalRecord?.status ?? "running",
+    stop_reason: terminalRecord?.stop_reason,
+    phase: started.phase,
+    objective_preview: started.objective,
+    objective_hash: started.objective_hash,
+    requested_by: started.requested_by,
+    mission_id: started.mission_id,
+    session_id: started.session_id,
+    launch_id: started.launch_id,
+    provider_id: started.provider_id,
+    provider_kind: started.provider_kind,
+    model_id: started.model_id,
+    tool_protocol: started.tool_protocol,
+    started_at: started.started_at,
+    updated_at: terminalRecord?.completed_at ?? latestCheckpoint?.created_at ?? started.started_at,
+    completed_at: terminalRecord?.completed_at,
+    budget_id: started.budget.budget_id,
+    budget_hash: started.budget_hash,
+    bootstrap_id: started.bootstrap_ref.bootstrap_id,
+    bootstrap_hash: started.bootstrap_ref.bootstrap_hash,
+    model_turn_count: terminalRecord?.model_turn_count ?? latestCheckpoint?.working_set.model_turn_count ?? 0,
+    provider_request_count: terminalRecord?.provider_request_count ?? latestCheckpoint?.provider_request_count ?? 0,
+    tool_call_count: terminalRecord?.tool_call_count ?? latestCheckpoint?.working_set.tool_call_count ?? 0,
+    tool_search_call_count: terminalRecord?.tool_search_call_count ?? latestCheckpoint?.working_set.tool_search_call_count ?? 0,
+    loaded_tool_ids: terminalRecord?.loaded_tool_ids ?? latestCheckpoint?.working_set.loaded_tool_ids ?? started.initial_loaded_tool_refs.map((tool) => tool.tool_id),
+    evidence_ids: (terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []).map((card) => card.evidence_id),
+    evidence_count: (terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []).length,
+    latest_checkpoint_id: latestCheckpoint?.checkpoint_id,
+    latest_checkpoint_sequence: latestCheckpoint?.checkpoint_sequence,
+    latest_checkpoint_hash: latestCheckpoint?.checkpoint_hash,
+    pending_model_request_id: pendingModel?.model_request_id,
+    pending_turn_index: pendingModel?.turn_index,
+    last_transition: lastTransition,
+    checkpoint_available: Boolean(latestCheckpoint),
+    uncertain_provider_outcome: uncertain,
+    resume_supported: false,
+    recovery_state: recoveryState,
+    investigation_event_count: events.length,
+    external_api_audit_event_count: terminalRecord?.provider_audit.external_api_audit_event_count ?? latestCheckpoint?.external_api_audit_count ?? 0,
+    semantic_result_hash: terminalRecord?.semantic_result_hash,
+    projection_status: projectionStatus,
+    integrity_errors: integrity,
+    warnings: terminalRecord?.warnings ?? latestCheckpoint?.working_set.current_warnings ?? [],
+    record_hash: "",
+  }
+  record.record_hash = stableHash({ ...record, record_hash: "" })
+  return { record, checkpoints }
+}
+
+function corruptRecord(investigationId: string, events: JsonlEvent[], errors: string[], status: CommanderInvestigationJournalProjectionStatus): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[] } {
+  const record = {
+    investigation_id: investigationId,
+    status: "running" as const,
+    phase: "general_read" as const,
+    objective_preview: "",
+    objective_hash: "",
+    requested_by: "",
+    provider_id: "",
+    provider_kind: "",
+    model_id: "",
+    tool_protocol: "native" as const,
+    started_at: "",
+    updated_at: String(events.at(-1)?.timestamp ?? ""),
+    budget_id: "",
+    budget_hash: "",
+    bootstrap_id: "",
+    bootstrap_hash: "",
+    model_turn_count: 0,
+    provider_request_count: 0,
+    tool_call_count: 0,
+    tool_search_call_count: 0,
+    loaded_tool_ids: [],
+    evidence_ids: [],
+    evidence_count: 0,
+    last_transition: "started" as const,
+    checkpoint_available: false,
+    uncertain_provider_outcome: false,
+    resume_supported: false as const,
+    recovery_state: "no_checkpoint_resume_not_implemented" as const,
+    investigation_event_count: events.length,
+    external_api_audit_event_count: 0,
+    projection_status: status,
+    integrity_errors: errors,
+    warnings: [],
+    record_hash: "",
+  }
+  record.record_hash = stableHash({ ...record, record_hash: "" })
+  return { record, checkpoints: [] }
+}
+
+function recovery(checkpoint: CommanderInvestigationCheckpoint | undefined, uncertain: boolean, terminal: boolean): CommanderInvestigationRecoveryState {
+  if (terminal) return "not_required"
+  if (uncertain) return "uncertain_provider_outcome_resume_not_implemented"
+  if (checkpoint) return "checkpoint_available_resume_not_implemented"
+  return "no_checkpoint_resume_not_implemented"
+}
+
+function isCommanderInvestigationKind(kind: unknown): kind is CommanderInvestigationJournalEventKind {
+  return typeof kind === "string" && (COMMANDER_INVESTIGATION_EVENT_KINDS as readonly string[]).includes(kind)
+}
+
+function verifyPayloadHash(event: JsonlEvent): boolean {
+  if (typeof event.event_payload_hash !== "string") return false
+  const { event_id: _eventId, timestamp: _timestamp, kind: _kind, ...payload } = event
+  return stableHash({ ...payload, event_payload_hash: "" }) === event.event_payload_hash
+}
+
+function verifyCheckpoint(checkpoint: CommanderInvestigationCheckpoint): boolean {
+  return checkpoint.checkpoint_hash === stableHash({ ...checkpoint, checkpoint_hash: "" })
+}
+
+function verifyTerminal(terminal: { terminal_hash: string }): boolean {
+  return terminal.terminal_hash === stableHash({ ...terminal, terminal_hash: "" })
+}

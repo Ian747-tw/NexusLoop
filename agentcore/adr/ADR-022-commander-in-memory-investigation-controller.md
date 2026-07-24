@@ -83,6 +83,13 @@ Investigation state is transient. 9W2A appends no events, writes no files,
 writes no research DB records, mutates no missions/proposals/reviews/apply
 state, and performs no OpenCode or GitHub action.
 
+9W3A adds an optional persistence observer interface to the controller. Observer
+absence preserves the original in-memory semantics: no Commander investigation
+events are appended and the semantic investigation result hash is unchanged by
+durability metadata. Durable execution is a separate RuntimeServer method that
+installs an observer for journal writes; it does not turn the in-memory method
+into a persistent workflow.
+
 ## Consequences
 
 The internal runtime seam can now compose:
@@ -106,9 +113,10 @@ the working set remains in-memory and only existing external API audit events
 are durable.
 
 9W2B2 owns RuntimeServer provider activation, connector preflight, run-lock
-policy, model capability registration, and investigation audit reporting. 9W3
-owns durable working sets, pause/resume, and recovery. 9Y owns proposal
-generation.
+policy, model capability registration, and investigation audit reporting. 9W3A
+adds durable records and checkpoints but does not resume. 9W3B owns recovery
+preview, checkpoint compatibility, uncertain-provider-outcome handling, and
+human-reviewed resume. 9Y owns proposal generation.
 
 Existing one-shot Commander-cycle provider behavior remains a compatibility
 surface.
