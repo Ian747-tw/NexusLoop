@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from tests.e2e_user.snapshot_assertions import assert_opencode_process_smoke_idle
+
 
 @pytest.mark.phase_m4
 def test_user_navigates_wake_scheduler_audit_guidance_through_tui(sandbox) -> None:
@@ -115,7 +117,7 @@ def test_user_navigates_wake_scheduler_audit_guidance_through_tui(sandbox) -> No
     assert "runtime_wake_scheduler_recovery_workflow_step_recorded" not in result.stdout
     assert "last_step=" not in result.stdout
     assert "handoff_sent=true" not in result.stdout
-    assert "opencode process" not in result.stdout.lower()
+    assert_opencode_process_smoke_idle(result.stdout)
     assert "navigation-secret" not in result.stdout
     assert "navigation-secret-abc123" not in result.stdout
     assert "token=abc123" not in result.stdout

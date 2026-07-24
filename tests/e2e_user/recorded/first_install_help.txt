@@ -15,7 +15,7 @@ Available commands:
     install    Print install confirmation and usage tips.
     init       Scaffold a new NexusLoop project.
     doctor     Check environment, hardware, and config validity.
-    dashboard  Start the local web dashboard.
+    dashboard  Deprecated: start the legacy local web dashboard.
     run        Start the autonomous experiment loop.
     status     Print current project status summary.
     plan       Show or refresh the implementation plan.
@@ -27,9 +27,10 @@ Available commands:
     check      Check whether an agent action violates the hard rules.
 
 Examples:
+  nxl
   nxl init --project-dir ~/my-drl-project
   nxl doctor
   nxl run --parallel 4
-  nxl dashboard --port 8765
+  nxl dashboard --port 8765  # deprecated
 --- stderr ---
 

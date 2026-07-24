@@ -5,6 +5,8 @@ from hashlib import sha256
 
 import pytest
 
+from tests.e2e_user.snapshot_assertions import assert_opencode_process_smoke_idle
+
 
 def _stable_json(value) -> str:
     if isinstance(value, list):
@@ -117,8 +119,7 @@ def test_user_tracks_wake_scheduler_recovery_workflow_through_tui(sandbox) -> No
     assert "runtime_wake_scheduler_started status=running" not in result.stdout
     assert "last_step=" not in result.stdout
     assert "handoff_sent=true" not in result.stdout
-    assert "opencode process" not in result.stdout.lower()
+    assert_opencode_process_smoke_idle(result.stdout)
     assert "workflow-secret" not in result.stdout
     assert "workflow-secret-abc123" not in result.stdout
     assert "token=abc123" not in result.stdout
-

@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from tests.e2e_user.snapshot_assertions import assert_opencode_process_smoke_idle
+
 
 @pytest.mark.phase_m4
 def test_user_runs_continuation_commands_through_tui(sandbox) -> None:
@@ -49,4 +51,4 @@ def test_user_runs_continuation_commands_through_tui(sandbox) -> None:
     assert "secret-looking token=abc123" not in result.stdout
     assert "proposal_applied" not in result.stdout
     assert "handoff_sent=true" not in result.stdout
-    assert "opencode process" not in result.stdout.lower()
+    assert_opencode_process_smoke_idle(result.stdout)
