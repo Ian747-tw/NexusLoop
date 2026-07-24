@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+from tests.e2e_user.snapshot_assertions import assert_opencode_process_smoke_idle
+
 
 def staged_write_id(command: str, authority_gate: str, risk: str) -> str:
     payload = json.dumps(
@@ -92,7 +94,7 @@ def test_user_compares_scheduler_navigation_write_runs_without_rerun(sandbox) ->
     assert "runtime_wake_scheduler_recovery_recorded" not in result.stdout
     assert "runtime_wake_scheduler_recovery_workflow_step_recorded" not in result.stdout
     assert "handoff_sent=true" not in result.stdout
-    assert "opencode process" not in result.stdout.lower()
+    assert_opencode_process_smoke_idle(result.stdout)
     assert "navigation-write-run-compare-secret" not in result.stdout
     assert "navigation-write-run-compare-secret-abc123" not in result.stdout
     assert "token=abc123" not in result.stdout
