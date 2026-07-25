@@ -65,8 +65,11 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (index !== 0) integrity.push("started event is not first")
       if (started) integrity.push("duplicate started event")
       started = event
-      checkpoints.push(started.initial_checkpoint)
-      if (!verifyCheckpoint(started.initial_checkpoint)) integrity.push("initial checkpoint hash mismatch")
+      if (verifyCheckpoint(started.initial_checkpoint)) {
+        checkpoints.push(started.initial_checkpoint)
+      } else {
+        integrity.push("initial checkpoint hash mismatch")
+      }
       lastTransition = "started"
     } else if (event.kind === "runtime_commander_investigation_model_step_started") {
       if (!isModelStepStartedPayload(event)) {
@@ -85,11 +88,15 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       }
       const checkpoint = event.checkpoint
       const previous = checkpoints.at(-1)
-      if (checkpoint.checkpoint_sequence !== checkpoints.length) integrity.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
-      if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) integrity.push("checkpoint previous reference mismatch")
-      if (!verifyCheckpoint(checkpoint)) integrity.push(`checkpoint hash mismatch at ${checkpoint.checkpoint_sequence}`)
-      checkpoints.push(checkpoint)
-      pendingModel = undefined
+      const checkpointErrors: string[] = []
+      if (checkpoint.checkpoint_sequence !== checkpoints.length) checkpointErrors.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
+      if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) checkpointErrors.push("checkpoint previous reference mismatch")
+      if (!verifyCheckpoint(checkpoint)) checkpointErrors.push(`checkpoint hash mismatch at ${checkpoint.checkpoint_sequence}`)
+      integrity.push(...checkpointErrors)
+      if (checkpointErrors.length === 0) {
+        checkpoints.push(checkpoint)
+        pendingModel = undefined
+      }
       lastTransition = "checkpointed"
     } else if (event.kind === "runtime_commander_investigation_finished") {
       if (!isFinishedPayload(event)) {
@@ -132,7 +139,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     model_id: started.model_id,
     tool_protocol: started.tool_protocol,
     started_at: started.started_at,
-    updated_at: terminalRecord?.completed_at ?? latestCheckpoint?.created_at ?? started.started_at,
+    updated_at: terminalRecord?.completed_at ?? pendingModel?.started_at ?? latestCheckpoint?.created_at ?? started.started_at,
     completed_at: terminalRecord?.completed_at,
     budget_id: started.budget.budget_id,
     budget_hash: started.budget_hash,
@@ -219,6 +226,41 @@ function isCommanderInvestigationKind(kind: unknown): kind is CommanderInvestiga
   return typeof kind === "string" && (COMMANDER_INVESTIGATION_EVENT_KINDS as readonly string[]).includes(kind)
 }
 
+const INVESTIGATION_STATUSES = ["final", "refused", "blocked", "failed", "cancelled", "budget_exhausted", "no_progress", "needs_human_review"] as const
+const INVESTIGATION_STOP_REASONS = [
+  "model_final",
+  "model_refusal",
+  "model_malformed",
+  "provider_failed",
+  "caller_cancelled",
+  "human_pause",
+  "human_stop",
+  "human_correction",
+  "human_override",
+  "human_escalation",
+  "max_model_turns",
+  "max_tool_calls",
+  "max_tool_search_calls",
+  "max_tool_calls_per_turn",
+  "max_loaded_schemas",
+  "max_cumulative_tool_result_bytes",
+  "context_budget_exhausted",
+  "wall_time_exhausted",
+  "repeated_identical_call",
+  "consecutive_no_progress",
+  "invalid_tool_call",
+  "unloaded_tool_call",
+  "duplicate_tool_call_id",
+  "tool_execution_cancelled",
+  "controller_error",
+  "adapter_not_configured",
+  "bootstrap_blocked",
+  "provider_preflight_blocked",
+  "provider_audit_incomplete",
+  "persistence_failed",
+  "durable_state_conflict",
+] as const
+
 function verifyPayloadHash(event: JsonlEvent): boolean {
   if (typeof event.event_payload_hash !== "string") return false
   const { event_id: _eventId, timestamp: _timestamp, kind: _kind, ...payload } = event
@@ -295,6 +337,17 @@ function isCheckpointedPayload(event: JsonlEvent): event is CommanderInvestigati
 function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFinishedPayload {
   if (event.schema_version !== 1 || !isRecord(event.terminal)) return false
   return (
+    typeof event.terminal.status === "string" &&
+    (INVESTIGATION_STATUSES as readonly string[]).includes(event.terminal.status) &&
+    typeof event.terminal.stop_reason === "string" &&
+    (INVESTIGATION_STOP_REASONS as readonly string[]).includes(event.terminal.stop_reason) &&
+    hasString(event.terminal, "phase") &&
+    hasString(event.terminal, "objective_hash") &&
+    hasString(event.terminal, "provider_id") &&
+    hasString(event.terminal, "provider_kind") &&
+    hasString(event.terminal, "model_id") &&
+    hasString(event.terminal, "tool_protocol") &&
+    hasString(event.terminal, "semantic_result_hash") &&
     hasString(event.terminal, "last_checkpoint_id") &&
     hasString(event.terminal, "last_checkpoint_hash") &&
     hasString(event.terminal, "terminal_hash") &&

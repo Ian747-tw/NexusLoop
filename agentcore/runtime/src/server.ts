@@ -2724,21 +2724,21 @@ export class RuntimeServer {
           run = await journal.createObserver(durableInput)
         } catch (error) {
           const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation journal conflict") })
-          return {
+          return durableOverrideResult(blocked, {
             ...blocked,
             status: error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed",
             stop_reason: error instanceof CommanderInvestigationJournalConflictError ? "durable_state_conflict" : "persistence_failed",
             blockers: [error instanceof Error ? redactText(error.message) : String(error)].slice(0, 1),
-          }
+          })
         }
         if (combined.signal.aborted || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
           const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation stopped before journal start") })
-          return {
+          return durableOverrideResult(blocked, {
             ...blocked,
             status: "blocked",
             stop_reason: "provider_preflight_blocked",
             blockers: ["durable Commander investigation stopped before journal start"],
-          }
+          })
         }
         const result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
         if (!run.state.started_persisted) return result
@@ -5667,6 +5667,22 @@ function durablePersistenceFailedResult(result: CommanderInvestigationResult, st
     investigation_events_appended: state.investigation_event_count > 0,
     events_appended: result.external_api_audit_events_appended > 0 || state.investigation_event_count > 0,
     result_hash: stableHash({ semantic: result.result_hash, status: "failed", stop_reason: "persistence_failed", blocker: message }),
+  }
+}
+
+function durableOverrideResult(original: CommanderInvestigationResult, result: CommanderInvestigationResult): CommanderInvestigationResult {
+  return {
+    ...result,
+    result_hash: stableHash({
+      semantic: original.result_hash,
+      status: result.status,
+      stop_reason: result.stop_reason,
+      blockers: result.blockers,
+      provider_request_count: result.provider_request_count,
+      tool_call_count: result.tool_call_count,
+      investigation_event_count: result.investigation_event_count,
+      external_api_audit_events_appended: result.external_api_audit_events_appended,
+    }),
   }
 }
 

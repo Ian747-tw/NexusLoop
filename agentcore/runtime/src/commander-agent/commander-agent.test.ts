@@ -39,6 +39,7 @@ import {
   parseJsonFallback,
   providerJsonSchema,
   providerToolNameFor,
+  stableHash,
   toCommanderToolResultMessage,
   validateCommanderInvestigationProviderConfig,
   validateCommanderConnectorModelTransportConfig,
@@ -2378,6 +2379,20 @@ describe("Commander in-memory investigation controller", () => {
     expect(first.status).toBe("final")
     const duplicate = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_duplicate" }))
     expect(duplicate).toMatchObject({ status: "blocked", stop_reason: "durable_state_conflict", provider_request_count: 0 })
+    const duplicateAbort = new AbortController()
+    duplicateAbort.abort(new Error("durable Commander investigation journal conflict"))
+    const preOverride = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_duplicate", abort_signal: duplicateAbort.signal }))
+    expect(duplicate.result_hash).toBe(stableHash({
+      semantic: preOverride.result_hash,
+      status: duplicate.status,
+      stop_reason: duplicate.stop_reason,
+      blockers: duplicate.blockers,
+      provider_request_count: duplicate.provider_request_count,
+      tool_call_count: duplicate.tool_call_count,
+      investigation_event_count: duplicate.investigation_event_count,
+      external_api_audit_events_appended: duplicate.external_api_audit_events_appended,
+    }))
+    expect(duplicate.result_hash).not.toBe(preOverride.result_hash)
     await server.shutdown()
 
     const failingServer = new RuntimeServer({
@@ -2462,6 +2477,8 @@ describe("Commander in-memory investigation controller", () => {
     const badCheckpointInput = baseInvestigation({ investigation_id: "inv_malformed_checkpoint", objective: "malformed checkpoint" })
     const badCheckpointRun = await service.createObserver(badCheckpointInput)
     await badCheckpointRun.observer.onStarted(durableStartedSnapshot(badCheckpointInput, 1, "inv_malformed_checkpoint") as Parameters<typeof badCheckpointRun.observer.onStarted>[0])
+    const validInitialCheckpoint = await service.latestCheckpoint("inv_malformed_checkpoint")
+    expect(validInitialCheckpoint?.checkpoint_sequence).toBe(0)
     service.release(badCheckpointRun)
     await store.append({
       kind: "runtime_commander_investigation_checkpointed",
@@ -2481,6 +2498,30 @@ describe("Commander in-memory investigation controller", () => {
       },
       event_payload_hash: "bad_checkpoint_payload_hash",
     } as Parameters<EventStore["append"]>[0])
+    await store.append({
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_malformed_terminal",
+      journal_sequence: 0,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:03.000Z",
+      terminal: {
+        schema_version: 1,
+        investigation_id: "inv_malformed_terminal",
+        last_checkpoint_id: "missing",
+        last_checkpoint_hash: "missing_hash",
+        terminal_hash: "bad_terminal_hash",
+        completed_at: "2026-01-01T00:00:03.000Z",
+        model_turn_count: 0,
+        provider_request_count: 0,
+        tool_call_count: 0,
+        tool_search_call_count: 0,
+        loaded_tool_ids: [],
+        evidence_cards: [],
+        provider_audit: {},
+      },
+      event_payload_hash: "bad_terminal_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
 
     const malformed = await service.get("inv_malformed_unsupported")
     expect(malformed).toMatchObject({
@@ -2492,10 +2533,49 @@ describe("Commander in-memory investigation controller", () => {
     const malformedCheckpoint = await service.get("inv_malformed_checkpoint")
     expect(malformedCheckpoint).toMatchObject({ investigation_id: "inv_malformed_checkpoint", projection_status: "corrupt", checkpoint_available: true })
     expect(malformedCheckpoint?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
+    expect(await service.latestCheckpoint("inv_malformed_checkpoint")).toEqual(validInitialCheckpoint)
+    expect(await service.getCheckpoint("bad_checkpoint")).toBeUndefined()
+    const malformedTerminal = await service.get("inv_malformed_terminal")
+    expect(malformedTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "no_checkpoint_resume_not_implemented" })
+    expect(malformedTerminal?.integrity_errors.join("\n")).toContain("malformed terminal payload")
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 3, running_count: 3, checkpoint_available_count: 2, corrupt_count: 1 })
+    expect(summary).toMatchObject({ total: 4, running_count: 4, checkpoint_available_count: 2, corrupt_count: 2 })
+  })
+
+  test("durable journal pending model-step start advances running record updated_at", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-pending-updated-"))
+    const service = new CommanderInvestigationJournalService({
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      now: () => new Date("2026-01-01T00:00:30.000Z"),
+    })
+    const input = baseInvestigation({ investigation_id: "inv_pending_updated_at", objective: "pending step updated at" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_pending_updated_at") as Parameters<typeof run.observer.onStarted>[0])
+    await run.observer.onModelStepStarted({
+      investigation_id: "inv_pending_updated_at",
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_pending_updated_at",
+      tool_protocol: "native",
+      working_set_hash: "working_hash_pending",
+      context_hash: "context_hash_pending",
+      input_bytes: 512,
+      estimated_input_tokens: 128,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:45.000Z",
+    })
+    service.release(run)
+    const record = await service.get("inv_pending_updated_at")
+    expect(record).toMatchObject({
+      updated_at: "2026-01-01T00:00:45.000Z",
+      pending_model_request_id: "model_request_pending_updated_at",
+      uncertain_provider_outcome: true,
+      recovery_state: "uncertain_provider_outcome_resume_not_implemented",
+    })
   })
 
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {
