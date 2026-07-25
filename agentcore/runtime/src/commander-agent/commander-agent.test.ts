@@ -27,6 +27,7 @@ import {
   ConnectorBackedCommanderModelStepAdapter,
   CommanderInvestigationContextService,
   CommanderInvestigationController,
+  CommanderInvestigationJournalService,
   CommanderToolExecutor,
   ScriptedCommanderModelStepAdapter,
   buildProviderToolMap,
@@ -2398,6 +2399,47 @@ describe("Commander in-memory investigation controller", () => {
     expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
   })
 
+  test("durable journal reserves ids across awaited lookup and exact get bypasses list pagination", async () => {
+    const raceDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-race-"))
+    const raceStore = new EventStore(join(raceDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: raceStore })
+    const originalReadAll = raceStore.readAll.bind(raceStore)
+    let releaseLookup!: () => void
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookup = resolve
+    })
+    raceStore.readAll = async () => {
+      await lookupGate
+      return originalReadAll()
+    }
+    const first = service.createObserver(baseInvestigation({ investigation_id: "inv_concurrent_reserved" }))
+    await Promise.resolve()
+    const second = service.createObserver(baseInvestigation({ investigation_id: "inv_concurrent_reserved" }))
+    releaseLookup()
+    const results = await Promise.allSettled([first, second])
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
+    const fulfilled = results.find((result): result is PromiseFulfilledResult<Awaited<typeof first>> => result.status === "fulfilled")
+    expect(fulfilled).toBeDefined()
+    service.release(fulfilled!.value)
+
+    const journalDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-pagination-"))
+    const journalService = new CommanderInvestigationJournalService({ eventStore: new EventStore(join(journalDir, ".nxl", "events.jsonl")) })
+    for (let index = 0; index < 101; index += 1) {
+      const investigationId = index === 0 ? "inv_oldest_exact_lookup" : `inv_newer_${index}`
+      const input = baseInvestigation({ investigation_id: investigationId, objective: `durable lookup ${index}` })
+      const run = await journalService.createObserver(input)
+      await run.observer.onStarted(durableStartedSnapshot(input, index, investigationId) as Parameters<typeof run.observer.onStarted>[0])
+      journalService.release(run)
+    }
+    const oldest = await journalService.get("inv_oldest_exact_lookup")
+    expect(oldest).toMatchObject({ investigation_id: "inv_oldest_exact_lookup", status: "running", recovery_state: "checkpoint_available_resume_not_implemented" })
+    const visibleList = await journalService.list({ limit: 100 })
+    expect(visibleList).toHaveLength(100)
+    expect(visibleList.some((record) => record.investigation_id === "inv_oldest_exact_lookup")).toBe(false)
+    await expect(journalService.createObserver(baseInvestigation({ investigation_id: "inv_oldest_exact_lookup", objective: "duplicate oldest durable lookup" }))).rejects.toThrow("9W3B recovery")
+  })
+
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-operational-memory-"))
     await writeApprovedSpec(projectDir)
@@ -2928,6 +2970,90 @@ function baseInvestigation(overrides: Partial<Parameters<RuntimeServer["runComma
     provider_kind: "unknown",
     model_id: "cloud-long-context",
     ...overrides,
+  }
+}
+
+function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, index: number, investigationId: string) {
+  const occurred = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString()
+  return {
+    investigation_id: investigationId,
+    input,
+    bootstrap: {
+      bootstrap_id: `bootstrap_${index}`,
+      phase: input.phase,
+      objective_preview: input.objective,
+      authority_kernel: "bounded authority",
+      continuity_kind: "summary",
+      readiness: "ready",
+      current_project_summary: "project summary",
+      open_loops: [],
+      source_refs: [],
+      blockers: [],
+      warnings: [],
+      estimated_bytes: 128,
+      estimated_tokens: 32,
+      bootstrap_hash: `bootstrap_hash_${index}`,
+    },
+    budget: {
+      budget_id: `budget_${index}`,
+      phase: input.phase,
+      max_model_turns: 4,
+      max_tool_calls: 4,
+      max_tool_search_calls: 1,
+      max_loaded_schemas: 4,
+      max_tool_calls_per_turn: 1,
+      max_cumulative_tool_result_bytes: 4096,
+      max_wall_time_ms: 10_000,
+      max_consecutive_no_progress_turns: 2,
+      max_evidence_cards: 4,
+      max_turn_summaries: 4,
+      max_context_tokens: 4096,
+      max_context_bytes: 4096,
+      source_profile_id: "profile",
+      source_context_budget_id: "context_budget",
+      warnings: [],
+      budget_hash: `budget_hash_${index}`,
+    },
+    tool_protocol: "native",
+    loaded_tools: [],
+    working_set: {
+      objective_preview: input.objective,
+      phase: input.phase,
+      loaded_tool_ids: [],
+      evidence_cards: [],
+      recent_execution_digests: [],
+      recent_load_outcomes: [],
+      current_blockers: [],
+      current_warnings: [],
+      provider_audit: {
+        audit_required: false,
+        transport_kind: "none",
+        connector_ids: [],
+        provider_request_count: 0,
+        external_api_audit_event_count: 0,
+        successful_audit_count: 0,
+        failed_audit_count: 0,
+        audit_request_ids: [],
+        audit_event_kinds: [],
+        omitted_request_id_count: 0,
+        all_provider_requests_audited: true,
+        request_body_persisted: false,
+        response_body_persisted: false,
+        credentials_persisted: false,
+        warnings: [],
+      },
+      omitted_evidence_count: 0,
+      omitted_digest_count: 0,
+      omitted_turn_count: 0,
+      consecutive_no_progress_turns: 0,
+      cumulative_tool_result_bytes: 0,
+      model_turn_count: 0,
+      tool_call_count: 0,
+      tool_search_call_count: 0,
+      recent_result_signatures: [],
+      working_set_hash: `working_set_hash_${index}`,
+    },
+    started_at: occurred,
   }
 }
 

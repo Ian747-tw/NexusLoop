@@ -103,8 +103,15 @@ export class CommanderInvestigationJournalService {
     const investigationId = safeId(input.investigation_id)
     if (!investigationId) throw new CommanderInvestigationPersistenceError("durable investigation requires a bounded investigation_id")
     if (this.active.has(investigationId)) throw new CommanderInvestigationJournalConflictError("duplicate concurrent durable investigation")
-    const existing = await this.get(investigationId)
-    if (existing) throw new CommanderInvestigationJournalConflictError(existing.status === "running" ? "existing durable investigation requires 9W3B recovery" : "durable investigation_id already exists")
+    this.active.add(investigationId)
+    const existing = await this.get(investigationId).catch((error) => {
+      this.active.delete(investigationId)
+      throw error
+    })
+    if (existing) {
+      this.active.delete(investigationId)
+      throw new CommanderInvestigationJournalConflictError(existing.status === "running" ? "existing durable investigation requires 9W3B recovery" : "durable investigation_id already exists")
+    }
     const state: CommanderInvestigationJournalRunState = {
       started_persisted: false,
       terminal_persisted: false,
@@ -115,7 +122,6 @@ export class CommanderInvestigationJournalService {
       requested_by: bound(input.requested_by, 200),
       warnings: [],
     }
-    this.active.add(investigationId)
     return {
       investigation_id: investigationId,
       state,
@@ -196,7 +202,8 @@ export class CommanderInvestigationJournalService {
   }
 
   async get(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
-    return (await this.list({ limit: 100 })).find((record) => record.investigation_id === investigationId)
+    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    return projection.records.find((record) => record.investigation_id === investigationId)
   }
 
   async list(options: CommanderInvestigationJournalListOptions = {}): Promise<CommanderInvestigationRecord[]> {
