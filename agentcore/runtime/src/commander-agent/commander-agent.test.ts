@@ -2350,6 +2350,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(events).toContain("\"checkpoint_kind\":\"turn_complete\"")
     expect(events).toContain("\"recent_result_signatures\"")
     expect(events).toContain("\"durable_summary_only\":true")
+    expect(events).not.toContain("\"output_tokens\":\"[REDACTED]\"")
     expect(events).not.toContain("durable-secret")
     expect(events).not.toContain("execution_arguments")
     expect(events).not.toContain("raw_provider")
@@ -2740,6 +2741,60 @@ describe("Commander in-memory investigation controller", () => {
       },
       event_payload_hash: "bad_nested_terminal_payload_hash",
     } as Parameters<EventStore["append"]>[0])
+    const badInitialInput = baseInvestigation({ investigation_id: "inv_bad_initial_chain", objective: "bad initial chain" })
+    const badInitialSeedInput = baseInvestigation({ investigation_id: "inv_bad_initial_seed", objective: "bad initial seed" })
+    const badInitialRun = await service.createObserver(badInitialSeedInput)
+    await badInitialRun.observer.onStarted(durableStartedSnapshot(badInitialSeedInput, 6, "inv_bad_initial_seed") as Parameters<typeof badInitialRun.observer.onStarted>[0])
+    service.release(badInitialRun)
+    const seedStarted = (await store.readAll()).find((event) => event.kind === "runtime_commander_investigation_started" && event.investigation_id === "inv_bad_initial_seed")
+    expect(seedStarted).toBeDefined()
+    const badInitial = structuredClone(seedStarted!) as Record<string, unknown>
+    badInitial.investigation_id = "inv_bad_initial_chain"
+    badInitial.journal_sequence = 0
+    badInitial.objective = badInitialInput.objective
+    badInitial.objective_hash = stableHash(badInitialInput.objective)
+    badInitial.requested_by = badInitialInput.requested_by
+    badInitial.occurred_at = "2026-01-01T00:00:08.000Z"
+    const badInitialCheckpoint = badInitial.initial_checkpoint as Record<string, unknown>
+    badInitialCheckpoint.investigation_id = "other_investigation"
+    badInitialCheckpoint.checkpoint_sequence = 1
+    badInitialCheckpoint.previous_checkpoint_id = "previous_checkpoint"
+    badInitialCheckpoint.previous_checkpoint_hash = "previous_hash"
+    badInitialCheckpoint.checkpoint_hash = stableHash({ ...badInitialCheckpoint, checkpoint_hash: "" })
+    badInitial.event_payload_hash = journalPayloadHash(badInitial)
+    await store.append(badInitial as Parameters<EventStore["append"]>[0])
+    const badModelStepInput = baseInvestigation({ investigation_id: "inv_bad_model_step_base", objective: "bad model step base" })
+    const badModelStepRun = await service.createObserver(badModelStepInput)
+    await badModelStepRun.observer.onStarted(durableStartedSnapshot(badModelStepInput, 7, "inv_bad_model_step_base") as Parameters<typeof badModelStepRun.observer.onStarted>[0])
+    service.release(badModelStepRun)
+    const badModelStep = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_bad_model_step_base",
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_bad_base",
+      provider_id: "fixture",
+      provider_kind: "unknown",
+      model_id: "cloud-long-context",
+      tool_protocol: "native",
+      base_checkpoint_id: "wrong_checkpoint",
+      base_checkpoint_sequence: 99,
+      base_checkpoint_hash: "wrong_hash",
+      working_set_hash: "working_set_hash_7",
+      context_hash: "context_hash_bad_base",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:09.000Z",
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:09.000Z",
+      event_payload_hash: "",
+    }
+    badModelStep.event_payload_hash = journalPayloadHash(badModelStep)
+    await store.append(badModelStep as Parameters<EventStore["append"]>[0])
     const postTerminalInput = baseInvestigation({ investigation_id: "inv_post_terminal_checkpoint", objective: "post terminal checkpoint" })
     const postTerminalRun = await service.createObserver(postTerminalInput)
     await postTerminalRun.observer.onStarted(durableStartedSnapshot(postTerminalInput, 5, "inv_post_terminal_checkpoint") as Parameters<typeof postTerminalRun.observer.onStarted>[0])
@@ -2829,6 +2884,13 @@ describe("Commander in-memory investigation controller", () => {
     const nestedBadTerminal = await service.get("inv_nested_bad_terminal")
     expect(nestedBadTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
     expect(nestedBadTerminal?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const badInitialRecord = await service.get("inv_bad_initial_chain")
+    expect(badInitialRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: false, recovery_state: "no_checkpoint_resume_not_implemented" })
+    expect(badInitialRecord?.integrity_errors.join("\n")).toContain("initial checkpoint investigation_id mismatch")
+    expect(await service.latestCheckpoint("inv_bad_initial_chain")).toBeUndefined()
+    const badModelStepRecord = await service.get("inv_bad_model_step_base")
+    expect(badModelStepRecord).toMatchObject({ projection_status: "corrupt", uncertain_provider_outcome: true, recovery_state: "uncertain_provider_outcome_resume_not_implemented" })
+    expect(badModelStepRecord?.integrity_errors.join("\n")).toContain("model-step base checkpoint mismatch")
     const postTerminal = await service.get("inv_post_terminal_checkpoint")
     expect(postTerminal).toMatchObject({ projection_status: "corrupt", status: "final", recovery_state: "not_required", latest_checkpoint_id: postTerminalInitial!.checkpoint_id })
     expect(postTerminal?.integrity_errors.join("\n")).toContain("investigation event appears after terminal event")
@@ -2837,7 +2899,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 7, running_count: 6, terminal_count: 1, final_count: 1, checkpoint_available_count: 5, corrupt_count: 5 })
+    expect(summary).toMatchObject({ total: 10, running_count: 9, terminal_count: 1, final_count: 1, checkpoint_available_count: 7, uncertain_provider_outcome_count: 1, corrupt_count: 7 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {
@@ -3556,6 +3618,11 @@ function largeEvidenceCard(index: number) {
     warnings: Array.from({ length: 6 }, (_, warningIndex) => `large warning ${index}-${warningIndex} ${"w".repeat(240)}`),
     evidence_hash: stableHash({ evidence: index }),
   }
+}
+
+function journalPayloadHash(event: Record<string, unknown>): string {
+  const { event_id: _eventId, timestamp: _timestamp, kind: _kind, ...payload } = event
+  return stableHash({ ...payload, event_payload_hash: "" })
 }
 
 async function investigationServerWithSession(prefix: string): Promise<{ server: RuntimeServer; projectDir: string; sessionId: string; launchId: string }> {

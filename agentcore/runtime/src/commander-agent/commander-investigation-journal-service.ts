@@ -546,13 +546,17 @@ function sanitizeEvidence(cards: CommanderEvidenceCard[]): CommanderEvidenceCard
 }
 
 function sanitizeTurnSummaries(turns: CommanderInvestigationTurnSummary[]): CommanderInvestigationTurnSummary[] {
-  return turns.map((turn) => ({
-    ...turn,
-    assistant_text_preview: bound(turn.assistant_text_preview, 300) || undefined,
-    output_tokens: undefined,
-    warnings: turn.warnings.map((item) => bound(item, 220)).slice(0, 8),
-    provider_audit_request_ids: turn.provider_audit_request_ids.map((item) => bound(item, 120)).slice(0, 24),
-  }))
+  return turns.map((turn) => {
+    const summary = {
+      ...turn,
+      warnings: turn.warnings.map((item) => bound(item, 220)).slice(0, 8),
+      provider_audit_request_ids: turn.provider_audit_request_ids.map((item) => bound(item, 120)).slice(0, 24),
+    }
+    delete (summary as Partial<CommanderInvestigationTurnSummary>).output_tokens
+    if (turn.assistant_text_preview) summary.assistant_text_preview = bound(turn.assistant_text_preview, 300)
+    else delete (summary as Partial<CommanderInvestigationTurnSummary>).assistant_text_preview
+    return summary
+  })
 }
 
 function replayExchange(turnIndex: number, assistant: CommanderModelAssistantMessage, toolResults: CommanderModelToolResultMessage[]) {

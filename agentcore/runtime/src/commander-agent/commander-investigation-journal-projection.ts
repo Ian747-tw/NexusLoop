@@ -67,7 +67,9 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (index !== 0) integrity.push("started event is not first")
       if (started) integrity.push("duplicate started event")
       started = event
-      if (verifyCheckpoint(started.initial_checkpoint)) {
+      const initialErrors = initialCheckpointErrors(investigationId, started.initial_checkpoint)
+      integrity.push(...initialErrors)
+      if (initialErrors.length === 0 && verifyCheckpoint(started.initial_checkpoint)) {
         checkpoints.push(started.initial_checkpoint)
       } else {
         integrity.push("initial checkpoint hash mismatch")
@@ -82,6 +84,10 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       const model = event
       if (seenRequests.has(model.model_request_id)) integrity.push(`duplicate model request ${model.model_request_id}`)
       seenRequests.add(model.model_request_id)
+      const previous = checkpoints.at(-1)
+      if (!previous || model.base_checkpoint_id !== previous.checkpoint_id || model.base_checkpoint_sequence !== previous.checkpoint_sequence || model.base_checkpoint_hash !== previous.checkpoint_hash) {
+        integrity.push(`model-step base checkpoint mismatch at sequence ${event.journal_sequence}`)
+      }
       pendingModel = model
       lastTransition = "model_step_started"
     } else if (event.kind === "runtime_commander_investigation_checkpointed") {
@@ -229,6 +235,14 @@ function recovery(checkpoint: CommanderInvestigationCheckpoint | undefined, unce
   if (uncertain) return "uncertain_provider_outcome_resume_not_implemented"
   if (checkpoint) return "checkpoint_available_resume_not_implemented"
   return "no_checkpoint_resume_not_implemented"
+}
+
+function initialCheckpointErrors(investigationId: string, checkpoint: CommanderInvestigationCheckpoint): string[] {
+  const errors: string[] = []
+  if (checkpoint.investigation_id !== investigationId) errors.push("initial checkpoint investigation_id mismatch")
+  if (checkpoint.checkpoint_sequence !== 0) errors.push("initial checkpoint sequence is not zero")
+  if (checkpoint.previous_checkpoint_id || checkpoint.previous_checkpoint_hash) errors.push("initial checkpoint has previous checkpoint reference")
+  return errors
 }
 
 function isCommanderInvestigationKind(kind: unknown): kind is CommanderInvestigationJournalEventKind {
