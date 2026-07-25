@@ -2459,6 +2459,28 @@ describe("Commander in-memory investigation controller", () => {
     const run = await service.createObserver(input)
     await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_valid_after_malformed") as Parameters<typeof run.observer.onStarted>[0])
     service.release(run)
+    const badCheckpointInput = baseInvestigation({ investigation_id: "inv_malformed_checkpoint", objective: "malformed checkpoint" })
+    const badCheckpointRun = await service.createObserver(badCheckpointInput)
+    await badCheckpointRun.observer.onStarted(durableStartedSnapshot(badCheckpointInput, 1, "inv_malformed_checkpoint") as Parameters<typeof badCheckpointRun.observer.onStarted>[0])
+    service.release(badCheckpointRun)
+    await store.append({
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_malformed_checkpoint",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:02.000Z",
+      checkpoint: {
+        schema_version: 1,
+        checkpoint_id: "bad_checkpoint",
+        investigation_id: "inv_malformed_checkpoint",
+        checkpoint_sequence: 1,
+        checkpoint_kind: "turn_complete",
+        working_set: { evidence_cards: "bad" },
+        checkpoint_hash: "bad_checkpoint_hash",
+      },
+      event_payload_hash: "bad_checkpoint_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
 
     const malformed = await service.get("inv_malformed_unsupported")
     expect(malformed).toMatchObject({
@@ -2467,10 +2489,13 @@ describe("Commander in-memory investigation controller", () => {
       recovery_state: "no_checkpoint_resume_not_implemented",
     })
     expect(malformed?.integrity_errors.join("\n")).toContain("malformed started payload")
+    const malformedCheckpoint = await service.get("inv_malformed_checkpoint")
+    expect(malformedCheckpoint).toMatchObject({ investigation_id: "inv_malformed_checkpoint", projection_status: "corrupt", checkpoint_available: true })
+    expect(malformedCheckpoint?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 2, running_count: 2, checkpoint_available_count: 1 })
+    expect(summary).toMatchObject({ total: 3, running_count: 3, checkpoint_available_count: 2, corrupt_count: 1 })
   })
 
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {
@@ -2508,6 +2533,48 @@ describe("Commander in-memory investigation controller", () => {
     const kinds = eventKinds(await eventText(projectDir))
     expect(kinds.indexOf("runtime_commander_investigation_finished")).toBeGreaterThan(-1)
     expect(kinds.indexOf("runtime_commander_investigation_finished")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+  })
+
+  test("durable shutdown waits for journal observer reservation before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-shutdown-observer-race-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "should not run" }]),
+    })
+    await server.start()
+    const store = (server as unknown as { eventStore: EventStore }).eventStore
+    const originalReadAll = store.readAll.bind(store)
+    let releaseLookup!: () => void
+    let lookupEntered!: () => void
+    const lookupStarted = new Promise<void>((resolve) => {
+      lookupEntered = resolve
+    })
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookup = resolve
+    })
+    let blockedLookup = true
+    store.readAll = async () => {
+      if (blockedLookup) {
+        blockedLookup = false
+        lookupEntered()
+        await lookupGate
+      }
+      return originalReadAll()
+    }
+    const investigation = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_shutdown_before_observer" }))
+    await lookupStarted
+    const shutdown = server.shutdown("durable observer race")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(eventKinds(await eventText(projectDir))).not.toContain("runtime_shutdown")
+    releaseLookup()
+    const result = await investigation
+    await shutdown
+    expect(result).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0, investigation_event_count: 0 })
+    const kinds = eventKinds(await eventText(projectDir))
+    expect(kinds).not.toContain("runtime_commander_investigation_started")
     expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
   })
 })

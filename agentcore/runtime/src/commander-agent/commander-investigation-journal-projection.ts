@@ -244,8 +244,22 @@ function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint
     hasString(value, "checkpoint_id") &&
     hasString(value, "investigation_id") &&
     hasNumber(value, "checkpoint_sequence") &&
+    hasNumber(value, "provider_request_count") &&
+    hasNumber(value, "external_api_audit_count") &&
     hasString(value, "checkpoint_hash") &&
-    isRecord(value.working_set)
+    isDurableWorkingSet(value.working_set)
+  )
+}
+
+function isDurableWorkingSet(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return (
+    Array.isArray(value.loaded_tool_ids) &&
+    Array.isArray(value.evidence_cards) &&
+    Array.isArray(value.current_warnings) &&
+    hasNumber(value, "model_turn_count") &&
+    hasNumber(value, "tool_call_count") &&
+    hasNumber(value, "tool_search_call_count")
   )
 }
 

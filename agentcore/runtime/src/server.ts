@@ -2715,22 +2715,31 @@ export class RuntimeServer {
     }
     const journal = this.commanderInvestigationJournalService()
     const durableInput = { ...input, investigation_id: input.investigation_id ?? this.generatedCommanderInvestigationId(input) }
-    let run
-    try {
-      run = await journal.createObserver(durableInput)
-    } catch (error) {
-      const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation journal conflict") })
-      return {
-        ...blocked,
-        status: error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed",
-        stop_reason: error instanceof CommanderInvestigationJournalConflictError ? "durable_state_conflict" : "persistence_failed",
-        blockers: [error instanceof Error ? redactText(error.message) : String(error)].slice(0, 1),
-      }
-    }
     const combined = this.commanderInvestigationAbortSignal(durableInput.abort_signal)
     let tracked!: Promise<CommanderInvestigationResult>
     tracked = (async () => {
+      let run
       try {
+        try {
+          run = await journal.createObserver(durableInput)
+        } catch (error) {
+          const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation journal conflict") })
+          return {
+            ...blocked,
+            status: error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed",
+            stop_reason: error instanceof CommanderInvestigationJournalConflictError ? "durable_state_conflict" : "persistence_failed",
+            blockers: [error instanceof Error ? redactText(error.message) : String(error)].slice(0, 1),
+          }
+        }
+        if (combined.signal.aborted || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
+          const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation stopped before journal start") })
+          return {
+            ...blocked,
+            status: "blocked",
+            stop_reason: "provider_preflight_blocked",
+            blockers: ["durable Commander investigation stopped before journal start"],
+          }
+        }
         const result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
         if (!run.state.started_persisted) return result
         try {
@@ -2740,7 +2749,7 @@ export class RuntimeServer {
           return durablePersistenceFailedResult(result, run.state, error)
         }
       } finally {
-        journal.release(run)
+        if (run) journal.release(run)
         combined.cleanup()
         this.activeDurableCommanderInvestigations.delete(tracked)
       }
