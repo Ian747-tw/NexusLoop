@@ -2767,6 +2767,8 @@ describe("Commander in-memory investigation controller", () => {
     const badModelStepRun = await service.createObserver(badModelStepInput)
     await badModelStepRun.observer.onStarted(durableStartedSnapshot(badModelStepInput, 7, "inv_bad_model_step_base") as Parameters<typeof badModelStepRun.observer.onStarted>[0])
     service.release(badModelStepRun)
+    const badModelStepCheckpoint = await service.latestCheckpoint("inv_bad_model_step_base")
+    expect(badModelStepCheckpoint).toBeDefined()
     const badModelStep = {
       kind: "runtime_commander_investigation_model_step_started",
       schema_version: 1,
@@ -2795,6 +2797,65 @@ describe("Commander in-memory investigation controller", () => {
     }
     badModelStep.event_payload_hash = journalPayloadHash(badModelStep)
     await store.append(badModelStep as Parameters<EventStore["append"]>[0])
+    const missingTimestampModelStepInput = baseInvestigation({ investigation_id: "inv_model_step_missing_time", objective: "missing model step time" })
+    const missingTimestampModelStepRun = await service.createObserver(missingTimestampModelStepInput)
+    await missingTimestampModelStepRun.observer.onStarted(durableStartedSnapshot(missingTimestampModelStepInput, 8, "inv_model_step_missing_time") as Parameters<typeof missingTimestampModelStepRun.observer.onStarted>[0])
+    const missingTimestampCheckpoint = await service.latestCheckpoint("inv_model_step_missing_time")
+    service.release(missingTimestampModelStepRun)
+    const missingTimestampModelStep = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_model_step_missing_time",
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_missing_time",
+      provider_id: "fixture",
+      provider_kind: "unknown",
+      model_id: "cloud-long-context",
+      tool_protocol: "native",
+      base_checkpoint_id: missingTimestampCheckpoint!.checkpoint_id,
+      base_checkpoint_sequence: missingTimestampCheckpoint!.checkpoint_sequence,
+      base_checkpoint_hash: missingTimestampCheckpoint!.checkpoint_hash,
+      working_set_hash: "working_set_hash_8",
+      context_hash: "context_hash_missing_time",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:10.000Z",
+      event_payload_hash: "",
+    }
+    missingTimestampModelStep.event_payload_hash = journalPayloadHash(missingTimestampModelStep)
+    await store.append(missingTimestampModelStep as Parameters<EventStore["append"]>[0])
+    const wrongOwnerCheckpointInput = baseInvestigation({ investigation_id: "inv_wrong_owner_checkpoint", objective: "wrong owner checkpoint" })
+    const wrongOwnerCheckpointRun = await service.createObserver(wrongOwnerCheckpointInput)
+    await wrongOwnerCheckpointRun.observer.onStarted(durableStartedSnapshot(wrongOwnerCheckpointInput, 9, "inv_wrong_owner_checkpoint") as Parameters<typeof wrongOwnerCheckpointRun.observer.onStarted>[0])
+    const wrongOwnerInitial = await service.latestCheckpoint("inv_wrong_owner_checkpoint")
+    service.release(wrongOwnerCheckpointRun)
+    const wrongOwnerCheckpoint = {
+      ...wrongOwnerInitial!,
+      checkpoint_id: "wrong_owner_checkpoint",
+      investigation_id: "other_investigation",
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete" as const,
+      previous_checkpoint_id: wrongOwnerInitial!.checkpoint_id,
+      previous_checkpoint_hash: wrongOwnerInitial!.checkpoint_hash,
+    }
+    wrongOwnerCheckpoint.checkpoint_hash = stableHash({ ...wrongOwnerCheckpoint, checkpoint_hash: "" })
+    const wrongOwnerCheckpointEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_wrong_owner_checkpoint",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:11.000Z",
+      checkpoint: wrongOwnerCheckpoint,
+      event_payload_hash: "",
+    }
+    wrongOwnerCheckpointEvent.event_payload_hash = journalPayloadHash(wrongOwnerCheckpointEvent)
+    await store.append(wrongOwnerCheckpointEvent as Parameters<EventStore["append"]>[0])
     const postTerminalInput = baseInvestigation({ investigation_id: "inv_post_terminal_checkpoint", objective: "post terminal checkpoint" })
     const postTerminalRun = await service.createObserver(postTerminalInput)
     await postTerminalRun.observer.onStarted(durableStartedSnapshot(postTerminalInput, 5, "inv_post_terminal_checkpoint") as Parameters<typeof postTerminalRun.observer.onStarted>[0])
@@ -2891,6 +2952,13 @@ describe("Commander in-memory investigation controller", () => {
     const badModelStepRecord = await service.get("inv_bad_model_step_base")
     expect(badModelStepRecord).toMatchObject({ projection_status: "corrupt", uncertain_provider_outcome: true, recovery_state: "uncertain_provider_outcome_resume_not_implemented" })
     expect(badModelStepRecord?.integrity_errors.join("\n")).toContain("model-step base checkpoint mismatch")
+    const missingTimestampModelStepRecord = await service.get("inv_model_step_missing_time")
+    expect(missingTimestampModelStepRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, uncertain_provider_outcome: false })
+    expect(missingTimestampModelStepRecord?.integrity_errors.join("\n")).toContain("malformed model-step payload")
+    const wrongOwnerCheckpointRecord = await service.get("inv_wrong_owner_checkpoint")
+    expect(wrongOwnerCheckpointRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: wrongOwnerInitial!.checkpoint_id })
+    expect(wrongOwnerCheckpointRecord?.integrity_errors.join("\n")).toContain("checkpoint investigation_id mismatch")
+    expect(await service.getCheckpoint("wrong_owner_checkpoint")).toBeUndefined()
     const postTerminal = await service.get("inv_post_terminal_checkpoint")
     expect(postTerminal).toMatchObject({ projection_status: "corrupt", status: "final", recovery_state: "not_required", latest_checkpoint_id: postTerminalInitial!.checkpoint_id })
     expect(postTerminal?.integrity_errors.join("\n")).toContain("investigation event appears after terminal event")
@@ -2899,7 +2967,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 10, running_count: 9, terminal_count: 1, final_count: 1, checkpoint_available_count: 7, uncertain_provider_outcome_count: 1, corrupt_count: 7 })
+    expect(summary).toMatchObject({ total: 12, running_count: 11, terminal_count: 1, final_count: 1, checkpoint_available_count: 9, uncertain_provider_outcome_count: 1, corrupt_count: 9 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {
@@ -3014,6 +3082,27 @@ describe("Commander in-memory investigation controller", () => {
     const kinds = eventKinds(await eventText(projectDir))
     expect(kinds).not.toContain("runtime_commander_investigation_started")
     expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+  })
+
+  test("durable shutdown timeout remains diagnostic and releases the run lock", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-shutdown-hung-durable-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new NeverSettlingCommanderModelStepAdapter(),
+    })
+    await server.start()
+    void server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_hung_durable_shutdown" })).catch(() => undefined)
+    await waitForEventText(projectDir, "runtime_commander_investigation_model_step_started")
+    await server.shutdown("hung durable drain")
+    const events = await eventText(projectDir)
+    const kinds = eventKinds(events)
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    const next = new RuntimeServer({ projectDir, adapter: new FakeOpenCodeAdapter(), commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "after hung drain" }]) })
+    await next.start()
+    servers.push({ stop: () => next.shutdown() })
+    expect(next.previewCommanderInvestigationProviderReadiness().runtime_started).toBe(true)
   })
 })
 
@@ -3273,6 +3362,24 @@ function connectorBackedAdapter(projectDir: string, transport: FakeExternalApiTr
     now: () => new Date("2026-07-21T00:00:00.000Z"),
   })
   return new ConnectorBackedCommanderModelStepAdapter({ config: connectorConfig(), registry, requestService })
+}
+
+class NeverSettlingCommanderModelStepAdapter implements CommanderModelStepAdapter {
+  readonly adapter_id = "never_settling"
+  readonly adapter_version = "test"
+  readonly supports_streaming = false as const
+  readonly supports_native_tools = true as const
+  readonly supports_json_fallback = true as const
+  readonly supports_structured_output = true as const
+  readonly supports_abort_signal = true as const
+  readonly supports_usage = true as const
+  readonly supports_openai_compatible = true as const
+
+  async executeOneStep(): Promise<CommanderModelStepResult> {
+    return new Promise<CommanderModelStepResult>(() => undefined)
+  }
+
+  async *executeOneStreamedStep(): AsyncIterable<never> {}
 }
 
 function chatCompletionText(text: string) {

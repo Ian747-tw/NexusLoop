@@ -99,6 +99,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       const checkpoint = event.checkpoint
       const previous = checkpoints.at(-1)
       const checkpointErrors: string[] = []
+      if (checkpoint.investigation_id !== investigationId) checkpointErrors.push("checkpoint investigation_id mismatch")
       if (checkpoint.checkpoint_sequence !== checkpoints.length) checkpointErrors.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
       if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) checkpointErrors.push("checkpoint previous reference mismatch")
       if (!verifyCheckpoint(checkpoint)) checkpointErrors.push(`checkpoint hash mismatch at ${checkpoint.checkpoint_sequence}`)
@@ -367,7 +368,15 @@ function isStartedPayload(event: JsonlEvent): event is CommanderInvestigationSta
 }
 
 function isModelStepStartedPayload(event: JsonlEvent): event is CommanderInvestigationModelStepStartedPayload {
-  return event.schema_version === 1 && hasString(event, "model_request_id") && hasNumber(event, "turn_index")
+  return (
+    event.schema_version === 1 &&
+    hasString(event, "model_request_id") &&
+    hasNumber(event, "turn_index") &&
+    hasString(event, "started_at") &&
+    hasString(event, "base_checkpoint_id") &&
+    hasNumber(event, "base_checkpoint_sequence") &&
+    hasString(event, "base_checkpoint_hash")
+  )
 }
 
 function isCheckpointedPayload(event: JsonlEvent): event is CommanderInvestigationCheckpointedPayload {

@@ -2828,10 +2828,9 @@ export class RuntimeServer {
     if (result === timedOut) {
       this.eventBus.emit({
         type: "ExecutorLifecycle",
-        phase: "runtime-commander-provider-drain-timeout",
-        message: "Configured Commander investigations did not settle before the shutdown drain timeout",
+        phase: "runtime_commander_investigation_drain_timeout",
+        message: "Commander investigations did not settle before the shutdown drain timeout",
       })
-      throw new Error("configured Commander investigation drain timed out")
     }
   }
 
