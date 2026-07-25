@@ -2437,7 +2437,40 @@ describe("Commander in-memory investigation controller", () => {
     const visibleList = await journalService.list({ limit: 100 })
     expect(visibleList).toHaveLength(100)
     expect(visibleList.some((record) => record.investigation_id === "inv_oldest_exact_lookup")).toBe(false)
+    const summary = await journalService.summary()
+    expect(summary).toMatchObject({ total: 101, running_count: 101, checkpoint_available_count: 101 })
     await expect(journalService.createObserver(baseInvestigation({ investigation_id: "inv_oldest_exact_lookup", objective: "duplicate oldest durable lookup" }))).rejects.toThrow("9W3B recovery")
+  })
+
+  test("durable journal projection isolates malformed unsupported payloads", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-malformed-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    await store.append({
+      kind: "runtime_commander_investigation_started",
+      schema_version: 2,
+      investigation_id: "inv_malformed_unsupported",
+      journal_sequence: 0,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      event_payload_hash: "bad_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const input = baseInvestigation({ investigation_id: "inv_valid_after_malformed", objective: "valid after malformed" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_valid_after_malformed") as Parameters<typeof run.observer.onStarted>[0])
+    service.release(run)
+
+    const malformed = await service.get("inv_malformed_unsupported")
+    expect(malformed).toMatchObject({
+      investigation_id: "inv_malformed_unsupported",
+      projection_status: "unsupported_version",
+      recovery_state: "no_checkpoint_resume_not_implemented",
+    })
+    expect(malformed?.integrity_errors.join("\n")).toContain("malformed started payload")
+    const valid = await service.get("inv_valid_after_malformed")
+    expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
+    const summary = await service.summary()
+    expect(summary).toMatchObject({ total: 2, running_count: 2, checkpoint_available_count: 1 })
   })
 
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {

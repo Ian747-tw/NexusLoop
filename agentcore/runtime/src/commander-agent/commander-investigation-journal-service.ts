@@ -230,7 +230,8 @@ export class CommanderInvestigationJournalService {
   }
 
   async summary(): Promise<CommanderInvestigationJournalSummary> {
-    const records = await this.list({ limit: 100 })
+    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    const records = projection.records
     return {
       total: records.length,
       running_count: records.filter((record) => record.status === "running").length,

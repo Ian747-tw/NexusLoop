@@ -58,20 +58,32 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     if (!verifyPayloadHash(event)) integrity.push(`payload hash mismatch at sequence ${event.journal_sequence}`)
     if (terminal) integrity.push("investigation event appears after terminal event")
     if (event.kind === "runtime_commander_investigation_started") {
+      if (!isStartedPayload(event)) {
+        integrity.push(`malformed started payload at sequence ${event.journal_sequence}`)
+        return
+      }
       if (index !== 0) integrity.push("started event is not first")
       if (started) integrity.push("duplicate started event")
-      started = event as CommanderInvestigationStartedPayload
+      started = event
       checkpoints.push(started.initial_checkpoint)
       if (!verifyCheckpoint(started.initial_checkpoint)) integrity.push("initial checkpoint hash mismatch")
       lastTransition = "started"
     } else if (event.kind === "runtime_commander_investigation_model_step_started") {
-      const model = event as CommanderInvestigationModelStepStartedPayload
+      if (!isModelStepStartedPayload(event)) {
+        integrity.push(`malformed model-step payload at sequence ${event.journal_sequence}`)
+        return
+      }
+      const model = event
       if (seenRequests.has(model.model_request_id)) integrity.push(`duplicate model request ${model.model_request_id}`)
       seenRequests.add(model.model_request_id)
       pendingModel = model
       lastTransition = "model_step_started"
     } else if (event.kind === "runtime_commander_investigation_checkpointed") {
-      const checkpoint = (event as CommanderInvestigationCheckpointedPayload).checkpoint
+      if (!isCheckpointedPayload(event)) {
+        integrity.push(`malformed checkpoint payload at sequence ${event.journal_sequence}`)
+        return
+      }
+      const checkpoint = event.checkpoint
       const previous = checkpoints.at(-1)
       if (checkpoint.checkpoint_sequence !== checkpoints.length) integrity.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
       if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) integrity.push("checkpoint previous reference mismatch")
@@ -80,8 +92,12 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       pendingModel = undefined
       lastTransition = "checkpointed"
     } else if (event.kind === "runtime_commander_investigation_finished") {
+      if (!isFinishedPayload(event)) {
+        integrity.push(`malformed terminal payload at sequence ${event.journal_sequence}`)
+        return
+      }
       if (terminal) integrity.push("duplicate terminal event")
-      terminal = event as CommanderInvestigationFinishedPayload
+      terminal = event
       const previous = checkpoints.at(-1)
       if (terminal.terminal.last_checkpoint_id !== previous?.checkpoint_id || terminal.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) integrity.push("terminal last-checkpoint reference mismatch")
       if (!verifyTerminal(terminal.terminal)) integrity.push("terminal hash mismatch")
@@ -207,6 +223,76 @@ function verifyPayloadHash(event: JsonlEvent): boolean {
   if (typeof event.event_payload_hash !== "string") return false
   const { event_id: _eventId, timestamp: _timestamp, kind: _kind, ...payload } = event
   return stableHash({ ...payload, event_payload_hash: "" }) === event.event_payload_hash
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function hasString(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === "string"
+}
+
+function hasNumber(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === "number" && Number.isFinite(value[key])
+}
+
+function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint {
+  if (!isRecord(value)) return false
+  return (
+    value.schema_version === 1 &&
+    hasString(value, "checkpoint_id") &&
+    hasString(value, "investigation_id") &&
+    hasNumber(value, "checkpoint_sequence") &&
+    hasString(value, "checkpoint_hash") &&
+    isRecord(value.working_set)
+  )
+}
+
+function isStartedPayload(event: JsonlEvent): event is CommanderInvestigationStartedPayload {
+  if (event.schema_version !== 1 || !isCheckpoint(event.initial_checkpoint)) return false
+  return (
+    hasString(event, "objective") &&
+    hasString(event, "objective_hash") &&
+    hasString(event, "requested_by") &&
+    hasString(event, "provider_id") &&
+    hasString(event, "provider_kind") &&
+    hasString(event, "model_id") &&
+    hasString(event, "tool_protocol") &&
+    hasString(event, "started_at") &&
+    isRecord(event.budget) &&
+    hasString(event.budget, "budget_id") &&
+    hasString(event, "budget_hash") &&
+    isRecord(event.bootstrap_ref) &&
+    hasString(event.bootstrap_ref, "bootstrap_id") &&
+    hasString(event.bootstrap_ref, "bootstrap_hash") &&
+    Array.isArray(event.initial_loaded_tool_refs)
+  )
+}
+
+function isModelStepStartedPayload(event: JsonlEvent): event is CommanderInvestigationModelStepStartedPayload {
+  return event.schema_version === 1 && hasString(event, "model_request_id") && hasNumber(event, "turn_index")
+}
+
+function isCheckpointedPayload(event: JsonlEvent): event is CommanderInvestigationCheckpointedPayload {
+  return event.schema_version === 1 && isCheckpoint(event.checkpoint)
+}
+
+function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFinishedPayload {
+  if (event.schema_version !== 1 || !isRecord(event.terminal)) return false
+  return (
+    hasString(event.terminal, "last_checkpoint_id") &&
+    hasString(event.terminal, "last_checkpoint_hash") &&
+    hasString(event.terminal, "terminal_hash") &&
+    hasString(event.terminal, "completed_at") &&
+    hasNumber(event.terminal, "model_turn_count") &&
+    hasNumber(event.terminal, "provider_request_count") &&
+    hasNumber(event.terminal, "tool_call_count") &&
+    hasNumber(event.terminal, "tool_search_call_count") &&
+    Array.isArray(event.terminal.loaded_tool_ids) &&
+    Array.isArray(event.terminal.evidence_cards) &&
+    isRecord(event.terminal.provider_audit)
+  )
 }
 
 function verifyCheckpoint(checkpoint: CommanderInvestigationCheckpoint): boolean {
