@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { EventStore } from "./events/event-store"
@@ -2706,12 +2707,12 @@ export class RuntimeServer {
   async runCommanderInvestigationDurable(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
     if (this.mode !== "active" || !this.started || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
       const blocked = await this.commanderInvestigationController().run({ ...input, abort_signal: alreadyAbortedSignal("durable Commander investigation requires active ready runtime with run lock") })
-      return {
+      return durableOverrideResult(blocked, {
         ...blocked,
         status: "blocked",
         stop_reason: "provider_preflight_blocked",
         blockers: ["durable Commander investigation requires active ready runtime with run lock"],
-      }
+      })
     }
     const journal = this.commanderInvestigationJournalService()
     const durableInput = { ...input, investigation_id: input.investigation_id ?? this.generatedCommanderInvestigationId(input) }
@@ -2802,7 +2803,7 @@ export class RuntimeServer {
   }
 
   private generatedCommanderInvestigationId(input: CommanderInvestigationInput): string {
-    return `commander_investigation_${stableHash({ input: { ...input, abort_signal: undefined }, generated_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString() }).slice(0, 16)}`
+    return `commander_investigation_${stableHash({ input: { ...input, abort_signal: undefined }, generated_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString(), nonce: randomUUID() }).slice(0, 16)}`
   }
 
   private async drainConfiguredCommanderInvestigations(): Promise<void> {

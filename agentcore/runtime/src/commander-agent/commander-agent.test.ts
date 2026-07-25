@@ -2394,6 +2394,21 @@ describe("Commander in-memory investigation controller", () => {
     }))
     expect(duplicate.result_hash).not.toBe(preOverride.result_hash)
     await server.shutdown()
+    const stopped = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_stopped_preflight" }))
+    expect(stopped).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0 })
+    const preflightAbort = new AbortController()
+    preflightAbort.abort(new Error("durable Commander investigation requires active ready runtime with run lock"))
+    const stoppedPreOverride = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_stopped_preflight", abort_signal: preflightAbort.signal }))
+    expect(stopped.result_hash).toBe(stableHash({
+      semantic: stoppedPreOverride.result_hash,
+      status: stopped.status,
+      stop_reason: stopped.stop_reason,
+      blockers: stopped.blockers,
+      provider_request_count: stopped.provider_request_count,
+      tool_call_count: stopped.tool_call_count,
+      investigation_event_count: stopped.investigation_event_count,
+      external_api_audit_events_appended: stopped.external_api_audit_events_appended,
+    }))
 
     const failingServer = new RuntimeServer({
       projectDir,
@@ -2412,6 +2427,29 @@ describe("Commander in-memory investigation controller", () => {
     expect(terminalFailure.durability).toMatchObject({ terminal_persisted: false, original_terminal_status_if_persistence_failed: "final" })
     const projected = await failingServer.getCommanderInvestigationRecord("inv_terminal_fail")
     expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
+  })
+
+  test("durable generated investigation ids remain unique with fixed clock", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-generated-id-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      researchSynthesisNow: () => new Date("2026-01-01T00:00:00.000Z"),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "first generated" }, { status: "final", text: "second generated" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const first = await server.runCommanderInvestigationDurable(baseInvestigation({ objective: "fixed-clock generated durable id" }))
+    const second = await server.runCommanderInvestigationDurable(baseInvestigation({ objective: "fixed-clock generated durable id" }))
+    expect(first.status).toBe("final")
+    expect(second.status).toBe("final")
+    expect(first.investigation_id).toStartWith("commander_investigation_")
+    expect(second.investigation_id).toStartWith("commander_investigation_")
+    expect(first.investigation_id).not.toBe(second.investigation_id)
+    const records = await server.listCommanderInvestigationRecords({ limit: 10 })
+    expect(records.map((record) => record.investigation_id)).toContain(first.investigation_id)
+    expect(records.map((record) => record.investigation_id)).toContain(second.investigation_id)
   })
 
   test("durable journal reserves ids across awaited lookup and exact get bypasses list pagination", async () => {
@@ -2522,6 +2560,61 @@ describe("Commander in-memory investigation controller", () => {
       },
       event_payload_hash: "bad_terminal_payload_hash",
     } as Parameters<EventStore["append"]>[0])
+    const corruptTerminalInput = baseInvestigation({ investigation_id: "inv_corrupt_terminal", objective: "corrupt terminal" })
+    const corruptTerminalRun = await service.createObserver(corruptTerminalInput)
+    await corruptTerminalRun.observer.onStarted(durableStartedSnapshot(corruptTerminalInput, 3, "inv_corrupt_terminal") as Parameters<typeof corruptTerminalRun.observer.onStarted>[0])
+    const corruptTerminalCheckpoint = await service.latestCheckpoint("inv_corrupt_terminal")
+    expect(corruptTerminalCheckpoint?.checkpoint_sequence).toBe(0)
+    service.release(corruptTerminalRun)
+    await store.append({
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_corrupt_terminal",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:04.000Z",
+      terminal: {
+        schema_version: 1,
+        investigation_id: "inv_corrupt_terminal",
+        status: "final",
+        stop_reason: "model_final",
+        phase: "proposal_investigation",
+        objective_hash: "objective_hash_3",
+        provider_id: "fixture",
+        provider_kind: "unknown",
+        model_id: "cloud-long-context",
+        tool_protocol: "native",
+        final_summary: "corrupt terminal should not complete",
+        bootstrap_id: "bootstrap_3",
+        bootstrap_hash: "bootstrap_hash_3",
+        budget_id: "budget_3",
+        budget_hash: "budget_hash_3",
+        last_checkpoint_id: corruptTerminalCheckpoint?.checkpoint_id,
+        last_checkpoint_sequence: corruptTerminalCheckpoint?.checkpoint_sequence,
+        last_checkpoint_hash: corruptTerminalCheckpoint?.checkpoint_hash,
+        pending_model_request_id: undefined,
+        model_turn_count: 1,
+        provider_request_count: 1,
+        tool_call_count: 0,
+        tool_search_call_count: 0,
+        loaded_tool_ids: [],
+        evidence_cards: [],
+        turn_summaries: [],
+        omitted_evidence_count: 0,
+        omitted_turn_count: 0,
+        provider_audit: { audit_required: false, transport_kind: "none", connector_ids: [], provider_request_count: 0, external_api_audit_event_count: 0, successful_audit_count: 0, failed_audit_count: 0, audit_request_ids: [], audit_event_kinds: [], omitted_request_id_count: 0, all_provider_requests_audited: true, request_body_persisted: false, response_body_persisted: false, credentials_persisted: false, warnings: [] },
+        blockers: [],
+        warnings: [],
+        semantic_result_hash: "semantic_corrupt_terminal",
+        started_at: "2026-01-01T00:00:03.000Z",
+        completed_at: "2026-01-01T00:00:04.000Z",
+        terminal_hash: "bad_terminal_hash",
+        transcript_persisted: false,
+        raw_tool_results_persisted: false,
+        chain_of_thought_persisted: false,
+      },
+      event_payload_hash: "bad_corrupt_terminal_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
 
     const malformed = await service.get("inv_malformed_unsupported")
     expect(malformed).toMatchObject({
@@ -2538,10 +2631,13 @@ describe("Commander in-memory investigation controller", () => {
     const malformedTerminal = await service.get("inv_malformed_terminal")
     expect(malformedTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "no_checkpoint_resume_not_implemented" })
     expect(malformedTerminal?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const corruptTerminal = await service.get("inv_corrupt_terminal")
+    expect(corruptTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
+    expect(corruptTerminal?.integrity_errors.join("\n")).toContain("terminal hash mismatch")
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 4, running_count: 4, checkpoint_available_count: 2, corrupt_count: 2 })
+    expect(summary).toMatchObject({ total: 5, running_count: 5, checkpoint_available_count: 3, corrupt_count: 3 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {

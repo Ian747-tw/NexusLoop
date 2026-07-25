@@ -103,13 +103,17 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
         integrity.push(`malformed terminal payload at sequence ${event.journal_sequence}`)
         return
       }
-      if (terminal) integrity.push("duplicate terminal event")
-      terminal = event
+      const terminalErrors: string[] = []
+      if (terminal) terminalErrors.push("duplicate terminal event")
       const previous = checkpoints.at(-1)
-      if (terminal.terminal.last_checkpoint_id !== previous?.checkpoint_id || terminal.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) integrity.push("terminal last-checkpoint reference mismatch")
-      if (!verifyTerminal(terminal.terminal)) integrity.push("terminal hash mismatch")
-      pendingModel = undefined
-      lastTransition = "finished"
+      if (event.terminal.last_checkpoint_id !== previous?.checkpoint_id || event.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) terminalErrors.push("terminal last-checkpoint reference mismatch")
+      if (!verifyTerminal(event.terminal)) terminalErrors.push("terminal hash mismatch")
+      integrity.push(...terminalErrors)
+      if (terminalErrors.length === 0) {
+        terminal = event
+        pendingModel = undefined
+        lastTransition = "finished"
+      }
     }
   })
 
