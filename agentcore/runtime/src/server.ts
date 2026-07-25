@@ -2741,7 +2741,13 @@ export class RuntimeServer {
             blockers: ["durable Commander investigation stopped before journal start"],
           })
         }
-        const result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
+        let result: CommanderInvestigationResult
+        try {
+          result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
+        } catch (error) {
+          if (!run.state.started_persisted) throw error
+          result = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
+        }
         if (!run.state.started_persisted) return result
         try {
           const durability = await journal.finish(run, result)
@@ -5668,6 +5674,70 @@ function durablePersistenceFailedResult(result: CommanderInvestigationResult, st
     investigation_events_appended: state.investigation_event_count > 0,
     events_appended: result.external_api_audit_events_appended > 0 || state.investigation_event_count > 0,
     result_hash: stableHash({ semantic: result.result_hash, status: "failed", stop_reason: "persistence_failed", blocker: message }),
+  }
+}
+
+function durableControllerRejectedResult(state: import("./commander-agent").CommanderInvestigationJournalRunState, error: unknown, now: Date): CommanderInvestigationResult {
+  const checkpoint = state.latest_checkpoint
+  if (!checkpoint) throw error
+  const message = error instanceof Error ? redactText(error.message) : redactText(String(error))
+  const completedAt = now.toISOString()
+  const resultHash = stableHash({
+    status: "failed",
+    stop_reason: "controller_error",
+    investigation_id: checkpoint.investigation_id,
+    checkpoint_hash: checkpoint.checkpoint_hash,
+    pending_model_request_id: state.pending_model_request_id,
+    blocker: message,
+  })
+  return {
+    investigation_id: checkpoint.investigation_id,
+    status: "failed",
+    stop_reason: "controller_error",
+    phase: checkpoint.phase,
+    objective_preview: checkpoint.working_set.objective_preview,
+    provider_id: checkpoint.provider_id,
+    provider_kind: checkpoint.provider_kind,
+    model_id: checkpoint.model_id,
+    tool_protocol: checkpoint.tool_protocol,
+    bootstrap_id: checkpoint.bootstrap_ref.bootstrap_id,
+    bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
+    context_budget_id: checkpoint.budget.source_context_budget_id,
+    budget: checkpoint.budget,
+    model_turn_count: checkpoint.working_set.model_turn_count,
+    provider_request_count: checkpoint.provider_request_count,
+    tool_call_count: checkpoint.working_set.tool_call_count,
+    tool_search_call_count: checkpoint.working_set.tool_search_call_count,
+    loaded_tool_ids: checkpoint.working_set.loaded_tool_ids.slice(),
+    loaded_schema_bytes: 0,
+    loaded_schema_tokens: 0,
+    cumulative_tool_result_bytes: checkpoint.working_set.cumulative_tool_result_bytes,
+    evidence: checkpoint.working_set.evidence_cards.slice(),
+    turn_summaries: checkpoint.turn_summaries.slice(),
+    omitted_evidence_count: checkpoint.working_set.omitted_evidence_count,
+    omitted_turn_count: checkpoint.working_set.omitted_turn_count,
+    provider_audit: checkpoint.working_set.provider_audit,
+    blockers: [message || "Commander investigation controller rejected after durable start"],
+    warnings: [...checkpoint.working_set.current_warnings, "Durable Commander investigation was terminalized after controller rejection."].slice(0, 16),
+    started_at: checkpoint.created_at,
+    completed_at: completedAt,
+    duration_ms: Math.max(0, now.getTime() - Date.parse(checkpoint.created_at || completedAt)),
+    investigation_event_count: state.investigation_event_count,
+    in_memory_only: false,
+    transcript_persisted: false,
+    working_set_persisted: state.checkpoint_count > 0,
+    investigation_events_appended: state.investigation_event_count > 0,
+    external_api_audit_events_appended: checkpoint.external_api_audit_count,
+    events_appended: state.investigation_event_count > 0 || checkpoint.external_api_audit_count > 0,
+    files_written: false,
+    research_db_written: false,
+    mission_mutated: false,
+    proposal_mutated: false,
+    opencode_action_performed: false,
+    github_action_performed: false,
+    mcp_called: false,
+    external_research_called: false,
+    result_hash: resultHash,
   }
 }
 

@@ -56,12 +56,14 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     if (event.schema_version !== 1) unsupportedVersion = true
     if (event.journal_sequence !== index) integrity.push(`journal sequence gap at ${index}`)
     if (!verifyPayloadHash(event)) integrity.push(`payload hash mismatch at sequence ${event.journal_sequence}`)
-    if (terminal) integrity.push("investigation event appears after terminal event")
+    const afterTerminal = Boolean(terminal)
+    if (afterTerminal) integrity.push("investigation event appears after terminal event")
     if (event.kind === "runtime_commander_investigation_started") {
       if (!isStartedPayload(event)) {
         integrity.push(`malformed started payload at sequence ${event.journal_sequence}`)
         return
       }
+      if (afterTerminal) return
       if (index !== 0) integrity.push("started event is not first")
       if (started) integrity.push("duplicate started event")
       started = event
@@ -76,6 +78,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
         integrity.push(`malformed model-step payload at sequence ${event.journal_sequence}`)
         return
       }
+      if (afterTerminal) return
       const model = event
       if (seenRequests.has(model.model_request_id)) integrity.push(`duplicate model request ${model.model_request_id}`)
       seenRequests.add(model.model_request_id)
@@ -86,6 +89,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
         integrity.push(`malformed checkpoint payload at sequence ${event.journal_sequence}`)
         return
       }
+      if (afterTerminal) return
       const checkpoint = event.checkpoint
       const previous = checkpoints.at(-1)
       const checkpointErrors: string[] = []
@@ -103,6 +107,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
         integrity.push(`malformed terminal payload at sequence ${event.journal_sequence}`)
         return
       }
+      if (afterTerminal) return
       const terminalErrors: string[] = []
       if (terminal) terminalErrors.push("duplicate terminal event")
       const previous = checkpoints.at(-1)

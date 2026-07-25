@@ -2429,6 +2429,34 @@ describe("Commander in-memory investigation controller", () => {
     expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
   })
 
+  test("durable controller rejection after start is terminalized before journal release", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-controller-reject-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{
+        assert_request: () => {
+          throw new Error("scripted adapter rejected after durable boundary")
+        },
+      }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_controller_reject" }))
+    expect(result).toMatchObject({ status: "failed", stop_reason: "controller_error", in_memory_only: false, investigation_events_appended: true })
+    expect(result.durability).toMatchObject({ terminal_persisted: true, resume_supported: false })
+    const record = await server.getCommanderInvestigationRecord("inv_controller_reject")
+    expect(record).toMatchObject({ status: "failed", stop_reason: "controller_error", recovery_state: "not_required", uncertain_provider_outcome: false })
+    const kinds = eventKinds(await eventText(projectDir)).filter((kind) => kind.startsWith("runtime_commander_investigation_"))
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_finished",
+    ])
+  })
+
   test("durable generated investigation ids remain unique with fixed clock", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-generated-id-"))
     await writeApprovedSpec(projectDir)
@@ -2455,7 +2483,8 @@ describe("Commander in-memory investigation controller", () => {
   test("durable terminal records compact evidence and turn summaries before the terminal cap", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-terminal-compact-"))
     await writeApprovedSpec(projectDir)
-    const input = baseInvestigation({ investigation_id: "inv_terminal_compact", objective: "compact terminal payload" })
+    const longModelId = `model_${"m".repeat(175)}`
+    const input = baseInvestigation({ investigation_id: "inv_terminal_compact", objective: "compact terminal payload", model_id: longModelId })
     const controllerServer = new RuntimeServer({
       projectDir,
       adapter: new FakeOpenCodeAdapter(),
@@ -2492,6 +2521,7 @@ describe("Commander in-memory investigation controller", () => {
     const finished = (await store.readAll()).find((event) => event.kind === "runtime_commander_investigation_finished")
     expect(finished).toBeDefined()
     expect(Buffer.byteLength(JSON.stringify(finished))).toBeLessThanOrEqual(48_000)
+    expect((finished as { terminal?: { model_id?: string; evidence_cards?: unknown[]; turn_summaries?: unknown[]; omitted_evidence_count?: number; omitted_turn_count?: number } }).terminal?.model_id).toBe(longModelId)
     expect((finished as { terminal?: { evidence_cards?: unknown[]; turn_summaries?: unknown[]; omitted_evidence_count?: number; omitted_turn_count?: number } }).terminal?.omitted_evidence_count).toBeGreaterThan(0)
   })
 
@@ -2710,6 +2740,73 @@ describe("Commander in-memory investigation controller", () => {
       },
       event_payload_hash: "bad_nested_terminal_payload_hash",
     } as Parameters<EventStore["append"]>[0])
+    const postTerminalInput = baseInvestigation({ investigation_id: "inv_post_terminal_checkpoint", objective: "post terminal checkpoint" })
+    const postTerminalRun = await service.createObserver(postTerminalInput)
+    await postTerminalRun.observer.onStarted(durableStartedSnapshot(postTerminalInput, 5, "inv_post_terminal_checkpoint") as Parameters<typeof postTerminalRun.observer.onStarted>[0])
+    const postTerminalInitial = await service.latestCheckpoint("inv_post_terminal_checkpoint")
+    expect(postTerminalInitial).toBeDefined()
+    const postTerminalBaseResult: Awaited<ReturnType<RuntimeServer["runCommanderInvestigationInMemory"]>> = {
+      investigation_id: "inv_post_terminal_checkpoint",
+      status: "final" as const,
+      stop_reason: "model_final" as const,
+      phase: "proposal_investigation" as const,
+      objective_preview: "post terminal checkpoint",
+      provider_id: "fixture",
+      provider_kind: "unknown",
+      model_id: "cloud-long-context",
+      tool_protocol: "native" as const,
+      final_summary: "finished before corrupt checkpoint",
+      bootstrap_id: "bootstrap_5",
+      bootstrap_hash: "bootstrap_hash_5",
+      context_budget_id: "ctx_5",
+      budget: postTerminalInitial!.budget,
+      model_turn_count: 1,
+      provider_request_count: 1,
+      tool_call_count: 0,
+      tool_search_call_count: 0,
+      loaded_tool_ids: [],
+      loaded_schema_bytes: 0,
+      loaded_schema_tokens: 0,
+      cumulative_tool_result_bytes: 0,
+      evidence: [],
+      turn_summaries: [],
+      omitted_evidence_count: 0,
+      omitted_turn_count: 0,
+      provider_audit: { audit_required: false, transport_kind: "none" as const, connector_ids: [], provider_request_count: 0, external_api_audit_event_count: 0, successful_audit_count: 0, failed_audit_count: 0, audit_request_ids: [], audit_event_kinds: [], omitted_request_id_count: 0, all_provider_requests_audited: true, request_body_persisted: false, response_body_persisted: false, credentials_persisted: false, warnings: [] },
+      blockers: [],
+      warnings: [],
+      started_at: "2026-01-01T00:00:05.000Z",
+      completed_at: "2026-01-01T00:00:06.000Z",
+      duration_ms: 1000,
+      investigation_event_count: 1,
+      in_memory_only: false,
+      transcript_persisted: false as const,
+      working_set_persisted: true,
+      investigation_events_appended: true,
+      external_api_audit_events_appended: 0,
+      events_appended: true,
+      files_written: false as const,
+      research_db_written: false as const,
+      mission_mutated: false as const,
+      proposal_mutated: false as const,
+      opencode_action_performed: false as const,
+      github_action_performed: false as const,
+      mcp_called: false as const,
+      external_research_called: false as const,
+      result_hash: stableHash({ result: "post_terminal" }),
+    }
+    await service.finish(postTerminalRun, postTerminalBaseResult)
+    service.release(postTerminalRun)
+    await store.append({
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_post_terminal_checkpoint",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:07.000Z",
+      checkpoint: { ...postTerminalInitial!, checkpoint_id: "post_terminal_bad_checkpoint", checkpoint_sequence: 1, previous_checkpoint_id: postTerminalInitial!.checkpoint_id, previous_checkpoint_hash: postTerminalInitial!.checkpoint_hash },
+      event_payload_hash: "bad_post_terminal_checkpoint_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
 
     const malformed = await service.get("inv_malformed_unsupported")
     expect(malformed).toMatchObject({
@@ -2732,10 +2829,15 @@ describe("Commander in-memory investigation controller", () => {
     const nestedBadTerminal = await service.get("inv_nested_bad_terminal")
     expect(nestedBadTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
     expect(nestedBadTerminal?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const postTerminal = await service.get("inv_post_terminal_checkpoint")
+    expect(postTerminal).toMatchObject({ projection_status: "corrupt", status: "final", recovery_state: "not_required", latest_checkpoint_id: postTerminalInitial!.checkpoint_id })
+    expect(postTerminal?.integrity_errors.join("\n")).toContain("investigation event appears after terminal event")
+    expect(await service.latestCheckpoint("inv_post_terminal_checkpoint")).toEqual(postTerminalInitial)
+    expect(await service.getCheckpoint("post_terminal_bad_checkpoint")).toBeUndefined()
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 6, running_count: 6, checkpoint_available_count: 4, corrupt_count: 4 })
+    expect(summary).toMatchObject({ total: 7, running_count: 6, terminal_count: 1, final_count: 1, checkpoint_available_count: 5, corrupt_count: 5 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {
