@@ -293,7 +293,8 @@ function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint
     hasNumber(value, "provider_request_count") &&
     hasNumber(value, "external_api_audit_count") &&
     hasString(value, "checkpoint_hash") &&
-    isDurableWorkingSet(value.working_set)
+    isDurableWorkingSet(value.working_set) &&
+    Array.isArray(value.turn_summaries)
   )
 }
 
@@ -302,10 +303,26 @@ function isDurableWorkingSet(value: unknown): boolean {
   return (
     Array.isArray(value.loaded_tool_ids) &&
     Array.isArray(value.evidence_cards) &&
+    value.evidence_cards.every(isEvidenceCard) &&
     Array.isArray(value.current_warnings) &&
     hasNumber(value, "model_turn_count") &&
     hasNumber(value, "tool_call_count") &&
     hasNumber(value, "tool_search_call_count")
+  )
+}
+
+function isEvidenceCard(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  return (
+    hasString(value, "evidence_id") &&
+    hasString(value, "tool_id") &&
+    hasString(value, "source_kind") &&
+    hasString(value, "source_id") &&
+    hasString(value, "title") &&
+    hasString(value, "summary_preview") &&
+    Array.isArray(value.source_refs) &&
+    Array.isArray(value.warnings) &&
+    hasString(value, "evidence_hash")
   )
 }
 
@@ -362,6 +379,7 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     hasNumber(event.terminal, "tool_search_call_count") &&
     Array.isArray(event.terminal.loaded_tool_ids) &&
     Array.isArray(event.terminal.evidence_cards) &&
+    event.terminal.evidence_cards.every(isEvidenceCard) &&
     isRecord(event.terminal.provider_audit)
   )
 }

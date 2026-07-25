@@ -181,9 +181,8 @@ export class CommanderInvestigationJournalService {
       raw_tool_results_persisted: false,
       chain_of_thought_persisted: false,
     }
-    terminal = redactValue(terminal) as CommanderInvestigationTerminalRecord
-    terminal.terminal_hash = stableHash({ ...terminal, terminal_hash: "" })
-    const payload = withPayloadHash({
+    terminal = finalizeTerminalHash(redactValue(compactTerminal(terminal, TERMINAL_CAP - 512)) as CommanderInvestigationTerminalRecord)
+    let payload = withPayloadHash({
       schema_version: 1 as const,
       investigation_id: result.investigation_id,
       journal_sequence: run.state.journal_sequence,
@@ -192,6 +191,20 @@ export class CommanderInvestigationJournalService {
       terminal,
       event_payload_hash: "",
     } satisfies CommanderInvestigationFinishedPayload)
+    while (eventBytes({ kind: "runtime_commander_investigation_finished", ...payload }) > TERMINAL_CAP) {
+      const next = compactTerminalOnce(payload.terminal)
+      if (next === payload.terminal) break
+      terminal = finalizeTerminalHash(redactValue(next) as CommanderInvestigationTerminalRecord)
+      payload = withPayloadHash({
+        schema_version: 1 as const,
+        investigation_id: result.investigation_id,
+        journal_sequence: run.state.journal_sequence,
+        requested_by: run.state.requested_by,
+        occurred_at: payload.occurred_at,
+        terminal,
+        event_payload_hash: "",
+      } satisfies CommanderInvestigationFinishedPayload)
+    }
     const eventId = await this.appendCapped("runtime_commander_investigation_finished", payload, TERMINAL_CAP)
     run.state.terminal_persisted = true
     run.state.finished_event_id = eventId
@@ -609,6 +622,31 @@ function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: nu
   if (eventBytes({ checkpoint: current }) > cap && current.replay_exchange) {
     current = { ...current, replay_exchange: { ...current.replay_exchange, tool_result_messages: current.replay_exchange.tool_result_messages.map((message) => ({ ...message, content: JSON.stringify({ status: "omitted_for_checkpoint_budget", tool_id: message.tool_id, tool_call_id: message.tool_call_id }).slice(0, 400), truncated: true })) } }
   }
+  return current
+}
+
+function compactTerminal(terminal: CommanderInvestigationTerminalRecord, cap: number): CommanderInvestigationTerminalRecord {
+  let current = terminal
+  while (eventBytes({ terminal: current }) > cap) {
+    const next = compactTerminalOnce(current)
+    if (next === current) break
+    current = next
+  }
+  return current
+}
+
+function compactTerminalOnce(terminal: CommanderInvestigationTerminalRecord): CommanderInvestigationTerminalRecord {
+  if (terminal.turn_summaries.length > 0) return { ...terminal, turn_summaries: terminal.turn_summaries.slice(1), omitted_turn_count: terminal.omitted_turn_count + 1 }
+  if (terminal.evidence_cards.length > 0) return { ...terminal, evidence_cards: terminal.evidence_cards.slice(1), omitted_evidence_count: terminal.omitted_evidence_count + 1 }
+  if (terminal.warnings.length > 0) return { ...terminal, warnings: terminal.warnings.slice(0, -1) }
+  if (terminal.blockers.length > 0) return { ...terminal, blockers: terminal.blockers.slice(0, -1) }
+  if (terminal.final_summary && terminal.final_summary.length > 500) return { ...terminal, final_summary: terminal.final_summary.slice(0, 500) }
+  return terminal
+}
+
+function finalizeTerminalHash(terminal: CommanderInvestigationTerminalRecord): CommanderInvestigationTerminalRecord {
+  const current = { ...terminal, terminal_hash: "" }
+  current.terminal_hash = stableHash({ ...current, terminal_hash: "" })
   return current
 }
 

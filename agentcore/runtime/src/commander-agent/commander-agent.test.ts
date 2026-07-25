@@ -2452,6 +2452,49 @@ describe("Commander in-memory investigation controller", () => {
     expect(records.map((record) => record.investigation_id)).toContain(second.investigation_id)
   })
 
+  test("durable terminal records compact evidence and turn summaries before the terminal cap", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-terminal-compact-"))
+    await writeApprovedSpec(projectDir)
+    const input = baseInvestigation({ investigation_id: "inv_terminal_compact", objective: "compact terminal payload" })
+    const controllerServer = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "terminal compact final" }]),
+    })
+    servers.push({ stop: () => controllerServer.shutdown() })
+    const baseResult = await controllerServer.runCommanderInvestigationInMemory(input)
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_terminal_compact") as Parameters<typeof run.observer.onStarted>[0])
+    const largeTurns = Array.from({ length: 12 }, (_, index) => ({
+      ...baseResult.turn_summaries[0],
+      turn_index: index + 1,
+      model_request_id: `model_request_large_terminal_${index}`,
+      assistant_text_preview: "assistant terminal summary ".repeat(30),
+      warnings: Array.from({ length: 8 }, (__, warningIndex) => `terminal warning ${index}-${warningIndex} ${"w".repeat(220)}`),
+      turn_hash: `turn_hash_large_terminal_${index}`,
+    }))
+    const largeResult = {
+      ...baseResult,
+      evidence: Array.from({ length: 24 }, (_, index) => largeEvidenceCard(index)),
+      turn_summaries: largeTurns,
+      omitted_evidence_count: 0,
+      omitted_turn_count: 0,
+      budget: { ...baseResult.budget, max_evidence_cards: 24, max_turn_summaries: 12 },
+      final_summary: "terminal final summary ".repeat(240),
+    }
+    const durability = await service.finish(run, largeResult)
+    expect(durability.terminal_persisted).toBe(true)
+    service.release(run)
+    const record = await service.get("inv_terminal_compact")
+    expect(record).toMatchObject({ status: "final", projection_status: "ready", recovery_state: "not_required" })
+    const finished = (await store.readAll()).find((event) => event.kind === "runtime_commander_investigation_finished")
+    expect(finished).toBeDefined()
+    expect(Buffer.byteLength(JSON.stringify(finished))).toBeLessThanOrEqual(48_000)
+    expect((finished as { terminal?: { evidence_cards?: unknown[]; turn_summaries?: unknown[]; omitted_evidence_count?: number; omitted_turn_count?: number } }).terminal?.omitted_evidence_count).toBeGreaterThan(0)
+  })
+
   test("durable journal reserves ids across awaited lookup and exact get bypasses list pagination", async () => {
     const raceDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-race-"))
     const raceStore = new EventStore(join(raceDir, ".nxl", "events.jsonl"))
@@ -2615,6 +2658,58 @@ describe("Commander in-memory investigation controller", () => {
       },
       event_payload_hash: "bad_corrupt_terminal_payload_hash",
     } as Parameters<EventStore["append"]>[0])
+    const nestedBadTerminalInput = baseInvestigation({ investigation_id: "inv_nested_bad_terminal", objective: "nested bad terminal evidence" })
+    const nestedBadTerminalRun = await service.createObserver(nestedBadTerminalInput)
+    await nestedBadTerminalRun.observer.onStarted(durableStartedSnapshot(nestedBadTerminalInput, 4, "inv_nested_bad_terminal") as Parameters<typeof nestedBadTerminalRun.observer.onStarted>[0])
+    const nestedBadTerminalCheckpoint = await service.latestCheckpoint("inv_nested_bad_terminal")
+    service.release(nestedBadTerminalRun)
+    await store.append({
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_nested_bad_terminal",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:05.000Z",
+      terminal: {
+        schema_version: 1,
+        investigation_id: "inv_nested_bad_terminal",
+        status: "final",
+        stop_reason: "model_final",
+        phase: "proposal_investigation",
+        objective_hash: "objective_hash_4",
+        provider_id: "fixture",
+        provider_kind: "unknown",
+        model_id: "cloud-long-context",
+        tool_protocol: "native",
+        bootstrap_id: "bootstrap_4",
+        bootstrap_hash: "bootstrap_hash_4",
+        budget_id: "budget_4",
+        budget_hash: "budget_hash_4",
+        last_checkpoint_id: nestedBadTerminalCheckpoint?.checkpoint_id,
+        last_checkpoint_sequence: nestedBadTerminalCheckpoint?.checkpoint_sequence,
+        last_checkpoint_hash: nestedBadTerminalCheckpoint?.checkpoint_hash,
+        model_turn_count: 1,
+        provider_request_count: 1,
+        tool_call_count: 0,
+        tool_search_call_count: 0,
+        loaded_tool_ids: [],
+        evidence_cards: [null],
+        turn_summaries: [],
+        omitted_evidence_count: 0,
+        omitted_turn_count: 0,
+        provider_audit: { audit_required: false, transport_kind: "none", connector_ids: [], provider_request_count: 0, external_api_audit_event_count: 0, successful_audit_count: 0, failed_audit_count: 0, audit_request_ids: [], audit_event_kinds: [], omitted_request_id_count: 0, all_provider_requests_audited: true, request_body_persisted: false, response_body_persisted: false, credentials_persisted: false, warnings: [] },
+        blockers: [],
+        warnings: [],
+        semantic_result_hash: "semantic_nested_bad_terminal",
+        started_at: "2026-01-01T00:00:04.000Z",
+        completed_at: "2026-01-01T00:00:05.000Z",
+        terminal_hash: "nested_bad_terminal_hash",
+        transcript_persisted: false,
+        raw_tool_results_persisted: false,
+        chain_of_thought_persisted: false,
+      },
+      event_payload_hash: "bad_nested_terminal_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
 
     const malformed = await service.get("inv_malformed_unsupported")
     expect(malformed).toMatchObject({
@@ -2634,10 +2729,13 @@ describe("Commander in-memory investigation controller", () => {
     const corruptTerminal = await service.get("inv_corrupt_terminal")
     expect(corruptTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
     expect(corruptTerminal?.integrity_errors.join("\n")).toContain("terminal hash mismatch")
+    const nestedBadTerminal = await service.get("inv_nested_bad_terminal")
+    expect(nestedBadTerminal).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
+    expect(nestedBadTerminal?.integrity_errors.join("\n")).toContain("malformed terminal payload")
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 5, running_count: 5, checkpoint_available_count: 3, corrupt_count: 3 })
+    expect(summary).toMatchObject({ total: 6, running_count: 6, checkpoint_available_count: 4, corrupt_count: 4 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {
@@ -3330,6 +3428,31 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
       working_set_hash: `working_set_hash_${index}`,
     },
     started_at: occurred,
+  }
+}
+
+function largeEvidenceCard(index: number) {
+  return {
+    evidence_id: `evidence_large_terminal_${index}`,
+    tool_id: "memory.search",
+    source_kind: "operational_memory" as const,
+    source_id: `source_large_terminal_${index}`,
+    title: `Large terminal evidence ${index} ${"t".repeat(220)}`,
+    summary_preview: `Large terminal evidence summary ${index} ${"s".repeat(1_200)}`,
+    trust_class: "research_projection" as const,
+    instruction_semantics: "none" as const,
+    source_refs: Array.from({ length: 8 }, (_, refIndex) => ({
+      source_kind: "operational_memory",
+      source_id: `source_large_terminal_${index}_${refIndex}`,
+      label: `Large source ref ${index}-${refIndex} ${"l".repeat(220)}`,
+      summary_preview: `Large source summary ${index}-${refIndex} ${"r".repeat(500)}`,
+      pointer_only: true as const,
+    })),
+    content_included: false,
+    content_truncated: true,
+    observed_at: "2026-01-01T00:00:00.000Z",
+    warnings: Array.from({ length: 6 }, (_, warningIndex) => `large warning ${index}-${warningIndex} ${"w".repeat(240)}`),
+    evidence_hash: stableHash({ evidence: index }),
   }
 }
 
