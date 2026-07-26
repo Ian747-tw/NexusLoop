@@ -3549,6 +3549,33 @@ describe("Commander in-memory investigation controller", () => {
     service.release(evidenceRun)
     const evidenceSearch = await server.searchCommanderOperationalMemory({ query: "rare amber finding", source_kinds: ["commander_investigation"], session_id: "session_search" })
     expect(evidenceSearch.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable_evidence" })])
+
+    const corruptInput = baseInvestigation({ investigation_id: "inv_corrupt_searchable", objective: "Generic corrupt durable objective", session_id: "session_search" })
+    const corruptRun = await service.createObserver(corruptInput)
+    await corruptRun.observer.onStarted(durableStartedSnapshot(corruptInput, 1, "inv_corrupt_searchable") as Parameters<typeof corruptRun.observer.onStarted>[0])
+    await service.finish(corruptRun, {
+      ...baseResult,
+      investigation_id: "inv_corrupt_searchable",
+      final_summary: "quarantinedxyz finding must stay quarantined",
+      evidence: [{ ...evidenceCard("evidence_corrupt_searchable"), title: "Corrupt searchable evidence", summary_preview: "quarantinedxyz evidence preview must stay quarantined" }],
+    })
+    service.release(corruptRun)
+    const corruptInitial = await service.latestCheckpoint("inv_corrupt_searchable")
+    expect(corruptInitial).toBeDefined()
+    await server.eventStore.append({
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_corrupt_searchable",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:07.000Z",
+      checkpoint: { ...corruptInitial!, checkpoint_id: "corrupt_searchable_post_terminal_checkpoint", checkpoint_sequence: 1, previous_checkpoint_id: corruptInitial!.checkpoint_id, previous_checkpoint_hash: corruptInitial!.checkpoint_hash },
+      event_payload_hash: "bad_corrupt_searchable_post_terminal_payload_hash",
+    } as Parameters<EventStore["append"]>[0])
+    const corruptRecord = await service.get("inv_corrupt_searchable")
+    expect(corruptRecord).toMatchObject({ projection_status: "corrupt" })
+    const corruptSearch = await server.searchCommanderOperationalMemory({ query: "quarantinedxyz", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(corruptSearch.result?.candidates).toEqual([])
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
   })
 
@@ -3645,7 +3672,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
   })
 
-  test("durable shutdown timeout fences late journal writes and releases the run lock", async () => {
+  test("durable shutdown timeout fences late journal writes and retains the run lock until the investigation settles", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-shutdown-hung-durable-"))
     await writeApprovedSpec(projectDir)
     const adapter = new LateSettlingCommanderModelStepAdapter()
@@ -3657,16 +3684,19 @@ describe("Commander in-memory investigation controller", () => {
     await server.start()
     const investigation = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_hung_durable_shutdown" }))
     await waitForEventText(projectDir, "runtime_commander_investigation_model_step_started")
-    await server.shutdown("hung durable drain")
-    const eventsAtShutdown = await eventText(projectDir)
-    const kindsAtShutdown = eventKinds(eventsAtShutdown)
-    expect(kindsAtShutdown[kindsAtShutdown.length - 1]).toBe("runtime_shutdown")
+    await expect(server.shutdown("hung durable drain")).rejects.toThrow("run lock retained")
+    const eventsAtFailedShutdown = await eventText(projectDir)
+    expect(eventKinds(eventsAtFailedShutdown)).not.toContain("runtime_shutdown")
     adapter.resolve("late final after shutdown")
     const result = await investigation
     expect(result).toMatchObject({ status: "failed", stop_reason: "persistence_failed" })
     const eventsAfterLateSettle = await eventText(projectDir)
-    expect(eventsAfterLateSettle).toBe(eventsAtShutdown)
+    expect(eventsAfterLateSettle).toBe(eventsAtFailedShutdown)
     expect(eventKinds(eventsAfterLateSettle)).not.toContain("runtime_commander_investigation_finished")
+    await server.shutdown("hung durable drain after settle")
+    const finalEvents = await eventText(projectDir)
+    const finalKinds = eventKinds(finalEvents)
+    expect(finalKinds[finalKinds.length - 1]).toBe("runtime_shutdown")
     const next = new RuntimeServer({ projectDir, adapter: new FakeOpenCodeAdapter(), commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "after hung drain" }]) })
     await next.start()
     servers.push({ stop: () => next.shutdown() })

@@ -2858,6 +2858,7 @@ export class RuntimeServer {
         phase: "runtime_commander_investigation_drain_timeout",
         message: "Commander investigations did not settle before the shutdown drain timeout",
       })
+      throw new Error("Commander investigations did not settle before shutdown; run lock retained")
     }
   }
 
@@ -5158,6 +5159,7 @@ export class RuntimeServer {
     for (const ingestion of await this.listResearchIngestions({ limit: 100 })) push({ source_kind: "research_ingestion", source_id: ingestion.ingestion_id, label: "Research ingestion", status: ingestion.research_db_written ? "research_db_written" : "not_written", summary_preview: ingestion.research_title_preview, session_id: ingestion.session_id, launch_id: ingestion.launch_id, occurred_at: ingestion.recorded_at, fields: { evidence_kind: ingestion.evidence_kind, review_id: ingestion.review_id, report_id: ingestion.report_id } })
     for (const refresh of await this.listOpenCodeContextRefreshes({ limit: 100 })) push({ source_kind: "context_refresh", source_id: refresh.refresh_id, label: "Context refresh", status: refresh.status, summary_preview: refresh.summary_preview, session_id: refresh.target_session_id, launch_id: refresh.launch_id, occurred_at: refresh.written_at, fields: { mode: refresh.continuity_mode, packet_kind: refresh.packet_kind, previous_refresh_id: refresh.previous_refresh_id } })
     for (const investigation of await this.listCommanderInvestigationRecords({ limit: 100 })) {
+      if (investigation.projection_status !== "ready") continue
       push({
         source_kind: "commander_investigation",
         source_id: investigation.investigation_id,
