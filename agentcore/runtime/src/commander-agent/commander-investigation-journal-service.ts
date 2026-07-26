@@ -372,6 +372,7 @@ export class CommanderInvestigationJournalService {
   private async onCheckpoint(state: CommanderInvestigationJournalRunState, snapshot: CommanderInvestigationCheckpointSnapshot): Promise<void> {
     assertNotFenced(state)
     if (!state.started_persisted || !state.latest_checkpoint) throw new CommanderInvestigationPersistenceError("checkpoint cannot be persisted before durable start")
+    if (!state.pending_model_request_id) throw new CommanderInvestigationPersistenceError("checkpoint cannot be persisted without a pending model-step boundary")
     const checkpoint = this.buildCheckpoint({
       snapshot,
       checkpointKind: "turn_complete",

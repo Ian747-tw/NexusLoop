@@ -99,6 +99,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       const checkpoint = event.checkpoint
       const previous = checkpoints.at(-1)
       const checkpointErrors: string[] = []
+      if (!pendingModel) checkpointErrors.push("checkpoint missing model-step boundary")
       if (checkpoint.investigation_id !== investigationId) checkpointErrors.push("checkpoint investigation_id mismatch")
       if (checkpoint.checkpoint_sequence !== checkpoints.length) checkpointErrors.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
       if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) checkpointErrors.push("checkpoint previous reference mismatch")
@@ -119,7 +120,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (terminal) terminalErrors.push("duplicate terminal event")
       if (event.terminal.investigation_id !== investigationId) terminalErrors.push("terminal investigation_id mismatch")
       const previous = checkpoints.at(-1)
-      if (event.terminal.last_checkpoint_id !== previous?.checkpoint_id || event.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) terminalErrors.push("terminal last-checkpoint reference mismatch")
+      if (event.terminal.last_checkpoint_id !== previous?.checkpoint_id || event.terminal.last_checkpoint_sequence !== previous?.checkpoint_sequence || event.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) terminalErrors.push("terminal last-checkpoint reference mismatch")
       if (!verifyTerminal(event.terminal)) terminalErrors.push("terminal hash mismatch")
       integrity.push(...terminalErrors)
       if (terminalErrors.length === 0) {
@@ -399,6 +400,7 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     hasString(event.terminal, "tool_protocol") &&
     hasString(event.terminal, "semantic_result_hash") &&
     hasString(event.terminal, "last_checkpoint_id") &&
+    hasNumber(event.terminal, "last_checkpoint_sequence") &&
     hasString(event.terminal, "last_checkpoint_hash") &&
     hasString(event.terminal, "terminal_hash") &&
     hasString(event.terminal, "completed_at") &&

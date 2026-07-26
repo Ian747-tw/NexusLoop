@@ -67,9 +67,10 @@ export class CommanderOperationalMemorySearchService {
       .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
       .filter((record) => input.include_closed !== false || !isClosedOperationalStatus(record.status))
       .filter((record) => withinTime(record.occurred_at, input.since, input.until))
-    const scanned = Math.min(filteredRecords.length, SCAN_LIMIT)
+    const scanRecords = orderForScan(filteredRecords)
+    const scanned = Math.min(scanRecords.length, SCAN_LIMIT)
     const candidates = query
-      ? filteredRecords
+      ? scanRecords
           .slice(0, SCAN_LIMIT)
           .map((record) => scoreRecord(record, query))
           .filter((candidate) => candidate.relevance_score > 0)
@@ -246,6 +247,20 @@ function withinTime(value: string | undefined, since?: string, until?: string): 
 function isClosedOperationalStatus(status: string | undefined): boolean {
   const normalized = (status ?? "").toLowerCase()
   return ["closed", "complete", "completed", "accepted", "rejected", "failed", "cancelled", "canceled", "superseded", "resolved"].some((term) => normalized.includes(term))
+}
+
+function orderForScan(records: CommanderOperationalMemoryRecord[]): CommanderOperationalMemoryRecord[] {
+  return [...records].sort((a, b) => {
+    const priority = sourceKindPriority(a.source_kind) - sourceKindPriority(b.source_kind)
+    if (priority !== 0) return priority
+    const time = Date.parse(b.occurred_at ?? "") - Date.parse(a.occurred_at ?? "")
+    if (Number.isFinite(time) && time !== 0) return time
+    return `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`)
+  })
+}
+
+function sourceKindPriority(sourceKind: string): number {
+  return sourceKind === "commander_investigation" ? 0 : 1
 }
 
 function readCsv(value: unknown): string[] {
