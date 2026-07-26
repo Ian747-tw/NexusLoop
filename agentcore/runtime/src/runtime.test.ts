@@ -24529,6 +24529,15 @@ describe("ProcessOpenCodeAdapter", () => {
       summary_preview: "needle continuity target",
       session_id: "session-wanted",
     })
+    for (const status of ["final", "refused", "blocked", "budget_exhausted", "no_progress", "needs_human_review"]) {
+      records.push({
+        source_kind: "commander_investigation",
+        source_id: `closed-commander-${status}`,
+        label: "Commander investigation",
+        status,
+        summary_preview: `closed commander continuity target ${status}`,
+      })
+    }
     const service = new CommanderOperationalMemorySearchService({ collectRecords: async () => records, now: () => new Date("2026-01-01T00:00:00.000Z") })
     const result = await service.search({ query: "needle continuity target", session_id: "session-wanted", limit: 5 })
     expect(result).toMatchObject({ status: "ready", scanned_items: 1 })
@@ -24538,6 +24547,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(activeOnly).toMatchObject({ status: "ready", scanned_items: 1 })
     expect(activeOnly.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", status: "active" })])
     expect(JSON.stringify(activeOnly.result)).not.toContain("other-")
+    expect(JSON.stringify(activeOnly.result)).not.toContain("closed-commander-")
   })
 
   test("Commander operational memory search enforces its output budget", async () => {

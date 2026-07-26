@@ -2331,11 +2331,11 @@ describe("Commander in-memory investigation controller", () => {
       working_set_persisted: true,
       investigation_events_appended: true,
       transcript_persisted: false,
-      investigation_event_count: 5,
+      investigation_event_count: 6,
     })
     expect(result.events_appended).toBe(true)
     expect(result.result_hash).toBe(inMemory.result_hash)
-    expect(result.durability).toMatchObject({ mode: "event_journal", started_persisted: true, initial_checkpoint_persisted: true, terminal_persisted: true, checkpoint_count: 2, resume_supported: false })
+    expect(result.durability).toMatchObject({ mode: "event_journal", started_persisted: true, initial_checkpoint_persisted: true, terminal_persisted: true, checkpoint_count: 3, resume_supported: false })
 
     const events = await eventText(projectDir)
     const kinds = eventKinds(events).filter((kind) => kind.startsWith("runtime_commander_investigation_"))
@@ -2344,6 +2344,7 @@ describe("Commander in-memory investigation controller", () => {
       "runtime_commander_investigation_model_step_started",
       "runtime_commander_investigation_checkpointed",
       "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_checkpointed",
       "runtime_commander_investigation_finished",
     ])
     expect(events).toContain("\"journal_sequence\":0")
@@ -2360,7 +2361,7 @@ describe("Commander in-memory investigation controller", () => {
 
     const record = await server.getCommanderInvestigationRecord("inv_durable_journal")
     expect(record).toMatchObject({ status: "final", stop_reason: "model_final", checkpoint_available: true, resume_supported: false, recovery_state: "not_required", projection_status: "ready" })
-    expect(record?.investigation_event_count).toBe(5)
+    expect(record?.investigation_event_count).toBe(6)
     const checkpoint = await server.getLatestCommanderInvestigationCheckpoint("inv_durable_journal")
     expect(checkpoint).toMatchObject({ checkpoint_kind: "turn_complete", resume_supported: false, full_transcript_persisted: false, raw_tool_results_persisted: false, chain_of_thought_persisted: false })
     expect(checkpoint?.loaded_tools.every((tool) => !("input_schema" in tool))).toBe(true)
@@ -2399,7 +2400,7 @@ describe("Commander in-memory investigation controller", () => {
       max_turn_summaries: 1,
     }))
     expect(result.status).toBe("final")
-    expect(checkpoints).toHaveLength(2)
+    expect(checkpoints).toHaveLength(3)
     const workingSet = checkpoints.at(-1)!.working_set
     expect(workingSet.omitted_turn_count).toBeGreaterThan(0)
     expect(checkpoints.at(-1)!.turn_summaries).toHaveLength(1)
@@ -2565,7 +2566,12 @@ describe("Commander in-memory investigation controller", () => {
     const semantic = await comparisonServer.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_terminal_fail" }))
     expect(terminalFailure.result_hash).toBe(semantic.result_hash)
     const projected = await failingServer.getCommanderInvestigationRecord("inv_terminal_fail")
-    expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
+    expect(projected).toMatchObject({ status: "running", recovery_state: "checkpoint_available_resume_not_implemented", uncertain_provider_outcome: false, checkpoint_available: true, resume_supported: false })
+    const terminalFailureKinds = (await eventText(projectDir)).trim().split(/\n+/).filter(Boolean)
+      .map((line) => JSON.parse(line) as { kind?: string; investigation_id?: string })
+      .filter((event) => event.investigation_id === "inv_terminal_fail")
+      .map((event) => event.kind ?? "")
+    expect(terminalFailureKinds.filter((kind) => kind === "runtime_commander_investigation_checkpointed")).toHaveLength(1)
   })
 
   test("durable adapter rejection after model-step start preserves pending uncertainty", async () => {

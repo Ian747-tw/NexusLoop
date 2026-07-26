@@ -128,8 +128,12 @@ export class CommanderInvestigationController {
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
       if (deadline.expired()) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
       if (modelResult.status !== "tool_call") {
+        latestAssistant = modelResult.assistant_message
+        latestToolResults = []
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
+        const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
+        if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started)
         if (modelResult.status === "final") return this.finish(input, investigationId, "final", "model_final", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], [...modelResult.warnings, ...(modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [])], started, modelResult.text)
         if (modelResult.status === "refusal") return this.finish(input, investigationId, "refused", "model_refusal", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], modelResult.warnings, started)
         if (modelResult.status === "cancelled") return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "model request cancelled"], modelResult.warnings, started)

@@ -246,6 +246,7 @@ function withinTime(value: string | undefined, since?: string, until?: string): 
 
 function isClosedOperationalStatus(status: string | undefined): boolean {
   const normalized = (status ?? "").toLowerCase()
+  if (["final", "refused", "blocked", "budget_exhausted", "no_progress", "needs_human_review"].includes(normalized)) return true
   return ["closed", "complete", "completed", "accepted", "rejected", "failed", "cancelled", "canceled", "superseded", "resolved"].some((term) => normalized.includes(term))
 }
 
