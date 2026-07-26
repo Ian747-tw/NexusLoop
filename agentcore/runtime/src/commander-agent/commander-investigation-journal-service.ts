@@ -75,6 +75,7 @@ export type CommanderInvestigationJournalRunState = {
   started_persisted: boolean
   terminal_persisted: boolean
   persistence_fenced: boolean
+  in_flight_persistence: Set<Promise<unknown>>
   started_event_id?: string
   latest_checkpoint_event_id?: string
   finished_event_id?: string
@@ -117,6 +118,7 @@ export class CommanderInvestigationJournalService {
       started_persisted: false,
       terminal_persisted: false,
       persistence_fenced: false,
+      in_flight_persistence: new Set(),
       checkpoint_count: 0,
       investigation_event_count: 0,
       journal_sequence: 0,
@@ -142,6 +144,16 @@ export class CommanderInvestigationJournalService {
   fence(run: CommanderInvestigationJournalRun, reason: string): void {
     run.state.persistence_fenced = true
     run.state.warnings = [...run.state.warnings, bound(reason, 240)].slice(-12)
+  }
+
+  inFlightPersistenceCount(run: CommanderInvestigationJournalRun): number {
+    return run.state.in_flight_persistence.size
+  }
+
+  async settleInFlightPersistence(run: CommanderInvestigationJournalRun): Promise<void> {
+    while (run.state.in_flight_persistence.size > 0) {
+      await Promise.allSettled(Array.from(run.state.in_flight_persistence))
+    }
   }
 
   async finish(run: CommanderInvestigationJournalRun, result: CommanderInvestigationResult): Promise<CommanderInvestigationDurabilitySummary> {
@@ -213,7 +225,7 @@ export class CommanderInvestigationJournalService {
         event_payload_hash: "",
       } satisfies CommanderInvestigationFinishedPayload)
     }
-    const eventId = await this.appendCapped("runtime_commander_investigation_finished", payload, TERMINAL_CAP)
+    const eventId = await this.trackedAppendCapped(run.state, "runtime_commander_investigation_finished", payload, TERMINAL_CAP)
     run.state.terminal_persisted = true
     run.state.finished_event_id = eventId
     run.state.investigation_event_count += 1
@@ -324,7 +336,7 @@ export class CommanderInvestigationJournalService {
       summary_preview: `${snapshot.input.phase}: ${objective}`.slice(0, 400),
       event_payload_hash: "",
     } satisfies CommanderInvestigationStartedPayload)
-    const eventId = await this.appendCapped("runtime_commander_investigation_started", payload, STARTED_HARD_CAP)
+    const eventId = await this.trackedAppendCapped(state, "runtime_commander_investigation_started", payload, STARTED_HARD_CAP)
     state.started_persisted = true
     state.started_event_id = eventId
     state.latest_checkpoint = checkpoint
@@ -363,7 +375,7 @@ export class CommanderInvestigationJournalService {
       occurred_at: this.now().toISOString(),
       event_payload_hash: "",
     } satisfies CommanderInvestigationModelStepStartedPayload)
-    await this.appendCapped("runtime_commander_investigation_model_step_started", payload, MODEL_STEP_CAP)
+    await this.trackedAppendCapped(state, "runtime_commander_investigation_model_step_started", payload, MODEL_STEP_CAP)
     state.pending_model_request_id = snapshot.model_request_id
     state.investigation_event_count += 1
     state.journal_sequence += 1
@@ -396,7 +408,7 @@ export class CommanderInvestigationJournalService {
       checkpoint,
       event_payload_hash: "",
     })
-    const eventId = await this.appendCapped("runtime_commander_investigation_checkpointed", payload, this.checkpointPayloadCapBytes)
+    const eventId = await this.trackedAppendCapped(state, "runtime_commander_investigation_checkpointed", payload, this.checkpointPayloadCapBytes)
     state.latest_checkpoint = checkpoint
     state.latest_checkpoint_event_id = eventId
     state.checkpoint_count += 1
@@ -469,6 +481,16 @@ export class CommanderInvestigationJournalService {
     const redacted = redactValue(payload) as Record<string, unknown>
     if (eventBytes({ kind, ...redacted }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
     return this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
+  }
+
+  private async trackedAppendCapped(state: CommanderInvestigationJournalRunState, kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
+    const operation = this.appendCapped(kind, payload, cap)
+    state.in_flight_persistence.add(operation)
+    try {
+      return await operation
+    } finally {
+      state.in_flight_persistence.delete(operation)
+    }
   }
 
   durability(state: CommanderInvestigationJournalRunState): CommanderInvestigationDurabilitySummary {

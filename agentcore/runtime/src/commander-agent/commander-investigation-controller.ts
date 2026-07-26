@@ -733,6 +733,7 @@ function appendTurnSummary(turns: CommanderInvestigationTurnSummary[], summary: 
     turns.shift()
     workingSet.omitted_turn_count += 1
   }
+  workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
 }
 
 function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[], auditPolicy?: CommanderInvestigationProviderAuditPolicy): CommanderInvestigationWorkingSet {
@@ -907,8 +908,9 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
 }
 
 function stableWorkingSet(value: CommanderInvestigationWorkingSet): unknown {
+  const { working_set_hash: _workingSetHash, ...rest } = value
   return {
-    ...value,
+    ...rest,
     evidence_cards: value.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
     provider_audit: stableProviderAudit(value.provider_audit),
   }

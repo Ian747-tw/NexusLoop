@@ -44,6 +44,7 @@ import {
   validateCommanderInvestigationProviderConfig,
   validateCommanderConnectorModelTransportConfig,
   validateCommanderToolArguments,
+  type CommanderInvestigationCheckpointSnapshot,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
   type CommanderModelStepResult,
@@ -2366,6 +2367,49 @@ describe("Commander in-memory investigation controller", () => {
     expect(summary).toMatchObject({ total: 1, final_count: 1, checkpoint_available_count: 1 })
   })
 
+  test("durable checkpoint working-set hash is refreshed after turn summary eviction", async () => {
+    const contextBudgetService = new ContextBudgetService({ registry: new ModelCapabilityRegistry() })
+    const checkpoints: CommanderInvestigationCheckpointSnapshot[] = []
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("working_hash_search_1", "commander.tool_search", { query: "working hash alpha" })] },
+        { status: "tool_call", tool_calls: [toolCall("working_hash_search_2", "commander.tool_search", { query: "working hash beta" })] },
+        { status: "final", text: "Working hash final." },
+      ]),
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => minimalTestBootstrap() },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: new ModelCapabilityRegistry(),
+      contextBudgetService,
+      persistenceObserver: {
+        onStarted: () => undefined,
+        onModelStepStarted: () => undefined,
+        onCheckpoint: (snapshot) => {
+          checkpoints.push(snapshot)
+        },
+      },
+    })
+    const result = await controller.run(baseInvestigation({
+      investigation_id: "inv_working_hash_eviction",
+      objective: "checkpoint working set hash after turn summary cap",
+      max_turn_summaries: 1,
+    }))
+    expect(result.status).toBe("final")
+    expect(checkpoints).toHaveLength(2)
+    const workingSet = checkpoints.at(-1)!.working_set
+    expect(workingSet.omitted_turn_count).toBeGreaterThan(0)
+    expect(checkpoints.at(-1)!.turn_summaries).toHaveLength(1)
+    const { working_set_hash: _workingSetHash, ...stableWorkingSetFields } = workingSet
+    expect(workingSet.working_set_hash).toBe(stableHash({
+      ...stableWorkingSetFields,
+      evidence_cards: workingSet.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+      provider_audit: { ...workingSet.provider_audit, audit_request_ids: [] },
+    }))
+  })
+
   test("durable journal rejects duplicate ids and terminal persistence failures leave nonterminal projection", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-failures-"))
     await writeApprovedSpec(projectDir)
@@ -3356,6 +3400,47 @@ describe("Commander in-memory investigation controller", () => {
     await next.start()
     servers.push({ stop: () => next.shutdown() })
     expect(next.previewCommanderInvestigationProviderReadiness().runtime_started).toBe(true)
+  })
+
+  test("durable shutdown fails closed while a journal append is in flight", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-shutdown-inflight-journal-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "terminal append waits" }]),
+    })
+    const store = server.eventStore
+    const originalAppend = store.append.bind(store)
+    let terminalAppendStarted!: () => void
+    let releaseTerminalAppend!: () => void
+    const terminalAppendStartedPromise = new Promise<void>((resolve) => {
+      terminalAppendStarted = resolve
+    })
+    const terminalAppendGate = new Promise<void>((resolve) => {
+      releaseTerminalAppend = resolve
+    })
+    store.append = async (event) => {
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_finished") {
+        terminalAppendStarted()
+        await terminalAppendGate
+      }
+      return originalAppend(event)
+    }
+    await server.start()
+    const investigation = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_inflight_journal_shutdown", objective: "in-flight terminal journal append" }))
+    await terminalAppendStartedPromise
+    await expect(server.shutdown("in-flight durable journal")).rejects.toThrow("durable investigation persistence did not settle")
+    const eventsBeforeRelease = await eventText(projectDir)
+    expect(eventKinds(eventsBeforeRelease)).not.toContain("runtime_shutdown")
+    expect(server.previewCommanderInvestigationProviderReadiness().run_lock_held).toBe(true)
+    releaseTerminalAppend()
+    const result = await investigation
+    expect(result).toMatchObject({ status: "final", stop_reason: "model_final" })
+    await server.shutdown("after in-flight durable journal")
+    const kinds = eventKinds(await eventText(projectDir))
+    expect(kinds.indexOf("runtime_commander_investigation_finished")).toBeGreaterThan(-1)
+    expect(kinds.indexOf("runtime_commander_investigation_finished")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
   })
 })
 

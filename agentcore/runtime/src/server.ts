@@ -2839,6 +2839,20 @@ export class RuntimeServer {
           journal.fence(entry.run, "RuntimeServer shutdown drain timed out before durable investigation settled")
         }
       }
+      const inFlightPersistence = activeDurable
+        .filter((entry) => this.activeDurableCommanderInvestigations.has(entry) && entry.run && journal.inFlightPersistenceCount(entry.run) > 0)
+        .map((entry) => journal.settleInFlightPersistence(entry.run!))
+      if (inFlightPersistence.length > 0) {
+        const persistenceSettled = Symbol("commander-journal-persistence-settled")
+        const persistenceTimedOut = Symbol("commander-journal-persistence-timeout")
+        const persistenceResult = await Promise.race([
+          Promise.allSettled(inFlightPersistence).then(() => persistenceSettled),
+          new Promise<typeof persistenceTimedOut>((resolve) => setTimeout(() => resolve(persistenceTimedOut), 1000)),
+        ])
+        if (persistenceResult === persistenceTimedOut) {
+          throw new Error("Commander durable investigation persistence did not settle before shutdown; run lock retained")
+        }
+      }
       this.eventBus.emit({
         type: "ExecutorLifecycle",
         phase: "runtime_commander_investigation_drain_timeout",
