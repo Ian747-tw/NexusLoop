@@ -3334,6 +3334,16 @@ describe("Commander in-memory investigation controller", () => {
     badInitialCheckpoint.checkpoint_hash = stableHash({ ...badInitialCheckpoint, checkpoint_hash: "" })
     badInitial.event_payload_hash = journalPayloadHash(badInitial)
     await store.append(badInitial as Parameters<EventStore["append"]>[0])
+    const badLoadedRefs = structuredClone(seedStarted!) as Record<string, unknown>
+    badLoadedRefs.investigation_id = "inv_bad_initial_loaded_refs"
+    badLoadedRefs.journal_sequence = 0
+    badLoadedRefs.objective = "bad initial loaded refs"
+    badLoadedRefs.objective_hash = stableHash("bad initial loaded refs")
+    badLoadedRefs.occurred_at = "2026-01-01T00:00:09.000Z"
+    ;(badLoadedRefs.initial_checkpoint as Record<string, unknown>).investigation_id = "inv_bad_initial_loaded_refs"
+    badLoadedRefs.initial_loaded_tool_refs = [null]
+    badLoadedRefs.event_payload_hash = journalPayloadHash(badLoadedRefs)
+    await store.append(badLoadedRefs as Parameters<EventStore["append"]>[0])
     const badModelStepInput = baseInvestigation({ investigation_id: "inv_bad_model_step_base", objective: "bad model step base" })
     const badModelStepRun = await service.createObserver(badModelStepInput)
     await badModelStepRun.observer.onStarted(durableStartedSnapshot(badModelStepInput, 7, "inv_bad_model_step_base") as Parameters<typeof badModelStepRun.observer.onStarted>[0])
@@ -3574,6 +3584,9 @@ describe("Commander in-memory investigation controller", () => {
     expect(badInitialRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: false, recovery_state: "no_checkpoint_resume_not_implemented" })
     expect(badInitialRecord?.integrity_errors.join("\n")).toContain("initial checkpoint investigation_id mismatch")
     expect(await service.latestCheckpoint("inv_bad_initial_chain")).toBeUndefined()
+    const badLoadedRefsRecord = await service.get("inv_bad_initial_loaded_refs")
+    expect(badLoadedRefsRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: false, recovery_state: "no_checkpoint_resume_not_implemented" })
+    expect(badLoadedRefsRecord?.integrity_errors.join("\n")).toContain("malformed started payload")
     const badModelStepRecord = await service.get("inv_bad_model_step_base")
     expect(badModelStepRecord).toMatchObject({ projection_status: "corrupt", uncertain_provider_outcome: true, recovery_state: "uncertain_provider_outcome_resume_not_implemented" })
     expect(badModelStepRecord?.integrity_errors.join("\n")).toContain("model-step base checkpoint mismatch")
@@ -3600,7 +3613,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 16, running_count: 15, terminal_count: 1, final_count: 1, checkpoint_available_count: 13, uncertain_provider_outcome_count: 2, corrupt_count: 13 })
+    expect(summary).toMatchObject({ total: 17, running_count: 16, terminal_count: 1, final_count: 1, checkpoint_available_count: 13, uncertain_provider_outcome_count: 2, corrupt_count: 14 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {

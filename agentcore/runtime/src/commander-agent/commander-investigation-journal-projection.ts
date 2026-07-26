@@ -383,7 +383,22 @@ function isStartedPayload(event: JsonlEvent): event is CommanderInvestigationSta
     isRecord(event.bootstrap_ref) &&
     hasString(event.bootstrap_ref, "bootstrap_id") &&
     hasString(event.bootstrap_ref, "bootstrap_hash") &&
-    Array.isArray(event.initial_loaded_tool_refs)
+    Array.isArray(event.initial_loaded_tool_refs) &&
+    event.initial_loaded_tool_refs.every(isLoadedToolRef)
+  )
+}
+
+function isLoadedToolRef(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasString(value, "tool_id") &&
+    hasString(value, "descriptor_version") &&
+    hasString(value, "authority_id") &&
+    hasString(value, "input_schema_hash") &&
+    hasString(value, "output_schema_hash") &&
+    hasString(value, "load_policy") &&
+    hasString(value, "trust_class") &&
+    value.instruction_semantics === "none"
   )
 }
 
