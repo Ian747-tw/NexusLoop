@@ -3686,7 +3686,7 @@ describe("Commander in-memory investigation controller", () => {
       source_id: `wake_filler_${String(index).padStart(3, "0")}`,
       label: `Wake filler ${index}`,
       status: "ready",
-      summary_preview: index === 799 ? "rare guidance needle from wake supervision" : "wake scheduler unrelated filler",
+      summary_preview: index === 699 ? "rare guidance needle from wake supervision" : "wake scheduler unrelated filler",
       occurred_at: "2026-01-01T00:00:00.000Z",
       fields: { phase: "mid_mission_supervision" },
     }))
@@ -3695,7 +3695,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     const search = await service.search({ query: "rare guidance needle" })
     expect(search).toMatchObject({ status: "ready", scanned_items: 800 })
-    expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "wake_supervision", source_id: "wake_filler_799" })])
+    expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "wake_supervision", source_id: "wake_filler_699" })])
     expect(search.warnings).toContain("operational memory scan capped at 800 filtered typed records")
   })
 
