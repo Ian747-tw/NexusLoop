@@ -2751,6 +2751,10 @@ export class RuntimeServer {
           result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
         } catch (error) {
           if (!run.state.started_persisted) throw error
+          if (run.state.pending_model_request_id) {
+            const uncertain = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
+            return durablePersistenceFailedResult(uncertain, run.state, error)
+          }
           result = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
         }
         if (!run.state.started_persisted) return result

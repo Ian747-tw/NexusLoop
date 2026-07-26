@@ -153,6 +153,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
   const latestCheckpoint = checkpoints.at(-1)
   const terminalRecord = terminal?.terminal
   const evidenceCards = terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []
+  const omittedEvidenceCount = terminalRecord?.omitted_evidence_count ?? latestCheckpoint?.working_set.omitted_evidence_count ?? 0
   const uncertain = Boolean(pendingModel && !terminalRecord)
   const recoveryState = recovery(latestCheckpoint, uncertain, Boolean(terminalRecord))
   const record: CommanderInvestigationRecord = {
@@ -183,7 +184,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     tool_search_call_count: terminalRecord?.tool_search_call_count ?? latestCheckpoint?.working_set.tool_search_call_count ?? 0,
     loaded_tool_ids: terminalRecord?.loaded_tool_ids ?? latestCheckpoint?.working_set.loaded_tool_ids ?? started.initial_loaded_tool_refs.map((tool) => tool.tool_id),
     evidence_ids: evidenceCards.map((card) => card.evidence_id),
-    evidence_count: evidenceCards.length,
+    evidence_count: evidenceCards.length + omittedEvidenceCount,
     final_summary_preview: terminalRecord?.final_summary?.slice(0, 500),
     evidence_previews: evidenceCards.map((card) => `${card.title}: ${card.summary_preview}`.slice(0, 500)).slice(0, 8),
     latest_checkpoint_id: latestCheckpoint?.checkpoint_id,

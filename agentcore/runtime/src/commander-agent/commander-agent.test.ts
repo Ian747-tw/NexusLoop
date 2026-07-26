@@ -2510,7 +2510,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
   })
 
-  test("durable controller rejection after start is terminalized before journal release", async () => {
+  test("durable adapter rejection after model-step start preserves pending uncertainty", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-controller-reject-"))
     await writeApprovedSpec(projectDir)
     const server = new RuntimeServer({
@@ -2526,15 +2526,14 @@ describe("Commander in-memory investigation controller", () => {
     await server.start()
 
     const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_controller_reject" }))
-    expect(result).toMatchObject({ status: "failed", stop_reason: "controller_error", in_memory_only: false, investigation_events_appended: true })
-    expect(result.durability).toMatchObject({ terminal_persisted: true, resume_supported: false })
+    expect(result).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
+    expect(result.durability).toMatchObject({ terminal_persisted: false, pending_model_request_id: expect.any(String), resume_supported: false })
     const record = await server.getCommanderInvestigationRecord("inv_controller_reject")
-    expect(record).toMatchObject({ status: "failed", stop_reason: "controller_error", recovery_state: "not_required", uncertain_provider_outcome: false })
+    expect(record).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, pending_model_request_id: expect.any(String) })
     const kinds = eventKinds(await eventText(projectDir)).filter((kind) => kind.startsWith("runtime_commander_investigation_"))
     expect(kinds).toEqual([
       "runtime_commander_investigation_started",
       "runtime_commander_investigation_model_step_started",
-      "runtime_commander_investigation_finished",
     ])
   })
 
@@ -2559,7 +2558,8 @@ describe("Commander in-memory investigation controller", () => {
     await server.start()
 
     const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_controller_reject_after_checkpoint" }))
-    expect(result).toMatchObject({ status: "failed", stop_reason: "controller_error", in_memory_only: false, investigation_events_appended: true })
+    expect(result).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
+    expect(result.durability).toMatchObject({ terminal_persisted: false, pending_model_request_id: expect.any(String) })
     const events = await server.eventStore.readAll()
     const started = events.find((event) => event.kind === "runtime_commander_investigation_started" && event.investigation_id === "inv_controller_reject_after_checkpoint") as { started_at?: string } | undefined
     const checkpointed = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === "inv_controller_reject_after_checkpoint") as { checkpoint?: { created_at?: string } } | undefined
@@ -2570,13 +2570,14 @@ describe("Commander in-memory investigation controller", () => {
     expect(checkpointCreatedAt).not.toBe(startedAt)
     expect(result.started_at).toBe(startedAt)
     expect(result.started_at).not.toBe(checkpointCreatedAt)
+    const record = await server.getCommanderInvestigationRecord("inv_controller_reject_after_checkpoint")
+    expect(record).toMatchObject({ status: "running", started_at: startedAt, uncertain_provider_outcome: true, pending_model_request_id: expect.any(String) })
     const kinds = events.filter((event) => typeof event.kind === "string" && event.kind.startsWith("runtime_commander_investigation_") && event.investigation_id === "inv_controller_reject_after_checkpoint").map((event) => event.kind)
     expect(kinds).toEqual([
       "runtime_commander_investigation_started",
       "runtime_commander_investigation_model_step_started",
       "runtime_commander_investigation_checkpointed",
       "runtime_commander_investigation_model_step_started",
-      "runtime_commander_investigation_finished",
     ])
   })
 
@@ -2644,8 +2645,11 @@ describe("Commander in-memory investigation controller", () => {
     const finished = (await store.readAll()).find((event) => event.kind === "runtime_commander_investigation_finished")
     expect(finished).toBeDefined()
     expect(Buffer.byteLength(JSON.stringify(finished))).toBeLessThanOrEqual(48_000)
-    expect((finished as { terminal?: { model_id?: string; evidence_cards?: unknown[]; turn_summaries?: unknown[]; omitted_evidence_count?: number; omitted_turn_count?: number } }).terminal?.model_id).toBe(longModelId)
-    expect((finished as { terminal?: { evidence_cards?: unknown[]; turn_summaries?: unknown[]; omitted_evidence_count?: number; omitted_turn_count?: number } }).terminal?.omitted_evidence_count).toBeGreaterThan(0)
+    const terminal = (finished as { terminal?: { model_id?: string; evidence_cards?: unknown[]; turn_summaries?: unknown[]; omitted_evidence_count?: number; omitted_turn_count?: number } }).terminal
+    expect(terminal?.model_id).toBe(longModelId)
+    expect(terminal?.omitted_evidence_count).toBeGreaterThan(0)
+    expect(record?.evidence_count).toBe((terminal?.evidence_cards?.length ?? 0) + (terminal?.omitted_evidence_count ?? 0))
+    expect(record?.evidence_count).toBeGreaterThan(terminal?.evidence_cards?.length ?? 0)
   })
 
   test("durable journal reserves ids across awaited lookup and exact get bypasses list pagination", async () => {
