@@ -67,7 +67,7 @@ export class CommanderOperationalMemorySearchService {
       .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
       .filter((record) => input.include_closed !== false || !isClosedOperationalStatus(record.status))
       .filter((record) => withinTime(record.occurred_at, input.since, input.until))
-    const scanRecords = selectScanRecords(filteredRecords, sourceKinds.length > 0)
+    const scanRecords = selectScanRecords(filteredRecords, sourceKinds.length === 1)
     const scanned = scanRecords.length
     const rankedCandidates = query
       ? scanRecords

@@ -434,9 +434,33 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
 }
 
 function verifyCheckpoint(checkpoint: CommanderInvestigationCheckpoint): boolean {
-  return checkpoint.checkpoint_hash === stableHash({ ...checkpoint, checkpoint_hash: "" })
+  const semanticStateHash = stableHash(stableCheckpointState(checkpoint))
+  const checkpointId = `commander_inv_checkpoint_${checkpoint.checkpoint_sequence}_${semanticStateHash.slice(0, 16)}`
+  return (
+    checkpoint.semantic_state_hash === semanticStateHash &&
+    checkpoint.checkpoint_id === checkpointId &&
+    checkpoint.checkpoint_hash === stableHash({ ...checkpoint, checkpoint_hash: "" })
+  )
 }
 
 function verifyTerminal(terminal: { terminal_hash: string }): boolean {
   return terminal.terminal_hash === stableHash({ ...terminal, terminal_hash: "" })
+}
+
+function stableCheckpointState(checkpoint: CommanderInvestigationCheckpoint): unknown {
+  return {
+    ...checkpoint,
+    checkpoint_id: "",
+    checkpoint_hash: "",
+    semantic_state_hash: "",
+    created_at: "",
+    elapsed_active_ms: 0,
+    provider_audit: undefined,
+    working_set: {
+      ...checkpoint.working_set,
+      provider_audit: { ...checkpoint.working_set.provider_audit, audit_request_ids: [] },
+      evidence_cards: checkpoint.working_set.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+    },
+    turn_summaries: checkpoint.turn_summaries.map((item) => ({ ...item, provider_audit_request_ids: [], turn_hash: "" })),
+  }
 }

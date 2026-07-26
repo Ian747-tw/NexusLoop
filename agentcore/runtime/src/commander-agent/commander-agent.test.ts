@@ -2876,6 +2876,63 @@ describe("Commander in-memory investigation controller", () => {
     expect(badCheckpointRecord?.integrity_errors).toContain("checkpoint provider_request_count does not match pending model step")
   })
 
+  test("durable journal projection rejects stale checkpoint semantic hashes", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-checkpoint-semantic-hash-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const input = baseInvestigation({ investigation_id: "inv_bad_checkpoint_semantic_hash", objective: "bad checkpoint semantic hash" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_bad_checkpoint_semantic_hash") as Parameters<typeof run.observer.onStarted>[0])
+    const initial = await service.latestCheckpoint("inv_bad_checkpoint_semantic_hash")
+    expect(initial).toBeDefined()
+    await run.observer.onModelStepStarted({
+      investigation_id: "inv_bad_checkpoint_semantic_hash",
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_bad_checkpoint_semantic_hash",
+      tool_protocol: "native",
+      working_set_hash: initial!.working_set.working_set_hash,
+      context_hash: "context_hash_bad_checkpoint_semantic_hash",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:01.000Z",
+    })
+    service.release(run)
+    const staleSemanticCheckpoint = {
+      ...initial!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete" as const,
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: initial!.checkpoint_id,
+      previous_checkpoint_hash: initial!.checkpoint_hash,
+      working_set: { ...initial!.working_set, model_turn_count: 1 },
+      provider_request_count: 1,
+      created_at: "2026-01-01T00:00:02.000Z",
+      semantic_state_hash: "stale_semantic_state_hash",
+      checkpoint_hash: "",
+    }
+    staleSemanticCheckpoint.checkpoint_hash = stableHash({ ...staleSemanticCheckpoint, checkpoint_hash: "" })
+    const staleSemanticEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_bad_checkpoint_semantic_hash",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:02.000Z",
+      checkpoint: staleSemanticCheckpoint,
+      event_payload_hash: "",
+    }
+    staleSemanticEvent.event_payload_hash = journalPayloadHash(staleSemanticEvent)
+    await store.append(staleSemanticEvent as Parameters<EventStore["append"]>[0])
+    const record = await service.get("inv_bad_checkpoint_semantic_hash")
+    expect(record).toMatchObject({ projection_status: "corrupt", pending_model_request_id: "model_request_bad_checkpoint_semantic_hash" })
+    expect(record?.integrity_errors).toContain("checkpoint hash mismatch at 1")
+  })
+
   test("durable checkpoint compaction rehashes replay tool messages", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-replay-rehash-"))
     const service = new CommanderInvestigationJournalService({
@@ -3696,6 +3753,34 @@ describe("Commander in-memory investigation controller", () => {
     const search = await service.search({ query: "rare guidance needle" })
     expect(search).toMatchObject({ status: "ready", scanned_items: 800 })
     expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "wake_supervision", source_id: "wake_filler_699" })])
+    expect(search.warnings).toContain("operational memory scan capped at 800 filtered typed records")
+  })
+
+  test("operational memory search balances explicit multi-source filters before scoring", async () => {
+    const commanderFiller = Array.from({ length: 800 }, (_, index) => ({
+      source_kind: "commander_investigation",
+      source_id: `inv_filtered_filler_${String(index).padStart(3, "0")}`,
+      label: `Filtered Commander filler ${index}`,
+      status: "final",
+      summary_preview: "durable investigation unrelated filtered filler",
+      occurred_at: `2026-01-01T00:02:${String(index % 60).padStart(2, "0")}.000Z`,
+      fields: { phase: "proposal_investigation" },
+    }))
+    const wakeFiller = Array.from({ length: 800 }, (_, index) => ({
+      source_kind: "wake_supervision",
+      source_id: `wake_filtered_filler_${String(index).padStart(3, "0")}`,
+      label: `Filtered Wake filler ${index}`,
+      status: "ready",
+      summary_preview: index === 399 ? "explicit multi source filter needle" : "wake scheduler unrelated filtered filler",
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      fields: { phase: "mid_mission_supervision" },
+    }))
+    const service = new CommanderOperationalMemorySearchService({
+      collectRecords: async () => [...commanderFiller, ...wakeFiller],
+    })
+    const search = await service.search({ query: "explicit multi source filter needle", source_kinds: ["commander_investigation", "wake_supervision"] })
+    expect(search).toMatchObject({ status: "ready", scanned_items: 800 })
+    expect(search.result?.candidates[0]).toMatchObject({ source_kind: "wake_supervision", source_id: "wake_filtered_filler_399" })
     expect(search.warnings).toContain("operational memory scan capped at 800 filtered typed records")
   })
 
