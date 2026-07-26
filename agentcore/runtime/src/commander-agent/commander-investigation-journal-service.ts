@@ -571,15 +571,30 @@ function durableWorkingSet(input: CommanderInvestigationWorkingSet) {
 }
 
 function sanitizeEvidence(cards: CommanderEvidenceCard[]): CommanderEvidenceCard[] {
-  return cards.map((card) => redactValue({
-    ...card,
-    title: bound(card.title, 180),
-    summary_preview: bound(card.summary_preview, 500),
-    source_refs: card.source_refs.map((ref: CommanderReadSourceRef) => ({ ...ref, label: bound(ref.label, 160), summary_preview: bound(ref.summary_preview, 240), pointer_only: true as const })).slice(0, 8),
-    warnings: card.warnings.map((item: string) => bound(item, 200)).slice(0, 6),
-    content_included: false,
-    content_truncated: card.content_truncated,
-  }) as CommanderEvidenceCard)
+  return cards.map((card) => {
+    const contentBearing = card.content_included || ["repository_file", "repository_search_match", "git_diff"].includes(card.source_kind)
+    return redactValue({
+      ...card,
+      title: bound(card.title, 180),
+      summary_preview: contentBearing ? durablePointerSummary(card) : bound(card.summary_preview, 500),
+      source_refs: card.source_refs.map((ref: CommanderReadSourceRef) => ({
+        ...ref,
+        label: bound(ref.label, 160),
+        summary_preview: contentBearing ? durablePointerSummary(card) : bound(ref.summary_preview, 240),
+        pointer_only: true as const,
+      })).slice(0, 8),
+      warnings: [
+        ...card.warnings.map((item: string) => bound(item, 200)),
+        ...(contentBearing ? ["Durable journal stores pointer/hash metadata only for content-bearing evidence."] : []),
+      ].slice(0, 6),
+      content_included: false,
+      content_truncated: card.content_truncated || contentBearing,
+    }) as CommanderEvidenceCard
+  })
+}
+
+function durablePointerSummary(card: CommanderEvidenceCard): string {
+  return bound(`${card.source_kind} evidence content omitted from durable journal; use source_id=${card.source_id} evidence_hash=${card.evidence_hash ?? ""}`.trim(), 500)
 }
 
 function sanitizeTurnSummaries(turns: CommanderInvestigationTurnSummary[]): CommanderInvestigationTurnSummary[] {

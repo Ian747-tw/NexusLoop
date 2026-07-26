@@ -67,15 +67,14 @@ export class CommanderOperationalMemorySearchService {
       .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
       .filter((record) => input.include_closed !== false || !isClosedOperationalStatus(record.status))
       .filter((record) => withinTime(record.occurred_at, input.since, input.until))
-    const scanRecords = orderForScan(filteredRecords)
-    const scanned = Math.min(scanRecords.length, SCAN_LIMIT)
-    const candidates = query
-      ? scanRecords
-          .slice(0, SCAN_LIMIT)
+    const rankedCandidates = query
+      ? filteredRecords
           .map((record) => scoreRecord(record, query))
           .filter((candidate) => candidate.relevance_score > 0)
-          .sort((a, b) => b.relevance_score - a.relevance_score || `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`))
+          .sort(compareCandidatesForScan)
       : []
+    const scanned = Math.min(filteredRecords.length, SCAN_LIMIT)
+    const candidates = rankedCandidates.slice(0, SCAN_LIMIT)
     const returned = candidates.slice(0, limit)
     let result = {
       query_preview: redactText(query ?? ""),
@@ -249,18 +248,11 @@ function isClosedOperationalStatus(status: string | undefined): boolean {
   return ["closed", "complete", "completed", "accepted", "rejected", "failed", "cancelled", "canceled", "superseded", "resolved"].some((term) => normalized.includes(term))
 }
 
-function orderForScan(records: CommanderOperationalMemoryRecord[]): CommanderOperationalMemoryRecord[] {
-  return [...records].sort((a, b) => {
-    const priority = sourceKindPriority(a.source_kind) - sourceKindPriority(b.source_kind)
-    if (priority !== 0) return priority
-    const time = Date.parse(b.occurred_at ?? "") - Date.parse(a.occurred_at ?? "")
-    if (Number.isFinite(time) && time !== 0) return time
-    return `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`)
-  })
-}
-
-function sourceKindPriority(sourceKind: string): number {
-  return sourceKind === "commander_investigation" ? 0 : 1
+function compareCandidatesForScan(a: CommanderOperationalMemoryCandidate, b: CommanderOperationalMemoryCandidate): number {
+  if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score
+  const time = Date.parse(b.occurred_at ?? "") - Date.parse(a.occurred_at ?? "")
+  if (Number.isFinite(time) && time !== 0) return time
+  return `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`)
 }
 
 function readCsv(value: unknown): string[] {

@@ -2446,6 +2446,53 @@ describe("Commander in-memory investigation controller", () => {
     }))
   })
 
+  test("durable journal stores content-bearing evidence as pointer summaries only", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-pointer-evidence-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "pointer-only final" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const input = baseInvestigation({ investigation_id: "inv_pointer_only_evidence", objective: "Persist only pointer evidence" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_pointer_only_evidence") as Parameters<typeof run.observer.onStarted>[0])
+    const baseResult = await server.runCommanderInvestigationInMemory(input)
+    await service.finish(run, {
+      ...baseResult,
+      investigation_id: "inv_pointer_only_evidence",
+      evidence: [{
+        ...evidenceCard("evidence_raw_repo_content"),
+        tool_id: "repo.read_lines",
+        source_kind: "repository_file" as const,
+        source_id: "src/raw-file.ts:1-2",
+        title: "Repository file excerpt",
+        summary_preview: "const durableRawRepoLine = 'DO_NOT_PERSIST_RAW_REPO_TEXT';",
+        source_refs: [{
+          source_kind: "repository_file",
+          source_id: "src/raw-file.ts",
+          label: "src/raw-file.ts",
+          summary_preview: "const durableRawRepoLine = 'DO_NOT_PERSIST_RAW_REPO_TEXT';",
+          pointer_only: true,
+        }],
+        content_included: true,
+        content_truncated: false,
+        evidence_hash: "hash_raw_repo_content",
+      }],
+    })
+    service.release(run)
+
+    const events = await eventText(projectDir)
+    expect(events).not.toContain("DO_NOT_PERSIST_RAW_REPO_TEXT")
+    expect(events).toContain("repository_file evidence content omitted from durable journal")
+    expect(events).toContain("hash_raw_repo_content")
+    const record = await service.get("inv_pointer_only_evidence")
+    expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_REPO_TEXT")
+  })
+
   test("durable journal rejects duplicate ids and terminal persistence failures leave nonterminal projection", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-failures-"))
     await writeApprovedSpec(projectDir)
@@ -3594,7 +3641,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
   })
 
-  test("operational memory search includes Commander investigations before the global scan cap", async () => {
+  test("operational memory search finds Commander investigations under scan cap pressure", async () => {
     const filler = Array.from({ length: 800 }, (_, index) => ({
       source_kind: "wake_supervision",
       source_id: `wake_filler_${String(index).padStart(3, "0")}`,
@@ -3621,6 +3668,34 @@ describe("Commander in-memory investigation controller", () => {
     const search = await service.search({ query: "scan cap needle" })
     expect(search).toMatchObject({ status: "ready", scanned_items: 800 })
     expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_scan_cap_visible" })])
+    expect(search.warnings).toContain("operational memory scan capped at 800 filtered typed records")
+  })
+
+  test("operational memory search preserves non-Commander records under Commander scan cap pressure", async () => {
+    const commanderFiller = Array.from({ length: 100 }, (_, index) => ({
+      source_kind: "commander_investigation",
+      source_id: `inv_filler_${String(index).padStart(3, "0")}`,
+      label: `Commander filler ${index}`,
+      status: "final",
+      summary_preview: "durable investigation unrelated filler",
+      occurred_at: `2026-01-01T00:02:${String(index % 60).padStart(2, "0")}.000Z`,
+      fields: { phase: "proposal_investigation" },
+    }))
+    const wakeFiller = Array.from({ length: 800 }, (_, index) => ({
+      source_kind: "wake_supervision",
+      source_id: `wake_filler_${String(index).padStart(3, "0")}`,
+      label: `Wake filler ${index}`,
+      status: "ready",
+      summary_preview: index === 799 ? "rare guidance needle from wake supervision" : "wake scheduler unrelated filler",
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      fields: { phase: "mid_mission_supervision" },
+    }))
+    const service = new CommanderOperationalMemorySearchService({
+      collectRecords: async () => [...commanderFiller, ...wakeFiller],
+    })
+    const search = await service.search({ query: "rare guidance needle" })
+    expect(search).toMatchObject({ status: "ready", scanned_items: 800 })
+    expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "wake_supervision", source_id: "wake_filler_799" })])
     expect(search.warnings).toContain("operational memory scan capped at 800 filtered typed records")
   })
 
