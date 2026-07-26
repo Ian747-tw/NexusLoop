@@ -2926,6 +2926,68 @@ describe("Commander in-memory investigation controller", () => {
     const badCheckpointRecord = await service.get("inv_bad_pending_checkpoint")
     expect(badCheckpointRecord).toMatchObject({ projection_status: "corrupt", pending_model_request_id: "model_request_bad_pending_checkpoint" })
     expect(badCheckpointRecord?.integrity_errors).toContain("checkpoint hash mismatch at 1")
+
+    const malformedCheckpointInput = baseInvestigation({ investigation_id: "inv_missing_checkpoint_fields", objective: "missing checkpoint fields" })
+    const malformedRun = await service.createObserver(malformedCheckpointInput)
+    await malformedRun.observer.onStarted(durableStartedSnapshot(malformedCheckpointInput, 1, "inv_missing_checkpoint_fields") as Parameters<typeof malformedRun.observer.onStarted>[0])
+    const malformedInitial = await service.latestCheckpoint("inv_missing_checkpoint_fields")
+    expect(malformedInitial).toBeDefined()
+    await malformedRun.observer.onModelStepStarted({
+      investigation_id: "inv_missing_checkpoint_fields",
+      input: malformedCheckpointInput,
+      turn_index: 1,
+      model_request_id: "model_request_missing_checkpoint_fields",
+      tool_protocol: "native",
+      working_set_hash: malformedInitial!.working_set.working_set_hash,
+      context_hash: "context_hash_missing_checkpoint_fields",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:04.000Z",
+    })
+    service.release(malformedRun)
+    const incompleteCheckpoint: Record<string, unknown> = {
+      schema_version: 1,
+      checkpoint_id: "checkpoint_missing_required_fields",
+      investigation_id: "inv_missing_checkpoint_fields",
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      phase: malformedInitial!.phase,
+      objective_hash: malformedInitial!.objective_hash,
+      provider_id: malformedInitial!.provider_id,
+      provider_kind: malformedInitial!.provider_kind,
+      model_id: malformedInitial!.model_id,
+      tool_protocol: malformedInitial!.tool_protocol,
+      working_set: { ...malformedInitial!.working_set, model_turn_count: 1 },
+      turn_summaries: [],
+      provider_request_count: 0,
+      external_api_audit_count: 0,
+      elapsed_active_ms: 10,
+      previous_checkpoint_id: malformedInitial!.checkpoint_id,
+      previous_checkpoint_hash: malformedInitial!.checkpoint_hash,
+      checkpoint_hash: "",
+    }
+    incompleteCheckpoint.checkpoint_hash = stableHash({ ...incompleteCheckpoint, checkpoint_hash: "" })
+    const malformedCheckpointEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_missing_checkpoint_fields",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:05.000Z",
+      checkpoint: incompleteCheckpoint,
+      event_payload_hash: "",
+    }
+    malformedCheckpointEvent.event_payload_hash = journalPayloadHash(malformedCheckpointEvent)
+    await store.append(malformedCheckpointEvent as Parameters<EventStore["append"]>[0])
+    const malformedRecord = await service.get("inv_missing_checkpoint_fields")
+    expect(malformedRecord).toMatchObject({ projection_status: "corrupt", pending_model_request_id: "model_request_missing_checkpoint_fields" })
+    expect(malformedRecord?.integrity_errors).toContain("malformed checkpoint payload at sequence 2")
+    expect(await service.latestCheckpoint("inv_missing_checkpoint_fields")).toMatchObject({ checkpoint_sequence: 0 })
   })
 
   test("durable journal projection rejects stale checkpoint semantic hashes", async () => {

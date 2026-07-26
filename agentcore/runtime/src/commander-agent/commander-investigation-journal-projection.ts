@@ -330,24 +330,83 @@ function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint
     hasString(value, "checkpoint_id") &&
     hasString(value, "investigation_id") &&
     hasNumber(value, "checkpoint_sequence") &&
+    (value.checkpoint_kind === "initial" || value.checkpoint_kind === "turn_complete") &&
+    hasNumber(value, "turn_index") &&
+    hasNumber(value, "next_turn_index") &&
+    hasString(value, "phase") &&
+    hasString(value, "objective_hash") &&
+    hasString(value, "provider_id") &&
+    hasString(value, "provider_kind") &&
+    hasString(value, "model_id") &&
+    hasString(value, "tool_protocol") &&
+    isBootstrapRef(value.bootstrap_ref) &&
+    isRecord(value.budget) &&
+    hasString(value.budget, "budget_id") &&
+    Array.isArray(value.loaded_tools) &&
+    value.loaded_tools.every(isLoadedToolRef) &&
+    isDurableWorkingSet(value.working_set) &&
+    Array.isArray(value.turn_summaries) &&
+    (value.replay_exchange === undefined || isReplayExchange(value.replay_exchange)) &&
     hasNumber(value, "provider_request_count") &&
     hasNumber(value, "external_api_audit_count") &&
+    hasNumber(value, "elapsed_active_ms") &&
+    (value.previous_checkpoint_id === undefined || hasString(value, "previous_checkpoint_id")) &&
+    (value.previous_checkpoint_hash === undefined || hasString(value, "previous_checkpoint_hash")) &&
+    hasString(value, "created_at") &&
+    hasString(value, "created_by") &&
+    hasString(value, "semantic_state_hash") &&
     hasString(value, "checkpoint_hash") &&
-    isDurableWorkingSet(value.working_set) &&
-    Array.isArray(value.turn_summaries)
+    value.resume_supported === false &&
+    value.full_transcript_persisted === false &&
+    value.raw_tool_results_persisted === false &&
+    value.chain_of_thought_persisted === false
   )
+}
+
+function isBootstrapRef(value: unknown): boolean {
+  return isRecord(value) && hasString(value, "bootstrap_id") && hasString(value, "bootstrap_hash")
 }
 
 function isDurableWorkingSet(value: unknown): boolean {
   if (!isRecord(value)) return false
   return (
+    hasString(value, "objective_preview") &&
+    hasString(value, "phase") &&
     Array.isArray(value.loaded_tool_ids) &&
     Array.isArray(value.evidence_cards) &&
     value.evidence_cards.every(isEvidenceCard) &&
+    Array.isArray(value.recent_execution_digests) &&
+    Array.isArray(value.recent_load_outcomes) &&
+    Array.isArray(value.current_blockers) &&
     Array.isArray(value.current_warnings) &&
+    isRecord(value.provider_audit) &&
+    hasNumber(value, "omitted_evidence_count") &&
+    hasNumber(value, "omitted_digest_count") &&
+    hasNumber(value, "omitted_turn_count") &&
+    hasNumber(value, "consecutive_no_progress_turns") &&
+    hasNumber(value, "cumulative_tool_result_bytes") &&
     hasNumber(value, "model_turn_count") &&
     hasNumber(value, "tool_call_count") &&
-    hasNumber(value, "tool_search_call_count")
+    hasNumber(value, "tool_search_call_count") &&
+    Array.isArray(value.recent_result_signatures) &&
+    value.recent_result_signatures.every(isRecentResultSignature) &&
+    hasString(value, "working_set_hash")
+  )
+}
+
+function isRecentResultSignature(value: unknown): boolean {
+  return isRecord(value) && hasString(value, "signature_hash") && hasNumber(value, "count") && hasNumber(value, "last_turn_index")
+}
+
+function isReplayExchange(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasNumber(value, "turn_index") &&
+    isRecord(value.assistant_message) &&
+    Array.isArray(value.tool_result_messages) &&
+    hasString(value, "exchange_hash") &&
+    value.summary_only === true &&
+    value.full_tool_results_persisted === false
   )
 }
 
