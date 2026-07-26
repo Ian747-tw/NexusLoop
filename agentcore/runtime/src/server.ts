@@ -5709,7 +5709,7 @@ function durablePersistenceFailedResult(result: CommanderInvestigationResult, st
     working_set_persisted: state.checkpoint_count > 0,
     investigation_events_appended: state.investigation_event_count > 0,
     events_appended: result.external_api_audit_events_appended > 0 || state.investigation_event_count > 0,
-    result_hash: stableHash({ semantic: result.result_hash, status: "failed", stop_reason: "persistence_failed", blocker: message }),
+    result_hash: result.result_hash,
   }
 }
 

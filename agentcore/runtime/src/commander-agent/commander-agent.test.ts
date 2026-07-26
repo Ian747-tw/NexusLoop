@@ -2506,6 +2506,17 @@ describe("Commander in-memory investigation controller", () => {
     const terminalFailure = await failingServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_terminal_fail" }))
     expect(terminalFailure).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
     expect(terminalFailure.durability).toMatchObject({ terminal_persisted: false, original_terminal_status_if_persistence_failed: "final" })
+    const comparisonDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-terminal-fail-semantic-"))
+    await writeApprovedSpec(comparisonDir)
+    const comparisonServer = new RuntimeServer({
+      projectDir: comparisonDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "terminal will fail" }]),
+    })
+    servers.push({ stop: () => comparisonServer.shutdown() })
+    await comparisonServer.start()
+    const semantic = await comparisonServer.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_terminal_fail" }))
+    expect(terminalFailure.result_hash).toBe(semantic.result_hash)
     const projected = await failingServer.getCommanderInvestigationRecord("inv_terminal_fail")
     expect(projected).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, resume_supported: false })
   })
