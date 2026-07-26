@@ -2585,6 +2585,23 @@ describe("Commander in-memory investigation controller", () => {
       external_api_audit_events_appended: stopped.external_api_audit_events_appended,
     }))
 
+    const startFailingServer = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "start will fail" }]),
+    })
+    servers.push({ stop: () => startFailingServer.shutdown() })
+    await startFailingServer.start()
+    const startFailingAppend = startFailingServer.eventStore.append.bind(startFailingServer.eventStore)
+    startFailingServer.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_started") throw new Error("started append failed")
+      return startFailingAppend(event)
+    }
+    const startFailure = await startFailingServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_started_fail" }))
+    expect(startFailure).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_event_count: 0, investigation_events_appended: false, events_appended: false })
+    expect(startFailure.durability).toMatchObject({ mode: "event_journal", started_persisted: false, initial_checkpoint_persisted: false, terminal_persisted: false, investigation_event_count: 0, checkpoint_count: 0 })
+    await startFailingServer.shutdown()
+
     const failingServer = new RuntimeServer({
       projectDir,
       adapter: new FakeOpenCodeAdapter(),
@@ -3140,6 +3157,90 @@ describe("Commander in-memory investigation controller", () => {
     expect(replay!.tool_result_messages[0].content_hash).toBe(stableHash(replay!.tool_result_messages[0].content))
     expect(replay!.exchange_hash).toBe(stableHash({ ...replay!, exchange_hash: "" }))
     expect(Buffer.byteLength(JSON.stringify((await service.get("inv_replay_rehash"))))).toBeGreaterThan(0)
+  })
+
+  test("durable checkpoint compaction measures the full persisted checkpoint event envelope", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-checkpoint-envelope-cap-"))
+    const service = new CommanderInvestigationJournalService({
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      checkpointPayloadCapBytes: 16_000,
+    })
+    const input = baseInvestigation({ investigation_id: "inv_checkpoint_envelope_cap", objective: "compact checkpoint against full envelope" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_checkpoint_envelope_cap") as Parameters<typeof run.observer.onStarted>[0])
+    await run.observer.onModelStepStarted({
+      investigation_id: "inv_checkpoint_envelope_cap",
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_checkpoint_envelope_cap",
+      tool_protocol: "native",
+      working_set_hash: run.state.latest_checkpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_checkpoint_envelope_cap",
+      input_bytes: 512,
+      estimated_input_tokens: 128,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:01.000Z",
+    })
+    const checkpointSnapshot = durableStartedSnapshot(input, 1, "inv_checkpoint_envelope_cap") as unknown as CommanderInvestigationCheckpointSnapshot
+    checkpointSnapshot.working_set.model_turn_count = 1
+    checkpointSnapshot.working_set.evidence_cards = Array.from({ length: 4 }, (_, index) => largeEvidenceCard(index))
+    checkpointSnapshot.working_set.recent_execution_digests = Array.from({ length: 24 }, (_, index) => ({
+      turn_index: index,
+      tool_id: "memory.search",
+      call_signature_hash: `call_signature_hash_envelope_${index}`,
+      execution_status: "ready",
+      result_hash: `result_hash_envelope_${index}`,
+      evidence_ids: [`evidence_large_terminal_${index % 4}`],
+      loaded_tool_outcome: `loaded outcome ${index}`,
+      blocker_warning_summary: `checkpoint envelope digest ${index} ${"d".repeat(700)}`,
+      order: index,
+    }))
+    const largeTurns = Array.from({ length: 12 }, (_, index) => ({
+      turn_index: index + 1,
+      model_request_id: `model_request_large_checkpoint_${index}`,
+      model_result_hash: `model_result_hash_large_checkpoint_${index}`,
+      model_status: "tool_call",
+      provider_request_count: index + 1,
+      assistant_text_preview: `large checkpoint turn ${index} ${"a".repeat(700)}`,
+      tool_call_ids: [`call_${index}`],
+      tool_ids: ["memory.search"],
+      tool_execution_ids: [`exec_${index}`],
+      tool_execution_statuses: ["ready"],
+      newly_loaded_tool_ids: [],
+      new_evidence_ids: [],
+      input_estimated_tokens: 128,
+      input_bytes: 512,
+      output_tokens: 8,
+      cumulative_tool_calls: index + 1,
+      progress_made: true,
+      no_progress_reasons: [],
+      warnings: [`large checkpoint warning ${index} ${"w".repeat(700)}`],
+      provider_audit_request_ids: [],
+      provider_audit_event_kinds: [],
+      provider_audit_event_count: 0,
+      provider_audit_complete: true,
+      turn_hash: `turn_hash_large_checkpoint_${index}`,
+    }))
+    await run.observer.onCheckpoint({
+      ...checkpointSnapshot,
+      turn_index: 1,
+      next_turn_index: 2,
+      turn_summaries: largeTurns,
+      latest_tool_results: [],
+      provider_request_count: 1,
+      elapsed_active_ms: 10,
+      created_at: "2026-01-01T00:00:02.000Z",
+    })
+    service.release(run)
+    const checkpoint = await service.latestCheckpoint("inv_checkpoint_envelope_cap")
+    expect(checkpoint).toMatchObject({ checkpoint_sequence: 1 })
+    expect(checkpoint!.working_set.omitted_turn_count + checkpoint!.working_set.omitted_digest_count + checkpoint!.working_set.omitted_evidence_count).toBeGreaterThan(0)
+    const events = (await eventText(projectDir)).trim().split(/\n+/).filter(Boolean).map((line) => JSON.parse(line) as { kind?: string; investigation_id?: string })
+    const checkpointEvent = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === "inv_checkpoint_envelope_cap")
+    expect(checkpointEvent).toBeDefined()
+    expect(Buffer.byteLength(JSON.stringify(checkpointEvent)) + 256).toBeLessThanOrEqual(16_000)
   })
 
   test("durable journal projection isolates malformed unsupported payloads", async () => {

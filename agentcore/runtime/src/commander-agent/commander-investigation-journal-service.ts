@@ -400,6 +400,15 @@ export class CommanderInvestigationJournalService {
       providerRequestCount: snapshot.provider_request_count,
       elapsedActiveMs: snapshot.elapsed_active_ms,
       createdAt: snapshot.created_at,
+      measureBytes: (candidate) => eventBytes({ kind: "runtime_commander_investigation_checkpointed", ...withPayloadHash({
+        schema_version: 1 as const,
+        investigation_id: snapshot.investigation_id,
+        journal_sequence: state.journal_sequence,
+        requested_by: state.requested_by,
+        occurred_at: snapshot.created_at,
+        checkpoint: candidate,
+        event_payload_hash: "",
+      }) }),
     })
     const payload = withPayloadHash({
       schema_version: 1 as const,
@@ -433,6 +442,7 @@ export class CommanderInvestigationJournalService {
     providerRequestCount: number
     elapsedActiveMs: number
     createdAt: string
+    measureBytes?: (checkpoint: CommanderInvestigationCheckpoint) => number
   }): CommanderInvestigationCheckpoint {
     const snapshot = input.snapshot
     const workingSet = durableWorkingSet(snapshot.working_set)
@@ -471,11 +481,17 @@ export class CommanderInvestigationJournalService {
       raw_tool_results_persisted: false,
       chain_of_thought_persisted: false,
     }
-    checkpoint = redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes)) as CommanderInvestigationCheckpoint
-    checkpoint.semantic_state_hash = stableHash(stableCheckpointState(checkpoint))
-    checkpoint.checkpoint_id = `commander_inv_checkpoint_${checkpoint.checkpoint_sequence}_${checkpoint.semantic_state_hash.slice(0, 16)}`
-    checkpoint.checkpoint_hash = stableHash({ ...checkpoint, checkpoint_hash: "" })
-    if (eventBytes({ checkpoint }) > this.checkpointPayloadCapBytes) throw new CommanderInvestigationPersistenceError("Commander investigation checkpoint exceeds durable event byte cap")
+    const measureBytes = input.measureBytes ?? ((candidate: CommanderInvestigationCheckpoint) => eventBytes({ checkpoint: candidate }))
+    const finalize = (candidate: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint => {
+      const finalized = { ...candidate, checkpoint_id: "", semantic_state_hash: "", checkpoint_hash: "" }
+      finalized.semantic_state_hash = stableHash(stableCheckpointState(finalized))
+      finalized.checkpoint_id = `commander_inv_checkpoint_${finalized.checkpoint_sequence}_${finalized.semantic_state_hash.slice(0, 16)}`
+      finalized.checkpoint_hash = stableHash({ ...finalized, checkpoint_hash: "" })
+      return finalized
+    }
+    checkpoint = redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint
+    checkpoint = finalize(checkpoint)
+    if (measureBytes(checkpoint) > this.checkpointPayloadCapBytes) throw new CommanderInvestigationPersistenceError("Commander investigation checkpoint exceeds durable event byte cap")
     return checkpoint
   }
 
@@ -664,18 +680,18 @@ function durableToolResult(message: CommanderModelToolResultMessage): CommanderD
   }
 }
 
-function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: number): CommanderInvestigationCheckpoint {
+function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: number, measureBytes: (checkpoint: CommanderInvestigationCheckpoint) => number): CommanderInvestigationCheckpoint {
   let current = checkpoint
-  while (eventBytes({ checkpoint: current }) > cap && current.turn_summaries.length > 0) {
+  while (measureBytes(current) > cap && current.turn_summaries.length > 0) {
     current = { ...current, turn_summaries: current.turn_summaries.slice(1), working_set: { ...current.working_set, omitted_turn_count: current.working_set.omitted_turn_count + 1 } }
   }
-  while (eventBytes({ checkpoint: current }) > cap && current.working_set.recent_execution_digests.length > 0) {
+  while (measureBytes(current) > cap && current.working_set.recent_execution_digests.length > 0) {
     current = { ...current, working_set: { ...current.working_set, recent_execution_digests: current.working_set.recent_execution_digests.slice(1), omitted_digest_count: current.working_set.omitted_digest_count + 1 } }
   }
-  while (eventBytes({ checkpoint: current }) > cap && current.working_set.evidence_cards.length > 0) {
+  while (measureBytes(current) > cap && current.working_set.evidence_cards.length > 0) {
     current = { ...current, working_set: { ...current.working_set, evidence_cards: current.working_set.evidence_cards.slice(1), omitted_evidence_count: current.working_set.omitted_evidence_count + 1 } }
   }
-  if (eventBytes({ checkpoint: current }) > cap && current.replay_exchange) {
+  if (measureBytes(current) > cap && current.replay_exchange) {
     current = { ...current, replay_exchange: compactReplayExchangeForCheckpointBudget(current.replay_exchange) }
   }
   return current

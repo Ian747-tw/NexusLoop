@@ -2757,7 +2757,12 @@ export class RuntimeServer {
           }
           result = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
         }
-        if (!run.state.started_persisted) return result
+        if (!run.state.started_persisted) {
+          if (result.stop_reason === "persistence_failed") {
+            return durablePersistenceFailedResult(result, run.state, result.blockers[0] ?? "Commander investigation durable start was not persisted")
+          }
+          return result
+        }
         try {
           const durability = await journal.finish(run, result)
           return durableResult(result, durability)
