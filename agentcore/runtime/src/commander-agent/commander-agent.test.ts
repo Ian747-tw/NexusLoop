@@ -2983,6 +2983,50 @@ describe("Commander in-memory investigation controller", () => {
     }
     missingTimestampModelStep.event_payload_hash = journalPayloadHash(missingTimestampModelStep)
     await store.append(missingTimestampModelStep as Parameters<EventStore["append"]>[0])
+    const doublePendingModelStepInput = baseInvestigation({ investigation_id: "inv_double_pending_model_step", objective: "double pending model step" })
+    const doublePendingRun = await service.createObserver(doublePendingModelStepInput)
+    await doublePendingRun.observer.onStarted(durableStartedSnapshot(doublePendingModelStepInput, 13, "inv_double_pending_model_step") as Parameters<typeof doublePendingRun.observer.onStarted>[0])
+    const doublePendingCheckpoint = await service.latestCheckpoint("inv_double_pending_model_step")
+    service.release(doublePendingRun)
+    const firstPendingModelStep = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_double_pending_model_step",
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_first_pending",
+      provider_id: "fixture",
+      provider_kind: "unknown",
+      model_id: "cloud-long-context",
+      tool_protocol: "native",
+      base_checkpoint_id: doublePendingCheckpoint!.checkpoint_id,
+      base_checkpoint_sequence: doublePendingCheckpoint!.checkpoint_sequence,
+      base_checkpoint_hash: doublePendingCheckpoint!.checkpoint_hash,
+      working_set_hash: "working_set_hash_double_pending",
+      context_hash: "context_hash_first_pending",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:10.500Z",
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:10.500Z",
+      event_payload_hash: "",
+    }
+    firstPendingModelStep.event_payload_hash = journalPayloadHash(firstPendingModelStep)
+    await store.append(firstPendingModelStep as Parameters<EventStore["append"]>[0])
+    const secondPendingModelStep = {
+      ...firstPendingModelStep,
+      journal_sequence: 2,
+      model_request_id: "model_request_second_pending",
+      context_hash: "context_hash_second_pending",
+      started_at: "2026-01-01T00:00:10.750Z",
+      occurred_at: "2026-01-01T00:00:10.750Z",
+      event_payload_hash: "",
+    }
+    secondPendingModelStep.event_payload_hash = journalPayloadHash(secondPendingModelStep)
+    await store.append(secondPendingModelStep as Parameters<EventStore["append"]>[0])
     const wrongOwnerCheckpointInput = baseInvestigation({ investigation_id: "inv_wrong_owner_checkpoint", objective: "wrong owner checkpoint" })
     const wrongOwnerCheckpointRun = await service.createObserver(wrongOwnerCheckpointInput)
     await wrongOwnerCheckpointRun.observer.onStarted(durableStartedSnapshot(wrongOwnerCheckpointInput, 9, "inv_wrong_owner_checkpoint") as Parameters<typeof wrongOwnerCheckpointRun.observer.onStarted>[0])
@@ -3119,6 +3163,14 @@ describe("Commander in-memory investigation controller", () => {
     const missingTimestampModelStepRecord = await service.get("inv_model_step_missing_time")
     expect(missingTimestampModelStepRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, uncertain_provider_outcome: false })
     expect(missingTimestampModelStepRecord?.integrity_errors.join("\n")).toContain("malformed model-step payload")
+    const doublePendingModelStepRecord = await service.get("inv_double_pending_model_step")
+    expect(doublePendingModelStepRecord).toMatchObject({
+      projection_status: "corrupt",
+      checkpoint_available: true,
+      uncertain_provider_outcome: true,
+      pending_model_request_id: "model_request_first_pending",
+    })
+    expect(doublePendingModelStepRecord?.integrity_errors.join("\n")).toContain("model-step started while previous model step pending")
     const wrongOwnerCheckpointRecord = await service.get("inv_wrong_owner_checkpoint")
     expect(wrongOwnerCheckpointRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: wrongOwnerInitial!.checkpoint_id })
     expect(wrongOwnerCheckpointRecord?.integrity_errors.join("\n")).toContain("checkpoint investigation_id mismatch")
@@ -3131,7 +3183,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 15, running_count: 14, terminal_count: 1, final_count: 1, checkpoint_available_count: 12, uncertain_provider_outcome_count: 1, corrupt_count: 12 })
+    expect(summary).toMatchObject({ total: 16, running_count: 15, terminal_count: 1, final_count: 1, checkpoint_available_count: 13, uncertain_provider_outcome_count: 2, corrupt_count: 13 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {

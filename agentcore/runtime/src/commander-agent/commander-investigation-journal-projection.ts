@@ -88,6 +88,11 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (!previous || model.base_checkpoint_id !== previous.checkpoint_id || model.base_checkpoint_sequence !== previous.checkpoint_sequence || model.base_checkpoint_hash !== previous.checkpoint_hash) {
         integrity.push(`model-step base checkpoint mismatch at sequence ${event.journal_sequence}`)
       }
+      if (pendingModel) {
+        integrity.push(`model-step started while previous model step pending at sequence ${event.journal_sequence}`)
+        lastTransition = "model_step_started"
+        return
+      }
       pendingModel = model
       lastTransition = "model_step_started"
     } else if (event.kind === "runtime_commander_investigation_checkpointed") {
