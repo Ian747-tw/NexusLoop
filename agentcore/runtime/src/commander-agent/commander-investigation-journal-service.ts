@@ -572,7 +572,7 @@ function durableWorkingSet(input: CommanderInvestigationWorkingSet) {
 
 function sanitizeEvidence(cards: CommanderEvidenceCard[]): CommanderEvidenceCard[] {
   return cards.map((card) => {
-    const contentBearing = card.content_included || ["repository_file", "repository_search_match", "git_diff"].includes(card.source_kind)
+    const contentBearing = card.content_included || ["repository_file", "repository_search_match", "repository_symbol", "git_diff"].includes(card.source_kind)
     return redactValue({
       ...card,
       title: bound(card.title, 180),

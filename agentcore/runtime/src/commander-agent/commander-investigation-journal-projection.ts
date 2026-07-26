@@ -110,7 +110,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (!pendingModel) checkpointErrors.push("checkpoint missing model-step boundary")
       if (pendingModel && checkpoint.turn_index !== pendingModel.turn_index) checkpointErrors.push("checkpoint turn_index does not match pending model step")
       if (pendingModel && checkpoint.next_turn_index !== pendingModel.turn_index + 1) checkpointErrors.push("checkpoint next_turn_index does not follow pending model step")
-      if (pendingModel && checkpoint.provider_request_count !== pendingModel.provider_request_count_before + 1) checkpointErrors.push("checkpoint provider_request_count does not match pending model step")
+      if (pendingModel && (checkpoint.provider_request_count < pendingModel.provider_request_count_before || checkpoint.provider_request_count > pendingModel.provider_request_count_before + 1)) checkpointErrors.push("checkpoint provider_request_count does not match pending model step")
       if (pendingModel && checkpoint.external_api_audit_count < pendingModel.external_api_audit_count_before) checkpointErrors.push("checkpoint external_api_audit_count is behind pending model step")
       if (pendingModel && checkpoint.working_set.model_turn_count !== pendingModel.turn_index) checkpointErrors.push("checkpoint working-set turn count does not match pending model step")
       if (checkpoint.investigation_id !== investigationId) checkpointErrors.push("checkpoint investigation_id mismatch")

@@ -2482,16 +2482,62 @@ describe("Commander in-memory investigation controller", () => {
         content_included: true,
         content_truncated: false,
         evidence_hash: "hash_raw_repo_content",
+      }, {
+        ...evidenceCard("evidence_raw_repo_symbol"),
+        tool_id: "repo.find_symbol",
+        source_kind: "repository_symbol" as const,
+        source_id: "src/raw-symbol.ts:7",
+        title: "Repository symbol match",
+        summary_preview: "function durableRawRepoSymbol() { return 'DO_NOT_PERSIST_RAW_SYMBOL_LINE'; }",
+        source_refs: [{
+          source_kind: "repository_symbol",
+          source_id: "src/raw-symbol.ts:7",
+          label: "durableRawRepoSymbol",
+          summary_preview: "function durableRawRepoSymbol() { return 'DO_NOT_PERSIST_RAW_SYMBOL_LINE'; }",
+          pointer_only: true,
+        }],
+        content_included: false,
+        content_truncated: false,
+        evidence_hash: "hash_raw_repo_symbol",
       }],
     })
     service.release(run)
 
     const events = await eventText(projectDir)
     expect(events).not.toContain("DO_NOT_PERSIST_RAW_REPO_TEXT")
+    expect(events).not.toContain("DO_NOT_PERSIST_RAW_SYMBOL_LINE")
     expect(events).toContain("repository_file evidence content omitted from durable journal")
+    expect(events).toContain("repository_symbol evidence content omitted from durable journal")
     expect(events).toContain("hash_raw_repo_content")
+    expect(events).toContain("hash_raw_repo_symbol")
     const record = await service.get("inv_pointer_only_evidence")
     expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_REPO_TEXT")
+    expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_SYMBOL_LINE")
+  })
+
+  test("durable zero-request cancellation checkpoints project as terminal without uncertainty", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-zero-cancel-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "cancelled", request_count: 0, error: "cancelled before transport" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_zero_request_cancel" }))
+    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", provider_request_count: 0, investigation_events_appended: true })
+    const record = await server.getCommanderInvestigationRecord("inv_zero_request_cancel")
+    expect(record).toMatchObject({ status: "cancelled", projection_status: "ready", uncertain_provider_outcome: false, recovery_state: "not_required" })
+    expect(record?.pending_model_request_id).toBeUndefined()
+    const kinds = eventKinds(await eventText(projectDir)).filter((kind) => kind.startsWith("runtime_commander_investigation_"))
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_checkpointed",
+      "runtime_commander_investigation_finished",
+    ])
   })
 
   test("durable journal rejects duplicate ids and terminal persistence failures leave nonterminal projection", async () => {
@@ -2879,7 +2925,7 @@ describe("Commander in-memory investigation controller", () => {
     await store.append(badCheckpointEvent as Parameters<EventStore["append"]>[0])
     const badCheckpointRecord = await service.get("inv_bad_pending_checkpoint")
     expect(badCheckpointRecord).toMatchObject({ projection_status: "corrupt", pending_model_request_id: "model_request_bad_pending_checkpoint" })
-    expect(badCheckpointRecord?.integrity_errors).toContain("checkpoint provider_request_count does not match pending model step")
+    expect(badCheckpointRecord?.integrity_errors).toContain("checkpoint hash mismatch at 1")
   })
 
   test("durable journal projection rejects stale checkpoint semantic hashes", async () => {
