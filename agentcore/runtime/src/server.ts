@@ -479,7 +479,10 @@ export class RuntimeServer {
   private lifecycleShutdownRequested = false
   private commanderInvestigationLifecycleAbort = new AbortController()
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
-  private readonly activeDurableCommanderInvestigations = new Set<Promise<unknown>>()
+  private readonly activeDurableCommanderInvestigations = new Set<{
+    promise: Promise<unknown>
+    run?: import("./commander-agent").CommanderInvestigationJournalRun
+  }>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2717,6 +2720,7 @@ export class RuntimeServer {
     const journal = this.commanderInvestigationJournalService()
     const durableInput = { ...input, investigation_id: input.investigation_id ?? this.generatedCommanderInvestigationId(input) }
     const combined = this.commanderInvestigationAbortSignal(durableInput.abort_signal)
+    const active: { promise: Promise<CommanderInvestigationResult>; run?: import("./commander-agent").CommanderInvestigationJournalRun } = {} as { promise: Promise<CommanderInvestigationResult>; run?: import("./commander-agent").CommanderInvestigationJournalRun }
     let tracked!: Promise<CommanderInvestigationResult>
     tracked = (async () => {
       let run
@@ -2732,6 +2736,7 @@ export class RuntimeServer {
             blockers: [error instanceof Error ? redactText(error.message) : String(error)].slice(0, 1),
           })
         }
+        active.run = run
         if (combined.signal.aborted || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
           const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation stopped before journal start") })
           return durableOverrideResult(blocked, {
@@ -2758,10 +2763,11 @@ export class RuntimeServer {
       } finally {
         if (run) journal.release(run)
         combined.cleanup()
-        this.activeDurableCommanderInvestigations.delete(tracked)
+        this.activeDurableCommanderInvestigations.delete(active)
       }
     })()
-    this.activeDurableCommanderInvestigations.add(tracked)
+    active.promise = tracked
+    this.activeDurableCommanderInvestigations.add(active)
     return tracked
   }
 
@@ -2813,7 +2819,8 @@ export class RuntimeServer {
   }
 
   private async drainConfiguredCommanderInvestigations(): Promise<void> {
-    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...Array.from(this.activeDurableCommanderInvestigations)]
+    const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
@@ -2826,6 +2833,12 @@ export class RuntimeServer {
     ])
     if (timeoutId) clearTimeout(timeoutId)
     if (result === timedOut) {
+      const journal = this.commanderInvestigationJournalService()
+      for (const entry of activeDurable) {
+        if (this.activeDurableCommanderInvestigations.has(entry) && entry.run) {
+          journal.fence(entry.run, "RuntimeServer shutdown drain timed out before durable investigation settled")
+        }
+      }
       this.eventBus.emit({
         type: "ExecutorLifecycle",
         phase: "runtime_commander_investigation_drain_timeout",

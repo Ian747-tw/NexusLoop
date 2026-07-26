@@ -74,6 +74,7 @@ export type CommanderInvestigationJournalRun = {
 export type CommanderInvestigationJournalRunState = {
   started_persisted: boolean
   terminal_persisted: boolean
+  persistence_fenced: boolean
   started_event_id?: string
   latest_checkpoint_event_id?: string
   finished_event_id?: string
@@ -115,6 +116,7 @@ export class CommanderInvestigationJournalService {
     const state: CommanderInvestigationJournalRunState = {
       started_persisted: false,
       terminal_persisted: false,
+      persistence_fenced: false,
       checkpoint_count: 0,
       investigation_event_count: 0,
       journal_sequence: 0,
@@ -137,7 +139,13 @@ export class CommanderInvestigationJournalService {
     this.active.delete(run.investigation_id)
   }
 
+  fence(run: CommanderInvestigationJournalRun, reason: string): void {
+    run.state.persistence_fenced = true
+    run.state.warnings = [...run.state.warnings, bound(reason, 240)].slice(-12)
+  }
+
   async finish(run: CommanderInvestigationJournalRun, result: CommanderInvestigationResult): Promise<CommanderInvestigationDurabilitySummary> {
+    assertNotFenced(run.state)
     if (!run.state.started_persisted || run.state.terminal_persisted) return this.durability(run.state)
     const checkpoint = run.state.latest_checkpoint
     if (!checkpoint) throw new CommanderInvestigationPersistenceError("cannot finish durable investigation without an initial checkpoint")
@@ -267,6 +275,7 @@ export class CommanderInvestigationJournalService {
   }
 
   private async onStarted(state: CommanderInvestigationJournalRunState, snapshot: CommanderInvestigationStartedSnapshot): Promise<void> {
+    assertNotFenced(state)
     if (state.started_persisted) throw new CommanderInvestigationJournalConflictError("durable investigation already started")
     const objective = bound(snapshot.input.objective, 1000)
     if (objective.length !== snapshot.input.objective.replace(/\s+/g, " ").trim().length && snapshot.input.objective.replace(/\s+/g, " ").trim().length > 1000) {
@@ -327,6 +336,7 @@ export class CommanderInvestigationJournalService {
   }
 
   private async onModelStepStarted(state: CommanderInvestigationJournalRunState, snapshot: CommanderInvestigationModelStepStartedSnapshot): Promise<void> {
+    assertNotFenced(state)
     if (!state.started_persisted || !state.latest_checkpoint) throw new CommanderInvestigationPersistenceError("model-step boundary cannot be persisted before durable start")
     const payload = withPayloadHash({
       schema_version: 1 as const,
@@ -360,6 +370,7 @@ export class CommanderInvestigationJournalService {
   }
 
   private async onCheckpoint(state: CommanderInvestigationJournalRunState, snapshot: CommanderInvestigationCheckpointSnapshot): Promise<void> {
+    assertNotFenced(state)
     if (!state.started_persisted || !state.latest_checkpoint) throw new CommanderInvestigationPersistenceError("checkpoint cannot be persisted before durable start")
     const checkpoint = this.buildCheckpoint({
       snapshot,
@@ -454,8 +465,9 @@ export class CommanderInvestigationJournalService {
   }
 
   private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
-    if (eventBytes({ kind, ...payload }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
-    return this.options.eventStore.append({ kind, ...redactValue(payload) } as JsonlEvent)
+    const redacted = redactValue(payload) as Record<string, unknown>
+    if (eventBytes({ kind, ...redacted }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
+    return this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
   }
 
   durability(state: CommanderInvestigationJournalRunState): CommanderInvestigationDurabilitySummary {
@@ -688,8 +700,13 @@ function sanitizeInput(input: CommanderInvestigationInput): Omit<CommanderInvest
 }
 
 function withPayloadHash<T extends { event_payload_hash: string }>(payload: T): T {
-  payload.event_payload_hash = stableHash({ ...payload, event_payload_hash: "" })
-  return payload
+  const redacted = redactValue(payload) as T
+  redacted.event_payload_hash = stableHash({ ...redacted, event_payload_hash: "" })
+  return redacted
+}
+
+function assertNotFenced(state: CommanderInvestigationJournalRunState): void {
+  if (state.persistence_fenced) throw new CommanderInvestigationPersistenceError("durable investigation persistence fenced after shutdown drain timeout")
 }
 
 function eventBytes(value: unknown): number {

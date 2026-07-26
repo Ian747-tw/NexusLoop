@@ -117,6 +117,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (afterTerminal) return
       const terminalErrors: string[] = []
       if (terminal) terminalErrors.push("duplicate terminal event")
+      if (event.terminal.investigation_id !== investigationId) terminalErrors.push("terminal investigation_id mismatch")
       const previous = checkpoints.at(-1)
       if (event.terminal.last_checkpoint_id !== previous?.checkpoint_id || event.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) terminalErrors.push("terminal last-checkpoint reference mismatch")
       if (!verifyTerminal(event.terminal)) terminalErrors.push("terminal hash mismatch")
