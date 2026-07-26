@@ -5708,6 +5708,7 @@ function durableControllerRejectedResult(state: import("./commander-agent").Comm
   if (!checkpoint) throw error
   const message = error instanceof Error ? redactText(error.message) : redactText(String(error))
   const completedAt = now.toISOString()
+  const startedAt = state.started_at ?? checkpoint.created_at
   const resultHash = stableHash({
     status: "failed",
     stop_reason: "controller_error",
@@ -5745,9 +5746,9 @@ function durableControllerRejectedResult(state: import("./commander-agent").Comm
     provider_audit: checkpoint.working_set.provider_audit,
     blockers: [message || "Commander investigation controller rejected after durable start"],
     warnings: [...checkpoint.working_set.current_warnings, "Durable Commander investigation was terminalized after controller rejection."].slice(0, 16),
-    started_at: checkpoint.created_at,
+    started_at: startedAt,
     completed_at: completedAt,
-    duration_ms: Math.max(0, now.getTime() - Date.parse(checkpoint.created_at || completedAt)),
+    duration_ms: Math.max(0, now.getTime() - Date.parse(startedAt || completedAt)),
     investigation_event_count: state.investigation_event_count,
     in_memory_only: false,
     transcript_persisted: false,

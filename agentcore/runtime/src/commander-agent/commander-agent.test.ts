@@ -45,6 +45,7 @@ import {
   validateCommanderConnectorModelTransportConfig,
   validateCommanderToolArguments,
   type CommanderInvestigationCheckpointSnapshot,
+  type CommanderInvestigationStartedSnapshot,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
   type CommanderModelStepResult,
@@ -2410,6 +2411,41 @@ describe("Commander in-memory investigation controller", () => {
     }))
   })
 
+  test("durable started observer receives a refreshed initial working-set hash after warnings", async () => {
+    const contextBudgetService = new ContextBudgetService({ registry: new ModelCapabilityRegistry() })
+    let startedWorkingSet: CommanderInvestigationStartedSnapshot["working_set"] | undefined
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "Initial hash final." }]),
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => minimalTestBootstrap() },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: new ModelCapabilityRegistry(),
+      contextBudgetService,
+      persistenceObserver: {
+        onStarted: (snapshot) => {
+          startedWorkingSet = snapshot.working_set
+        },
+        onModelStepStarted: () => undefined,
+        onCheckpoint: () => undefined,
+      },
+    })
+    const result = await controller.run(baseInvestigation({
+      investigation_id: "inv_started_hash_warning",
+      objective: "started hash includes initial warnings",
+    }))
+    expect(result.status).toBe("final")
+    expect(startedWorkingSet?.current_warnings.some((warning) => warning.includes("json_fallback"))).toBe(true)
+    const { working_set_hash: _workingSetHash, ...stableWorkingSetFields } = startedWorkingSet!
+    expect(startedWorkingSet!.working_set_hash).toBe(stableHash({
+      ...stableWorkingSetFields,
+      evidence_cards: startedWorkingSet!.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+      provider_audit: { ...startedWorkingSet!.provider_audit, audit_request_ids: [] },
+    }))
+  })
+
   test("durable journal rejects duplicate ids and terminal persistence failures leave nonterminal projection", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-failures-"))
     await writeApprovedSpec(projectDir)
@@ -2497,6 +2533,48 @@ describe("Commander in-memory investigation controller", () => {
     const kinds = eventKinds(await eventText(projectDir)).filter((kind) => kind.startsWith("runtime_commander_investigation_"))
     expect(kinds).toEqual([
       "runtime_commander_investigation_started",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_finished",
+    ])
+  })
+
+  test("durable controller rejection after a checkpoint preserves original start time", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-controller-reject-started-at-"))
+    await writeApprovedSpec(projectDir)
+    let tick = 0
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      researchSynthesisNow: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("controller_reject_after_checkpoint_search", "commander.tool_search", { query: "durable controller rejection" })] },
+        {
+          assert_request: () => {
+            throw new Error("scripted adapter rejected after durable checkpoint")
+          },
+        },
+      ]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_controller_reject_after_checkpoint" }))
+    expect(result).toMatchObject({ status: "failed", stop_reason: "controller_error", in_memory_only: false, investigation_events_appended: true })
+    const events = await server.eventStore.readAll()
+    const started = events.find((event) => event.kind === "runtime_commander_investigation_started" && event.investigation_id === "inv_controller_reject_after_checkpoint") as { started_at?: string } | undefined
+    const checkpointed = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === "inv_controller_reject_after_checkpoint") as { checkpoint?: { created_at?: string } } | undefined
+    expect(started?.started_at).toBeDefined()
+    expect(checkpointed?.checkpoint?.created_at).toBeDefined()
+    const startedAt = started!.started_at!
+    const checkpointCreatedAt = checkpointed!.checkpoint!.created_at!
+    expect(checkpointCreatedAt).not.toBe(startedAt)
+    expect(result.started_at).toBe(startedAt)
+    expect(result.started_at).not.toBe(checkpointCreatedAt)
+    const kinds = events.filter((event) => typeof event.kind === "string" && event.kind.startsWith("runtime_commander_investigation_") && event.investigation_id === "inv_controller_reject_after_checkpoint").map((event) => event.kind)
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_checkpointed",
       "runtime_commander_investigation_model_step_started",
       "runtime_commander_investigation_finished",
     ])
@@ -2653,6 +2731,100 @@ describe("Commander in-memory investigation controller", () => {
       created_at: "2026-01-01T00:00:02.000Z",
     } as Parameters<typeof run.observer.onCheckpoint>[0])).rejects.toThrow("pending model-step boundary")
     service.release(run)
+  })
+
+  test("durable checkpoint compaction rehashes replay tool messages", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-replay-rehash-"))
+    const service = new CommanderInvestigationJournalService({
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      checkpointPayloadCapBytes: 16_000,
+    })
+    const input = baseInvestigation({ investigation_id: "inv_replay_rehash", objective: "compact replay exchange hashes" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_replay_rehash") as Parameters<typeof run.observer.onStarted>[0])
+    await run.observer.onModelStepStarted({
+      investigation_id: "inv_replay_rehash",
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_replay_rehash",
+      tool_protocol: "native",
+      working_set_hash: "working_hash_replay_rehash",
+      context_hash: "context_hash_replay_rehash",
+      input_bytes: 512,
+      estimated_input_tokens: 128,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:01.000Z",
+    })
+    const checkpointSnapshot = durableStartedSnapshot(input, 1, "inv_replay_rehash") as unknown as CommanderInvestigationCheckpointSnapshot
+    checkpointSnapshot.working_set.current_warnings = Array.from({ length: 24 }, (_, index) => `replay checkpoint warning ${index} ${"w".repeat(120)}`)
+    await run.observer.onCheckpoint({
+      ...checkpointSnapshot,
+      turn_index: 1,
+      next_turn_index: 2,
+      turn_summaries: [],
+      latest_assistant: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_call",
+            tool_call_id: "call_replay_rehash",
+            tool_id: "memory.search",
+            arguments: { query: "replay rehash" },
+            arguments_valid: true,
+            validation_errors: [],
+            call_hash: "call_hash_replay_rehash",
+          },
+          {
+            type: "tool_call",
+            tool_call_id: "call_replay_rehash_2",
+            tool_id: "memory.search",
+            arguments: { query: "replay rehash 2" },
+            arguments_valid: true,
+            validation_errors: [],
+            call_hash: "call_hash_replay_rehash_2",
+          },
+          {
+            type: "tool_call",
+            tool_call_id: "call_replay_rehash_3",
+            tool_id: "memory.search",
+            arguments: { query: "replay rehash 3" },
+            arguments_valid: true,
+            validation_errors: [],
+            call_hash: "call_hash_replay_rehash_3",
+          },
+          {
+            type: "tool_call",
+            tool_call_id: "call_replay_rehash_4",
+            tool_id: "memory.search",
+            arguments: { query: "replay rehash 4" },
+            arguments_valid: true,
+            validation_errors: [],
+            call_hash: "call_hash_replay_rehash_4",
+          },
+        ],
+      },
+      latest_tool_results: [1, 2, 3, 4].map((index) => ({
+        role: "tool" as const,
+        tool_call_id: index === 1 ? "call_replay_rehash" : `call_replay_rehash_${index}`,
+        tool_id: "memory.search",
+        content: "bounded replay result",
+        content_hash: `large_replay_hash_${index}_`.repeat(1_000),
+        truncated: false,
+      })),
+      provider_request_count: 1,
+      elapsed_active_ms: 10,
+      created_at: "2026-01-01T00:00:02.000Z",
+    } as Parameters<typeof run.observer.onCheckpoint>[0])
+    service.release(run)
+    const checkpoint = await service.latestCheckpoint("inv_replay_rehash")
+    const replay = checkpoint?.replay_exchange
+    expect(replay).toBeDefined()
+    expect(replay!.tool_result_messages[0].content).toContain("omitted_for_checkpoint_budget")
+    expect(replay!.tool_result_messages[0].content_hash).toBe(stableHash(replay!.tool_result_messages[0].content))
+    expect(replay!.exchange_hash).toBe(stableHash({ ...replay!, exchange_hash: "" }))
+    expect(Buffer.byteLength(JSON.stringify((await service.get("inv_replay_rehash"))))).toBeGreaterThan(0)
   })
 
   test("durable journal projection isolates malformed unsupported payloads", async () => {

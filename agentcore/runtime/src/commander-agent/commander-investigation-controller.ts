@@ -71,6 +71,7 @@ export class CommanderInvestigationController {
     const loaded = new Map(initial.loaded.map((tool) => [tool.tool_id, tool]))
     const workingSet = emptyWorkingSet(input, Array.from(loaded.keys()), this.options.providerAuditPolicy)
     workingSet.current_warnings.push(...protocolResolution.warnings, ...initial.warnings)
+    workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
     let latestAssistant: CommanderModelAssistantMessage | undefined
     let latestToolResults: CommanderModelToolResultMessage[] = []
     const turns: CommanderInvestigationTurnSummary[] = []

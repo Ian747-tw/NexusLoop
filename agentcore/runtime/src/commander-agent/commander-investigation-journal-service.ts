@@ -77,6 +77,7 @@ export type CommanderInvestigationJournalRunState = {
   persistence_fenced: boolean
   in_flight_persistence: Set<Promise<unknown>>
   started_event_id?: string
+  started_at?: string
   latest_checkpoint_event_id?: string
   finished_event_id?: string
   latest_checkpoint?: CommanderInvestigationCheckpoint
@@ -339,6 +340,7 @@ export class CommanderInvestigationJournalService {
     const eventId = await this.trackedAppendCapped(state, "runtime_commander_investigation_started", payload, STARTED_HARD_CAP)
     state.started_persisted = true
     state.started_event_id = eventId
+    state.started_at = snapshot.started_at
     state.latest_checkpoint = checkpoint
     state.latest_checkpoint_event_id = eventId
     state.checkpoint_count = 1
@@ -659,9 +661,27 @@ function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: nu
     current = { ...current, working_set: { ...current.working_set, evidence_cards: current.working_set.evidence_cards.slice(1), omitted_evidence_count: current.working_set.omitted_evidence_count + 1 } }
   }
   if (eventBytes({ checkpoint: current }) > cap && current.replay_exchange) {
-    current = { ...current, replay_exchange: { ...current.replay_exchange, tool_result_messages: current.replay_exchange.tool_result_messages.map((message) => ({ ...message, content: JSON.stringify({ status: "omitted_for_checkpoint_budget", tool_id: message.tool_id, tool_call_id: message.tool_call_id }).slice(0, 400), truncated: true })) } }
+    current = { ...current, replay_exchange: compactReplayExchangeForCheckpointBudget(current.replay_exchange) }
   }
   return current
+}
+
+function compactReplayExchangeForCheckpointBudget(exchange: NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]>): NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]> {
+  const compacted = {
+    ...exchange,
+    tool_result_messages: exchange.tool_result_messages.map((message) => {
+      const content = JSON.stringify({ status: "omitted_for_checkpoint_budget", tool_id: message.tool_id, tool_call_id: message.tool_call_id }).slice(0, 400)
+      return {
+        ...message,
+        content,
+        content_hash: stableHash(content),
+        truncated: true,
+      }
+    }),
+    exchange_hash: "",
+  }
+  compacted.exchange_hash = stableHash({ ...compacted, exchange_hash: "" })
+  return compacted
 }
 
 function compactTerminal(terminal: CommanderInvestigationTerminalRecord, cap: number): CommanderInvestigationTerminalRecord {
