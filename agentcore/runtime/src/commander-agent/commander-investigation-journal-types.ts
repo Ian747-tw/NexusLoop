@@ -273,6 +273,8 @@ export type CommanderInvestigationRecord = {
   loaded_tool_ids: string[]
   evidence_ids: string[]
   evidence_count: number
+  final_summary_preview?: string
+  evidence_previews: string[]
   latest_checkpoint_id?: string
   latest_checkpoint_sequence?: number
   latest_checkpoint_hash?: string

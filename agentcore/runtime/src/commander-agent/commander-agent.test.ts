@@ -2733,6 +2733,87 @@ describe("Commander in-memory investigation controller", () => {
     service.release(run)
   })
 
+  test("durable journal projection rejects model-step and checkpoint boundary mismatches", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-pending-boundary-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+
+    const badModelInput = baseInvestigation({ investigation_id: "inv_bad_pending_working_hash", objective: "bad pending working hash" })
+    const badModelRun = await service.createObserver(badModelInput)
+    await badModelRun.observer.onStarted(durableStartedSnapshot(badModelInput, 0, "inv_bad_pending_working_hash") as Parameters<typeof badModelRun.observer.onStarted>[0])
+    await badModelRun.observer.onModelStepStarted({
+      investigation_id: "inv_bad_pending_working_hash",
+      input: badModelInput,
+      turn_index: 1,
+      model_request_id: "model_request_bad_pending_working_hash",
+      tool_protocol: "native",
+      working_set_hash: "wrong_working_set_hash",
+      context_hash: "context_hash_bad_pending_working_hash",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:01.000Z",
+    })
+    service.release(badModelRun)
+    const badModelRecord = await service.get("inv_bad_pending_working_hash")
+    expect(badModelRecord).toMatchObject({ projection_status: "corrupt" })
+    expect(badModelRecord?.integrity_errors).toContain("model-step working-set hash mismatch at sequence 1")
+
+    const badCheckpointInput = baseInvestigation({ investigation_id: "inv_bad_pending_checkpoint", objective: "bad pending checkpoint" })
+    const badCheckpointRun = await service.createObserver(badCheckpointInput)
+    await badCheckpointRun.observer.onStarted(durableStartedSnapshot(badCheckpointInput, 1, "inv_bad_pending_checkpoint") as Parameters<typeof badCheckpointRun.observer.onStarted>[0])
+    const initial = await service.latestCheckpoint("inv_bad_pending_checkpoint")
+    expect(initial).toBeDefined()
+    await badCheckpointRun.observer.onModelStepStarted({
+      investigation_id: "inv_bad_pending_checkpoint",
+      input: badCheckpointInput,
+      turn_index: 1,
+      model_request_id: "model_request_bad_pending_checkpoint",
+      tool_protocol: "native",
+      working_set_hash: initial!.working_set.working_set_hash,
+      context_hash: "context_hash_bad_pending_checkpoint",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:02.000Z",
+    })
+    service.release(badCheckpointRun)
+    const badCheckpoint = {
+      ...initial!,
+      checkpoint_id: "checkpoint_bad_pending_counter",
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete" as const,
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: initial!.checkpoint_id,
+      previous_checkpoint_hash: initial!.checkpoint_hash,
+      working_set: { ...initial!.working_set, model_turn_count: 1 },
+      provider_request_count: 0,
+      created_at: "2026-01-01T00:00:03.000Z",
+      checkpoint_hash: "",
+    }
+    badCheckpoint.checkpoint_hash = stableHash({ ...badCheckpoint, checkpoint_hash: "" })
+    const badCheckpointEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_bad_pending_checkpoint",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:03.000Z",
+      checkpoint: badCheckpoint,
+      event_payload_hash: "",
+    }
+    badCheckpointEvent.event_payload_hash = journalPayloadHash(badCheckpointEvent)
+    await store.append(badCheckpointEvent as Parameters<EventStore["append"]>[0])
+    const badCheckpointRecord = await service.get("inv_bad_pending_checkpoint")
+    expect(badCheckpointRecord).toMatchObject({ projection_status: "corrupt", pending_model_request_id: "model_request_bad_pending_checkpoint" })
+    expect(badCheckpointRecord?.integrity_errors).toContain("checkpoint provider_request_count does not match pending model step")
+  })
+
   test("durable checkpoint compaction rehashes replay tool messages", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-replay-rehash-"))
     const service = new CommanderInvestigationJournalService({
@@ -2748,7 +2829,7 @@ describe("Commander in-memory investigation controller", () => {
       turn_index: 1,
       model_request_id: "model_request_replay_rehash",
       tool_protocol: "native",
-      working_set_hash: "working_hash_replay_rehash",
+      working_set_hash: run.state.latest_checkpoint!.working_set.working_set_hash,
       context_hash: "context_hash_replay_rehash",
       input_bytes: 512,
       estimated_input_tokens: 128,
@@ -2759,6 +2840,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     const checkpointSnapshot = durableStartedSnapshot(input, 1, "inv_replay_rehash") as unknown as CommanderInvestigationCheckpointSnapshot
     checkpointSnapshot.working_set.current_warnings = Array.from({ length: 24 }, (_, index) => `replay checkpoint warning ${index} ${"w".repeat(120)}`)
+    checkpointSnapshot.working_set.model_turn_count = 1
     await run.observer.onCheckpoint({
       ...checkpointSnapshot,
       turn_index: 1,
@@ -3450,6 +3532,23 @@ describe("Commander in-memory investigation controller", () => {
     const search = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
     expect(search).toMatchObject({ status: "ready", events_appended: false })
     expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true, session_id: "session_search" })])
+    const finalSearch = await server.searchCommanderOperationalMemory({ query: "completed durable objective summary", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(finalSearch.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable" })])
+
+    const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const evidenceInput = baseInvestigation({ investigation_id: "inv_searchable_evidence", objective: "Generic durable investigation objective", session_id: "session_search" })
+    const evidenceRun = await service.createObserver(evidenceInput)
+    await evidenceRun.observer.onStarted(durableStartedSnapshot(evidenceInput, 0, "inv_searchable_evidence") as Parameters<typeof evidenceRun.observer.onStarted>[0])
+    const baseResult = await server.runCommanderInvestigationInMemory(evidenceInput)
+    await service.finish(evidenceRun, {
+      ...baseResult,
+      investigation_id: "inv_searchable_evidence",
+      final_summary: "Generic final summary",
+      evidence: [{ ...evidenceCard("evidence_rare_amber"), title: "Rare amber conclusion", summary_preview: "rare amber finding lives only in evidence preview" }],
+    })
+    service.release(evidenceRun)
+    const evidenceSearch = await server.searchCommanderOperationalMemory({ query: "rare amber finding", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(evidenceSearch.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable_evidence" })])
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
   })
 

@@ -88,6 +88,9 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (!previous || model.base_checkpoint_id !== previous.checkpoint_id || model.base_checkpoint_sequence !== previous.checkpoint_sequence || model.base_checkpoint_hash !== previous.checkpoint_hash) {
         integrity.push(`model-step base checkpoint mismatch at sequence ${event.journal_sequence}`)
       }
+      if (previous && model.working_set_hash !== previous.working_set.working_set_hash) {
+        integrity.push(`model-step working-set hash mismatch at sequence ${event.journal_sequence}`)
+      }
       if (pendingModel) {
         integrity.push(`model-step started while previous model step pending at sequence ${event.journal_sequence}`)
         lastTransition = "model_step_started"
@@ -105,6 +108,11 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       const previous = checkpoints.at(-1)
       const checkpointErrors: string[] = []
       if (!pendingModel) checkpointErrors.push("checkpoint missing model-step boundary")
+      if (pendingModel && checkpoint.turn_index !== pendingModel.turn_index) checkpointErrors.push("checkpoint turn_index does not match pending model step")
+      if (pendingModel && checkpoint.next_turn_index !== pendingModel.turn_index + 1) checkpointErrors.push("checkpoint next_turn_index does not follow pending model step")
+      if (pendingModel && checkpoint.provider_request_count !== pendingModel.provider_request_count_before + 1) checkpointErrors.push("checkpoint provider_request_count does not match pending model step")
+      if (pendingModel && checkpoint.external_api_audit_count < pendingModel.external_api_audit_count_before) checkpointErrors.push("checkpoint external_api_audit_count is behind pending model step")
+      if (pendingModel && checkpoint.working_set.model_turn_count !== pendingModel.turn_index) checkpointErrors.push("checkpoint working-set turn count does not match pending model step")
       if (checkpoint.investigation_id !== investigationId) checkpointErrors.push("checkpoint investigation_id mismatch")
       if (checkpoint.checkpoint_sequence !== checkpoints.length) checkpointErrors.push(`checkpoint sequence gap at ${checkpoint.checkpoint_sequence}`)
       if (checkpoint.previous_checkpoint_id !== previous?.checkpoint_id || checkpoint.previous_checkpoint_hash !== previous?.checkpoint_hash) checkpointErrors.push("checkpoint previous reference mismatch")
@@ -144,6 +152,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
   if (integrity.length && projectionStatus === "ready") projectionStatus = "corrupt"
   const latestCheckpoint = checkpoints.at(-1)
   const terminalRecord = terminal?.terminal
+  const evidenceCards = terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []
   const uncertain = Boolean(pendingModel && !terminalRecord)
   const recoveryState = recovery(latestCheckpoint, uncertain, Boolean(terminalRecord))
   const record: CommanderInvestigationRecord = {
@@ -173,8 +182,10 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     tool_call_count: terminalRecord?.tool_call_count ?? latestCheckpoint?.working_set.tool_call_count ?? 0,
     tool_search_call_count: terminalRecord?.tool_search_call_count ?? latestCheckpoint?.working_set.tool_search_call_count ?? 0,
     loaded_tool_ids: terminalRecord?.loaded_tool_ids ?? latestCheckpoint?.working_set.loaded_tool_ids ?? started.initial_loaded_tool_refs.map((tool) => tool.tool_id),
-    evidence_ids: (terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []).map((card) => card.evidence_id),
-    evidence_count: (terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []).length,
+    evidence_ids: evidenceCards.map((card) => card.evidence_id),
+    evidence_count: evidenceCards.length,
+    final_summary_preview: terminalRecord?.final_summary?.slice(0, 500),
+    evidence_previews: evidenceCards.map((card) => `${card.title}: ${card.summary_preview}`.slice(0, 500)).slice(0, 8),
     latest_checkpoint_id: latestCheckpoint?.checkpoint_id,
     latest_checkpoint_sequence: latestCheckpoint?.checkpoint_sequence,
     latest_checkpoint_hash: latestCheckpoint?.checkpoint_hash,
@@ -222,6 +233,7 @@ function corruptRecord(investigationId: string, events: JsonlEvent[], errors: st
     loaded_tool_ids: [],
     evidence_ids: [],
     evidence_count: 0,
+    evidence_previews: [],
     last_transition: "started" as const,
     checkpoint_available: false,
     uncertain_provider_outcome: false,
