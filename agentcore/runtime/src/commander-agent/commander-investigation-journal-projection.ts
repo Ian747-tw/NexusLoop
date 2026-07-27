@@ -457,7 +457,7 @@ function isDurableWorkingSet(value: unknown): boolean {
     Array.isArray(value.recent_load_outcomes) &&
     Array.isArray(value.current_blockers) &&
     Array.isArray(value.current_warnings) &&
-    isRecord(value.provider_audit) &&
+    isProviderAuditSummary(value.provider_audit) &&
     hasNumber(value, "omitted_evidence_count") &&
     hasNumber(value, "omitted_digest_count") &&
     hasNumber(value, "omitted_turn_count") &&

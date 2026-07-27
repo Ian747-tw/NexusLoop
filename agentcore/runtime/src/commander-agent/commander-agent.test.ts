@@ -4169,6 +4169,37 @@ describe("Commander in-memory investigation controller", () => {
     }
     malformedCheckpointTurnEvent.event_payload_hash = journalPayloadHash(malformedCheckpointTurnEvent)
     await store.append(malformedCheckpointTurnEvent as Parameters<EventStore["append"]>[0])
+    const badCheckpointAuditInput = baseInvestigation({ investigation_id: "inv_checkpoint_bad_provider_audit", objective: "checkpoint bad provider audit" })
+    const badCheckpointAuditRun = await service.createObserver(badCheckpointAuditInput)
+    await badCheckpointAuditRun.observer.onStarted(durableStartedSnapshot(badCheckpointAuditInput, 20, "inv_checkpoint_bad_provider_audit") as Parameters<typeof badCheckpointAuditRun.observer.onStarted>[0])
+    const badCheckpointAuditInitial = await service.latestCheckpoint("inv_checkpoint_bad_provider_audit")
+    service.release(badCheckpointAuditRun)
+    const badCheckpointAudit = finalizeTestCheckpoint({
+      ...badCheckpointAuditInitial!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: badCheckpointAuditInitial!.checkpoint_id,
+      previous_checkpoint_hash: badCheckpointAuditInitial!.checkpoint_hash,
+      working_set: {
+        ...badCheckpointAuditInitial!.working_set,
+        provider_audit: { ...badCheckpointAuditInitial!.working_set.provider_audit, transport_kind: "local" },
+        model_turn_count: 1,
+      },
+    } as unknown as CommanderInvestigationCheckpoint)
+    const badCheckpointAuditEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_checkpoint_bad_provider_audit",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:13.250Z",
+      checkpoint: badCheckpointAudit,
+      event_payload_hash: "",
+    }
+    badCheckpointAuditEvent.event_payload_hash = journalPayloadHash(badCheckpointAuditEvent)
+    await store.append(badCheckpointAuditEvent as Parameters<EventStore["append"]>[0])
     const checkpointWithoutBoundaryInput = baseInvestigation({ investigation_id: "inv_projected_checkpoint_without_boundary", objective: "project checkpoint without model step" })
     const checkpointWithoutBoundaryRun = await service.createObserver(checkpointWithoutBoundaryInput)
     await checkpointWithoutBoundaryRun.observer.onStarted(durableStartedSnapshot(checkpointWithoutBoundaryInput, 12, "inv_projected_checkpoint_without_boundary") as Parameters<typeof checkpointWithoutBoundaryRun.observer.onStarted>[0])
@@ -4542,6 +4573,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(malformedCheckpointTurnRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, latest_checkpoint_id: malformedCheckpointTurnInitial!.checkpoint_id })
     expect(malformedCheckpointTurnRecord?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
     expect(await service.getCheckpoint(malformedCheckpointTurn.checkpoint_id)).toBeUndefined()
+    const badCheckpointAuditRecord = await service.get("inv_checkpoint_bad_provider_audit")
+    expect(badCheckpointAuditRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, latest_checkpoint_id: badCheckpointAuditInitial!.checkpoint_id })
+    expect(badCheckpointAuditRecord?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
+    expect(await service.getCheckpoint(badCheckpointAudit.checkpoint_id)).toBeUndefined()
     const checkpointWithoutBoundaryRecord = await service.get("inv_projected_checkpoint_without_boundary")
     expect(checkpointWithoutBoundaryRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: checkpointWithoutBoundaryInitial!.checkpoint_id, checkpoint_available: true })
     expect(checkpointWithoutBoundaryRecord?.integrity_errors.join("\n")).toContain("checkpoint missing model-step boundary")
@@ -4586,7 +4621,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 25, running_count: 24, terminal_count: 1, final_count: 1, checkpoint_available_count: 20, uncertain_provider_outcome_count: 3, corrupt_count: 22 })
+    expect(summary).toMatchObject({ total: 26, running_count: 25, terminal_count: 1, final_count: 1, checkpoint_available_count: 21, uncertain_provider_outcome_count: 3, corrupt_count: 23 })
   })
 
   test("durable journal projection rejects hash-valid immutable identity drift", async () => {
