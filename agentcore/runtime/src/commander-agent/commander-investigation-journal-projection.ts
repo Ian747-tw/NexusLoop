@@ -464,12 +464,29 @@ function isLoadedToolRef(value: unknown): boolean {
 function isModelStepStartedPayload(event: JsonlEvent): event is CommanderInvestigationModelStepStartedPayload {
   return (
     event.schema_version === 1 &&
-    hasString(event, "model_request_id") &&
+    hasString(event, "investigation_id") &&
+    hasNumber(event, "journal_sequence") &&
     hasNumber(event, "turn_index") &&
-    hasString(event, "started_at") &&
+    hasString(event, "model_request_id") &&
+    hasString(event, "provider_id") &&
+    hasString(event, "provider_kind") &&
+    hasString(event, "model_id") &&
+    hasString(event, "tool_protocol") &&
     hasString(event, "base_checkpoint_id") &&
     hasNumber(event, "base_checkpoint_sequence") &&
-    hasString(event, "base_checkpoint_hash")
+    hasString(event, "base_checkpoint_hash") &&
+    hasString(event, "working_set_hash") &&
+    hasString(event, "context_hash") &&
+    hasNumber(event, "input_bytes") &&
+    hasNumber(event, "estimated_input_tokens") &&
+    Array.isArray(event.loaded_tool_refs) &&
+    event.loaded_tool_refs.every(isLoadedToolRef) &&
+    hasNumber(event, "provider_request_count_before") &&
+    hasNumber(event, "external_api_audit_count_before") &&
+    hasString(event, "started_at") &&
+    hasString(event, "requested_by") &&
+    hasString(event, "occurred_at") &&
+    hasString(event, "event_payload_hash")
   )
 }
 

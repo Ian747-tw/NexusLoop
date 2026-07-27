@@ -506,6 +506,11 @@ export class CommanderInvestigationJournalService {
     state.in_flight_persistence.add(operation)
     try {
       return await operation
+    } catch (error) {
+      state.persistence_fenced = true
+      const message = error instanceof Error ? error.message : String(error)
+      state.warnings = [...state.warnings, bound(`durable journal append for ${kind} failed with uncertain commit status: ${message}`, 240)].slice(-12)
+      throw error
     } finally {
       state.in_flight_persistence.delete(operation)
     }
@@ -780,7 +785,7 @@ function withPayloadHash<T extends { event_payload_hash: string }>(payload: T): 
 }
 
 function assertNotFenced(state: CommanderInvestigationJournalRunState): void {
-  if (state.persistence_fenced) throw new CommanderInvestigationPersistenceError("durable investigation persistence fenced after shutdown drain timeout")
+  if (state.persistence_fenced) throw new CommanderInvestigationPersistenceError("durable investigation persistence fenced after uncertain journal append")
 }
 
 function eventBytes(value: unknown): number {

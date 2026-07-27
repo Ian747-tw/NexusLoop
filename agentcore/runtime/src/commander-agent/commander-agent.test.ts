@@ -2602,6 +2602,37 @@ describe("Commander in-memory investigation controller", () => {
     expect(startFailure.durability).toMatchObject({ mode: "event_journal", started_persisted: false, initial_checkpoint_persisted: false, terminal_persisted: false, investigation_event_count: 0, checkpoint_count: 0 })
     await startFailingServer.shutdown()
 
+    const ambiguousDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-ambiguous-append-"))
+    await writeApprovedSpec(ambiguousDir)
+    const ambiguousServer = new RuntimeServer({
+      projectDir: ambiguousDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "must not finish after ambiguous append" }]),
+    })
+    servers.push({ stop: () => ambiguousServer.shutdown() })
+    await ambiguousServer.start()
+    const ambiguousAppend = ambiguousServer.eventStore.append.bind(ambiguousServer.eventStore)
+    ambiguousServer.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      const eventId = await ambiguousAppend(event)
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_model_step_started") {
+        throw new Error("model-step append fsync status uncertain")
+      }
+      return eventId
+    }
+    const ambiguous = await ambiguousServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_ambiguous_model_step_append" }))
+    expect(ambiguous).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
+    expect(ambiguous.durability).toMatchObject({ terminal_persisted: false, pending_model_request_id: undefined })
+    const ambiguousEvents = (await eventText(ambiguousDir)).trim().split(/\n+/).filter(Boolean)
+      .map((line) => JSON.parse(line) as { kind?: string; investigation_id?: string })
+      .filter((event) => event.investigation_id === "inv_ambiguous_model_step_append")
+    expect(ambiguousEvents.map((event) => event.kind)).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_model_step_started",
+    ])
+    const ambiguousRecord = await ambiguousServer.getCommanderInvestigationRecord("inv_ambiguous_model_step_append")
+    expect(ambiguousRecord).toMatchObject({ status: "running", recovery_state: "uncertain_provider_outcome_resume_not_implemented", uncertain_provider_outcome: true, pending_model_request_id: expect.any(String) })
+    await ambiguousServer.shutdown()
+
     const failingServer = new RuntimeServer({
       projectDir,
       adapter: new FakeOpenCodeAdapter(),
@@ -2891,6 +2922,31 @@ describe("Commander in-memory investigation controller", () => {
     const badModelRecord = await service.get("inv_bad_pending_working_hash")
     expect(badModelRecord).toMatchObject({ projection_status: "corrupt" })
     expect(badModelRecord?.integrity_errors).toContain("model-step working-set hash mismatch at sequence 1")
+
+    const malformedModelInput = baseInvestigation({ investigation_id: "inv_missing_model_step_fields", objective: "missing model step fields" })
+    const malformedModelRun = await service.createObserver(malformedModelInput)
+    await malformedModelRun.observer.onStarted(durableStartedSnapshot(malformedModelInput, 1, "inv_missing_model_step_fields") as Parameters<typeof malformedModelRun.observer.onStarted>[0])
+    const malformedModelInitial = await service.latestCheckpoint("inv_missing_model_step_fields")
+    expect(malformedModelInitial).toBeDefined()
+    service.release(malformedModelRun)
+    const incompleteModelStep = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_missing_model_step_fields",
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_missing_model_step_fields",
+      started_at: "2026-01-01T00:00:01.500Z",
+      base_checkpoint_id: malformedModelInitial!.checkpoint_id,
+      base_checkpoint_sequence: malformedModelInitial!.checkpoint_sequence,
+      base_checkpoint_hash: malformedModelInitial!.checkpoint_hash,
+      event_payload_hash: "",
+    }
+    incompleteModelStep.event_payload_hash = journalPayloadHash(incompleteModelStep)
+    await store.append(incompleteModelStep as Parameters<EventStore["append"]>[0])
+    const malformedModelRecord = await service.get("inv_missing_model_step_fields")
+    expect(malformedModelRecord).toMatchObject({ projection_status: "corrupt" })
+    expect(malformedModelRecord?.integrity_errors).toContain("malformed model-step payload at sequence 1")
 
     const badCheckpointInput = baseInvestigation({ investigation_id: "inv_bad_pending_checkpoint", objective: "bad pending checkpoint" })
     const badCheckpointRun = await service.createObserver(badCheckpointInput)
