@@ -2499,6 +2499,23 @@ describe("Commander in-memory investigation controller", () => {
         content_included: false,
         content_truncated: false,
         evidence_hash: "hash_raw_repo_symbol",
+      }, {
+        ...evidenceCard("evidence_raw_test_manifest"),
+        tool_id: "repo.test_manifest",
+        source_kind: "test_manifest" as const,
+        source_id: "pyproject.toml",
+        title: "Test manifest preview",
+        summary_preview: "[tool.pytest.ini_options] addopts = '-q DO_NOT_PERSIST_RAW_TEST_CONFIG'",
+        source_refs: [{
+          source_kind: "test_manifest",
+          source_id: "pyproject.toml",
+          label: "pyproject.toml",
+          summary_preview: "[tool.pytest.ini_options] addopts = '-q DO_NOT_PERSIST_RAW_TEST_CONFIG'",
+          pointer_only: true,
+        }],
+        content_included: false,
+        content_truncated: false,
+        evidence_hash: "hash_raw_test_manifest",
       }],
     })
     service.release(run)
@@ -2506,13 +2523,17 @@ describe("Commander in-memory investigation controller", () => {
     const events = await eventText(projectDir)
     expect(events).not.toContain("DO_NOT_PERSIST_RAW_REPO_TEXT")
     expect(events).not.toContain("DO_NOT_PERSIST_RAW_SYMBOL_LINE")
+    expect(events).not.toContain("DO_NOT_PERSIST_RAW_TEST_CONFIG")
     expect(events).toContain("repository_file evidence content omitted from durable journal")
     expect(events).toContain("repository_symbol evidence content omitted from durable journal")
+    expect(events).toContain("test_manifest evidence content omitted from durable journal")
     expect(events).toContain("hash_raw_repo_content")
     expect(events).toContain("hash_raw_repo_symbol")
+    expect(events).toContain("hash_raw_test_manifest")
     const record = await service.get("inv_pointer_only_evidence")
     expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_REPO_TEXT")
     expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_SYMBOL_LINE")
+    expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_TEST_CONFIG")
   })
 
   test("durable zero-request cancellation checkpoints project as terminal without uncertainty", async () => {
@@ -2546,7 +2567,14 @@ describe("Commander in-memory investigation controller", () => {
     const server = new RuntimeServer({
       projectDir,
       adapter: new FakeOpenCodeAdapter(),
-      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "continued after durable human note" }]),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{
+        status: "final",
+        text: "continued after durable human note",
+        assert_request: (request) => {
+          const requestText = JSON.stringify(request.messages)
+          expect(requestText).toContain("human control resume_requested")
+        },
+      }]),
       commanderInvestigationControlGate: {
         check: ({ before }) => ({
           action: "continue",

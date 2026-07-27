@@ -81,18 +81,20 @@ export class CommanderInvestigationController {
     if (startedObserved.blocker) return this.finish(input, investigationId, startedObserved.status!, startedObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [startedObserved.blocker], [], started)
 
     for (let turn = 1; turn <= budget.max_model_turns; turn += 1) {
-      const deferredPreModelWarnings: string[] = []
+      const preModelWarnings: string[] = []
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation"], [], started)
       const humanBeforeModel = await this.checkControl(input, "model_step", turn)
       const humanStop = stopReasonForControl(humanBeforeModel)
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
-      if (humanBeforeModel.warnings.length) deferredPreModelWarnings.push(...humanBeforeModel.warnings)
+      if (humanBeforeModel.warnings.length) preModelWarnings.push(...humanBeforeModel.warnings)
       const providerBeforeModel = await this.checkProvider(input, "model_step", turn)
       if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, providerBeforeModel.warnings, started)
-      if (providerBeforeModel?.warnings.length) deferredPreModelWarnings.push(...providerBeforeModel.warnings)
+      if (providerBeforeModel?.warnings.length) preModelWarnings.push(...providerBeforeModel.warnings)
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
 
-      const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
+      const contextWorkingSet = workingSetWithAdditionalWarnings(workingSet, preModelWarnings)
+      const context = this.options.contextService.build({ bootstrap, workingSet: contextWorkingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
+      const deferredPreModelWarnings = [...preModelWarnings]
       if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, context.warnings, started)
       if (context.warnings.length) deferredPreModelWarnings.push(...context.warnings)
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], context.warnings, started)
@@ -770,6 +772,14 @@ function emptyWorkingSet(input: CommanderInvestigationInput, loaded: string[], a
   }
   workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
   return workingSet
+}
+
+function workingSetWithAdditionalWarnings(workingSet: CommanderInvestigationWorkingSet, warnings: string[]): CommanderInvestigationWorkingSet {
+  if (warnings.length === 0) return workingSet
+  return {
+    ...workingSet,
+    current_warnings: [...workingSet.current_warnings, ...warnings],
+  }
 }
 
 function updateRecentResultSignatures(workingSet: CommanderInvestigationWorkingSet, recentResults: Map<string, { count: number; last_turn_index: number }>): void {
