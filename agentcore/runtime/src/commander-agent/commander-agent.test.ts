@@ -2578,6 +2578,115 @@ describe("Commander in-memory investigation controller", () => {
     expect(record?.evidence_previews.join("\n")).not.toContain("DO_NOT_PERSIST_RAW_TEST_CONFIG")
   })
 
+  test("durable journal omits raw model text from replay and terminal summaries", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-model-text-omission-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "const RAW_MODEL_QUOTED_FILE_LINE = 'DO_NOT_PERSIST_MODEL_TEXT';" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const input = baseInvestigation({ investigation_id: "inv_model_text_omission", objective: "Persist no raw model quoted text" })
+    const run = await service.createObserver(input)
+    const startedSnapshot = durableStartedSnapshot(input, 0, "inv_model_text_omission") as Parameters<typeof run.observer.onStarted>[0]
+    await run.observer.onStarted(startedSnapshot)
+    const initialCheckpoint = await service.latestCheckpoint("inv_model_text_omission")
+    await run.observer.onModelStepStarted({
+      investigation_id: "inv_model_text_omission",
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_model_text_omission",
+      tool_protocol: "native",
+      working_set_hash: initialCheckpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_model_text_omission",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:01.000Z",
+    })
+    await run.observer.onCheckpoint({
+      ...startedSnapshot,
+      working_set: { ...startedSnapshot.working_set, model_turn_count: 1 },
+      turn_index: 1,
+      next_turn_index: 2,
+      turn_summaries: [{
+        turn_index: 1,
+        model_request_id: "model_request_model_text_omission",
+        model_status: "final",
+        provider_request_count: 1,
+        assistant_text_preview: "const RAW_MODEL_QUOTED_FILE_LINE = 'DO_NOT_PERSIST_MODEL_TEXT';",
+        tool_call_ids: [],
+        tool_ids: [],
+        tool_execution_ids: [],
+        tool_execution_statuses: [],
+        newly_loaded_tool_ids: [],
+        new_evidence_ids: [],
+        input_estimated_tokens: 32,
+        input_bytes: 128,
+        cumulative_tool_calls: 0,
+        progress_made: true,
+        no_progress_reasons: [],
+        warnings: [],
+        provider_audit_request_ids: [],
+        provider_audit_event_kinds: [],
+        provider_audit_event_count: 0,
+        provider_audit_complete: true,
+        turn_hash: "turn_hash_model_text_omission",
+      }],
+      latest_assistant: {
+        role: "assistant",
+        content: [{ type: "text", text: "const RAW_MODEL_QUOTED_FILE_LINE = 'DO_NOT_PERSIST_MODEL_TEXT';" }],
+      },
+      latest_tool_results: [],
+      provider_request_count: 1,
+      elapsed_active_ms: 10,
+      created_at: "2026-01-01T00:00:02.000Z",
+    } as Parameters<typeof run.observer.onCheckpoint>[0])
+    const baseResult = await server.runCommanderInvestigationInMemory(input)
+    await service.finish(run, {
+      ...baseResult,
+      investigation_id: "inv_model_text_omission",
+      final_summary: "const RAW_MODEL_QUOTED_FILE_LINE = 'DO_NOT_PERSIST_MODEL_TEXT';",
+      model_turn_count: 1,
+      provider_request_count: 1,
+      turn_summaries: [],
+    })
+    service.release(run)
+
+    const events = await eventText(projectDir)
+    expect(events).not.toContain("DO_NOT_PERSIST_MODEL_TEXT")
+    expect(events).toContain("model-visible text omitted from durable journal")
+    const record = await service.get("inv_model_text_omission")
+    expect(record).toMatchObject({ projection_status: "ready", status: "final" })
+  })
+
+  test("durable journal read APIs quarantine torn JSONL lines without hiding valid records", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-torn-jsonl-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const validInput = baseInvestigation({ investigation_id: "inv_valid_before_torn", objective: "valid before torn line" })
+    const run = await service.createObserver(validInput)
+    await run.observer.onStarted(durableStartedSnapshot(validInput, 0, "inv_valid_before_torn") as Parameters<typeof run.observer.onStarted>[0])
+    service.release(run)
+    await writeFile(store.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_line\",\"journal_sequence\":0', { flag: "a" })
+
+    const valid = await service.get("inv_valid_before_torn")
+    expect(valid).toMatchObject({ projection_status: "ready", checkpoint_available: true })
+    const torn = await service.get("inv_torn_line")
+    expect(torn).toMatchObject({ projection_status: "corrupt", checkpoint_available: false, recovery_state: "no_checkpoint_resume_not_implemented" })
+    expect(torn?.integrity_errors.join("\n")).toContain("malformed started payload")
+    const list = await service.list({ limit: 10 })
+    expect(list.map((record) => record.investigation_id)).toContain("inv_valid_before_torn")
+    expect(list.map((record) => record.investigation_id)).toContain("inv_torn_line")
+    const summary = await service.summary()
+    expect(summary).toMatchObject({ total: 2, corrupt_count: 1, checkpoint_available_count: 1 })
+  })
+
   test("durable zero-request cancellation checkpoints project as terminal without uncertainty", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-zero-cancel-"))
     await writeApprovedSpec(projectDir)
@@ -4306,8 +4415,8 @@ describe("Commander in-memory investigation controller", () => {
       commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "should not run" }]),
     })
     await server.start()
-    const store = (server as unknown as { eventStore: EventStore }).eventStore
-    const originalReadAll = store.readAll.bind(store)
+    const journal = (server as unknown as { commanderInvestigationJournalService: () => CommanderInvestigationJournalService }).commanderInvestigationJournalService()
+    const originalGet = journal.get.bind(journal)
     let releaseLookup!: () => void
     let lookupEntered!: () => void
     const lookupStarted = new Promise<void>((resolve) => {
@@ -4317,13 +4426,13 @@ describe("Commander in-memory investigation controller", () => {
       releaseLookup = resolve
     })
     let blockedLookup = true
-    store.readAll = async () => {
+    journal.get = async (investigationId: string) => {
       if (blockedLookup) {
         blockedLookup = false
         lookupEntered()
         await lookupGate
       }
-      return originalReadAll()
+      return originalGet(investigationId)
     }
     const investigation = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_shutdown_before_observer" }))
     await lookupStarted

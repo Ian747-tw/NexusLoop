@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises"
 import { redactText, redactValue } from "../security/redaction"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
@@ -173,7 +174,7 @@ export class CommanderInvestigationJournalService {
       provider_kind: checkpoint.provider_kind,
       model_id: checkpoint.model_id,
       tool_protocol: checkpoint.tool_protocol,
-      final_summary: result.final_summary ? bound(result.final_summary, 4000) : undefined,
+      final_summary: result.final_summary ? durableModelTextSummary(result.final_summary, 4000) : undefined,
       bootstrap_id: checkpoint.bootstrap_ref.bootstrap_id,
       bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
       budget_id: checkpoint.budget.budget_id,
@@ -236,12 +237,12 @@ export class CommanderInvestigationJournalService {
   }
 
   async get(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
-    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
     return projection.records.find((record) => record.investigation_id === investigationId)
   }
 
   async list(options: CommanderInvestigationJournalListOptions = {}): Promise<CommanderInvestigationRecord[]> {
-    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
     const limit = Math.max(1, Math.min(100, Number.isInteger(options.limit) ? Number(options.limit) : 20))
     return projection.records
       .filter((record) => !options.status || record.status === options.status)
@@ -254,17 +255,17 @@ export class CommanderInvestigationJournalService {
   }
 
   async latestCheckpoint(investigationId: string): Promise<CommanderInvestigationCheckpoint | undefined> {
-    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
     return projection.checkpoints.filter((checkpoint) => checkpoint.investigation_id === investigationId).sort((a, b) => b.checkpoint_sequence - a.checkpoint_sequence)[0]
   }
 
   async getCheckpoint(checkpointId: string): Promise<CommanderInvestigationCheckpoint | undefined> {
-    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
     return projection.checkpoints.find((checkpoint) => checkpoint.checkpoint_id === checkpointId)
   }
 
   async summary(): Promise<CommanderInvestigationJournalSummary> {
-    const projection = projectCommanderInvestigationJournal(await this.options.eventStore.readAll())
+    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
     const records = projection.records
     return {
       total: records.length,
@@ -285,6 +286,26 @@ export class CommanderInvestigationJournalService {
 
   async verify(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
     return this.get(investigationId)
+  }
+
+  private async readJournalEvents(): Promise<JsonlEvent[]> {
+    try {
+      const text = await readFile(this.options.eventStore.eventsPath, "utf8")
+      const events: JsonlEvent[] = []
+      text.split(/\r?\n/).forEach((line, index) => {
+        if (!line) return
+        try {
+          events.push(JSON.parse(line) as JsonlEvent)
+        } catch {
+          const investigationId = recoverInvestigationIdFromMalformedLine(line, index)
+          if (investigationId) events.push(malformedJournalLineEvent(investigationId, index))
+        }
+      })
+      return events
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+      throw error
+    }
   }
 
   private async onStarted(state: CommanderInvestigationJournalRunState, snapshot: CommanderInvestigationStartedSnapshot): Promise<void> {
@@ -626,7 +647,7 @@ function sanitizeTurnSummaries(turns: CommanderInvestigationTurnSummary[]): Comm
       provider_audit_request_ids: turn.provider_audit_request_ids.map((item) => bound(item, 120)).slice(0, 24),
     }
     delete (summary as Partial<CommanderInvestigationTurnSummary>).output_tokens
-    if (turn.assistant_text_preview) summary.assistant_text_preview = bound(turn.assistant_text_preview, 300)
+    if (turn.assistant_text_preview) summary.assistant_text_preview = durableModelTextSummary(turn.assistant_text_preview, 300)
     else delete (summary as Partial<CommanderInvestigationTurnSummary>).assistant_text_preview
     return summary
   })
@@ -649,7 +670,7 @@ function sanitizeAssistant(message: CommanderModelAssistantMessage): CommanderMo
   return {
     role: "assistant",
     content: message.content.map((part) => {
-      if (part.type === "text") return { type: "text" as const, text: bound(part.text, 800) }
+      if (part.type === "text") return { type: "text" as const, text: durableModelTextSummary(part.text, 800) }
       const call = part as CommanderModelToolCallPart
       return {
         type: "tool_call" as const,
@@ -663,6 +684,32 @@ function sanitizeAssistant(message: CommanderModelAssistantMessage): CommanderMo
       }
     }),
   }
+}
+
+function durableModelTextSummary(text: string, maxBytes: number): string {
+  return bound(`model-visible text omitted from durable journal; text_hash=${stableHash(text)} text_chars=${text.length}`, maxBytes)
+}
+
+function recoverInvestigationIdFromMalformedLine(line: string, index: number): string {
+  const match = line.match(/"investigation_id"\s*:\s*"([^"\\]{1,200})"/)
+  if (match?.[1]) return bound(match[1], 200)
+  return `malformed_commander_journal_line_${index}`
+}
+
+function malformedJournalLineEvent(investigationId: string, lineIndex: number): JsonlEvent {
+  const event = {
+    kind: "runtime_commander_investigation_started",
+    schema_version: 1,
+    investigation_id: investigationId,
+    journal_sequence: 0,
+    requested_by: "",
+    occurred_at: "",
+    malformed_jsonl_line: true,
+    line_index: lineIndex,
+    event_payload_hash: "",
+  }
+  event.event_payload_hash = stableHash({ ...event, event_payload_hash: "" })
+  return event as JsonlEvent
 }
 
 function durableToolResult(message: CommanderModelToolResultMessage): CommanderDurableToolResultSummaryMessage {
