@@ -4433,6 +4433,30 @@ describe("Commander in-memory investigation controller", () => {
     expect(corruptSearch.result?.candidates).toEqual([])
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
 
+    for (let index = 1; index <= 101; index += 1) {
+      const investigationId = `inv_bulk_${String(index).padStart(3, "0")}`
+      const input = baseInvestigation({
+        investigation_id: investigationId,
+        objective: index === 1 ? "oldest durable archive needle" : `recent durable archive filler ${index}`,
+        session_id: "session_bulk_search",
+      })
+      const run = await service.createObserver(input)
+      await run.observer.onStarted(durableStartedSnapshot(input, index + 20, investigationId) as Parameters<typeof run.observer.onStarted>[0])
+      await service.finish(run, {
+        ...baseResult,
+        investigation_id: investigationId,
+        completed_at: new Date(Date.UTC(2026, 0, 1, 3, 0, index)).toISOString(),
+        final_summary: index === 1 ? "oldest durable archive final" : `recent durable archive final ${index}`,
+        evidence: [],
+      })
+      service.release(run)
+    }
+    const projectedBulk = await service.listForOperationalMemorySearch({ limit: 800, session_id: "session_bulk_search" })
+    expect(projectedBulk).toHaveLength(101)
+    expect(projectedBulk.map((record) => record.investigation_id)).toContain("inv_bulk_001")
+    const oldestSearch = await server.searchCommanderOperationalMemory({ query: "inv_bulk_001", source_kinds: ["commander_investigation"], session_id: "session_bulk_search" })
+    expect(oldestSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_bulk_001", pointer_only: true }))
+
     await writeFile((server as unknown as { eventStore: EventStore }).eventStore.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_search_line\",\"journal_sequence\":0', { flag: "a" })
     const afterTornSearch = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
     expect(afterTornSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true }))

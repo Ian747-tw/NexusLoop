@@ -5178,7 +5178,7 @@ export class RuntimeServer {
   private async collectCommanderInvestigationOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
     const records: CommanderOperationalMemoryRecord[] = []
     const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
-    for (const investigation of await this.listCommanderInvestigationRecords({ limit: 100 })) {
+    for (const investigation of await this.commanderInvestigationJournalService().listForOperationalMemorySearch({ limit: 800 })) {
       if (investigation.projection_status !== "ready") continue
       push({
         source_kind: "commander_investigation",

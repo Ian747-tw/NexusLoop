@@ -242,8 +242,16 @@ export class CommanderInvestigationJournalService {
   }
 
   async list(options: CommanderInvestigationJournalListOptions = {}): Promise<CommanderInvestigationRecord[]> {
+    return this.listProjected(options, 100, 20)
+  }
+
+  async listForOperationalMemorySearch(options: CommanderInvestigationJournalListOptions = {}): Promise<CommanderInvestigationRecord[]> {
+    return this.listProjected(options, 800, 800)
+  }
+
+  private async listProjected(options: CommanderInvestigationJournalListOptions, maxLimit: number, defaultLimit: number): Promise<CommanderInvestigationRecord[]> {
     const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
-    const limit = Math.max(1, Math.min(100, Number.isInteger(options.limit) ? Number(options.limit) : 20))
+    const limit = Math.max(1, Math.min(maxLimit, Number.isInteger(options.limit) ? Number(options.limit) : defaultLimit))
     return projection.records
       .filter((record) => !options.status || record.status === options.status)
       .filter((record) => !options.phase || record.phase === options.phase)
