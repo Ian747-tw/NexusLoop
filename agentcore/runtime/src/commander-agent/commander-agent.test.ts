@@ -46,6 +46,8 @@ import {
   validateCommanderToolArguments,
   type CommanderInvestigationCheckpointSnapshot,
   type CommanderInvestigationStartedSnapshot,
+  type CommanderInvestigationCheckpoint,
+  type CommanderInvestigationTerminalRecord,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
   type CommanderModelStepResult,
@@ -2469,6 +2471,12 @@ describe("Commander in-memory investigation controller", () => {
     expect(events).toContain("\"checkpoint_kind\":\"turn_complete\"")
     expect(events).toContain("\"recent_result_signatures\"")
     expect(events).toContain("\"durable_summary_only\":true")
+    expect(events).toContain("\"final_output\"")
+    expect(events).toContain("\"conclusion\"")
+    expect(events).toContain("\"text_persisted\":false")
+    expect(events).toContain("\"assistant_text_persisted\":false")
+    expect(events).toContain("\"exact_replay_supported\":false")
+    expect(events).not.toContain("Durable final summary.")
     expect(events).not.toContain("\"output_tokens\":\"[REDACTED]\"")
     expect(events).not.toContain("durable-secret")
     expect(events).not.toContain("execution_arguments")
@@ -2734,9 +2742,14 @@ describe("Commander in-memory investigation controller", () => {
 
     const events = await eventText(projectDir)
     expect(events).not.toContain("DO_NOT_PERSIST_MODEL_TEXT")
-    expect(events).toContain("model-visible text omitted from durable journal")
+    expect(events).toContain("\"text_persisted\":false")
+    expect(events).toContain("\"assistant_text_persisted\":false")
+    expect(events).toContain("\"exact_replay_supported\":false")
+    expect(events).toContain("\"protocol_relationship_preserved\":true")
     const record = await service.get("inv_model_text_omission")
-    expect(record).toMatchObject({ projection_status: "ready", status: "final" })
+    expect(record).toMatchObject({ projection_status: "ready", status: "final", final_summary_preview: undefined })
+    const checkpoint = await service.latestCheckpoint("inv_model_text_omission")
+    expect(checkpoint?.replay_exchange).toMatchObject({ assistant_text_persisted: false, exact_replay_supported: false, protocol_relationship_preserved: true })
   })
 
   test("durable journal read APIs quarantine torn JSONL lines without hiding valid records", async () => {
@@ -3744,7 +3757,8 @@ describe("Commander in-memory investigation controller", () => {
         provider_kind: "unknown",
         model_id: "cloud-long-context",
         tool_protocol: "native",
-        final_summary: "corrupt terminal should not complete",
+        final_output: { text_persisted: false, text_hash: "text_hash_corrupt_terminal", text_chars: 36 },
+        conclusion: { status: "final", stop_reason: "model_final", evidence_ids: [], evidence_titles: [], safe_evidence_summaries: [], blockers: [], warnings: [], final_output_text_hash: "text_hash_corrupt_terminal" },
         bootstrap_id: "bootstrap_3",
         bootstrap_hash: "bootstrap_hash_3",
         budget_id: "budget_3",
@@ -3798,6 +3812,8 @@ describe("Commander in-memory investigation controller", () => {
         provider_kind: "unknown",
         model_id: "cloud-long-context",
         tool_protocol: "native",
+        final_output: { text_persisted: false, text_hash: "text_hash_nested_terminal", text_chars: 12 },
+        conclusion: { status: "final", stop_reason: "model_final", evidence_ids: [], evidence_titles: [], safe_evidence_summaries: [], blockers: [], warnings: [], final_output_text_hash: "text_hash_nested_terminal" },
         bootstrap_id: "bootstrap_4",
         bootstrap_hash: "bootstrap_hash_4",
         budget_id: "budget_4",
@@ -3843,7 +3859,8 @@ describe("Commander in-memory investigation controller", () => {
       provider_kind: "unknown",
       model_id: "cloud-long-context",
       tool_protocol: "native",
-      final_summary: "wrong owner terminal should not complete",
+      final_output: { text_persisted: false, text_hash: "text_hash_wrong_owner_terminal", text_chars: 40 },
+      conclusion: { status: "final", stop_reason: "model_final", evidence_ids: [], evidence_titles: [], safe_evidence_summaries: [], blockers: [], warnings: [], final_output_text_hash: "text_hash_wrong_owner_terminal" },
       bootstrap_id: "bootstrap_10",
       bootstrap_hash: "bootstrap_hash_10",
       budget_id: "budget_10",
@@ -3922,7 +3939,7 @@ describe("Commander in-memory investigation controller", () => {
       ...wrongOwnerTerminal,
       investigation_id: "inv_bad_final_summary_terminal",
       objective_hash: "objective_hash_bad_final_summary",
-      final_summary: { unexpected: "object summary" },
+      final_output: { unexpected: "object summary" },
       last_checkpoint_id: badFinalSummaryCheckpoint!.checkpoint_id,
       last_checkpoint_sequence: badFinalSummaryCheckpoint!.checkpoint_sequence,
       last_checkpoint_hash: badFinalSummaryCheckpoint!.checkpoint_hash,
@@ -4346,6 +4363,194 @@ describe("Commander in-memory investigation controller", () => {
     expect(summary).toMatchObject({ total: 20, running_count: 19, terminal_count: 1, final_count: 1, checkpoint_available_count: 15, uncertain_provider_outcome_count: 3, corrupt_count: 17 })
   })
 
+  test("durable journal projection rejects hash-valid immutable identity drift", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-identity-drift-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "identity drift should not run" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+
+    async function start(input: ReturnType<typeof baseInvestigation>, index: number) {
+      const run = await service.createObserver(input)
+      await run.observer.onStarted(durableStartedSnapshot(input, index, input.investigation_id!) as Parameters<typeof run.observer.onStarted>[0])
+      const checkpoint = await service.latestCheckpoint(input.investigation_id!)
+      expect(checkpoint).toBeDefined()
+      service.release(run)
+      return checkpoint!
+    }
+
+    async function appendModelStep(input: ReturnType<typeof baseInvestigation>, checkpoint: CommanderInvestigationCheckpoint) {
+      const event = {
+        kind: "runtime_commander_investigation_model_step_started",
+        schema_version: 1,
+        investigation_id: input.investigation_id!,
+        journal_sequence: 1,
+        turn_index: 1,
+        model_request_id: `model_request_${input.investigation_id}`,
+        provider_id: input.provider_id,
+        provider_kind: input.provider_kind,
+        model_id: input.model_id,
+        tool_protocol: "native",
+        base_checkpoint_id: checkpoint.checkpoint_id,
+        base_checkpoint_sequence: checkpoint.checkpoint_sequence,
+        base_checkpoint_hash: checkpoint.checkpoint_hash,
+        working_set_hash: checkpoint.working_set.working_set_hash,
+        context_hash: `context_hash_${input.investigation_id}`,
+        input_bytes: 128,
+        estimated_input_tokens: 32,
+        loaded_tool_refs: [],
+        provider_request_count_before: 0,
+        external_api_audit_count_before: 0,
+        started_at: "2026-01-01T00:01:00.000Z",
+        requested_by: "tester",
+        occurred_at: "2026-01-01T00:01:00.000Z",
+        event_payload_hash: "",
+      }
+      event.event_payload_hash = journalPayloadHash(event)
+      await server.eventStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+
+    async function appendHashValidCheckpointDrift(name: string, mutate: (checkpoint: CommanderInvestigationCheckpoint) => CommanderInvestigationCheckpoint) {
+      const input = baseInvestigation({ investigation_id: `inv_identity_${name}`, objective: `identity drift ${name}` })
+      const initial = await start(input, 20 + name.length)
+      await appendModelStep(input, initial)
+      const checkpoint = finalizeTestCheckpoint(mutate({
+        ...initial,
+        checkpoint_sequence: 1,
+        checkpoint_kind: "turn_complete",
+        turn_index: 1,
+        next_turn_index: 2,
+        previous_checkpoint_id: initial.checkpoint_id,
+        previous_checkpoint_hash: initial.checkpoint_hash,
+        working_set: { ...initial.working_set, model_turn_count: 1 },
+      }))
+      const event = {
+        kind: "runtime_commander_investigation_checkpointed",
+        schema_version: 1,
+        investigation_id: input.investigation_id!,
+        journal_sequence: 2,
+        requested_by: "tester",
+        occurred_at: "2026-01-01T00:01:01.000Z",
+        checkpoint,
+        event_payload_hash: "",
+      }
+      event.event_payload_hash = journalPayloadHash(event)
+      await server.eventStore.append(event as Parameters<EventStore["append"]>[0])
+      const record = await service.get(input.investigation_id!)
+      expect(record).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: initial.checkpoint_id })
+      expect(await service.getCheckpoint(checkpoint.checkpoint_id)).toBeUndefined()
+      return record?.integrity_errors.join("\n") ?? ""
+    }
+
+    expect(await appendHashValidCheckpointDrift("provider", (checkpoint) => ({ ...checkpoint, provider_id: "provider-B" }))).toContain("checkpoint provider_id identity mismatch")
+    expect(await appendHashValidCheckpointDrift("model", (checkpoint) => ({ ...checkpoint, model_id: "model-B" }))).toContain("checkpoint model_id identity mismatch")
+    expect(await appendHashValidCheckpointDrift("phase", (checkpoint) => ({ ...checkpoint, phase: "governance_review" }))).toContain("checkpoint phase identity mismatch")
+    expect(await appendHashValidCheckpointDrift("objective", (checkpoint) => ({ ...checkpoint, objective_hash: "objective-hash-B" }))).toContain("checkpoint objective_hash identity mismatch")
+    expect(await appendHashValidCheckpointDrift("bootstrap", (checkpoint) => ({ ...checkpoint, bootstrap_ref: { bootstrap_id: "bootstrap-B", bootstrap_hash: "bootstrap-hash-B" } }))).toContain("checkpoint bootstrap_id identity mismatch")
+    expect(await appendHashValidCheckpointDrift("budget", (checkpoint) => ({ ...checkpoint, budget: { ...checkpoint.budget, budget_id: "budget-B", budget_hash: "budget-hash-B" } }))).toContain("checkpoint budget_id identity mismatch")
+
+    const initialRefsInput = baseInvestigation({ investigation_id: "inv_identity_initial_refs", objective: "identity initial refs drift" })
+    const initialRefs = await start(initialRefsInput, 31)
+    const initialRefsBad = finalizeTestCheckpoint({ ...initialRefs, investigation_id: "inv_identity_initial_refs_bad" })
+    const startedEvent = {
+      kind: "runtime_commander_investigation_started",
+      schema_version: 1,
+      investigation_id: "inv_identity_initial_refs_bad",
+      journal_sequence: 0,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:02:00.000Z",
+      normalized_input: { ...initialRefsInput, investigation_id: "inv_identity_initial_refs_bad" },
+      input_hash: "input_hash_refs_bad",
+      phase: initialRefsBad.phase,
+      objective: "identity initial refs drift",
+      objective_hash: initialRefsBad.objective_hash,
+      provider_id: initialRefsBad.provider_id,
+      provider_kind: initialRefsBad.provider_kind,
+      model_id: initialRefsBad.model_id,
+      tool_protocol: initialRefsBad.tool_protocol,
+      budget: initialRefsBad.budget,
+      budget_hash: initialRefsBad.budget.budget_hash,
+      bootstrap_ref: initialRefsBad.bootstrap_ref,
+      initial_loaded_tool_refs: [{ tool_id: "memory.search", descriptor_version: "v1", authority_id: "authority", input_schema_hash: "input", output_schema_hash: "output", load_policy: "deferred", trust_class: "runtime_authoritative", instruction_semantics: "none" }],
+      initial_checkpoint: initialRefsBad,
+      started_at: "2026-01-01T00:02:00.000Z",
+      summary_preview: "identity initial refs drift",
+      event_payload_hash: "",
+    }
+    startedEvent.event_payload_hash = journalPayloadHash(startedEvent)
+    await server.eventStore.append(startedEvent as Parameters<EventStore["append"]>[0])
+    const badRefs = await service.get("inv_identity_initial_refs_bad")
+    expect(badRefs).toMatchObject({ projection_status: "corrupt", checkpoint_available: false })
+    expect(badRefs?.integrity_errors.join("\n")).toContain("initial checkpoint loaded-tool references mismatch started event")
+
+    const terminalInput = baseInvestigation({ investigation_id: "inv_identity_terminal", objective: "identity terminal drift" })
+    const terminalCheckpoint = await start(terminalInput, 33)
+    const terminal: CommanderInvestigationTerminalRecord = {
+      schema_version: 1,
+      investigation_id: "inv_identity_terminal",
+      status: "final",
+      stop_reason: "model_final",
+      phase: terminalCheckpoint.phase,
+      objective_hash: terminalCheckpoint.objective_hash,
+      provider_id: "provideruniquexyz",
+      provider_kind: terminalCheckpoint.provider_kind,
+      model_id: terminalCheckpoint.model_id,
+      tool_protocol: terminalCheckpoint.tool_protocol,
+      final_output: { text_persisted: false, text_hash: "text_hash_terminal", text_chars: 10 },
+      conclusion: { status: "final", stop_reason: "model_final", evidence_ids: [], evidence_titles: [], safe_evidence_summaries: [], blockers: [], warnings: [], final_output_text_hash: "text_hash_terminal" },
+      bootstrap_id: terminalCheckpoint.bootstrap_ref.bootstrap_id,
+      bootstrap_hash: terminalCheckpoint.bootstrap_ref.bootstrap_hash,
+      budget_id: terminalCheckpoint.budget.budget_id,
+      budget_hash: terminalCheckpoint.budget.budget_hash,
+      last_checkpoint_id: terminalCheckpoint.checkpoint_id,
+      last_checkpoint_sequence: terminalCheckpoint.checkpoint_sequence,
+      last_checkpoint_hash: terminalCheckpoint.checkpoint_hash,
+      model_turn_count: 0,
+      provider_request_count: 0,
+      tool_call_count: 0,
+      tool_search_call_count: 0,
+      loaded_tool_ids: [],
+      evidence_cards: [],
+      turn_summaries: [],
+      omitted_evidence_count: 0,
+      omitted_turn_count: 0,
+      provider_audit: terminalCheckpoint.working_set.provider_audit,
+      blockers: [],
+      warnings: [],
+      semantic_result_hash: "semantic_terminal_identity",
+      started_at: "2026-01-01T00:03:00.000Z",
+      completed_at: "2026-01-01T00:03:01.000Z",
+      terminal_hash: "",
+      transcript_persisted: false,
+      raw_tool_results_persisted: false,
+      chain_of_thought_persisted: false,
+    }
+    terminal.terminal_hash = stableHash({ ...terminal, terminal_hash: "" })
+    const terminalEvent = {
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_identity_terminal",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:03:01.000Z",
+      terminal,
+      event_payload_hash: "",
+    }
+    terminalEvent.event_payload_hash = journalPayloadHash(terminalEvent)
+    await server.eventStore.append(terminalEvent as Parameters<EventStore["append"]>[0])
+    const terminalRecord = await service.get("inv_identity_terminal")
+    expect(terminalRecord).toMatchObject({ projection_status: "corrupt", status: "running" })
+    expect(terminalRecord?.integrity_errors.join("\n")).toContain("terminal provider_id identity mismatch")
+
+    const corruptSearch = await server.searchCommanderOperationalMemory({ query: "provideruniquexyz", source_kinds: ["commander_investigation"] })
+    expect(corruptSearch.result?.candidates).toEqual([])
+  })
+
   test("durable journal pending model-step start advances running record updated_at", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-pending-updated-"))
     const service = new CommanderInvestigationJournalService({
@@ -4386,7 +4591,7 @@ describe("Commander in-memory investigation controller", () => {
     const server = new RuntimeServer({
       projectDir,
       adapter: new FakeOpenCodeAdapter(),
-      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "completed durable objective summary" }]),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "modelonlyxyz durable conclusion text" }]),
     })
     servers.push({ stop: () => server.shutdown() })
     await server.start()
@@ -4394,8 +4599,8 @@ describe("Commander in-memory investigation controller", () => {
     const search = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
     expect(search).toMatchObject({ status: "ready", events_appended: false })
     expect(search.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true, session_id: "session_search" })])
-    const finalSearch = await server.searchCommanderOperationalMemory({ query: "completed durable objective summary", source_kinds: ["commander_investigation"], session_id: "session_search" })
-    expect(finalSearch.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable" })])
+    const finalSearch = await server.searchCommanderOperationalMemory({ query: "modelonlyxyz", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(finalSearch.result?.candidates).toEqual([])
 
     const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
     const evidenceInput = baseInvestigation({ investigation_id: "inv_searchable_evidence", objective: "Generic durable investigation objective", session_id: "session_search" })
@@ -4411,6 +4616,8 @@ describe("Commander in-memory investigation controller", () => {
     service.release(evidenceRun)
     const evidenceSearch = await server.searchCommanderOperationalMemory({ query: "rare amber finding", source_kinds: ["commander_investigation"], session_id: "session_search" })
     expect(evidenceSearch.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable_evidence" })])
+    const evidenceRecord = await service.get("inv_searchable_evidence")
+    expect(evidenceRecord?.final_summary_preview).toBeUndefined()
 
     const corruptInput = baseInvestigation({ investigation_id: "inv_corrupt_searchable", objective: "Generic corrupt durable objective", session_id: "session_search" })
     const corruptRun = await service.createObserver(corruptInput)
@@ -5352,6 +5559,28 @@ function largeEvidenceCard(index: number) {
 function journalPayloadHash(event: Record<string, unknown>): string {
   const { event_id: _eventId, timestamp: _timestamp, kind: _kind, ...payload } = event
   return stableHash({ ...payload, event_payload_hash: "" })
+}
+
+function finalizeTestCheckpoint(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  const current = { ...checkpoint, checkpoint_id: "", semantic_state_hash: "", checkpoint_hash: "" }
+  current.semantic_state_hash = stableHash({
+    ...current,
+    checkpoint_id: "",
+    checkpoint_hash: "",
+    semantic_state_hash: "",
+    created_at: "",
+    elapsed_active_ms: 0,
+    provider_audit: undefined,
+    working_set: {
+      ...current.working_set,
+      provider_audit: { ...current.working_set.provider_audit, audit_request_ids: [] },
+      evidence_cards: current.working_set.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+    },
+    turn_summaries: current.turn_summaries.map((item) => ({ ...item, provider_audit_request_ids: [], turn_hash: "" })),
+  })
+  current.checkpoint_id = `commander_inv_checkpoint_${current.checkpoint_sequence}_${current.semantic_state_hash.slice(0, 16)}`
+  current.checkpoint_hash = stableHash({ ...current, checkpoint_hash: "" })
+  return current
 }
 
 async function investigationServerWithSession(prefix: string): Promise<{ server: RuntimeServer; projectDir: string; sessionId: string; launchId: string }> {

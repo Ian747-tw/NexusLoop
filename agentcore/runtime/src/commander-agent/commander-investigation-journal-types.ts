@@ -2,7 +2,7 @@ import type { CommanderEvidenceCard } from "../commander-tools/commander-read-ty
 import type { CommanderToolPhase, CommanderToolTrustClass } from "../commander-tools/commander-tool-types"
 import type { JsonlEvent } from "../events/event-types"
 import type { CommanderInvestigationProviderAuditSummary } from "./commander-investigation-provider-types"
-import type { CommanderModelAssistantMessage, CommanderModelToolProtocol } from "./commander-model-types"
+import type { CommanderModelToolCallPart, CommanderModelToolProtocol } from "./commander-model-types"
 import type {
   CommanderInvestigationBudget,
   CommanderInvestigationInput,
@@ -34,6 +34,50 @@ export type CommanderInvestigationLoadedToolRef = {
   instruction_semantics: "none"
 }
 
+export type CommanderInvestigationJournalIdentity = {
+  investigation_id: string
+  phase: CommanderToolPhase
+  objective_hash: string
+  provider_id: string
+  provider_kind: string
+  model_id: string
+  tool_protocol: CommanderModelToolProtocol
+  bootstrap_id: string
+  bootstrap_hash: string
+  budget_id: string
+  budget_hash: string
+}
+
+export type CommanderDurableModelTextFingerprint = {
+  text_persisted: false
+  text_hash: string
+  text_chars: number
+}
+
+export type CommanderInvestigationConclusionCard = {
+  status: CommanderInvestigationStatus
+  stop_reason: CommanderInvestigationStopReason
+  evidence_ids: string[]
+  evidence_titles: string[]
+  safe_evidence_summaries: string[]
+  blockers: string[]
+  warnings: string[]
+  final_output_text_hash?: string
+}
+
+export type CommanderDurableAssistantTextFingerprintPart = CommanderDurableModelTextFingerprint & {
+  type: "text_fingerprint"
+}
+
+export type CommanderDurableAssistantToolCallPart = Omit<CommanderModelToolCallPart, "raw_arguments"> & {
+  raw_arguments?: string
+}
+
+export type CommanderDurableAssistantMessage = {
+  role: "assistant"
+  content: Array<CommanderDurableAssistantTextFingerprintPart | CommanderDurableAssistantToolCallPart>
+}
+
 export type CommanderInvestigationDurableWorkingSet = {
   objective_preview: string
   phase: CommanderToolPhase
@@ -58,10 +102,13 @@ export type CommanderInvestigationDurableWorkingSet = {
 
 export type CommanderInvestigationReplayExchange = {
   turn_index: number
-  assistant_message: CommanderModelAssistantMessage
+  assistant_message: CommanderDurableAssistantMessage
   tool_result_messages: CommanderDurableToolResultSummaryMessage[]
   exchange_hash: string
   summary_only: true
+  assistant_text_persisted: false
+  exact_replay_supported: false
+  protocol_relationship_preserved: true
   full_tool_results_persisted: false
 }
 
@@ -186,7 +233,8 @@ export type CommanderInvestigationTerminalRecord = {
   provider_kind: string
   model_id: string
   tool_protocol: CommanderModelToolProtocol
-  final_summary?: string
+  final_output?: CommanderDurableModelTextFingerprint
+  conclusion: CommanderInvestigationConclusionCard
   bootstrap_id: string
   bootstrap_hash: string
   budget_id: string

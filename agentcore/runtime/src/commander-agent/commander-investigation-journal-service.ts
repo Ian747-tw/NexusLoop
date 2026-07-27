@@ -18,6 +18,8 @@ import type {
   CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
 import type {
+  CommanderDurableModelTextFingerprint,
+  CommanderDurableAssistantMessage,
   CommanderDurableToolResultSummaryMessage,
   CommanderInvestigationCheckpoint,
   CommanderInvestigationFinishedPayload,
@@ -174,7 +176,8 @@ export class CommanderInvestigationJournalService {
       provider_kind: checkpoint.provider_kind,
       model_id: checkpoint.model_id,
       tool_protocol: checkpoint.tool_protocol,
-      final_summary: result.final_summary ? durableModelTextSummary(result.final_summary, 4000) : undefined,
+      final_output: result.final_summary ? durableModelTextFingerprint(result.final_summary) : undefined,
+      conclusion: durableConclusion(result),
       bootstrap_id: checkpoint.bootstrap_ref.bootstrap_id,
       bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
       budget_id: checkpoint.budget.budget_id,
@@ -476,6 +479,7 @@ export class CommanderInvestigationJournalService {
     const snapshot = input.snapshot
     const workingSet = durableWorkingSet(snapshot.working_set)
     const replay = input.latestAssistant ? replayExchange(input.turnIndex, input.latestAssistant, input.latestToolResults) : undefined
+    const previous = input.previous
     let checkpoint: CommanderInvestigationCheckpoint = {
       schema_version: 1,
       checkpoint_id: "",
@@ -484,14 +488,14 @@ export class CommanderInvestigationJournalService {
       checkpoint_kind: input.checkpointKind,
       turn_index: input.turnIndex,
       next_turn_index: input.nextTurnIndex,
-      phase: snapshot.input.phase,
-      objective_hash: stableHash(bound(snapshot.input.objective, 1000)),
-      provider_id: bound(snapshot.input.provider_id, 120),
-      provider_kind: bound(snapshot.input.provider_kind, 80),
-      model_id: bound(snapshot.input.model_id, 200),
-      tool_protocol: snapshot.tool_protocol,
-      bootstrap_ref: { bootstrap_id: snapshot.bootstrap.bootstrap_id, bootstrap_hash: snapshot.bootstrap.bootstrap_hash },
-      budget: snapshot.budget,
+      phase: previous?.phase ?? snapshot.input.phase,
+      objective_hash: previous?.objective_hash ?? stableHash(bound(snapshot.input.objective, 1000)),
+      provider_id: previous?.provider_id ?? bound(snapshot.input.provider_id, 120),
+      provider_kind: previous?.provider_kind ?? bound(snapshot.input.provider_kind, 80),
+      model_id: previous?.model_id ?? bound(snapshot.input.model_id, 200),
+      tool_protocol: previous?.tool_protocol ?? snapshot.tool_protocol,
+      bootstrap_ref: previous?.bootstrap_ref ?? { bootstrap_id: snapshot.bootstrap.bootstrap_id, bootstrap_hash: snapshot.bootstrap.bootstrap_hash },
+      budget: previous?.budget ?? snapshot.budget,
       loaded_tools: loadedToolRefs(snapshot.loaded_tools),
       working_set: workingSet,
       turn_summaries: sanitizeTurnSummaries(input.turnSummaries).slice(-snapshot.budget.max_turn_summaries),
@@ -668,7 +672,7 @@ function sanitizeTurnSummaries(turns: CommanderInvestigationTurnSummary[]): Comm
       provider_audit_request_ids: turn.provider_audit_request_ids.map((item) => bound(item, 120)).slice(0, 24),
     }
     delete (summary as Partial<CommanderInvestigationTurnSummary>).output_tokens
-    if (turn.assistant_text_preview) summary.assistant_text_preview = durableModelTextSummary(turn.assistant_text_preview, 300)
+    if (turn.assistant_text_preview) summary.assistant_text_preview = durableModelTextOmission(turn.assistant_text_preview, 300)
     else delete (summary as Partial<CommanderInvestigationTurnSummary>).assistant_text_preview
     return summary
   })
@@ -681,17 +685,20 @@ function replayExchange(turnIndex: number, assistant: CommanderModelAssistantMes
     tool_result_messages: toolResults.slice(0, 4).map(durableToolResult),
     exchange_hash: "",
     summary_only: true as const,
+    assistant_text_persisted: false as const,
+    exact_replay_supported: false as const,
+    protocol_relationship_preserved: true as const,
     full_tool_results_persisted: false as const,
   }
   exchange.exchange_hash = stableHash({ ...exchange, exchange_hash: "" })
   return exchange
 }
 
-function sanitizeAssistant(message: CommanderModelAssistantMessage): CommanderModelAssistantMessage {
+function sanitizeAssistant(message: CommanderModelAssistantMessage): CommanderDurableAssistantMessage {
   return {
-    role: "assistant",
+    role: "assistant" as const,
     content: message.content.map((part) => {
-      if (part.type === "text") return { type: "text" as const, text: durableModelTextSummary(part.text, 800) }
+      if (part.type === "text") return { type: "text_fingerprint" as const, ...durableModelTextFingerprint(part.text) }
       const call = part as CommanderModelToolCallPart
       return {
         type: "tool_call" as const,
@@ -707,8 +714,27 @@ function sanitizeAssistant(message: CommanderModelAssistantMessage): CommanderMo
   }
 }
 
-function durableModelTextSummary(text: string, maxBytes: number): string {
+function durableModelTextFingerprint(text: string): CommanderDurableModelTextFingerprint {
+  return { text_persisted: false, text_hash: stableHash(text), text_chars: text.length }
+}
+
+function durableModelTextOmission(text: string, maxBytes: number): string {
   return bound(`model-visible text omitted from durable journal; text_hash=${stableHash(text)} text_chars=${text.length}`, maxBytes)
+}
+
+function durableConclusion(result: CommanderInvestigationResult) {
+  const evidence = sanitizeEvidence(result.evidence).slice(0, result.budget.max_evidence_cards)
+  const finalOutput = result.final_summary ? durableModelTextFingerprint(result.final_summary) : undefined
+  return {
+    status: result.status,
+    stop_reason: result.stop_reason,
+    evidence_ids: evidence.map((card) => bound(card.evidence_id, 160)).slice(0, 24),
+    evidence_titles: evidence.map((card) => bound(card.title, 180)).slice(0, 24),
+    safe_evidence_summaries: evidence.map((card) => bound(card.summary_preview, 500)).slice(0, 24),
+    blockers: result.blockers.map((item) => bound(item, 300)).slice(0, 16),
+    warnings: result.warnings.map((item) => bound(item, 300)).slice(0, 16),
+    final_output_text_hash: finalOutput?.text_hash,
+  }
 }
 
 function recoverInvestigationIdFromMalformedLine(line: string, index: number): string | undefined {
@@ -804,7 +830,10 @@ function compactTerminalOnce(terminal: CommanderInvestigationTerminalRecord): Co
   if (terminal.evidence_cards.length > 0) return { ...terminal, evidence_cards: terminal.evidence_cards.slice(1), omitted_evidence_count: terminal.omitted_evidence_count + 1 }
   if (terminal.warnings.length > 0) return { ...terminal, warnings: terminal.warnings.slice(0, -1) }
   if (terminal.blockers.length > 0) return { ...terminal, blockers: terminal.blockers.slice(0, -1) }
-  if (terminal.final_summary && terminal.final_summary.length > 500) return { ...terminal, final_summary: terminal.final_summary.slice(0, 500) }
+  if (terminal.conclusion.safe_evidence_summaries.length > 0) return { ...terminal, conclusion: { ...terminal.conclusion, safe_evidence_summaries: terminal.conclusion.safe_evidence_summaries.slice(0, -1) } }
+  if (terminal.conclusion.evidence_titles.length > 0) return { ...terminal, conclusion: { ...terminal.conclusion, evidence_titles: terminal.conclusion.evidence_titles.slice(0, -1) } }
+  if (terminal.conclusion.warnings.length > 0) return { ...terminal, conclusion: { ...terminal.conclusion, warnings: terminal.conclusion.warnings.slice(0, -1) } }
+  if (terminal.conclusion.blockers.length > 0) return { ...terminal, conclusion: { ...terminal.conclusion, blockers: terminal.conclusion.blockers.slice(0, -1) } }
   return terminal
 }
 

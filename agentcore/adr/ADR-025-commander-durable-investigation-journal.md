@@ -63,14 +63,20 @@ Checkpoints persist operational state needed for restart analysis:
 - provider audit counts
 - repeat/no-progress signatures
 - the latest assistant/tool replay exchange as summary-only protocol state
+- a terminal conclusion card derived from safe evidence titles, safe evidence
+  summaries, blockers, warnings, status, stop reason, and model-output
+  fingerprint metadata
 
 Full transcripts, raw provider payloads, raw tool execution results, raw
 repository file lines, raw Git patches, raw research records, hidden reasoning,
 credentials, and SDK session state are not persisted.
 
-Replay exchange stores visible assistant text and tool-call IDs/tool IDs with
-redacted bounded arguments. Tool-result replay messages are durable summaries
-only and preserve protocol relationships without storing full tool result JSON.
+Replay exchange stores tool-call IDs/tool IDs with redacted bounded arguments
+and model-text fingerprints. It explicitly records that assistant text is not
+persisted and exact replay is unsupported in 9W3A. Tool-result replay messages
+are durable summaries only and preserve protocol relationships without storing
+full tool result JSON. 9W3B must reconstruct a fresh bounded context from
+durable state instead of replaying original assistant prose verbatim.
 
 ### Integrity
 
@@ -84,6 +90,8 @@ Projection replays typed event objects in append order and verifies:
 - contiguous journal and checkpoint sequences
 - checkpoint previous ID/hash links
 - unique model request IDs
+- immutable identity continuity from the started event through model-step
+  boundaries, checkpoints, and terminal records
 - at most one terminal event
 - no lifecycle event after terminal
 - payload, checkpoint, and terminal hashes
@@ -149,4 +157,3 @@ action in 9W3A.
 outcome gates, and human-reviewed resume. 9W3C owns any public/operator
 start/list/show/pause/resume/cancel surface decision. 9Y owns proposal
 generation.
-

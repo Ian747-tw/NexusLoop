@@ -5,6 +5,7 @@ import {
   type CommanderInvestigationCheckpoint,
   type CommanderInvestigationCheckpointedPayload,
   type CommanderInvestigationFinishedPayload,
+  type CommanderInvestigationJournalIdentity,
   type CommanderInvestigationJournalEventKind,
   type CommanderInvestigationJournalLastTransition,
   type CommanderInvestigationJournalProjectionStatus,
@@ -51,6 +52,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
   const checkpoints: CommanderInvestigationCheckpoint[] = []
   let lastTransition: CommanderInvestigationJournalLastTransition = "started"
   const seenRequests = new Set<string>()
+  let identity: CommanderInvestigationJournalIdentity | undefined
 
   events.forEach((event, index) => {
     if (event.schema_version !== 1) unsupportedVersion = true
@@ -67,7 +69,8 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (index !== 0) integrity.push("started event is not first")
       if (started) integrity.push("duplicate started event")
       started = event
-      const initialErrors = initialCheckpointErrors(investigationId, started.initial_checkpoint)
+      identity = identityFromStarted(started)
+      const initialErrors = initialCheckpointErrors(investigationId, started, identity)
       integrity.push(...initialErrors)
       if (initialErrors.length === 0 && verifyCheckpoint(started.initial_checkpoint)) {
         checkpoints.push(started.initial_checkpoint)
@@ -82,6 +85,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       }
       if (afterTerminal) return
       const model = event
+      if (identity) integrity.push(...modelStepIdentityErrors(model, identity))
       if (seenRequests.has(model.model_request_id)) integrity.push(`duplicate model request ${model.model_request_id}`)
       seenRequests.add(model.model_request_id)
       const previous = checkpoints.at(-1)
@@ -107,6 +111,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       const checkpoint = event.checkpoint
       const previous = checkpoints.at(-1)
       const checkpointErrors: string[] = []
+      if (identity) checkpointErrors.push(...checkpointIdentityErrors(checkpoint, identity))
       if (!pendingModel) checkpointErrors.push("checkpoint missing model-step boundary")
       if (pendingModel && checkpoint.turn_index !== pendingModel.turn_index) checkpointErrors.push("checkpoint turn_index does not match pending model step")
       if (pendingModel && checkpoint.next_turn_index !== pendingModel.turn_index + 1) checkpointErrors.push("checkpoint next_turn_index does not follow pending model step")
@@ -132,8 +137,10 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       const terminalErrors: string[] = []
       if (terminal) terminalErrors.push("duplicate terminal event")
       if (event.terminal.investigation_id !== investigationId) terminalErrors.push("terminal investigation_id mismatch")
+      if (identity) terminalErrors.push(...terminalIdentityErrors(event.terminal, identity))
       const previous = checkpoints.at(-1)
       if (event.terminal.last_checkpoint_id !== previous?.checkpoint_id || event.terminal.last_checkpoint_sequence !== previous?.checkpoint_sequence || event.terminal.last_checkpoint_hash !== previous?.checkpoint_hash) terminalErrors.push("terminal last-checkpoint reference mismatch")
+      if (previous) terminalErrors.push(...terminalCounterErrors(event.terminal, previous))
       if (!verifyTerminal(event.terminal)) terminalErrors.push("terminal hash mismatch")
       integrity.push(...terminalErrors)
       if (terminalErrors.length === 0) {
@@ -185,7 +192,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     loaded_tool_ids: terminalRecord?.loaded_tool_ids ?? latestCheckpoint?.working_set.loaded_tool_ids ?? started.initial_loaded_tool_refs.map((tool) => tool.tool_id),
     evidence_ids: evidenceCards.map((card) => card.evidence_id),
     evidence_count: evidenceCards.length + omittedEvidenceCount,
-    final_summary_preview: terminalRecord?.final_summary?.slice(0, 500),
+    final_summary_preview: undefined,
     evidence_previews: evidenceCards.map((card) => `${card.title}: ${card.summary_preview}`.slice(0, 500)).slice(0, 8),
     latest_checkpoint_id: latestCheckpoint?.checkpoint_id,
     latest_checkpoint_sequence: latestCheckpoint?.checkpoint_sequence,
@@ -258,11 +265,81 @@ function recovery(checkpoint: CommanderInvestigationCheckpoint | undefined, unce
   return "no_checkpoint_resume_not_implemented"
 }
 
-function initialCheckpointErrors(investigationId: string, checkpoint: CommanderInvestigationCheckpoint): string[] {
+function identityFromStarted(started: CommanderInvestigationStartedPayload): CommanderInvestigationJournalIdentity {
+  return {
+    investigation_id: started.investigation_id,
+    phase: started.phase,
+    objective_hash: started.objective_hash,
+    provider_id: started.provider_id,
+    provider_kind: started.provider_kind,
+    model_id: started.model_id,
+    tool_protocol: started.tool_protocol,
+    bootstrap_id: started.bootstrap_ref.bootstrap_id,
+    bootstrap_hash: started.bootstrap_ref.bootstrap_hash,
+    budget_id: started.budget.budget_id,
+    budget_hash: started.budget_hash,
+  }
+}
+
+function initialCheckpointErrors(investigationId: string, started: CommanderInvestigationStartedPayload, identity: CommanderInvestigationJournalIdentity): string[] {
   const errors: string[] = []
+  const checkpoint = started.initial_checkpoint
   if (checkpoint.investigation_id !== investigationId) errors.push("initial checkpoint investigation_id mismatch")
   if (checkpoint.checkpoint_sequence !== 0) errors.push("initial checkpoint sequence is not zero")
   if (checkpoint.previous_checkpoint_id || checkpoint.previous_checkpoint_hash) errors.push("initial checkpoint has previous checkpoint reference")
+  errors.push(...checkpointIdentityErrors(checkpoint, identity, "initial checkpoint"))
+  if (stableHash(started.initial_loaded_tool_refs) !== stableHash(checkpoint.loaded_tools)) errors.push("initial checkpoint loaded-tool references mismatch started event")
+  return errors
+}
+
+function modelStepIdentityErrors(model: CommanderInvestigationModelStepStartedPayload, identity: CommanderInvestigationJournalIdentity): string[] {
+  const errors: string[] = []
+  if (model.investigation_id !== identity.investigation_id) errors.push("model-step investigation_id mismatch")
+  if (model.provider_id !== identity.provider_id) errors.push("model-step provider_id identity mismatch")
+  if (model.provider_kind !== identity.provider_kind) errors.push("model-step provider_kind identity mismatch")
+  if (model.model_id !== identity.model_id) errors.push("model-step model_id identity mismatch")
+  if (model.tool_protocol !== identity.tool_protocol) errors.push("model-step tool_protocol identity mismatch")
+  return errors
+}
+
+function checkpointIdentityErrors(checkpoint: CommanderInvestigationCheckpoint, identity: CommanderInvestigationJournalIdentity, label = "checkpoint"): string[] {
+  const errors: string[] = []
+  if (checkpoint.investigation_id !== identity.investigation_id) errors.push(`${label} investigation_id mismatch`)
+  if (checkpoint.phase !== identity.phase) errors.push(`${label} phase identity mismatch`)
+  if (checkpoint.objective_hash !== identity.objective_hash) errors.push(`${label} objective_hash identity mismatch`)
+  if (checkpoint.provider_id !== identity.provider_id) errors.push(`${label} provider_id identity mismatch`)
+  if (checkpoint.provider_kind !== identity.provider_kind) errors.push(`${label} provider_kind identity mismatch`)
+  if (checkpoint.model_id !== identity.model_id) errors.push(`${label} model_id identity mismatch`)
+  if (checkpoint.tool_protocol !== identity.tool_protocol) errors.push(`${label} tool_protocol identity mismatch`)
+  if (checkpoint.bootstrap_ref.bootstrap_id !== identity.bootstrap_id) errors.push(`${label} bootstrap_id identity mismatch`)
+  if (checkpoint.bootstrap_ref.bootstrap_hash !== identity.bootstrap_hash) errors.push(`${label} bootstrap_hash identity mismatch`)
+  if (checkpoint.budget.budget_id !== identity.budget_id) errors.push(`${label} budget_id identity mismatch`)
+  if (checkpoint.budget.budget_hash !== identity.budget_hash) errors.push(`${label} budget_hash identity mismatch`)
+  return errors
+}
+
+function terminalIdentityErrors(terminal: CommanderInvestigationFinishedPayload["terminal"], identity: CommanderInvestigationJournalIdentity): string[] {
+  const errors: string[] = []
+  if (terminal.investigation_id !== identity.investigation_id) errors.push("terminal investigation_id mismatch")
+  if (terminal.phase !== identity.phase) errors.push("terminal phase identity mismatch")
+  if (terminal.objective_hash !== identity.objective_hash) errors.push("terminal objective_hash identity mismatch")
+  if (terminal.provider_id !== identity.provider_id) errors.push("terminal provider_id identity mismatch")
+  if (terminal.provider_kind !== identity.provider_kind) errors.push("terminal provider_kind identity mismatch")
+  if (terminal.model_id !== identity.model_id) errors.push("terminal model_id identity mismatch")
+  if (terminal.tool_protocol !== identity.tool_protocol) errors.push("terminal tool_protocol identity mismatch")
+  if (terminal.bootstrap_id !== identity.bootstrap_id) errors.push("terminal bootstrap_id identity mismatch")
+  if (terminal.bootstrap_hash !== identity.bootstrap_hash) errors.push("terminal bootstrap_hash identity mismatch")
+  if (terminal.budget_id !== identity.budget_id) errors.push("terminal budget_id identity mismatch")
+  if (terminal.budget_hash !== identity.budget_hash) errors.push("terminal budget_hash identity mismatch")
+  return errors
+}
+
+function terminalCounterErrors(terminal: CommanderInvestigationFinishedPayload["terminal"], checkpoint: CommanderInvestigationCheckpoint): string[] {
+  const errors: string[] = []
+  if (terminal.model_turn_count < checkpoint.working_set.model_turn_count) errors.push("terminal model_turn_count moves backward from latest checkpoint")
+  if (terminal.provider_request_count < checkpoint.provider_request_count) errors.push("terminal provider_request_count moves backward from latest checkpoint")
+  if (terminal.tool_call_count < checkpoint.working_set.tool_call_count) errors.push("terminal tool_call_count moves backward from latest checkpoint")
+  if (terminal.tool_search_call_count < checkpoint.working_set.tool_search_call_count) errors.push("terminal tool_search_call_count moves backward from latest checkpoint")
   return errors
 }
 
@@ -407,6 +484,9 @@ function isReplayExchange(value: unknown): boolean {
     value.tool_result_messages.every(isDurableToolResultMessage) &&
     hasString(value, "exchange_hash") &&
     value.summary_only === true &&
+    value.assistant_text_persisted === false &&
+    value.exact_replay_supported === false &&
+    value.protocol_relationship_preserved === true &&
     value.full_tool_results_persisted === false
   )
 }
@@ -422,7 +502,7 @@ function isDurableAssistantMessage(value: unknown): boolean {
 
 function isDurableAssistantPart(value: unknown): boolean {
   if (!isRecord(value)) return false
-  if (value.type === "text") return hasString(value, "text")
+  if (value.type === "text_fingerprint") return isModelTextFingerprint(value)
   return (
     value.type === "tool_call" &&
     hasString(value, "tool_call_id") &&
@@ -433,6 +513,31 @@ function isDurableAssistantPart(value: unknown): boolean {
     Array.isArray(value.validation_errors) &&
     value.validation_errors.every((item) => typeof item === "string") &&
     hasString(value, "call_hash")
+  )
+}
+
+function isModelTextFingerprint(value: unknown): boolean {
+  return isRecord(value) && value.text_persisted === false && hasString(value, "text_hash") && hasNumber(value, "text_chars")
+}
+
+function isConclusion(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.status === "string" &&
+    (INVESTIGATION_STATUSES as readonly string[]).includes(value.status) &&
+    typeof value.stop_reason === "string" &&
+    (INVESTIGATION_STOP_REASONS as readonly string[]).includes(value.stop_reason) &&
+    Array.isArray(value.evidence_ids) &&
+    value.evidence_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.evidence_titles) &&
+    value.evidence_titles.every((item) => typeof item === "string") &&
+    Array.isArray(value.safe_evidence_summaries) &&
+    value.safe_evidence_summaries.every((item) => typeof item === "string") &&
+    Array.isArray(value.blockers) &&
+    value.blockers.every((item) => typeof item === "string") &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every((item) => typeof item === "string") &&
+    (value.final_output_text_hash === undefined || typeof value.final_output_text_hash === "string")
   )
 }
 
@@ -548,7 +653,8 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     hasString(event.terminal, "provider_kind") &&
     hasString(event.terminal, "model_id") &&
     hasString(event.terminal, "tool_protocol") &&
-    (event.terminal.final_summary === undefined || typeof event.terminal.final_summary === "string") &&
+    (event.terminal.final_output === undefined || isModelTextFingerprint(event.terminal.final_output)) &&
+    isConclusion(event.terminal.conclusion) &&
     hasString(event.terminal, "semantic_result_hash") &&
     hasString(event.terminal, "last_checkpoint_id") &&
     hasNumber(event.terminal, "last_checkpoint_sequence") &&

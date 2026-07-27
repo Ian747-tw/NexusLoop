@@ -109,10 +109,12 @@ investigations before appending `runtime_shutdown` or releasing the run lock, so
 provider audit writes remain inside the owning runtime lifecycle. Provider calls
 append existing external API audit events. Durable Commander journal events are
 separate from those provider audits and persist only bounded operational state:
-objective preview/hash, loaded-tool refs, evidence cards, replay summaries,
-checkpoint hashes, repeat/no-progress guard state, and terminal summaries. Full
-provider transcripts, raw tool results, raw file/diff bodies, chain of thought,
-credentials, SDK session state, and automatic replay state are not persisted.
+objective preview/hash, loaded-tool refs, evidence cards, summary-only replay
+protocol relationships, model-text fingerprints, checkpoint hashes,
+repeat/no-progress guard state, and safe evidence-based conclusion cards. Full
+provider transcripts, raw model prose, raw tool results, raw file/diff bodies,
+chain of thought, credentials, SDK session state, exact assistant replay, and
+automatic replay state are not persisted.
 The public
 Commander provider loop remains disabled: there is no public investigation
 command, TUI surface, resumable investigation, proposal gate, streaming
