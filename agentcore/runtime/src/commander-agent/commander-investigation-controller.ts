@@ -81,19 +81,20 @@ export class CommanderInvestigationController {
     if (startedObserved.blocker) return this.finish(input, investigationId, startedObserved.status!, startedObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [startedObserved.blocker], [], started)
 
     for (let turn = 1; turn <= budget.max_model_turns; turn += 1) {
+      const deferredPreModelWarnings: string[] = []
       if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation"], [], started)
       const humanBeforeModel = await this.checkControl(input, "model_step", turn)
       const humanStop = stopReasonForControl(humanBeforeModel)
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
-      if (humanBeforeModel.warnings.length) workingSet.current_warnings.push(...humanBeforeModel.warnings)
+      if (humanBeforeModel.warnings.length) deferredPreModelWarnings.push(...humanBeforeModel.warnings)
       const providerBeforeModel = await this.checkProvider(input, "model_step", turn)
       if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, providerBeforeModel.warnings, started)
-      if (providerBeforeModel?.warnings.length) workingSet.current_warnings.push(...providerBeforeModel.warnings)
+      if (providerBeforeModel?.warnings.length) deferredPreModelWarnings.push(...providerBeforeModel.warnings)
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
 
       const context = this.options.contextService.build({ bootstrap, workingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
       if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, context.warnings, started)
-      if (context.warnings.length) workingSet.current_warnings.push(...context.warnings)
+      if (context.warnings.length) deferredPreModelWarnings.push(...context.warnings)
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], context.warnings, started)
       const deadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
       const request: CommanderModelStepRequest = {
@@ -113,6 +114,10 @@ export class CommanderInvestigationController {
       const observedModelStep = await this.observeModelStepStarted(input, investigationId, turn, request.request_id, toolProtocol, context, workingSet, Array.from(loaded.values()), providerRequests)
       if (observedModelStep.blocker) return this.finish(input, investigationId, observedModelStep.status!, observedModelStep.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [observedModelStep.blocker], [], started)
       const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
+      if (deferredPreModelWarnings.length) {
+        workingSet.current_warnings.push(...deferredPreModelWarnings)
+        workingSet.working_set_hash = stableHash(stableWorkingSet(workingSet))
+      }
       const requestCountBlocker = modelRequestCountBlocker(modelResult)
       if (!Number.isInteger(modelResult.request_count) || modelResult.request_count < 0) {
         return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker ?? "model adapter returned an invalid request_count"], modelResult.warnings, started)

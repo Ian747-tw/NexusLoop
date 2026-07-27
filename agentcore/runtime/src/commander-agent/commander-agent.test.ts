@@ -2540,6 +2540,41 @@ describe("Commander in-memory investigation controller", () => {
     ])
   })
 
+  test("durable pre-model human-control warnings do not mutate checkpoint state before the model boundary", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-human-warning-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "continued after durable human note" }]),
+      commanderInvestigationControlGate: {
+        check: ({ before }) => ({
+          action: "continue",
+          source_kind: "human_control",
+          projected_state: "resume_requested",
+          summary_preview: before === "model_step" ? "resume requested before model" : "resume requested before tool",
+          checked_at: "2026-01-01T00:00:01.000Z",
+          warnings: before === "model_step" ? ["human control resume_requested"] : [],
+        }),
+      },
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_durable_human_warning", session_id: "session_human_warning" }))
+    expect(result).toMatchObject({ status: "final", stop_reason: "model_final", investigation_events_appended: true })
+    expect(result.warnings.join(" ")).toContain("human control resume_requested")
+    const events = (await server.eventStore.readAll()).filter((event) => event.investigation_id === "inv_durable_human_warning")
+    const started = events.find((event) => event.kind === "runtime_commander_investigation_started") as { initial_checkpoint?: { working_set?: { working_set_hash?: string; current_warnings?: string[] } } } | undefined
+    const modelStep = events.find((event) => event.kind === "runtime_commander_investigation_model_step_started") as { working_set_hash?: string } | undefined
+    const checkpointed = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed") as { checkpoint?: { working_set?: { current_warnings?: string[] } } } | undefined
+    expect(started?.initial_checkpoint?.working_set?.current_warnings?.join(" ")).not.toContain("resume_requested")
+    expect(modelStep?.working_set_hash).toBe(started?.initial_checkpoint?.working_set?.working_set_hash)
+    expect(checkpointed?.checkpoint?.working_set?.current_warnings?.join(" ")).toContain("human control resume_requested")
+    const record = await server.getCommanderInvestigationRecord("inv_durable_human_warning")
+    expect(record).toMatchObject({ projection_status: "ready", status: "final", uncertain_provider_outcome: false })
+  })
+
   test("durable journal rejects duplicate ids and terminal persistence failures leave nonterminal projection", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-failures-"))
     await writeApprovedSpec(projectDir)
@@ -3557,6 +3592,35 @@ describe("Commander in-memory investigation controller", () => {
     }
     wrongSequenceTerminalEvent.event_payload_hash = journalPayloadHash(wrongSequenceTerminalEvent)
     await store.append(wrongSequenceTerminalEvent as Parameters<EventStore["append"]>[0])
+    const badFinalSummaryInput = baseInvestigation({ investigation_id: "inv_bad_final_summary_terminal", objective: "bad final summary terminal" })
+    const badFinalSummaryRun = await service.createObserver(badFinalSummaryInput)
+    await badFinalSummaryRun.observer.onStarted(durableStartedSnapshot(badFinalSummaryInput, 14, "inv_bad_final_summary_terminal") as Parameters<typeof badFinalSummaryRun.observer.onStarted>[0])
+    const badFinalSummaryCheckpoint = await service.latestCheckpoint("inv_bad_final_summary_terminal")
+    service.release(badFinalSummaryRun)
+    const badFinalSummaryTerminal = {
+      ...wrongOwnerTerminal,
+      investigation_id: "inv_bad_final_summary_terminal",
+      objective_hash: "objective_hash_bad_final_summary",
+      final_summary: { unexpected: "object summary" },
+      last_checkpoint_id: badFinalSummaryCheckpoint!.checkpoint_id,
+      last_checkpoint_sequence: badFinalSummaryCheckpoint!.checkpoint_sequence,
+      last_checkpoint_hash: badFinalSummaryCheckpoint!.checkpoint_hash,
+      semantic_result_hash: "semantic_bad_final_summary",
+      terminal_hash: "",
+    }
+    badFinalSummaryTerminal.terminal_hash = stableHash({ ...badFinalSummaryTerminal, terminal_hash: "" })
+    const badFinalSummaryEvent = {
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_bad_final_summary_terminal",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:12.500Z",
+      terminal: badFinalSummaryTerminal,
+      event_payload_hash: "",
+    }
+    badFinalSummaryEvent.event_payload_hash = journalPayloadHash(badFinalSummaryEvent)
+    await store.append(badFinalSummaryEvent as Parameters<EventStore["append"]>[0])
     const checkpointWithoutBoundaryInput = baseInvestigation({ investigation_id: "inv_projected_checkpoint_without_boundary", objective: "project checkpoint without model step" })
     const checkpointWithoutBoundaryRun = await service.createObserver(checkpointWithoutBoundaryInput)
     await checkpointWithoutBoundaryRun.observer.onStarted(durableStartedSnapshot(checkpointWithoutBoundaryInput, 12, "inv_projected_checkpoint_without_boundary") as Parameters<typeof checkpointWithoutBoundaryRun.observer.onStarted>[0])
@@ -3847,6 +3911,9 @@ describe("Commander in-memory investigation controller", () => {
     const wrongSequenceTerminalRecord = await service.get("inv_wrong_terminal_sequence")
     expect(wrongSequenceTerminalRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
     expect(wrongSequenceTerminalRecord?.integrity_errors.join("\n")).toContain("terminal last-checkpoint reference mismatch")
+    const badFinalSummaryRecord = await service.get("inv_bad_final_summary_terminal")
+    expect(badFinalSummaryRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
+    expect(badFinalSummaryRecord?.integrity_errors.join("\n")).toContain("malformed terminal payload")
     const checkpointWithoutBoundaryRecord = await service.get("inv_projected_checkpoint_without_boundary")
     expect(checkpointWithoutBoundaryRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: checkpointWithoutBoundaryInitial!.checkpoint_id, checkpoint_available: true })
     expect(checkpointWithoutBoundaryRecord?.integrity_errors.join("\n")).toContain("checkpoint missing model-step boundary")
@@ -3884,7 +3951,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 17, running_count: 16, terminal_count: 1, final_count: 1, checkpoint_available_count: 13, uncertain_provider_outcome_count: 2, corrupt_count: 14 })
+    expect(summary).toMatchObject({ total: 18, running_count: 17, terminal_count: 1, final_count: 1, checkpoint_available_count: 14, uncertain_provider_outcome_count: 2, corrupt_count: 15 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {

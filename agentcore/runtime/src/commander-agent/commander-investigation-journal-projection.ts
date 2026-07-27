@@ -507,6 +507,7 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     hasString(event.terminal, "provider_kind") &&
     hasString(event.terminal, "model_id") &&
     hasString(event.terminal, "tool_protocol") &&
+    (event.terminal.final_summary === undefined || typeof event.terminal.final_summary === "string") &&
     hasString(event.terminal, "semantic_result_hash") &&
     hasString(event.terminal, "last_checkpoint_id") &&
     hasNumber(event.terminal, "last_checkpoint_sequence") &&
