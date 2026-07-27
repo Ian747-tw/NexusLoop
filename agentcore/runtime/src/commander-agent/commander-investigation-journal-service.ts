@@ -527,6 +527,7 @@ export class CommanderInvestigationJournalService {
   private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
     const redacted = redactValue(payload) as Record<string, unknown>
     if (eventBytes({ kind, ...redacted }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
+    await this.assertAppendSafeTail()
     return this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
   }
 
@@ -542,6 +543,18 @@ export class CommanderInvestigationJournalService {
       throw error
     } finally {
       state.in_flight_persistence.delete(operation)
+    }
+  }
+
+  private async assertAppendSafeTail(): Promise<void> {
+    try {
+      const text = await readFile(this.options.eventStore.eventsPath, "utf8")
+      if (text.length > 0 && !text.endsWith("\n")) {
+        throw new CommanderInvestigationPersistenceError("durable journal event log has an unterminated tail; refusing to append Commander investigation event")
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw error
     }
   }
 

@@ -2759,6 +2759,13 @@ describe("Commander in-memory investigation controller", () => {
     expect(list.map((record) => record.investigation_id)).toContain("inv_torn_line")
     const summary = await service.summary()
     expect(summary).toMatchObject({ total: 2, corrupt_count: 1, checkpoint_available_count: 1 })
+
+    const afterTornInput = baseInvestigation({ investigation_id: "inv_after_torn_append", objective: "must not append after torn line" })
+    const afterTornRun = await service.createObserver(afterTornInput)
+    await expect(afterTornRun.observer.onStarted(durableStartedSnapshot(afterTornInput, 1, "inv_after_torn_append") as Parameters<typeof afterTornRun.observer.onStarted>[0])).rejects.toThrow("unterminated tail")
+    service.release(afterTornRun)
+    expect(await service.get("inv_after_torn_append")).toBeUndefined()
+    expect(await eventText(projectDir)).not.toContain("inv_after_torn_append")
   })
 
   test("durable journal ignores torn JSONL lines that are not Commander investigation events", async () => {
