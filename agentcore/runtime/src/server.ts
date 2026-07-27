@@ -5131,7 +5131,7 @@ export class RuntimeServer {
   private async collectCommanderOperationalMemoryRecords(input: CommanderOperationalMemorySearchInput = {}): Promise<CommanderOperationalMemoryRecord[]> {
     const requestedSourceKinds = operationalMemorySourceKinds(input.source_kinds)
     if (requestedSourceKinds.length === 1 && requestedSourceKinds[0] === "commander_investigation") {
-      return this.collectCommanderInvestigationOperationalMemoryRecords()
+      return this.collectCommanderInvestigationOperationalMemoryRecords(input)
     }
     const records: CommanderOperationalMemoryRecord[] = []
     const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
@@ -5171,14 +5171,20 @@ export class RuntimeServer {
     for (const review of await this.listOpenCodeResultReviews({ limit: 100 })) push({ source_kind: "result_review", source_id: review.review_id, label: "Result review", status: review.review_disposition, summary_preview: `${review.decision}: ${review.rationale_preview}`, session_id: review.session_id, launch_id: review.launch_id, occurred_at: review.recorded_at, fields: { decision: review.decision, next_step: review.next_step, report_id: review.report_id } })
     for (const ingestion of await this.listResearchIngestions({ limit: 100 })) push({ source_kind: "research_ingestion", source_id: ingestion.ingestion_id, label: "Research ingestion", status: ingestion.research_db_written ? "research_db_written" : "not_written", summary_preview: ingestion.research_title_preview, session_id: ingestion.session_id, launch_id: ingestion.launch_id, occurred_at: ingestion.recorded_at, fields: { evidence_kind: ingestion.evidence_kind, review_id: ingestion.review_id, report_id: ingestion.report_id } })
     for (const refresh of await this.listOpenCodeContextRefreshes({ limit: 100 })) push({ source_kind: "context_refresh", source_id: refresh.refresh_id, label: "Context refresh", status: refresh.status, summary_preview: refresh.summary_preview, session_id: refresh.target_session_id, launch_id: refresh.launch_id, occurred_at: refresh.written_at, fields: { mode: refresh.continuity_mode, packet_kind: refresh.packet_kind, previous_refresh_id: refresh.previous_refresh_id } })
-    records.push(...await this.collectCommanderInvestigationOperationalMemoryRecords())
+    records.push(...await this.collectCommanderInvestigationOperationalMemoryRecords(input))
     return records
   }
 
-  private async collectCommanderInvestigationOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
+  private async collectCommanderInvestigationOperationalMemoryRecords(input: CommanderOperationalMemorySearchInput = {}): Promise<CommanderOperationalMemoryRecord[]> {
     const records: CommanderOperationalMemoryRecord[] = []
     const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
-    for (const investigation of await this.commanderInvestigationJournalService().listForOperationalMemorySearch({ limit: 800 })) {
+    const statuses = operationalMemoryStatuses(input.statuses)
+    for (const investigation of await this.commanderInvestigationJournalService().listForOperationalMemorySearch({
+      limit: 800,
+      session_id: input.session_id,
+      mission_id: input.mission_id,
+      status: statuses.length === 1 ? statuses[0] : undefined,
+    })) {
       if (investigation.projection_status !== "ready") continue
       push({
         source_kind: "commander_investigation",
@@ -5842,6 +5848,12 @@ function durableOverrideResult(original: CommanderInvestigationResult, result: C
 }
 
 function operationalMemorySourceKinds(value: CommanderOperationalMemorySearchInput["source_kinds"]): string[] {
+  if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean)
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean)
+  return []
+}
+
+function operationalMemoryStatuses(value: CommanderOperationalMemorySearchInput["statuses"]): string[] {
   if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean)
   if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean)
   return []

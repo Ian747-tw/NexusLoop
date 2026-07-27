@@ -3959,6 +3959,45 @@ describe("Commander in-memory investigation controller", () => {
     }
     badFinalSummaryEvent.event_payload_hash = journalPayloadHash(badFinalSummaryEvent)
     await store.append(badFinalSummaryEvent as Parameters<EventStore["append"]>[0])
+    const persistedTranscriptInput = baseInvestigation({ investigation_id: "inv_terminal_persisted_transcript", objective: "terminal persisted transcript flag" })
+    const persistedTranscriptRun = await service.createObserver(persistedTranscriptInput)
+    await persistedTranscriptRun.observer.onStarted(durableStartedSnapshot(persistedTranscriptInput, 15, "inv_terminal_persisted_transcript") as Parameters<typeof persistedTranscriptRun.observer.onStarted>[0])
+    const persistedTranscriptCheckpoint = await service.latestCheckpoint("inv_terminal_persisted_transcript")
+    service.release(persistedTranscriptRun)
+    const persistedTranscriptTerminal = {
+      ...wrongOwnerTerminal,
+      investigation_id: "inv_terminal_persisted_transcript",
+      phase: persistedTranscriptCheckpoint!.phase,
+      objective_hash: persistedTranscriptCheckpoint!.objective_hash,
+      provider_id: persistedTranscriptCheckpoint!.provider_id,
+      provider_kind: persistedTranscriptCheckpoint!.provider_kind,
+      model_id: persistedTranscriptCheckpoint!.model_id,
+      tool_protocol: persistedTranscriptCheckpoint!.tool_protocol,
+      bootstrap_id: persistedTranscriptCheckpoint!.bootstrap_ref.bootstrap_id,
+      bootstrap_hash: persistedTranscriptCheckpoint!.bootstrap_ref.bootstrap_hash,
+      budget_id: persistedTranscriptCheckpoint!.budget.budget_id,
+      budget_hash: persistedTranscriptCheckpoint!.budget.budget_hash,
+      final_output: undefined,
+      last_checkpoint_id: persistedTranscriptCheckpoint!.checkpoint_id,
+      last_checkpoint_sequence: persistedTranscriptCheckpoint!.checkpoint_sequence,
+      last_checkpoint_hash: persistedTranscriptCheckpoint!.checkpoint_hash,
+      semantic_result_hash: "semantic_persisted_transcript_terminal",
+      transcript_persisted: true,
+      terminal_hash: "",
+    }
+    persistedTranscriptTerminal.terminal_hash = stableHash({ ...persistedTranscriptTerminal, terminal_hash: "" })
+    const persistedTranscriptEvent = {
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_terminal_persisted_transcript",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:12.750Z",
+      terminal: persistedTranscriptTerminal,
+      event_payload_hash: "",
+    }
+    persistedTranscriptEvent.event_payload_hash = journalPayloadHash(persistedTranscriptEvent)
+    await store.append(persistedTranscriptEvent as Parameters<EventStore["append"]>[0])
     const checkpointWithoutBoundaryInput = baseInvestigation({ investigation_id: "inv_projected_checkpoint_without_boundary", objective: "project checkpoint without model step" })
     const checkpointWithoutBoundaryRun = await service.createObserver(checkpointWithoutBoundaryInput)
     await checkpointWithoutBoundaryRun.observer.onStarted(durableStartedSnapshot(checkpointWithoutBoundaryInput, 12, "inv_projected_checkpoint_without_boundary") as Parameters<typeof checkpointWithoutBoundaryRun.observer.onStarted>[0])
@@ -4316,6 +4355,9 @@ describe("Commander in-memory investigation controller", () => {
     const badFinalSummaryRecord = await service.get("inv_bad_final_summary_terminal")
     expect(badFinalSummaryRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
     expect(badFinalSummaryRecord?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const persistedTranscriptRecord = await service.get("inv_terminal_persisted_transcript")
+    expect(persistedTranscriptRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
+    expect(persistedTranscriptRecord?.integrity_errors.join("\n")).toContain("malformed terminal payload")
     const checkpointWithoutBoundaryRecord = await service.get("inv_projected_checkpoint_without_boundary")
     expect(checkpointWithoutBoundaryRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: checkpointWithoutBoundaryInitial!.checkpoint_id, checkpoint_available: true })
     expect(checkpointWithoutBoundaryRecord?.integrity_errors.join("\n")).toContain("checkpoint missing model-step boundary")
@@ -4360,7 +4402,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 20, running_count: 19, terminal_count: 1, final_count: 1, checkpoint_available_count: 15, uncertain_provider_outcome_count: 3, corrupt_count: 17 })
+    expect(summary).toMatchObject({ total: 21, running_count: 20, terminal_count: 1, final_count: 1, checkpoint_available_count: 16, uncertain_provider_outcome_count: 3, corrupt_count: 18 })
   })
 
   test("durable journal projection rejects hash-valid immutable identity drift", async () => {

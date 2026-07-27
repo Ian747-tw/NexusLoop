@@ -10,23 +10,29 @@ function makeEventId(): string {
 }
 
 export class EventStore {
+  private appendQueue: Promise<unknown> = Promise.resolve()
+
   constructor(readonly eventsPath: string) {}
 
   async append(event: JsonlEvent): Promise<string> {
-    await mkdir(dirname(this.eventsPath), { recursive: true })
-    const safeEvent = redactValue({
-      ...event,
-      event_id: event.event_id ?? makeEventId(),
-      timestamp: event.timestamp ?? new Date().toISOString(),
+    const operation = this.appendQueue.then(async () => {
+      await mkdir(dirname(this.eventsPath), { recursive: true })
+      const safeEvent = redactValue({
+        ...event,
+        event_id: event.event_id ?? makeEventId(),
+        timestamp: event.timestamp ?? new Date().toISOString(),
+      })
+      const handle = await open(this.eventsPath, "a")
+      try {
+        await handle.write(JSON.stringify(safeEvent) + "\n")
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      return String(safeEvent.event_id)
     })
-    const handle = await open(this.eventsPath, "a")
-    try {
-      await handle.write(JSON.stringify(safeEvent) + "\n")
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    return String(safeEvent.event_id)
+    this.appendQueue = operation.catch(() => undefined)
+    return operation
   }
 
   async readAll(): Promise<JsonlEvent[]> {

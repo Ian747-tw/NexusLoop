@@ -12989,6 +12989,25 @@ describe("EventStore and EventBus", () => {
     expect(await store.latestEventId()).not.toBeNull()
   })
 
+  test("serializes concurrent JSONL appends through one writer", async () => {
+    const dir = await tempProject()
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    await Promise.all(Array.from({ length: 40 }, (_, index) => store.append({ kind: "test_event", value: index })))
+
+    const text = await readFile(join(dir, ".nxl", "events.jsonl"), "utf8")
+    const lines = text.split(/\r?\n/).filter(Boolean)
+    expect(lines).toHaveLength(40)
+    expect(lines.every((line) => {
+      try {
+        JSON.parse(line)
+        return true
+      } catch {
+        return false
+      }
+    })).toBe(true)
+    expect((await store.readAll()).map((event) => event.value)).toEqual(Array.from({ length: 40 }, (_, index) => index))
+  })
+
   test("streams RuntimeReady ProjectInitialized ResumeSummaryLoaded", () => {
     const bus = new RuntimeEventBus()
     bus.emit({ type: "RuntimeReady", projectName: "demo", runtimeStatus: "ready" })
@@ -24548,6 +24567,65 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(activeOnly.result?.candidates).toEqual([expect.objectContaining({ source_id: "wanted-progress", status: "active" })])
     expect(JSON.stringify(activeOnly.result)).not.toContain("other-")
     expect(JSON.stringify(activeOnly.result)).not.toContain("closed-commander-")
+  })
+
+  test("Commander investigation operational memory pushes journal filters before its scan cap", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter(), researchProjectionMode: "disabled" })
+    let captured: Record<string, unknown> | undefined
+    ;(server as unknown as { commanderInvestigationJournalServiceInstance: unknown }).commanderInvestigationJournalServiceInstance = {
+      listForOperationalMemorySearch: async (options: Record<string, unknown>) => {
+        captured = options
+        return [{
+          investigation_id: "inv_filtered_journal",
+          projection_status: "ready",
+          status: "final",
+          phase: "proposal_investigation",
+          objective_preview: "filtered journal needle",
+          objective_hash: "objective_hash",
+          requested_by: "tester",
+          session_id: "session-wanted",
+          mission_id: "mission-wanted",
+          provider_id: "provider",
+          provider_kind: "test",
+          model_id: "model",
+          tool_protocol: "native",
+          started_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:01.000Z",
+          budget_id: "budget",
+          budget_hash: "budget_hash",
+          bootstrap_id: "bootstrap",
+          bootstrap_hash: "bootstrap_hash",
+          model_turn_count: 1,
+          provider_request_count: 1,
+          tool_call_count: 0,
+          tool_search_call_count: 0,
+          loaded_tool_ids: [],
+          evidence_ids: [],
+          evidence_count: 0,
+          evidence_previews: [],
+          checkpoint_available: true,
+          uncertain_provider_outcome: false,
+          resume_supported: false,
+          recovery_state: "not_required",
+          investigation_event_count: 2,
+          external_api_audit_event_count: 0,
+          integrity_errors: [],
+          warnings: [],
+          record_hash: "record_hash",
+        }]
+      },
+    }
+    const result = await server.searchCommanderOperationalMemory({
+      query: "filtered journal needle",
+      source_kinds: ["commander_investigation"],
+      session_id: "session-wanted",
+      mission_id: "mission-wanted",
+      statuses: ["final"],
+    })
+    expect(captured).toMatchObject({ limit: 800, session_id: "session-wanted", mission_id: "mission-wanted", status: "final" })
+    expect(result.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_filtered_journal" })])
   })
 
   test("Commander operational memory search enforces its output budget", async () => {

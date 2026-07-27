@@ -643,6 +643,9 @@ function isCheckpointedPayload(event: JsonlEvent): event is CommanderInvestigati
 function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFinishedPayload {
   if (event.schema_version !== 1 || !isRecord(event.terminal)) return false
   return (
+    hasString(event, "requested_by") &&
+    hasString(event, "occurred_at") &&
+    hasString(event, "event_payload_hash") &&
     typeof event.terminal.status === "string" &&
     (INVESTIGATION_STATUSES as readonly string[]).includes(event.terminal.status) &&
     typeof event.terminal.stop_reason === "string" &&
@@ -655,20 +658,37 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     hasString(event.terminal, "tool_protocol") &&
     (event.terminal.final_output === undefined || isModelTextFingerprint(event.terminal.final_output)) &&
     isConclusion(event.terminal.conclusion) &&
+    hasString(event.terminal, "bootstrap_id") &&
+    hasString(event.terminal, "bootstrap_hash") &&
+    hasString(event.terminal, "budget_id") &&
+    hasString(event.terminal, "budget_hash") &&
     hasString(event.terminal, "semantic_result_hash") &&
     hasString(event.terminal, "last_checkpoint_id") &&
     hasNumber(event.terminal, "last_checkpoint_sequence") &&
     hasString(event.terminal, "last_checkpoint_hash") &&
+    (event.terminal.pending_model_request_id === undefined || typeof event.terminal.pending_model_request_id === "string") &&
     hasString(event.terminal, "terminal_hash") &&
+    hasString(event.terminal, "started_at") &&
     hasString(event.terminal, "completed_at") &&
     hasNumber(event.terminal, "model_turn_count") &&
     hasNumber(event.terminal, "provider_request_count") &&
     hasNumber(event.terminal, "tool_call_count") &&
     hasNumber(event.terminal, "tool_search_call_count") &&
     Array.isArray(event.terminal.loaded_tool_ids) &&
+    event.terminal.loaded_tool_ids.every((item) => typeof item === "string") &&
     Array.isArray(event.terminal.evidence_cards) &&
     event.terminal.evidence_cards.every(isEvidenceCard) &&
-    isRecord(event.terminal.provider_audit)
+    Array.isArray(event.terminal.turn_summaries) &&
+    hasNumber(event.terminal, "omitted_evidence_count") &&
+    hasNumber(event.terminal, "omitted_turn_count") &&
+    isRecord(event.terminal.provider_audit) &&
+    Array.isArray(event.terminal.blockers) &&
+    event.terminal.blockers.every((item) => typeof item === "string") &&
+    Array.isArray(event.terminal.warnings) &&
+    event.terminal.warnings.every((item) => typeof item === "string") &&
+    event.terminal.transcript_persisted === false &&
+    event.terminal.raw_tool_results_persisted === false &&
+    event.terminal.chain_of_thought_persisted === false
   )
 }
 

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { open, readFile, stat } from "node:fs/promises"
 import { redactText, redactValue } from "../security/redaction"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
@@ -551,14 +551,23 @@ export class CommanderInvestigationJournalService {
   }
 
   private async assertAppendSafeTail(): Promise<void> {
+    let size = 0
     try {
-      const text = await readFile(this.options.eventStore.eventsPath, "utf8")
-      if (text.length > 0 && !text.endsWith("\n")) {
-        throw new CommanderInvestigationPersistenceError("durable journal event log has an unterminated tail; refusing to append Commander investigation event")
-      }
+      size = (await stat(this.options.eventStore.eventsPath)).size
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return
       throw error
+    }
+    if (size === 0) return
+    const handle = await open(this.options.eventStore.eventsPath, "r")
+    try {
+      const buffer = Buffer.alloc(1)
+      await handle.read(buffer, 0, 1, size - 1)
+      if (buffer[0] !== 0x0a) {
+        throw new CommanderInvestigationPersistenceError("durable journal event log has an unterminated tail; refusing to append Commander investigation event")
+      }
+    } finally {
+      await handle.close()
     }
   }
 
