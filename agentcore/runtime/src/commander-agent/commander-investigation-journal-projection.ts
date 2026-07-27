@@ -423,6 +423,7 @@ function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint
     value.loaded_tools.every(isLoadedToolRef) &&
     isDurableWorkingSet(value.working_set) &&
     Array.isArray(value.turn_summaries) &&
+    value.turn_summaries.every(isTurnSummary) &&
     (value.replay_exchange === undefined || isReplayExchange(value.replay_exchange)) &&
     hasNumber(value, "provider_request_count") &&
     hasNumber(value, "external_api_audit_count") &&
@@ -472,10 +473,13 @@ function isDurableWorkingSet(value: unknown): boolean {
 }
 
 function isProviderAuditSummary(value: unknown): boolean {
+  const transport = isRecord(value) ? value.transport_kind : undefined
+  const auditRequired = isRecord(value) ? value.audit_required : undefined
   return (
     isRecord(value) &&
     typeof value.audit_required === "boolean" &&
-    typeof value.transport_kind === "string" &&
+    (transport === "none" || transport === "external_api_connector") &&
+    ((auditRequired === false && transport === "none") || (auditRequired === true && transport === "external_api_connector")) &&
     Array.isArray(value.connector_ids) &&
     value.connector_ids.every((item) => typeof item === "string") &&
     hasNumber(value, "provider_request_count") &&
@@ -504,7 +508,7 @@ function isTurnSummary(value: unknown): boolean {
     (value.model_result_hash === undefined || typeof value.model_result_hash === "string") &&
     hasString(value, "model_status") &&
     hasNumber(value, "provider_request_count") &&
-    (value.assistant_text_preview === undefined || typeof value.assistant_text_preview === "string") &&
+    (value.assistant_text_preview === undefined || isDurableModelTextOmission(value.assistant_text_preview)) &&
     Array.isArray(value.tool_call_ids) &&
     value.tool_call_ids.every((item) => typeof item === "string") &&
     Array.isArray(value.tool_ids) &&
@@ -536,6 +540,10 @@ function isTurnSummary(value: unknown): boolean {
     typeof value.provider_audit_complete === "boolean" &&
     hasString(value, "turn_hash")
   )
+}
+
+function isDurableModelTextOmission(value: unknown): boolean {
+  return typeof value === "string" && /^model-visible text omitted from durable journal; text_hash=[a-f0-9]{64} text_chars=\d+$/.test(value)
 }
 
 function isRecentResultSignature(value: unknown): boolean {

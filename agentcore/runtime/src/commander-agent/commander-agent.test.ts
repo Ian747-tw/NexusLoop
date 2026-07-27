@@ -4038,6 +4038,137 @@ describe("Commander in-memory investigation controller", () => {
     }
     malformedTerminalMembersEvent.event_payload_hash = journalPayloadHash(malformedTerminalMembersEvent)
     await store.append(malformedTerminalMembersEvent as Parameters<EventStore["append"]>[0])
+    const rawAssistantTerminalInput = baseInvestigation({ investigation_id: "inv_terminal_raw_assistant_preview", objective: "terminal raw assistant preview" })
+    const rawAssistantTerminalRun = await service.createObserver(rawAssistantTerminalInput)
+    await rawAssistantTerminalRun.observer.onStarted(durableStartedSnapshot(rawAssistantTerminalInput, 17, "inv_terminal_raw_assistant_preview") as Parameters<typeof rawAssistantTerminalRun.observer.onStarted>[0])
+    const rawAssistantTerminalCheckpoint = await service.latestCheckpoint("inv_terminal_raw_assistant_preview")
+    service.release(rawAssistantTerminalRun)
+    const completeTurnSummary = {
+      turn_index: 1,
+      model_request_id: "model_request_raw_assistant_preview",
+      model_result_hash: "model_result_hash",
+      model_status: "final",
+      provider_request_count: 1,
+      assistant_text_preview: "raw Commander model prose must not persist",
+      tool_call_ids: [],
+      tool_ids: [],
+      tool_execution_ids: [],
+      tool_execution_statuses: [],
+      newly_loaded_tool_ids: [],
+      new_evidence_ids: [],
+      input_estimated_tokens: 10,
+      input_bytes: 100,
+      cumulative_tool_calls: 0,
+      progress_made: true,
+      no_progress_reasons: [],
+      warnings: [],
+      provider_audit_request_ids: [],
+      provider_audit_event_kinds: [],
+      provider_audit_event_count: 0,
+      provider_audit_complete: true,
+      turn_hash: "turn_hash",
+    }
+    const rawAssistantTerminal = {
+      ...malformedTerminalMembers,
+      investigation_id: "inv_terminal_raw_assistant_preview",
+      phase: rawAssistantTerminalCheckpoint!.phase,
+      objective_hash: rawAssistantTerminalCheckpoint!.objective_hash,
+      provider_id: rawAssistantTerminalCheckpoint!.provider_id,
+      provider_kind: rawAssistantTerminalCheckpoint!.provider_kind,
+      model_id: rawAssistantTerminalCheckpoint!.model_id,
+      tool_protocol: rawAssistantTerminalCheckpoint!.tool_protocol,
+      bootstrap_id: rawAssistantTerminalCheckpoint!.bootstrap_ref.bootstrap_id,
+      bootstrap_hash: rawAssistantTerminalCheckpoint!.bootstrap_ref.bootstrap_hash,
+      budget_id: rawAssistantTerminalCheckpoint!.budget.budget_id,
+      budget_hash: rawAssistantTerminalCheckpoint!.budget.budget_hash,
+      last_checkpoint_id: rawAssistantTerminalCheckpoint!.checkpoint_id,
+      last_checkpoint_sequence: rawAssistantTerminalCheckpoint!.checkpoint_sequence,
+      last_checkpoint_hash: rawAssistantTerminalCheckpoint!.checkpoint_hash,
+      semantic_result_hash: "semantic_raw_assistant_terminal",
+      turn_summaries: [completeTurnSummary],
+      provider_audit: { audit_required: false, transport_kind: "none", connector_ids: [], provider_request_count: 0, external_api_audit_event_count: 0, successful_audit_count: 0, failed_audit_count: 0, audit_request_ids: [], audit_event_kinds: [], omitted_request_id_count: 0, all_provider_requests_audited: true, request_body_persisted: false, response_body_persisted: false, credentials_persisted: false, warnings: [] },
+      terminal_hash: "",
+    }
+    rawAssistantTerminal.terminal_hash = stableHash({ ...rawAssistantTerminal, terminal_hash: "" })
+    const rawAssistantTerminalEvent = {
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_terminal_raw_assistant_preview",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:12.900Z",
+      terminal: rawAssistantTerminal,
+      event_payload_hash: "",
+    }
+    rawAssistantTerminalEvent.event_payload_hash = journalPayloadHash(rawAssistantTerminalEvent)
+    await store.append(rawAssistantTerminalEvent as Parameters<EventStore["append"]>[0])
+    const badAuditTransportInput = baseInvestigation({ investigation_id: "inv_terminal_bad_audit_transport", objective: "terminal bad audit transport" })
+    const badAuditTransportRun = await service.createObserver(badAuditTransportInput)
+    await badAuditTransportRun.observer.onStarted(durableStartedSnapshot(badAuditTransportInput, 18, "inv_terminal_bad_audit_transport") as Parameters<typeof badAuditTransportRun.observer.onStarted>[0])
+    const badAuditTransportCheckpoint = await service.latestCheckpoint("inv_terminal_bad_audit_transport")
+    service.release(badAuditTransportRun)
+    const badAuditTransportTerminal = {
+      ...rawAssistantTerminal,
+      investigation_id: "inv_terminal_bad_audit_transport",
+      phase: badAuditTransportCheckpoint!.phase,
+      objective_hash: badAuditTransportCheckpoint!.objective_hash,
+      provider_id: badAuditTransportCheckpoint!.provider_id,
+      provider_kind: badAuditTransportCheckpoint!.provider_kind,
+      model_id: badAuditTransportCheckpoint!.model_id,
+      tool_protocol: badAuditTransportCheckpoint!.tool_protocol,
+      bootstrap_id: badAuditTransportCheckpoint!.bootstrap_ref.bootstrap_id,
+      bootstrap_hash: badAuditTransportCheckpoint!.bootstrap_ref.bootstrap_hash,
+      budget_id: badAuditTransportCheckpoint!.budget.budget_id,
+      budget_hash: badAuditTransportCheckpoint!.budget.budget_hash,
+      last_checkpoint_id: badAuditTransportCheckpoint!.checkpoint_id,
+      last_checkpoint_sequence: badAuditTransportCheckpoint!.checkpoint_sequence,
+      last_checkpoint_hash: badAuditTransportCheckpoint!.checkpoint_hash,
+      semantic_result_hash: "semantic_bad_audit_transport_terminal",
+      turn_summaries: [],
+      provider_audit: { ...rawAssistantTerminal.provider_audit, transport_kind: "local" },
+      terminal_hash: "",
+    }
+    badAuditTransportTerminal.terminal_hash = stableHash({ ...badAuditTransportTerminal, terminal_hash: "" })
+    const badAuditTransportEvent = {
+      kind: "runtime_commander_investigation_finished",
+      schema_version: 1,
+      investigation_id: "inv_terminal_bad_audit_transport",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:12.950Z",
+      terminal: badAuditTransportTerminal,
+      event_payload_hash: "",
+    }
+    badAuditTransportEvent.event_payload_hash = journalPayloadHash(badAuditTransportEvent)
+    await store.append(badAuditTransportEvent as Parameters<EventStore["append"]>[0])
+    const malformedCheckpointTurnInput = baseInvestigation({ investigation_id: "inv_checkpoint_malformed_turn_summary", objective: "checkpoint malformed turn summary" })
+    const malformedCheckpointTurnRun = await service.createObserver(malformedCheckpointTurnInput)
+    await malformedCheckpointTurnRun.observer.onStarted(durableStartedSnapshot(malformedCheckpointTurnInput, 19, "inv_checkpoint_malformed_turn_summary") as Parameters<typeof malformedCheckpointTurnRun.observer.onStarted>[0])
+    const malformedCheckpointTurnInitial = await service.latestCheckpoint("inv_checkpoint_malformed_turn_summary")
+    service.release(malformedCheckpointTurnRun)
+    const malformedCheckpointTurn = finalizeTestCheckpoint({
+      ...malformedCheckpointTurnInitial!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: malformedCheckpointTurnInitial!.checkpoint_id,
+      previous_checkpoint_hash: malformedCheckpointTurnInitial!.checkpoint_hash,
+      working_set: { ...malformedCheckpointTurnInitial!.working_set, model_turn_count: 1 },
+      turn_summaries: [{}],
+    } as CommanderInvestigationCheckpoint)
+    const malformedCheckpointTurnEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_checkpoint_malformed_turn_summary",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:13.000Z",
+      checkpoint: malformedCheckpointTurn,
+      event_payload_hash: "",
+    }
+    malformedCheckpointTurnEvent.event_payload_hash = journalPayloadHash(malformedCheckpointTurnEvent)
+    await store.append(malformedCheckpointTurnEvent as Parameters<EventStore["append"]>[0])
     const checkpointWithoutBoundaryInput = baseInvestigation({ investigation_id: "inv_projected_checkpoint_without_boundary", objective: "project checkpoint without model step" })
     const checkpointWithoutBoundaryRun = await service.createObserver(checkpointWithoutBoundaryInput)
     await checkpointWithoutBoundaryRun.observer.onStarted(durableStartedSnapshot(checkpointWithoutBoundaryInput, 12, "inv_projected_checkpoint_without_boundary") as Parameters<typeof checkpointWithoutBoundaryRun.observer.onStarted>[0])
@@ -4401,6 +4532,16 @@ describe("Commander in-memory investigation controller", () => {
     const malformedMembersRecord = await service.get("inv_terminal_malformed_members")
     expect(malformedMembersRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
     expect(malformedMembersRecord?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const rawAssistantTerminalRecord = await service.get("inv_terminal_raw_assistant_preview")
+    expect(rawAssistantTerminalRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
+    expect(rawAssistantTerminalRecord?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const badAuditTransportRecord = await service.get("inv_terminal_bad_audit_transport")
+    expect(badAuditTransportRecord).toMatchObject({ projection_status: "corrupt", status: "running", recovery_state: "checkpoint_available_resume_not_implemented", checkpoint_available: true })
+    expect(badAuditTransportRecord?.integrity_errors.join("\n")).toContain("malformed terminal payload")
+    const malformedCheckpointTurnRecord = await service.get("inv_checkpoint_malformed_turn_summary")
+    expect(malformedCheckpointTurnRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, latest_checkpoint_id: malformedCheckpointTurnInitial!.checkpoint_id })
+    expect(malformedCheckpointTurnRecord?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
+    expect(await service.getCheckpoint(malformedCheckpointTurn.checkpoint_id)).toBeUndefined()
     const checkpointWithoutBoundaryRecord = await service.get("inv_projected_checkpoint_without_boundary")
     expect(checkpointWithoutBoundaryRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: checkpointWithoutBoundaryInitial!.checkpoint_id, checkpoint_available: true })
     expect(checkpointWithoutBoundaryRecord?.integrity_errors.join("\n")).toContain("checkpoint missing model-step boundary")
@@ -4445,7 +4586,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 22, running_count: 21, terminal_count: 1, final_count: 1, checkpoint_available_count: 17, uncertain_provider_outcome_count: 3, corrupt_count: 19 })
+    expect(summary).toMatchObject({ total: 25, running_count: 24, terminal_count: 1, final_count: 1, checkpoint_available_count: 20, uncertain_provider_outcome_count: 3, corrupt_count: 22 })
   })
 
   test("durable journal projection rejects hash-valid immutable identity drift", async () => {
