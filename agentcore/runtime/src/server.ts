@@ -5183,7 +5183,7 @@ export class RuntimeServer {
       limit: 800,
       session_id: input.session_id,
       mission_id: input.mission_id,
-      status: statuses.length === 1 ? statuses[0] : undefined,
+      statuses,
     })) {
       if (investigation.projection_status !== "ready") continue
       push({

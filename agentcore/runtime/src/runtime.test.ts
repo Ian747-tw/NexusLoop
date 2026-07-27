@@ -24622,9 +24622,9 @@ describe("ProcessOpenCodeAdapter", () => {
       source_kinds: ["commander_investigation"],
       session_id: "session-wanted",
       mission_id: "mission-wanted",
-      statuses: ["final"],
+      statuses: ["final", "failed"],
     })
-    expect(captured).toMatchObject({ limit: 800, session_id: "session-wanted", mission_id: "mission-wanted", status: "final" })
+    expect(captured).toMatchObject({ limit: 800, session_id: "session-wanted", mission_id: "mission-wanted", statuses: ["final", "failed"] })
     expect(result.result?.candidates).toEqual([expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_filtered_journal" })])
   })
 

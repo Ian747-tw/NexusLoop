@@ -61,6 +61,7 @@ export type CommanderInvestigationJournalServiceOptions = {
 
 export type CommanderInvestigationJournalListOptions = {
   status?: string
+  statuses?: string[]
   phase?: string
   provider_id?: string
   session_id?: string
@@ -257,6 +258,7 @@ export class CommanderInvestigationJournalService {
     const limit = Math.max(1, Math.min(maxLimit, Number.isInteger(options.limit) ? Number(options.limit) : defaultLimit))
     return projection.records
       .filter((record) => !options.status || record.status === options.status)
+      .filter((record) => !options.statuses?.length || options.statuses.includes(record.status))
       .filter((record) => !options.phase || record.phase === options.phase)
       .filter((record) => !options.provider_id || record.provider_id === options.provider_id)
       .filter((record) => !options.session_id || record.session_id === options.session_id)

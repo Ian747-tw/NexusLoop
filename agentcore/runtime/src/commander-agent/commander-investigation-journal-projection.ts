@@ -471,6 +471,73 @@ function isDurableWorkingSet(value: unknown): boolean {
   )
 }
 
+function isProviderAuditSummary(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.audit_required === "boolean" &&
+    typeof value.transport_kind === "string" &&
+    Array.isArray(value.connector_ids) &&
+    value.connector_ids.every((item) => typeof item === "string") &&
+    hasNumber(value, "provider_request_count") &&
+    hasNumber(value, "external_api_audit_event_count") &&
+    hasNumber(value, "successful_audit_count") &&
+    hasNumber(value, "failed_audit_count") &&
+    Array.isArray(value.audit_request_ids) &&
+    value.audit_request_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.audit_event_kinds) &&
+    value.audit_event_kinds.every((item) => typeof item === "string") &&
+    hasNumber(value, "omitted_request_id_count") &&
+    typeof value.all_provider_requests_audited === "boolean" &&
+    value.request_body_persisted === false &&
+    value.response_body_persisted === false &&
+    value.credentials_persisted === false &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every((item) => typeof item === "string")
+  )
+}
+
+function isTurnSummary(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasNumber(value, "turn_index") &&
+    hasString(value, "model_request_id") &&
+    (value.model_result_hash === undefined || typeof value.model_result_hash === "string") &&
+    hasString(value, "model_status") &&
+    hasNumber(value, "provider_request_count") &&
+    (value.assistant_text_preview === undefined || typeof value.assistant_text_preview === "string") &&
+    Array.isArray(value.tool_call_ids) &&
+    value.tool_call_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.tool_ids) &&
+    value.tool_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.tool_execution_ids) &&
+    value.tool_execution_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.tool_execution_statuses) &&
+    value.tool_execution_statuses.every((item) => typeof item === "string") &&
+    Array.isArray(value.newly_loaded_tool_ids) &&
+    value.newly_loaded_tool_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.new_evidence_ids) &&
+    value.new_evidence_ids.every((item) => typeof item === "string") &&
+    hasNumber(value, "input_estimated_tokens") &&
+    hasNumber(value, "input_bytes") &&
+    (value.output_tokens === undefined || typeof value.output_tokens === "number") &&
+    hasNumber(value, "cumulative_tool_calls") &&
+    typeof value.progress_made === "boolean" &&
+    Array.isArray(value.no_progress_reasons) &&
+    value.no_progress_reasons.every((item) => typeof item === "string") &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every((item) => typeof item === "string") &&
+    (value.provider_transport_kind === undefined || value.provider_transport_kind === "external_api_connector") &&
+    (value.provider_connector_id === undefined || typeof value.provider_connector_id === "string") &&
+    Array.isArray(value.provider_audit_request_ids) &&
+    value.provider_audit_request_ids.every((item) => typeof item === "string") &&
+    Array.isArray(value.provider_audit_event_kinds) &&
+    value.provider_audit_event_kinds.every((item) => typeof item === "string") &&
+    hasNumber(value, "provider_audit_event_count") &&
+    typeof value.provider_audit_complete === "boolean" &&
+    hasString(value, "turn_hash")
+  )
+}
+
 function isRecentResultSignature(value: unknown): boolean {
   return isRecord(value) && hasString(value, "signature_hash") && hasNumber(value, "count") && hasNumber(value, "last_turn_index")
 }
@@ -679,9 +746,10 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     Array.isArray(event.terminal.evidence_cards) &&
     event.terminal.evidence_cards.every(isEvidenceCard) &&
     Array.isArray(event.terminal.turn_summaries) &&
+    event.terminal.turn_summaries.every(isTurnSummary) &&
     hasNumber(event.terminal, "omitted_evidence_count") &&
     hasNumber(event.terminal, "omitted_turn_count") &&
-    isRecord(event.terminal.provider_audit) &&
+    isProviderAuditSummary(event.terminal.provider_audit) &&
     Array.isArray(event.terminal.blockers) &&
     event.terminal.blockers.every((item) => typeof item === "string") &&
     Array.isArray(event.terminal.warnings) &&
