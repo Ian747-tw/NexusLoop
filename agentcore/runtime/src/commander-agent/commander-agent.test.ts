@@ -1208,6 +1208,71 @@ describe("Commander in-memory investigation controller", () => {
     expect(adapter.request_summaries).toHaveLength(0)
   })
 
+  test("pre-request gate warnings survive provider and wall-time early exits without provider dispatch", async () => {
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const baseOptions = {
+      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "must not dispatch" }]),
+      toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
+      toolService: new CommanderToolService({ contextBudgetService }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => minimalTestBootstrap() },
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry,
+      contextBudgetService,
+    }
+    let providerGateChecks = 0
+    const providerBlocked = new CommanderInvestigationController({
+      ...baseOptions,
+      controlGate: {
+        check: () => ({
+          action: "continue",
+          source_kind: "human_control",
+          checked_at: "2026-01-01T00:00:00.000Z",
+          warnings: ["control warning before provider block"],
+        }),
+      },
+      providerGate: {
+        check: ({ before }) => {
+          providerGateChecks += 1
+          return {
+            ready: before === "investigation",
+            source_kind: "configured_connector",
+            checks: [],
+            blockers: before === "investigation" ? [] : ["provider blocked before model"],
+            warnings: before === "investigation" ? [] : ["provider warning before model"],
+            checked_at: "2026-01-01T00:00:01.000Z",
+            snapshot_hash: `provider_block_hash_${providerGateChecks}`,
+          }
+        },
+      },
+    })
+    const blocked = await providerBlocked.run(baseInvestigation({ session_id: "session_provider_warning" }))
+    expect(blocked).toMatchObject({ status: "blocked", stop_reason: "provider_preflight_blocked", provider_request_count: 0 })
+    expect(blocked.warnings).toContain("control warning before provider block")
+    expect(blocked.warnings).toContain("provider warning before model")
+
+    const wallTimed = new CommanderInvestigationController({
+      ...baseOptions,
+      controlGate: {
+        check: () => {
+          const started = performance.now()
+          while (performance.now() - started < 20) {}
+          return {
+            action: "continue",
+            source_kind: "human_control",
+            checked_at: "2026-01-01T00:00:02.000Z",
+            warnings: ["control warning before pre-context wall-time exit"],
+          }
+        },
+      },
+    })
+    const exhausted = await wallTimed.run(baseInvestigation({ session_id: "session_wall_warning", max_wall_time_ms: 10 }))
+    expect(exhausted).toMatchObject({ status: "budget_exhausted", stop_reason: "wall_time_exhausted", provider_request_count: 0 })
+    expect(exhausted.warnings).toContain("control warning before pre-context wall-time exit")
+  })
+
   test("discovery search does not autoload and tool_get loads only eligible bound schemas", async () => {
     const adapter = new ScriptedCommanderModelStepAdapter([
       { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_search", { query: "research memory", limit: 20 })], assert_request: (request) => {
@@ -4322,6 +4387,10 @@ describe("Commander in-memory investigation controller", () => {
     const corruptSearch = await server.searchCommanderOperationalMemory({ query: "quarantinedxyz", source_kinds: ["commander_investigation"], session_id: "session_search" })
     expect(corruptSearch.result?.candidates).toEqual([])
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
+
+    await writeFile((server as unknown as { eventStore: EventStore }).eventStore.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_search_line\",\"journal_sequence\":0', { flag: "a" })
+    const afterTornSearch = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(afterTornSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true }))
   })
 
   test("operational memory search finds Commander investigations under scan cap pressure", async () => {

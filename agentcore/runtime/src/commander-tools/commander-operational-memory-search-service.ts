@@ -38,7 +38,7 @@ export type CommanderOperationalMemoryRecord = {
 
 export type CommanderOperationalMemorySearchOptions = {
   now?: () => Date
-  collectRecords: () => Promise<CommanderOperationalMemoryRecord[]>
+  collectRecords: (input?: CommanderOperationalMemorySearchInput) => Promise<CommanderOperationalMemoryRecord[]>
 }
 
 export class CommanderOperationalMemorySearchService {
@@ -58,7 +58,7 @@ export class CommanderOperationalMemorySearchService {
     const sourceKinds = readCsv(input.source_kinds)
     const statuses = readCsv(input.statuses)
     let records: CommanderOperationalMemoryRecord[] = []
-    if (blockers.length === 0) records = await this.options.collectRecords()
+    if (blockers.length === 0) records = await this.options.collectRecords(input)
     const filteredRecords = records
       .filter((record) => !input.session_id || record.session_id === input.session_id)
       .filter((record) => !input.launch_id || record.launch_id === input.launch_id)

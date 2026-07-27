@@ -88,9 +88,9 @@ export class CommanderInvestigationController {
       if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
       if (humanBeforeModel.warnings.length) preModelWarnings.push(...humanBeforeModel.warnings)
       const providerBeforeModel = await this.checkProvider(input, "model_step", turn)
-      if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, providerBeforeModel.warnings, started)
+      if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, [...preModelWarnings, ...providerBeforeModel.warnings], started)
       if (providerBeforeModel?.warnings.length) preModelWarnings.push(...providerBeforeModel.warnings)
-      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], [], started)
+      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], preModelWarnings, started)
 
       const contextWorkingSet = workingSetWithAdditionalWarnings(workingSet, preModelWarnings)
       const context = this.options.contextService.build({ bootstrap, workingSet: contextWorkingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })

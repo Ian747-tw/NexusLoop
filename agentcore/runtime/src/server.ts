@@ -120,7 +120,7 @@ import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readC
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
 import { CommanderToolService, readCommanderToolGetInput, readCommanderToolListInput, readCommanderToolSearchInput } from "./commander-tools/commander-tool-service"
 import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolPhase, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchPreview } from "./commander-tools/commander-tool-types"
-import { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput, type CommanderOperationalMemoryRecord } from "./commander-tools/commander-operational-memory-search-service"
+import { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput, type CommanderOperationalMemoryRecord, type CommanderOperationalMemorySearchInput } from "./commander-tools/commander-operational-memory-search-service"
 import { CommanderRepoReadService } from "./commander-tools/commander-repo-read-service"
 import type { CommanderDependencyManifestResult, CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult, CommanderInternalReadResult, CommanderOperationalMemorySearchPreview, CommanderRepoFileResult, CommanderRepoSearchResult, CommanderRepoSymbolResult, CommanderRepoTreeResult, CommanderTestManifestResult } from "./commander-tools/commander-read-types"
 import { OpenCodeSessionContinuityService, readOpenCodeContinuationInput, readOpenCodeSessionContinuityInput } from "./opencode-session/opencode-session-continuity-service"
@@ -4944,7 +4944,7 @@ export class RuntimeServer {
   private commanderOperationalMemorySearchService(): CommanderOperationalMemorySearchService {
     this.commanderOperationalMemorySearchServiceInstance ??= new CommanderOperationalMemorySearchService({
       now: this.researchSynthesisNow,
-      collectRecords: () => this.collectCommanderOperationalMemoryRecords(),
+      collectRecords: (input) => this.collectCommanderOperationalMemoryRecords(input),
     })
     return this.commanderOperationalMemorySearchServiceInstance
   }
@@ -5128,7 +5128,11 @@ export class RuntimeServer {
     return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
   }
 
-  private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
+  private async collectCommanderOperationalMemoryRecords(input: CommanderOperationalMemorySearchInput = {}): Promise<CommanderOperationalMemoryRecord[]> {
+    const requestedSourceKinds = operationalMemorySourceKinds(input.source_kinds)
+    if (requestedSourceKinds.length === 1 && requestedSourceKinds[0] === "commander_investigation") {
+      return this.collectCommanderInvestigationOperationalMemoryRecords()
+    }
     const records: CommanderOperationalMemoryRecord[] = []
     const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
     const missions = await this.listRecentMissions(100)
@@ -5167,6 +5171,13 @@ export class RuntimeServer {
     for (const review of await this.listOpenCodeResultReviews({ limit: 100 })) push({ source_kind: "result_review", source_id: review.review_id, label: "Result review", status: review.review_disposition, summary_preview: `${review.decision}: ${review.rationale_preview}`, session_id: review.session_id, launch_id: review.launch_id, occurred_at: review.recorded_at, fields: { decision: review.decision, next_step: review.next_step, report_id: review.report_id } })
     for (const ingestion of await this.listResearchIngestions({ limit: 100 })) push({ source_kind: "research_ingestion", source_id: ingestion.ingestion_id, label: "Research ingestion", status: ingestion.research_db_written ? "research_db_written" : "not_written", summary_preview: ingestion.research_title_preview, session_id: ingestion.session_id, launch_id: ingestion.launch_id, occurred_at: ingestion.recorded_at, fields: { evidence_kind: ingestion.evidence_kind, review_id: ingestion.review_id, report_id: ingestion.report_id } })
     for (const refresh of await this.listOpenCodeContextRefreshes({ limit: 100 })) push({ source_kind: "context_refresh", source_id: refresh.refresh_id, label: "Context refresh", status: refresh.status, summary_preview: refresh.summary_preview, session_id: refresh.target_session_id, launch_id: refresh.launch_id, occurred_at: refresh.written_at, fields: { mode: refresh.continuity_mode, packet_kind: refresh.packet_kind, previous_refresh_id: refresh.previous_refresh_id } })
+    records.push(...await this.collectCommanderInvestigationOperationalMemoryRecords())
+    return records
+  }
+
+  private async collectCommanderInvestigationOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
+    const records: CommanderOperationalMemoryRecord[] = []
+    const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
     for (const investigation of await this.listCommanderInvestigationRecords({ limit: 100 })) {
       if (investigation.projection_status !== "ready") continue
       push({
@@ -5797,6 +5808,12 @@ function durableOverrideResult(original: CommanderInvestigationResult, result: C
       external_api_audit_events_appended: result.external_api_audit_events_appended,
     }),
   }
+}
+
+function operationalMemorySourceKinds(value: CommanderOperationalMemorySearchInput["source_kinds"]): string[] {
+  if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean)
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean)
+  return []
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
