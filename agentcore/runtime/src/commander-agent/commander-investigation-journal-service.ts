@@ -690,7 +690,8 @@ function durableModelTextSummary(text: string, maxBytes: number): string {
   return bound(`model-visible text omitted from durable journal; text_hash=${stableHash(text)} text_chars=${text.length}`, maxBytes)
 }
 
-function recoverInvestigationIdFromMalformedLine(line: string, index: number): string {
+function recoverInvestigationIdFromMalformedLine(line: string, index: number): string | undefined {
+  if (!/"kind"\s*:\s*"runtime_commander_investigation_(started|model_step_started|checkpointed|finished)"/.test(line)) return undefined
   const match = line.match(/"investigation_id"\s*:\s*"([^"\\]{1,200})"/)
   if (match?.[1]) return bound(match[1], 200)
   return `malformed_commander_journal_line_${index}`

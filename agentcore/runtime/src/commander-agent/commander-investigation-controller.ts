@@ -941,7 +941,6 @@ function stableResult(value: CommanderInvestigationResult): unknown {
     ...value,
     investigation_id: "",
     bootstrap_id: "",
-    bootstrap_hash: "",
     context_budget_id: "",
     budget: {
       ...value.budget,

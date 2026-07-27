@@ -2202,6 +2202,15 @@ describe("Commander in-memory investigation controller", () => {
     expect(overRequestCount.blockers.join(" ")).toContain("one-request contract")
   })
 
+  test("result hash preserves bootstrap semantic differences", async () => {
+    const first = await controllerWithBootstrapHash("bootstrap_hash_continuity_a").run(baseInvestigation({ investigation_id: "inv_bootstrap_hash_a", objective: "same objective for bootstrap hash" }))
+    const second = await controllerWithBootstrapHash("bootstrap_hash_continuity_b").run(baseInvestigation({ investigation_id: "inv_bootstrap_hash_b", objective: "same objective for bootstrap hash" }))
+
+    expect(first).toMatchObject({ status: "final", final_summary: "same final" })
+    expect(second).toMatchObject({ status: "final", final_summary: "same final" })
+    expect(first.result_hash).not.toBe(second.result_hash)
+  })
+
   test("injected connector-backed adapters count optional external API audits truthfully", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w2b2-optional-audit-"))
     const adapter = connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("optional connector final") }]), "api_optional_audit")
@@ -2685,6 +2694,22 @@ describe("Commander in-memory investigation controller", () => {
     expect(list.map((record) => record.investigation_id)).toContain("inv_torn_line")
     const summary = await service.summary()
     expect(summary).toMatchObject({ total: 2, corrupt_count: 1, checkpoint_available_count: 1 })
+  })
+
+  test("durable journal ignores torn JSONL lines that are not Commander investigation events", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-unrelated-torn-jsonl-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const validInput = baseInvestigation({ investigation_id: "inv_valid_before_unrelated_torn", objective: "valid before unrelated torn line" })
+    const run = await service.createObserver(validInput)
+    await run.observer.onStarted(durableStartedSnapshot(validInput, 0, "inv_valid_before_unrelated_torn") as Parameters<typeof run.observer.onStarted>[0])
+    service.release(run)
+    await writeFile(store.eventsPath, '{\"kind\":\"runtime_shutdown\",\"reason\":\"partial shutdown line without commander id\"', { flag: "a" })
+
+    const list = await service.list({ limit: 10 })
+    expect(list.map((record) => record.investigation_id)).toEqual(["inv_valid_before_unrelated_torn"])
+    const summary = await service.summary()
+    expect(summary).toMatchObject({ total: 1, corrupt_count: 0, checkpoint_available_count: 1 })
   })
 
   test("durable zero-request cancellation checkpoints project as terminal without uncertainty", async () => {
@@ -4760,6 +4785,20 @@ function controllerWithOptionalAuditAdapter(modelAdapter: CommanderModelStepAdap
     descriptors: COMMANDER_TOOL_REGISTRY,
     boundToolIds: COMMANDER_BOUND_TOOL_IDS,
     bootstrapService: { compile: async () => minimalTestBootstrap() },
+    contextService: new CommanderInvestigationContextService(),
+    capabilityRegistry: new ModelCapabilityRegistry(),
+    contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }),
+  })
+}
+
+function controllerWithBootstrapHash(bootstrapHash: string) {
+  return new CommanderInvestigationController({
+    modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "same final" }]),
+    toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
+    toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }),
+    descriptors: COMMANDER_TOOL_REGISTRY,
+    boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+    bootstrapService: { compile: async () => ({ ...minimalTestBootstrap(), bootstrap_hash: bootstrapHash }) },
     contextService: new CommanderInvestigationContextService(),
     capabilityRegistry: new ModelCapabilityRegistry(),
     contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }),
