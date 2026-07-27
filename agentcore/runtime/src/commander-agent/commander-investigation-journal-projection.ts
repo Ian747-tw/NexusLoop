@@ -526,6 +526,7 @@ function isProviderAuditSummary(value: unknown): boolean {
   const eventKindsComplete = auditEventCount <= 24
     ? auditEventKinds.length === auditEventCount
     : auditEventKinds.length === 24
+  const expectedAllProviderRequestsAudited = providerRequestCount === 0 ? auditRequired === false : auditEventCount === providerRequestCount
   return (
     connectorIds.length > 0 &&
     auditEventCount <= providerRequestCount &&
@@ -533,7 +534,7 @@ function isProviderAuditSummary(value: unknown): boolean {
     requestIdsComplete &&
     eventKindsComplete &&
     typeof value.all_provider_requests_audited === "boolean" &&
-    value.all_provider_requests_audited === (auditEventCount === providerRequestCount) &&
+    value.all_provider_requests_audited === expectedAllProviderRequestsAudited &&
     value.request_body_persisted === false &&
     value.response_body_persisted === false &&
     value.credentials_persisted === false &&

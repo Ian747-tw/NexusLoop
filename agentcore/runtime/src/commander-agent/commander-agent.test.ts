@@ -3345,6 +3345,41 @@ describe("Commander in-memory investigation controller", () => {
     })
   })
 
+  test("durable journal projection accepts configured provider initial audit state before requests", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-required-initial-audit-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const input = baseInvestigation({ investigation_id: "inv_required_initial_audit", objective: "required initial audit" })
+    const run = await service.createObserver(input)
+    const started = durableStartedSnapshot(input, 0, "inv_required_initial_audit")
+    ;(started.working_set as { provider_audit: unknown }).provider_audit = {
+      audit_required: true,
+      transport_kind: "external_api_connector",
+      connector_ids: ["api_required"],
+      provider_request_count: 0,
+      external_api_audit_event_count: 0,
+      successful_audit_count: 0,
+      failed_audit_count: 0,
+      audit_request_ids: [],
+      audit_event_kinds: [],
+      omitted_request_id_count: 0,
+      all_provider_requests_audited: false,
+      request_body_persisted: false,
+      response_body_persisted: false,
+      credentials_persisted: false,
+      warnings: [],
+    }
+    await run.observer.onStarted(started as Parameters<typeof run.observer.onStarted>[0])
+    service.release(run)
+
+    const record = await service.get("inv_required_initial_audit")
+    expect(record).toMatchObject({ projection_status: "ready", checkpoint_available: true, provider_request_count: 0, external_api_audit_event_count: 0 })
+    expect(record?.integrity_errors).toEqual([])
+    expect(await service.latestCheckpoint("inv_required_initial_audit")).toMatchObject({
+      working_set: { provider_audit: { audit_required: true, transport_kind: "external_api_connector", all_provider_requests_audited: false } },
+    })
+  })
+
   test("durable journal projection rejects model-step and checkpoint boundary mismatches", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-pending-boundary-"))
     const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
