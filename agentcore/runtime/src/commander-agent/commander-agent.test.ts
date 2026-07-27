@@ -1166,6 +1166,48 @@ describe("Commander in-memory investigation controller", () => {
     expect(adapter.request_summaries).toHaveLength(0)
   })
 
+  test("pre-request gate warnings survive context-budget exits without provider dispatch", async () => {
+    const capabilityRegistry = new ModelCapabilityRegistry()
+    const contextBudgetService = new ContextBudgetService({ registry: capabilityRegistry })
+    const toolService = new CommanderToolService({ contextBudgetService })
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "must not dispatch" }])
+    const controller = new CommanderInvestigationController({
+      modelAdapter: adapter,
+      toolExecutor: { execute: async () => { throw new Error("tool executor should not run") } },
+      toolService,
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: { compile: async () => minimalTestBootstrap() },
+      contextService: {
+        build: () => ({
+          messages: [],
+          tools: [],
+          input_bytes: 1,
+          estimated_tokens: 1,
+          warnings: ["context warning before provider dispatch"],
+          blocked: true,
+          blockers: ["forced context budget block"],
+        }),
+      },
+      controlGate: {
+        check: () => ({
+          action: "continue",
+          source_kind: "human_control",
+          projected_state: "resume_requested",
+          checked_at: "2026-01-01T00:00:00.000Z",
+          warnings: ["pre-request warning must survive context exit"],
+        }),
+      },
+      capabilityRegistry,
+      contextBudgetService,
+    })
+    const result = await controller.run(baseInvestigation({ session_id: "session_pre_request_warning" }))
+    expect(result).toMatchObject({ status: "budget_exhausted", stop_reason: "context_budget_exhausted", provider_request_count: 0 })
+    expect(result.warnings).toContain("pre-request warning must survive context exit")
+    expect(result.warnings).toContain("context warning before provider dispatch")
+    expect(adapter.request_summaries).toHaveLength(0)
+  })
+
   test("discovery search does not autoload and tool_get loads only eligible bound schemas", async () => {
     const adapter = new ScriptedCommanderModelStepAdapter([
       { status: "tool_call", tool_calls: [toolCall("c1", "commander.tool_search", { query: "research memory", limit: 20 })], assert_request: (request) => {
@@ -3707,6 +3749,16 @@ describe("Commander in-memory investigation controller", () => {
     badLoadedRefs.initial_loaded_tool_refs = [null]
     badLoadedRefs.event_payload_hash = journalPayloadHash(badLoadedRefs)
     await store.append(badLoadedRefs as Parameters<EventStore["append"]>[0])
+    const badStartedMissingPhase = structuredClone(seedStarted!) as Record<string, unknown>
+    badStartedMissingPhase.investigation_id = "inv_bad_started_missing_phase"
+    badStartedMissingPhase.journal_sequence = 0
+    badStartedMissingPhase.objective = "bad started missing phase"
+    badStartedMissingPhase.objective_hash = stableHash("bad started missing phase")
+    badStartedMissingPhase.occurred_at = "2026-01-01T00:00:09.500Z"
+    ;(badStartedMissingPhase.initial_checkpoint as Record<string, unknown>).investigation_id = "inv_bad_started_missing_phase"
+    delete badStartedMissingPhase.phase
+    badStartedMissingPhase.event_payload_hash = journalPayloadHash(badStartedMissingPhase)
+    await store.append(badStartedMissingPhase as Parameters<EventStore["append"]>[0])
     const badModelStepInput = baseInvestigation({ investigation_id: "inv_bad_model_step_base", objective: "bad model step base" })
     const badModelStepRun = await service.createObserver(badModelStepInput)
     await badModelStepRun.observer.onStarted(durableStartedSnapshot(badModelStepInput, 7, "inv_bad_model_step_base") as Parameters<typeof badModelStepRun.observer.onStarted>[0])
@@ -3844,6 +3896,60 @@ describe("Commander in-memory investigation controller", () => {
     }
     wrongOwnerCheckpointEvent.event_payload_hash = journalPayloadHash(wrongOwnerCheckpointEvent)
     await store.append(wrongOwnerCheckpointEvent as Parameters<EventStore["append"]>[0])
+    const badReplayInput = baseInvestigation({ investigation_id: "inv_bad_replay_exchange", objective: "bad replay exchange" })
+    const badReplayRun = await service.createObserver(badReplayInput)
+    await badReplayRun.observer.onStarted(durableStartedSnapshot(badReplayInput, 15, "inv_bad_replay_exchange") as Parameters<typeof badReplayRun.observer.onStarted>[0])
+    const badReplayInitial = await service.latestCheckpoint("inv_bad_replay_exchange")
+    expect(badReplayInitial).toBeDefined()
+    await badReplayRun.observer.onModelStepStarted({
+      investigation_id: "inv_bad_replay_exchange",
+      input: badReplayInput,
+      turn_index: 1,
+      model_request_id: "model_request_bad_replay",
+      tool_protocol: "native",
+      working_set_hash: badReplayInitial!.working_set.working_set_hash,
+      context_hash: "context_hash_bad_replay",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:11.500Z",
+    })
+    service.release(badReplayRun)
+    const badReplayCheckpoint = {
+      ...badReplayInitial!,
+      checkpoint_id: "bad_replay_checkpoint",
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete" as const,
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: badReplayInitial!.checkpoint_id,
+      previous_checkpoint_hash: badReplayInitial!.checkpoint_hash,
+      replay_exchange: {
+        turn_index: 1,
+        assistant_message: { role: "assistant", content: null },
+        tool_result_messages: [null],
+        exchange_hash: "bad_replay_exchange_hash",
+        summary_only: true,
+        full_tool_results_persisted: false,
+      },
+      working_set: { ...badReplayInitial!.working_set, model_turn_count: 1 },
+      checkpoint_hash: "",
+    }
+    badReplayCheckpoint.checkpoint_hash = stableHash({ ...badReplayCheckpoint, checkpoint_hash: "" })
+    const badReplayCheckpointEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_bad_replay_exchange",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:12.000Z",
+      checkpoint: badReplayCheckpoint,
+      event_payload_hash: "",
+    }
+    badReplayCheckpointEvent.event_payload_hash = journalPayloadHash(badReplayCheckpointEvent)
+    await store.append(badReplayCheckpointEvent as Parameters<EventStore["append"]>[0])
     const postTerminalInput = baseInvestigation({ investigation_id: "inv_post_terminal_checkpoint", objective: "post terminal checkpoint" })
     const postTerminalRun = await service.createObserver(postTerminalInput)
     await postTerminalRun.observer.onStarted(durableStartedSnapshot(postTerminalInput, 5, "inv_post_terminal_checkpoint") as Parameters<typeof postTerminalRun.observer.onStarted>[0])
@@ -3953,6 +4059,9 @@ describe("Commander in-memory investigation controller", () => {
     const badLoadedRefsRecord = await service.get("inv_bad_initial_loaded_refs")
     expect(badLoadedRefsRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: false, recovery_state: "no_checkpoint_resume_not_implemented" })
     expect(badLoadedRefsRecord?.integrity_errors.join("\n")).toContain("malformed started payload")
+    const badStartedMissingPhaseRecord = await service.get("inv_bad_started_missing_phase")
+    expect(badStartedMissingPhaseRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: false, recovery_state: "no_checkpoint_resume_not_implemented" })
+    expect(badStartedMissingPhaseRecord?.integrity_errors.join("\n")).toContain("malformed started payload")
     const badModelStepRecord = await service.get("inv_bad_model_step_base")
     expect(badModelStepRecord).toMatchObject({ projection_status: "corrupt", uncertain_provider_outcome: true, recovery_state: "uncertain_provider_outcome_resume_not_implemented" })
     expect(badModelStepRecord?.integrity_errors.join("\n")).toContain("model-step base checkpoint mismatch")
@@ -3971,6 +4080,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(wrongOwnerCheckpointRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: wrongOwnerInitial!.checkpoint_id })
     expect(wrongOwnerCheckpointRecord?.integrity_errors.join("\n")).toContain("checkpoint investigation_id mismatch")
     expect(await service.getCheckpoint("wrong_owner_checkpoint")).toBeUndefined()
+    const badReplayRecord = await service.get("inv_bad_replay_exchange")
+    expect(badReplayRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: badReplayInitial!.checkpoint_id, checkpoint_available: true, uncertain_provider_outcome: true })
+    expect(badReplayRecord?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
+    expect(await service.getCheckpoint("bad_replay_checkpoint")).toBeUndefined()
     const postTerminal = await service.get("inv_post_terminal_checkpoint")
     expect(postTerminal).toMatchObject({ projection_status: "corrupt", status: "final", recovery_state: "not_required", latest_checkpoint_id: postTerminalInitial!.checkpoint_id })
     expect(postTerminal?.integrity_errors.join("\n")).toContain("investigation event appears after terminal event")
@@ -3979,7 +4092,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 18, running_count: 17, terminal_count: 1, final_count: 1, checkpoint_available_count: 14, uncertain_provider_outcome_count: 2, corrupt_count: 15 })
+    expect(summary).toMatchObject({ total: 20, running_count: 19, terminal_count: 1, final_count: 1, checkpoint_available_count: 15, uncertain_provider_outcome_count: 3, corrupt_count: 17 })
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {

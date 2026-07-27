@@ -402,11 +402,51 @@ function isReplayExchange(value: unknown): boolean {
   return (
     isRecord(value) &&
     hasNumber(value, "turn_index") &&
-    isRecord(value.assistant_message) &&
+    isDurableAssistantMessage(value.assistant_message) &&
     Array.isArray(value.tool_result_messages) &&
+    value.tool_result_messages.every(isDurableToolResultMessage) &&
     hasString(value, "exchange_hash") &&
     value.summary_only === true &&
     value.full_tool_results_persisted === false
+  )
+}
+
+function isDurableAssistantMessage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.role === "assistant" &&
+    Array.isArray(value.content) &&
+    value.content.every(isDurableAssistantPart)
+  )
+}
+
+function isDurableAssistantPart(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  if (value.type === "text") return hasString(value, "text")
+  return (
+    value.type === "tool_call" &&
+    hasString(value, "tool_call_id") &&
+    hasString(value, "tool_id") &&
+    isRecord(value.arguments) &&
+    (value.raw_arguments === undefined || hasString(value, "raw_arguments")) &&
+    typeof value.arguments_valid === "boolean" &&
+    Array.isArray(value.validation_errors) &&
+    value.validation_errors.every((item) => typeof item === "string") &&
+    hasString(value, "call_hash")
+  )
+}
+
+function isDurableToolResultMessage(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.role === "tool" &&
+    hasString(value, "tool_call_id") &&
+    hasString(value, "tool_id") &&
+    hasString(value, "content") &&
+    hasString(value, "content_hash") &&
+    typeof value.truncated === "boolean" &&
+    value.durable_summary_only === true &&
+    (value.source_execution_id === undefined || hasString(value, "source_execution_id"))
   )
 }
 
@@ -430,6 +470,7 @@ function isStartedPayload(event: JsonlEvent): event is CommanderInvestigationSta
   return (
     hasString(event, "objective") &&
     hasString(event, "objective_hash") &&
+    hasString(event, "phase") &&
     hasString(event, "requested_by") &&
     hasString(event, "provider_id") &&
     hasString(event, "provider_kind") &&

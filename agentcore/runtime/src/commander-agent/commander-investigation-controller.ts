@@ -95,9 +95,9 @@ export class CommanderInvestigationController {
       const contextWorkingSet = workingSetWithAdditionalWarnings(workingSet, preModelWarnings)
       const context = this.options.contextService.build({ bootstrap, workingSet: contextWorkingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
       const deferredPreModelWarnings = [...preModelWarnings]
-      if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, context.warnings, started)
+      if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, [...preModelWarnings, ...context.warnings], started)
       if (context.warnings.length) deferredPreModelWarnings.push(...context.warnings)
-      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], context.warnings, started)
+      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], [...preModelWarnings, ...context.warnings], started)
       const deadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
       const request: CommanderModelStepRequest = {
         request_id: `${investigationId}_turn_${turn}`,
