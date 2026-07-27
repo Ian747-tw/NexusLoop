@@ -3264,6 +3264,87 @@ describe("Commander in-memory investigation controller", () => {
     service.release(run)
   })
 
+  test("durable journal projection accepts optional connector audit summaries inside checkpoints", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-optional-checkpoint-audit-"))
+    const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const service = new CommanderInvestigationJournalService({ eventStore: store })
+    const input = baseInvestigation({ investigation_id: "inv_optional_checkpoint_audit", objective: "optional connector checkpoint audit" })
+    const run = await service.createObserver(input)
+    await run.observer.onStarted(durableStartedSnapshot(input, 0, "inv_optional_checkpoint_audit") as Parameters<typeof run.observer.onStarted>[0])
+    const initial = await service.latestCheckpoint("inv_optional_checkpoint_audit")
+    expect(initial).toBeDefined()
+    await run.observer.onModelStepStarted({
+      investigation_id: "inv_optional_checkpoint_audit",
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_optional_checkpoint_audit",
+      tool_protocol: "native",
+      working_set_hash: initial!.working_set.working_set_hash,
+      context_hash: "context_hash_optional_checkpoint_audit",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:01.000Z",
+    })
+    service.release(run)
+    const optionalAuditWorkingSet = {
+      ...initial!.working_set,
+      provider_audit: {
+        ...initial!.working_set.provider_audit,
+        audit_required: false,
+        transport_kind: "external_api_connector" as const,
+        connector_ids: ["api_optional"],
+        provider_request_count: 1,
+        external_api_audit_event_count: 1,
+        successful_audit_count: 1,
+        audit_request_ids: ["external_api_request_optional_checkpoint"],
+        audit_event_kinds: ["external_api_request_executed"],
+        all_provider_requests_audited: true,
+      },
+      model_turn_count: 1,
+    }
+    optionalAuditWorkingSet.working_set_hash = stableHash({
+      ...optionalAuditWorkingSet,
+      working_set_hash: "",
+      evidence_cards: optionalAuditWorkingSet.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+      provider_audit: { ...optionalAuditWorkingSet.provider_audit, audit_request_ids: [] },
+    })
+    const checkpoint = finalizeTestCheckpoint({
+      ...initial!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: initial!.checkpoint_id,
+      previous_checkpoint_hash: initial!.checkpoint_hash,
+      working_set: optionalAuditWorkingSet,
+      provider_request_count: 1,
+      external_api_audit_count: 1,
+    } as CommanderInvestigationCheckpoint)
+    const event = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_optional_checkpoint_audit",
+      journal_sequence: 2,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:02.000Z",
+      checkpoint,
+      event_payload_hash: "",
+    }
+    event.event_payload_hash = journalPayloadHash(event)
+    await store.append(event as Parameters<EventStore["append"]>[0])
+
+    const record = await service.get("inv_optional_checkpoint_audit")
+    expect(record).toMatchObject({ projection_status: "ready", checkpoint_available: true, latest_checkpoint_id: checkpoint.checkpoint_id })
+    expect(record?.integrity_errors).toEqual([])
+    expect(await service.getCheckpoint(checkpoint.checkpoint_id)).toMatchObject({
+      checkpoint_id: checkpoint.checkpoint_id,
+      working_set: { provider_audit: { audit_required: false, transport_kind: "external_api_connector", external_api_audit_event_count: 1 } },
+    })
+  })
+
   test("durable journal projection rejects model-step and checkpoint boundary mismatches", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-pending-boundary-"))
     const store = new EventStore(join(projectDir, ".nxl", "events.jsonl"))

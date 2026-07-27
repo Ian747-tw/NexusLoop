@@ -479,7 +479,7 @@ function isProviderAuditSummary(value: unknown): boolean {
     isRecord(value) &&
     typeof value.audit_required === "boolean" &&
     (transport === "none" || transport === "external_api_connector") &&
-    ((auditRequired === false && transport === "none") || (auditRequired === true && transport === "external_api_connector")) &&
+    (auditRequired === false || transport === "external_api_connector") &&
     Array.isArray(value.connector_ids) &&
     value.connector_ids.every((item) => typeof item === "string") &&
     hasNumber(value, "provider_request_count") &&
