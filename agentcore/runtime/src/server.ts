@@ -2753,13 +2753,13 @@ export class RuntimeServer {
           if (!run.state.started_persisted) throw error
           if (run.state.pending_model_request_id) {
             const uncertain = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
-            return durablePersistenceFailedResult(uncertain, run.state, error)
+            return durablePersistenceFailedResult(uncertain, run.state, error, await commanderInvestigationProjectionAfterFailure(journal, run.investigation_id))
           }
           result = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
         }
         if (!run.state.started_persisted) {
           if (result.stop_reason === "persistence_failed") {
-            return durablePersistenceFailedResult(result, run.state, result.blockers[0] ?? "Commander investigation durable start was not persisted")
+            return durablePersistenceFailedResult(result, run.state, result.blockers[0] ?? "Commander investigation durable start was not persisted", await commanderInvestigationProjectionAfterFailure(journal, run.investigation_id))
           }
           return result
         }
@@ -2767,7 +2767,7 @@ export class RuntimeServer {
           const durability = await journal.finish(run, result)
           return durableResult(result, durability)
         } catch (error) {
-          return durablePersistenceFailedResult(result, run.state, error)
+          return durablePersistenceFailedResult(result, run.state, error, await commanderInvestigationProjectionAfterFailure(journal, run.investigation_id))
         }
       } finally {
         if (run) journal.release(run)
@@ -5689,28 +5689,38 @@ function durableResult(result: CommanderInvestigationResult, durability: import(
   }
 }
 
-function durablePersistenceFailedResult(result: CommanderInvestigationResult, state: import("./commander-agent").CommanderInvestigationJournalRunState, error: unknown): CommanderInvestigationResult {
+async function commanderInvestigationProjectionAfterFailure(journal: import("./commander-agent").CommanderInvestigationJournalService, investigationId: string): Promise<import("./commander-agent").CommanderInvestigationRecord | undefined> {
+  try {
+    return await journal.get(investigationId)
+  } catch {
+    return undefined
+  }
+}
+
+function durablePersistenceFailedResult(result: CommanderInvestigationResult, state: import("./commander-agent").CommanderInvestigationJournalRunState, error: unknown, projected?: import("./commander-agent").CommanderInvestigationRecord): CommanderInvestigationResult {
   const message = error instanceof Error ? redactText(error.message) : redactText(String(error))
+  const projectedTerminalPersisted = projected ? projected.status !== "running" : undefined
+  const projectedWarnings = projected ? [...projected.integrity_errors, ...projected.warnings].map((item) => redactText(item)).filter(Boolean) : []
   const durability = {
     mode: "event_journal" as const,
-    started_persisted: state.started_persisted,
-    initial_checkpoint_persisted: state.checkpoint_count > 0,
-    terminal_persisted: false,
-    investigation_event_count: state.investigation_event_count,
+    started_persisted: state.started_persisted || Boolean(projected),
+    initial_checkpoint_persisted: projected?.checkpoint_available ?? state.checkpoint_count > 0,
+    terminal_persisted: projectedTerminalPersisted ?? false,
+    investigation_event_count: projected?.investigation_event_count ?? state.investigation_event_count,
     started_event_id: state.started_event_id,
     latest_checkpoint_event_id: state.latest_checkpoint_event_id,
-    latest_checkpoint_id: state.latest_checkpoint?.checkpoint_id,
-    latest_checkpoint_sequence: state.latest_checkpoint?.checkpoint_sequence,
-    latest_checkpoint_hash: state.latest_checkpoint?.checkpoint_hash,
-    checkpoint_count: state.checkpoint_count,
-    pending_model_request_id: state.pending_model_request_id,
-    projection_status: "ready" as const,
+    latest_checkpoint_id: projected?.latest_checkpoint_id ?? state.latest_checkpoint?.checkpoint_id,
+    latest_checkpoint_sequence: projected?.latest_checkpoint_sequence ?? state.latest_checkpoint?.checkpoint_sequence,
+    latest_checkpoint_hash: projected?.latest_checkpoint_hash ?? state.latest_checkpoint?.checkpoint_hash,
+    checkpoint_count: projected?.latest_checkpoint_sequence === undefined ? state.checkpoint_count : projected.latest_checkpoint_sequence + 1,
+    pending_model_request_id: projected?.pending_model_request_id ?? state.pending_model_request_id,
+    projection_status: projected?.projection_status ?? "corrupt" as const,
     resume_supported: false as const,
     full_transcript_persisted: false as const,
     raw_tool_results_persisted: false as const,
     chain_of_thought_persisted: false as const,
     original_terminal_status_if_persistence_failed: result.status,
-    warnings: [message].filter(Boolean),
+    warnings: [message, ...projectedWarnings].filter(Boolean).slice(0, 12),
     durability_hash: "",
   }
   durability.durability_hash = stableHash({ ...durability, started_event_id: "", latest_checkpoint_event_id: "", durability_hash: "" })
@@ -5720,11 +5730,11 @@ function durablePersistenceFailedResult(result: CommanderInvestigationResult, st
     stop_reason: "persistence_failed",
     blockers: [message || "Commander investigation terminal persistence failed"],
     durability,
-    investigation_event_count: state.investigation_event_count,
+    investigation_event_count: durability.investigation_event_count,
     in_memory_only: false,
-    working_set_persisted: state.checkpoint_count > 0,
-    investigation_events_appended: state.investigation_event_count > 0,
-    events_appended: result.external_api_audit_events_appended > 0 || state.investigation_event_count > 0,
+    working_set_persisted: durability.checkpoint_count > 0,
+    investigation_events_appended: durability.investigation_event_count > 0,
+    events_appended: result.external_api_audit_events_appended > 0 || durability.investigation_event_count > 0,
     result_hash: result.result_hash,
   }
 }

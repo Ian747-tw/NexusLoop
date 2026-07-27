@@ -2925,7 +2925,7 @@ describe("Commander in-memory investigation controller", () => {
     }
     const ambiguous = await ambiguousServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_ambiguous_model_step_append" }))
     expect(ambiguous).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
-    expect(ambiguous.durability).toMatchObject({ terminal_persisted: false, pending_model_request_id: undefined })
+    expect(ambiguous.durability).toMatchObject({ terminal_persisted: false, pending_model_request_id: expect.any(String), projection_status: "ready", investigation_event_count: 2 })
     const ambiguousEvents = (await eventText(ambiguousDir)).trim().split(/\n+/).filter(Boolean)
       .map((line) => JSON.parse(line) as { kind?: string; investigation_id?: string })
       .filter((event) => event.investigation_id === "inv_ambiguous_model_step_append")
@@ -2970,6 +2970,28 @@ describe("Commander in-memory investigation controller", () => {
       .filter((event) => event.investigation_id === "inv_terminal_fail")
       .map((event) => event.kind ?? "")
     expect(terminalFailureKinds.filter((kind) => kind === "runtime_commander_investigation_checkpointed")).toHaveLength(1)
+
+    const ambiguousTerminalDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-ambiguous-terminal-append-"))
+    await writeApprovedSpec(ambiguousTerminalDir)
+    const ambiguousTerminalServer = new RuntimeServer({
+      projectDir: ambiguousTerminalDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "terminal append is visible despite uncertain close" }]),
+    })
+    servers.push({ stop: () => ambiguousTerminalServer.shutdown() })
+    await ambiguousTerminalServer.start()
+    const ambiguousTerminalAppend = ambiguousTerminalServer.eventStore.append.bind(ambiguousTerminalServer.eventStore)
+    ambiguousTerminalServer.eventStore.append = async (event: Parameters<EventStore["append"]>[0]): Promise<string> => {
+      const eventId = await ambiguousTerminalAppend(event)
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_finished") throw new Error("terminal append fsync status uncertain")
+      return eventId
+    }
+    const ambiguousTerminal = await ambiguousTerminalServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_ambiguous_terminal_append" }))
+    expect(ambiguousTerminal).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
+    expect(ambiguousTerminal.durability).toMatchObject({ terminal_persisted: true, projection_status: "ready", original_terminal_status_if_persistence_failed: "final" })
+    const ambiguousTerminalRecord = await ambiguousTerminalServer.getCommanderInvestigationRecord("inv_ambiguous_terminal_append")
+    expect(ambiguousTerminalRecord).toMatchObject({ status: "final", stop_reason: "model_final", projection_status: "ready" })
+    expect(ambiguousTerminal.investigation_event_count).toBe(ambiguousTerminalRecord!.investigation_event_count)
   })
 
   test("durable adapter rejection after model-step start preserves pending uncertainty", async () => {
