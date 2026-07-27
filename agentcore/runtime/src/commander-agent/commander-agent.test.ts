@@ -3041,6 +3041,29 @@ describe("Commander in-memory investigation controller", () => {
       "runtime_commander_investigation_checkpointed",
       "runtime_commander_investigation_model_step_started",
     ])
+
+    const projectDirRepeat = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-controller-reject-repeat-"))
+    await writeApprovedSpec(projectDirRepeat)
+    let repeatTick = 100
+    const repeatServer = new RuntimeServer({
+      projectDir: projectDirRepeat,
+      adapter: new FakeOpenCodeAdapter(),
+      researchSynthesisNow: () => new Date(Date.UTC(2026, 0, 1, 0, 0, repeatTick++)),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("controller_reject_after_checkpoint_search", "commander.tool_search", { query: "durable controller rejection" })] },
+        {
+          assert_request: () => {
+            throw new Error("scripted adapter rejected after durable checkpoint")
+          },
+        },
+      ]),
+    })
+    servers.push({ stop: () => repeatServer.shutdown() })
+    await repeatServer.start()
+    const repeatResult = await repeatServer.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_controller_reject_after_checkpoint_repeat" }))
+    expect(repeatResult).toMatchObject({ status: "failed", stop_reason: "persistence_failed", in_memory_only: false, investigation_events_appended: true })
+    expect(repeatResult.started_at).not.toBe(result.started_at)
+    expect(repeatResult.result_hash).toBe(result.result_hash)
   })
 
   test("durable generated investigation ids remain unique with fixed clock", async () => {
