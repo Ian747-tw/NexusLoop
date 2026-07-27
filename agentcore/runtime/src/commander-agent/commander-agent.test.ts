@@ -4281,6 +4281,49 @@ describe("Commander in-memory investigation controller", () => {
     }
     badCheckpointAuditEvent.event_payload_hash = journalPayloadHash(badCheckpointAuditEvent)
     await store.append(badCheckpointAuditEvent as Parameters<EventStore["append"]>[0])
+    const inconsistentOptionalAuditInput = baseInvestigation({ investigation_id: "inv_checkpoint_inconsistent_optional_audit", objective: "checkpoint inconsistent optional audit" })
+    const inconsistentOptionalAuditRun = await service.createObserver(inconsistentOptionalAuditInput)
+    await inconsistentOptionalAuditRun.observer.onStarted(durableStartedSnapshot(inconsistentOptionalAuditInput, 21, "inv_checkpoint_inconsistent_optional_audit") as Parameters<typeof inconsistentOptionalAuditRun.observer.onStarted>[0])
+    const inconsistentOptionalAuditInitial = await service.latestCheckpoint("inv_checkpoint_inconsistent_optional_audit")
+    service.release(inconsistentOptionalAuditRun)
+    const inconsistentOptionalAudit = finalizeTestCheckpoint({
+      ...inconsistentOptionalAuditInitial!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: inconsistentOptionalAuditInitial!.checkpoint_id,
+      previous_checkpoint_hash: inconsistentOptionalAuditInitial!.checkpoint_hash,
+      working_set: {
+        ...inconsistentOptionalAuditInitial!.working_set,
+        provider_audit: {
+          ...inconsistentOptionalAuditInitial!.working_set.provider_audit,
+          audit_required: false,
+          transport_kind: "external_api_connector",
+          connector_ids: ["api_inconsistent_optional"],
+          provider_request_count: 1,
+          external_api_audit_event_count: 1,
+          successful_audit_count: 0,
+          failed_audit_count: 0,
+          audit_request_ids: [],
+          audit_event_kinds: [],
+          all_provider_requests_audited: true,
+        },
+        model_turn_count: 1,
+      },
+    } as CommanderInvestigationCheckpoint)
+    const inconsistentOptionalAuditEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_checkpoint_inconsistent_optional_audit",
+      journal_sequence: 1,
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:00:13.300Z",
+      checkpoint: inconsistentOptionalAudit,
+      event_payload_hash: "",
+    }
+    inconsistentOptionalAuditEvent.event_payload_hash = journalPayloadHash(inconsistentOptionalAuditEvent)
+    await store.append(inconsistentOptionalAuditEvent as Parameters<EventStore["append"]>[0])
     const checkpointWithoutBoundaryInput = baseInvestigation({ investigation_id: "inv_projected_checkpoint_without_boundary", objective: "project checkpoint without model step" })
     const checkpointWithoutBoundaryRun = await service.createObserver(checkpointWithoutBoundaryInput)
     await checkpointWithoutBoundaryRun.observer.onStarted(durableStartedSnapshot(checkpointWithoutBoundaryInput, 12, "inv_projected_checkpoint_without_boundary") as Parameters<typeof checkpointWithoutBoundaryRun.observer.onStarted>[0])
@@ -4658,6 +4701,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(badCheckpointAuditRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, latest_checkpoint_id: badCheckpointAuditInitial!.checkpoint_id })
     expect(badCheckpointAuditRecord?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
     expect(await service.getCheckpoint(badCheckpointAudit.checkpoint_id)).toBeUndefined()
+    const inconsistentOptionalAuditRecord = await service.get("inv_checkpoint_inconsistent_optional_audit")
+    expect(inconsistentOptionalAuditRecord).toMatchObject({ projection_status: "corrupt", checkpoint_available: true, latest_checkpoint_id: inconsistentOptionalAuditInitial!.checkpoint_id })
+    expect(inconsistentOptionalAuditRecord?.integrity_errors.join("\n")).toContain("malformed checkpoint payload")
+    expect(await service.getCheckpoint(inconsistentOptionalAudit.checkpoint_id)).toBeUndefined()
     const checkpointWithoutBoundaryRecord = await service.get("inv_projected_checkpoint_without_boundary")
     expect(checkpointWithoutBoundaryRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: checkpointWithoutBoundaryInitial!.checkpoint_id, checkpoint_available: true })
     expect(checkpointWithoutBoundaryRecord?.integrity_errors.join("\n")).toContain("checkpoint missing model-step boundary")
@@ -4702,7 +4749,7 @@ describe("Commander in-memory investigation controller", () => {
     const valid = await service.get("inv_valid_after_malformed")
     expect(valid).toMatchObject({ investigation_id: "inv_valid_after_malformed", projection_status: "ready", checkpoint_available: true })
     const summary = await service.summary()
-    expect(summary).toMatchObject({ total: 26, running_count: 25, terminal_count: 1, final_count: 1, checkpoint_available_count: 21, uncertain_provider_outcome_count: 3, corrupt_count: 23 })
+    expect(summary).toMatchObject({ total: 27, running_count: 26, terminal_count: 1, final_count: 1, checkpoint_available_count: 22, uncertain_provider_outcome_count: 3, corrupt_count: 24 })
   })
 
   test("durable journal projection rejects hash-valid immutable identity drift", async () => {

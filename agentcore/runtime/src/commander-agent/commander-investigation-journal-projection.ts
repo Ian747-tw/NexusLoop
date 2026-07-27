@@ -473,31 +473,77 @@ function isDurableWorkingSet(value: unknown): boolean {
 }
 
 function isProviderAuditSummary(value: unknown): boolean {
-  const transport = isRecord(value) ? value.transport_kind : undefined
-  const auditRequired = isRecord(value) ? value.audit_required : undefined
+  if (!isRecord(value)) return false
+  const transport = value.transport_kind
+  const auditRequired = value.audit_required
+  const providerRequestCount = value.provider_request_count
+  const auditEventCount = value.external_api_audit_event_count
+  const successfulAuditCount = value.successful_audit_count
+  const failedAuditCount = value.failed_audit_count
+  const omittedRequestIdCount = value.omitted_request_id_count
+  const auditRequestIds = value.audit_request_ids
+  const auditEventKinds = value.audit_event_kinds
+  const connectorIds = value.connector_ids
+  if (
+    typeof auditRequired !== "boolean" ||
+    (transport !== "none" && transport !== "external_api_connector") ||
+    (auditRequired === true && transport !== "external_api_connector") ||
+    !isNonnegativeInteger(providerRequestCount) ||
+    !isNonnegativeInteger(auditEventCount) ||
+    !isNonnegativeInteger(successfulAuditCount) ||
+    !isNonnegativeInteger(failedAuditCount) ||
+    !isNonnegativeInteger(omittedRequestIdCount) ||
+    !Array.isArray(connectorIds) ||
+    !connectorIds.every((item) => typeof item === "string") ||
+    !Array.isArray(auditRequestIds) ||
+    !auditRequestIds.every((item) => typeof item === "string") ||
+    !Array.isArray(auditEventKinds) ||
+    !auditEventKinds.every((item) => item === "external_api_request_executed" || item === "external_api_request_failed")
+  ) {
+    return false
+  }
+  if (transport === "none") {
+    return (
+      auditRequired === false &&
+      connectorIds.length === 0 &&
+      auditEventCount === 0 &&
+      successfulAuditCount === 0 &&
+      failedAuditCount === 0 &&
+      auditRequestIds.length === 0 &&
+      auditEventKinds.length === 0 &&
+      omittedRequestIdCount === 0 &&
+      value.all_provider_requests_audited === true &&
+      value.request_body_persisted === false &&
+      value.response_body_persisted === false &&
+      value.credentials_persisted === false &&
+      Array.isArray(value.warnings) &&
+      value.warnings.every((item) => typeof item === "string")
+    )
+  }
+  const requestIdsComplete = auditEventCount <= 24
+    ? auditRequestIds.length === auditEventCount && omittedRequestIdCount === 0
+    : auditRequestIds.length === 24 && omittedRequestIdCount === auditEventCount - 24
+  const eventKindsComplete = auditEventCount <= 24
+    ? auditEventKinds.length === auditEventCount
+    : auditEventKinds.length === 24
   return (
-    isRecord(value) &&
-    typeof value.audit_required === "boolean" &&
-    (transport === "none" || transport === "external_api_connector") &&
-    (auditRequired === false || transport === "external_api_connector") &&
-    Array.isArray(value.connector_ids) &&
-    value.connector_ids.every((item) => typeof item === "string") &&
-    hasNumber(value, "provider_request_count") &&
-    hasNumber(value, "external_api_audit_event_count") &&
-    hasNumber(value, "successful_audit_count") &&
-    hasNumber(value, "failed_audit_count") &&
-    Array.isArray(value.audit_request_ids) &&
-    value.audit_request_ids.every((item) => typeof item === "string") &&
-    Array.isArray(value.audit_event_kinds) &&
-    value.audit_event_kinds.every((item) => typeof item === "string") &&
-    hasNumber(value, "omitted_request_id_count") &&
+    connectorIds.length > 0 &&
+    auditEventCount <= providerRequestCount &&
+    successfulAuditCount + failedAuditCount === auditEventCount &&
+    requestIdsComplete &&
+    eventKindsComplete &&
     typeof value.all_provider_requests_audited === "boolean" &&
+    value.all_provider_requests_audited === (auditEventCount === providerRequestCount) &&
     value.request_body_persisted === false &&
     value.response_body_persisted === false &&
     value.credentials_persisted === false &&
     Array.isArray(value.warnings) &&
     value.warnings.every((item) => typeof item === "string")
   )
+}
+
+function isNonnegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0
 }
 
 function isTurnSummary(value: unknown): boolean {
