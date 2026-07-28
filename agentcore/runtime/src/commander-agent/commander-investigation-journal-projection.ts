@@ -554,6 +554,40 @@ function isNormalizedInput(value: unknown): value is Record<string, unknown> {
   return true
 }
 
+function isBudget(value: unknown): value is { budget_hash: string } {
+  if (!isRecord(value)) return false
+  const requiredNumberKeys = [
+    "max_model_turns",
+    "max_tool_calls",
+    "max_tool_search_calls",
+    "max_loaded_schemas",
+    "max_tool_calls_per_turn",
+    "max_cumulative_tool_result_bytes",
+    "max_wall_time_ms",
+    "max_consecutive_no_progress_turns",
+    "max_evidence_cards",
+    "max_turn_summaries",
+  ] as const
+  const optionalNumberKeys = [
+    "max_context_tokens",
+    "max_context_bytes",
+    "target_input_tokens",
+    "tool_schema_allocation_tokens",
+    "tool_schema_allocation_bytes",
+  ] as const
+  if (!hasString(value, "budget_id")) return false
+  if (typeof value.phase !== "string" || !(TOOL_PHASES as readonly string[]).includes(value.phase)) return false
+  if (!hasString(value, "source_profile_id") || !hasString(value, "source_context_budget_id") || !hasString(value, "budget_hash")) return false
+  if (!Array.isArray(value.warnings) || !value.warnings.every((item) => typeof item === "string")) return false
+  for (const key of requiredNumberKeys) {
+    if (!Number.isInteger(value[key]) || Number(value[key]) <= 0) return false
+  }
+  for (const key of optionalNumberKeys) {
+    if (value[key] !== undefined && (!Number.isInteger(value[key]) || Number(value[key]) <= 0)) return false
+  }
+  return value.budget_hash === stableHash({ ...value, budget_hash: "" })
+}
+
 function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint {
   if (!isRecord(value)) return false
   return (
@@ -571,8 +605,7 @@ function isCheckpoint(value: unknown): value is CommanderInvestigationCheckpoint
     hasString(value, "model_id") &&
     hasString(value, "tool_protocol") &&
     isBootstrapRef(value.bootstrap_ref) &&
-    isRecord(value.budget) &&
-    hasString(value.budget, "budget_id") &&
+    isBudget(value.budget) &&
     Array.isArray(value.loaded_tools) &&
     value.loaded_tools.every(isLoadedToolRef) &&
     isDurableWorkingSet(value.working_set) &&
@@ -860,9 +893,9 @@ function isStartedPayload(event: JsonlEvent): event is CommanderInvestigationSta
     hasString(event, "model_id") &&
     hasString(event, "tool_protocol") &&
     hasString(event, "started_at") &&
-    isRecord(event.budget) &&
-    hasString(event.budget, "budget_id") &&
+    isBudget(event.budget) &&
     hasString(event, "budget_hash") &&
+    event.budget_hash === event.budget.budget_hash &&
     isRecord(event.bootstrap_ref) &&
     hasString(event.bootstrap_ref, "bootstrap_id") &&
     hasString(event.bootstrap_ref, "bootstrap_hash") &&

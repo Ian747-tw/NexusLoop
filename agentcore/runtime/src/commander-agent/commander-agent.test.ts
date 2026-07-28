@@ -4969,7 +4969,11 @@ describe("Commander in-memory investigation controller", () => {
     expect(await appendHashValidCheckpointDrift("phase", (checkpoint) => ({ ...checkpoint, phase: "governance_review" }))).toContain("checkpoint phase identity mismatch")
     expect(await appendHashValidCheckpointDrift("objective", (checkpoint) => ({ ...checkpoint, objective_hash: "objective-hash-B" }))).toContain("checkpoint objective_hash identity mismatch")
     expect(await appendHashValidCheckpointDrift("bootstrap", (checkpoint) => ({ ...checkpoint, bootstrap_ref: { bootstrap_id: "bootstrap-B", bootstrap_hash: "bootstrap-hash-B" } }))).toContain("checkpoint bootstrap_id identity mismatch")
-    expect(await appendHashValidCheckpointDrift("budget", (checkpoint) => ({ ...checkpoint, budget: { ...checkpoint.budget, budget_id: "budget-B", budget_hash: "budget-hash-B" } }))).toContain("checkpoint budget_id identity mismatch")
+    expect(await appendHashValidCheckpointDrift("budget", (checkpoint) => {
+      const budget = { ...checkpoint.budget, budget_id: "budget-B", budget_hash: "" }
+      budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
+      return { ...checkpoint, budget }
+    })).toContain("checkpoint budget_id identity mismatch")
 
     expect(await appendHashValidStartedDrift("missing_input", (event) => {
       delete event.normalized_input
@@ -4992,6 +4996,12 @@ describe("Commander in-memory investigation controller", () => {
       const normalized_input = { ...(event.normalized_input as Record<string, unknown>), session_id: "session-B", mission_id: "mission-B" }
       return { ...event, normalized_input, input_hash: stableHash(normalized_input) }
     })).toContain("started normalized_input mission_id mismatch")
+    expect(await appendHashValidStartedDrift("incomplete_budget", (event) => {
+      const budget = { budget_id: "budget_incomplete", budget_hash: "" }
+      budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
+      const initial_checkpoint = finalizeTestCheckpoint({ ...(event.initial_checkpoint as CommanderInvestigationCheckpoint), budget: budget as unknown as CommanderInvestigationCheckpoint["budget"] })
+      return { ...event, budget, budget_hash: budget.budget_hash, initial_checkpoint }
+    })).toContain("malformed started payload")
 
     const initialRefsInput = baseInvestigation({ investigation_id: "inv_identity_initial_refs", objective: "identity initial refs drift" })
     const initialRefs = await start(initialRefsInput, 31)
@@ -5063,6 +5073,11 @@ describe("Commander in-memory investigation controller", () => {
     expect(modelLoadedRecord?.integrity_errors.join("\n")).toContain("model-step loaded_tool_refs mismatch base checkpoint")
 
     expect(await appendHashValidCheckpointDrift("checkpoint_loaded_ids", (checkpoint) => ({ ...checkpoint, loaded_tools: [fakeLoadedToolRef], working_set: { ...checkpoint.working_set, loaded_tool_ids: [] } }))).toContain("checkpoint loaded_tools mismatch working_set.loaded_tool_ids")
+    expect(await appendHashValidCheckpointDrift("checkpoint_incomplete_budget", (checkpoint) => {
+      const budget = { budget_id: "budget_checkpoint_incomplete", budget_hash: "" }
+      budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
+      return { ...checkpoint, budget: budget as unknown as CommanderInvestigationCheckpoint["budget"] }
+    })).toContain("malformed checkpoint payload")
 
     const terminalInput = baseInvestigation({ investigation_id: "inv_identity_terminal", objective: "identity terminal drift" })
     const terminalCheckpoint = await start(terminalInput, 33)
@@ -6102,6 +6117,27 @@ function baseInvestigation(overrides: Partial<Parameters<RuntimeServer["runComma
 
 function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, index: number, investigationId: string) {
   const occurred = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString()
+  const budget = {
+    budget_id: `budget_${index}`,
+    phase: input.phase,
+    max_model_turns: 4,
+    max_tool_calls: 4,
+    max_tool_search_calls: 1,
+    max_loaded_schemas: 4,
+    max_tool_calls_per_turn: 1,
+    max_cumulative_tool_result_bytes: 4096,
+    max_wall_time_ms: 10_000,
+    max_consecutive_no_progress_turns: 2,
+    max_evidence_cards: 4,
+    max_turn_summaries: 4,
+    max_context_tokens: 4096,
+    max_context_bytes: 4096,
+    source_profile_id: "profile",
+    source_context_budget_id: "context_budget",
+    warnings: [],
+    budget_hash: "",
+  }
+  budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
   return {
     investigation_id: investigationId,
     input,
@@ -6121,26 +6157,7 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
       estimated_tokens: 32,
       bootstrap_hash: `bootstrap_hash_${index}`,
     },
-    budget: {
-      budget_id: `budget_${index}`,
-      phase: input.phase,
-      max_model_turns: 4,
-      max_tool_calls: 4,
-      max_tool_search_calls: 1,
-      max_loaded_schemas: 4,
-      max_tool_calls_per_turn: 1,
-      max_cumulative_tool_result_bytes: 4096,
-      max_wall_time_ms: 10_000,
-      max_consecutive_no_progress_turns: 2,
-      max_evidence_cards: 4,
-      max_turn_summaries: 4,
-      max_context_tokens: 4096,
-      max_context_bytes: 4096,
-      source_profile_id: "profile",
-      source_context_budget_id: "context_budget",
-      warnings: [],
-      budget_hash: `budget_hash_${index}`,
-    },
+    budget,
     tool_protocol: "native",
     loaded_tools: [],
     working_set: {
