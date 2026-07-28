@@ -3033,6 +3033,7 @@ describe("Commander in-memory investigation controller", () => {
       ["long_session", { session_id: "s".repeat(201) }],
       ["long_mission", { mission_id: "m".repeat(201) }],
       ["long_launch", { launch_id: "l".repeat(201) }],
+      ["high_model_turns", { max_model_turns: 25 }],
     ] as const
 
     for (const [name, override] of badInputs) {

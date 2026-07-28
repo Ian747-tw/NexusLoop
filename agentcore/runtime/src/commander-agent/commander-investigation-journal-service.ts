@@ -38,6 +38,20 @@ const MODEL_STEP_CAP = 8_000
 const TERMINAL_CAP = 48_000
 const STARTED_HARD_CAP = 112_000
 const MIN_TEST_CAP = 16_000
+const PERSISTED_INPUT_INTEGER_LIMITS = {
+  max_model_turns: 24,
+  max_tool_calls: 32,
+  max_tool_search_calls: 8,
+  max_loaded_schemas: 12,
+  max_tool_calls_per_turn: 4,
+  max_cumulative_tool_result_bytes: 96_000,
+  max_wall_time_ms: 120_000,
+  max_consecutive_no_progress_turns: 3,
+  max_evidence_cards: 24,
+  max_turn_summaries: 12,
+  max_context_tokens: 1_000_000,
+  max_context_bytes: 65_536,
+} as const
 
 export class CommanderInvestigationJournalConflictError extends Error {
   constructor(message: string) {
@@ -913,6 +927,16 @@ function persistedIdentityErrors(input: CommanderInvestigationInput, investigati
     if (normalized.length > max) errors.push(`${key} exceeds ${max} characters`)
     if (normalized !== value) errors.push(`${key} must already be normalized`)
   }
+  for (const [key, limit] of Object.entries(PERSISTED_INPUT_INTEGER_LIMITS)) {
+    const value = input[key as keyof CommanderInvestigationInput]
+    if (value === undefined) continue
+    if (!Number.isInteger(value) || Number(value) <= 0) {
+      errors.push(`${key} must be a positive integer`)
+      continue
+    }
+    if (Number(value) > limit) errors.push(`${key} exceeds ${limit}`)
+  }
+  if (input.include_continuity !== undefined && typeof input.include_continuity !== "boolean") errors.push("include_continuity must be boolean")
   return errors
 }
 
