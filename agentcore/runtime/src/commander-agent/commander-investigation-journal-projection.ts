@@ -513,6 +513,23 @@ const NORMALIZED_INPUT_INTEGER_LIMITS: Record<(typeof NORMALIZED_INPUT_INTEGER_K
   max_context_tokens: 1_000_000,
   max_context_bytes: 65_536,
 }
+const BUDGET_NUMBER_LIMITS = {
+  max_model_turns: 24,
+  max_tool_calls: 32,
+  max_tool_search_calls: 8,
+  max_loaded_schemas: 12,
+  max_tool_calls_per_turn: 4,
+  max_cumulative_tool_result_bytes: 96_000,
+  max_wall_time_ms: 120_000,
+  max_consecutive_no_progress_turns: 3,
+  max_evidence_cards: 24,
+  max_turn_summaries: 12,
+  max_context_tokens: 128_000,
+  max_context_bytes: 512_000,
+  target_input_tokens: 128_000,
+  tool_schema_allocation_tokens: 128_000,
+  tool_schema_allocation_bytes: 512_000,
+} as const
 
 function verifyPayloadHash(event: JsonlEvent): boolean {
   if (typeof event.event_payload_hash !== "string") return false
@@ -580,10 +597,10 @@ function isBudget(value: unknown): value is { budget_hash: string } {
   if (!hasString(value, "source_profile_id") || !hasString(value, "source_context_budget_id") || !hasString(value, "budget_hash")) return false
   if (!Array.isArray(value.warnings) || !value.warnings.every((item) => typeof item === "string")) return false
   for (const key of requiredNumberKeys) {
-    if (!Number.isInteger(value[key]) || Number(value[key]) <= 0) return false
+    if (!Number.isSafeInteger(value[key]) || Number(value[key]) <= 0 || Number(value[key]) > BUDGET_NUMBER_LIMITS[key]) return false
   }
   for (const key of optionalNumberKeys) {
-    if (value[key] !== undefined && (!Number.isInteger(value[key]) || Number(value[key]) <= 0)) return false
+    if (value[key] !== undefined && (!Number.isSafeInteger(value[key]) || Number(value[key]) <= 0 || Number(value[key]) > BUDGET_NUMBER_LIMITS[key])) return false
   }
   return value.budget_hash === stableHash({ ...value, budget_hash: "" })
 }

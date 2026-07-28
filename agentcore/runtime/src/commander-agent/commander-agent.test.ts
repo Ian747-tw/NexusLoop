@@ -5002,6 +5002,12 @@ describe("Commander in-memory investigation controller", () => {
       const initial_checkpoint = finalizeTestCheckpoint({ ...(event.initial_checkpoint as CommanderInvestigationCheckpoint), budget: budget as unknown as CommanderInvestigationCheckpoint["budget"] })
       return { ...event, budget, budget_hash: budget.budget_hash, initial_checkpoint }
     })).toContain("malformed started payload")
+    expect(await appendHashValidStartedDrift("over_cap_budget", (event) => {
+      const budget = { ...((event.budget as CommanderInvestigationCheckpoint["budget"])), max_model_turns: 25, budget_hash: "" }
+      budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
+      const initial_checkpoint = finalizeTestCheckpoint({ ...(event.initial_checkpoint as CommanderInvestigationCheckpoint), budget })
+      return { ...event, budget, budget_hash: budget.budget_hash, initial_checkpoint }
+    })).toContain("malformed started payload")
 
     const initialRefsInput = baseInvestigation({ investigation_id: "inv_identity_initial_refs", objective: "identity initial refs drift" })
     const initialRefs = await start(initialRefsInput, 31)
@@ -5077,6 +5083,11 @@ describe("Commander in-memory investigation controller", () => {
       const budget = { budget_id: "budget_checkpoint_incomplete", budget_hash: "" }
       budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
       return { ...checkpoint, budget: budget as unknown as CommanderInvestigationCheckpoint["budget"] }
+    })).toContain("malformed checkpoint payload")
+    expect(await appendHashValidCheckpointDrift("checkpoint_over_cap_budget", (checkpoint) => {
+      const budget = { ...checkpoint.budget, max_model_turns: 25, budget_hash: "" }
+      budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
+      return { ...checkpoint, budget }
     })).toContain("malformed checkpoint payload")
 
     const terminalInput = baseInvestigation({ investigation_id: "inv_identity_terminal", objective: "identity terminal drift" })
