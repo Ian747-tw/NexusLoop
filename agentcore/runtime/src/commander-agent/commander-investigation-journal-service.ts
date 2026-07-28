@@ -191,7 +191,7 @@ export class CommanderInvestigationJournalService {
       provider_request_count: result.provider_request_count,
       tool_call_count: result.tool_call_count,
       tool_search_call_count: result.tool_search_call_count,
-      loaded_tool_ids: result.loaded_tool_ids.slice(0, 24),
+      loaded_tool_ids: checkpoint.loaded_tools.map((tool) => tool.tool_id).slice(0, 24),
       evidence_cards: sanitizeEvidence(result.evidence).slice(0, result.budget.max_evidence_cards),
       turn_summaries: sanitizeTurnSummaries(result.turn_summaries),
       omitted_evidence_count: result.omitted_evidence_count,
@@ -343,7 +343,7 @@ export class CommanderInvestigationJournalService {
       elapsedActiveMs: 0,
       createdAt: snapshot.started_at,
     })
-    const normalizedInput = sanitizeInput(snapshot.input)
+    const normalizedInput = sanitizeInput({ ...snapshot.input, investigation_id: snapshot.investigation_id })
     const payload = withPayloadHash({
       schema_version: 1 as const,
       investigation_id: snapshot.investigation_id,

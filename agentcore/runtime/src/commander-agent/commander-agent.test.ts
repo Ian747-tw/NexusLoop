@@ -47,6 +47,7 @@ import {
   type CommanderInvestigationCheckpointSnapshot,
   type CommanderInvestigationStartedSnapshot,
   type CommanderInvestigationCheckpoint,
+  type CommanderInvestigationLoadedToolRef,
   type CommanderInvestigationTerminalRecord,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
@@ -4831,12 +4832,62 @@ describe("Commander in-memory investigation controller", () => {
         provider_request_count_before: 0,
         external_api_audit_count_before: 0,
         started_at: "2026-01-01T00:01:00.000Z",
-        requested_by: "tester",
+        requested_by: input.requested_by,
         occurred_at: "2026-01-01T00:01:00.000Z",
         event_payload_hash: "",
       }
       event.event_payload_hash = journalPayloadHash(event)
       await server.eventStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+
+    async function appendHashValidStartedDrift(name: string, mutate: (event: Record<string, unknown>) => Record<string, unknown>) {
+      const objective = `started drift ${name}`
+      const input = baseInvestigation({ investigation_id: `inv_started_${name}`, objective })
+      const template = await start(baseInvestigation({ investigation_id: `inv_started_template_${name}`, objective: `template ${name}` }), 40 + name.length)
+      const checkpoint = finalizeTestCheckpoint({
+        ...template,
+        investigation_id: input.investigation_id!,
+        phase: input.phase,
+        objective_hash: stableHash(objective),
+        provider_id: input.provider_id,
+        provider_kind: input.provider_kind,
+        model_id: input.model_id,
+        tool_protocol: "native",
+        working_set: { ...template.working_set, phase: input.phase, objective_preview: objective },
+      })
+      const normalizedInput = { ...input }
+      const event = mutate({
+        kind: "runtime_commander_investigation_started",
+        schema_version: 1,
+        investigation_id: input.investigation_id!,
+        journal_sequence: 0,
+        requested_by: input.requested_by,
+        occurred_at: "2026-01-01T00:04:00.000Z",
+        normalized_input: normalizedInput,
+        input_hash: stableHash(normalizedInput),
+        phase: input.phase,
+        objective,
+        objective_hash: stableHash(objective),
+        provider_id: input.provider_id,
+        provider_kind: input.provider_kind,
+        model_id: input.model_id,
+        tool_protocol: "native",
+        budget: checkpoint.budget,
+        budget_hash: checkpoint.budget.budget_hash,
+        bootstrap_ref: checkpoint.bootstrap_ref,
+        initial_loaded_tool_refs: checkpoint.loaded_tools,
+        initial_checkpoint: checkpoint,
+        started_at: "2026-01-01T00:04:00.000Z",
+        summary_preview: objective,
+        event_payload_hash: "",
+      })
+      event.event_payload_hash = journalPayloadHash(event)
+      await server.eventStore.append(event as Parameters<EventStore["append"]>[0])
+      const record = await service.get(input.investigation_id!)
+      expect(record).toMatchObject({ projection_status: "corrupt", checkpoint_available: false })
+      const checkpointLookup = await service.latestCheckpoint(input.investigation_id!)
+      expect(checkpointLookup).toBeUndefined()
+      return record?.integrity_errors.join("\n") ?? ""
     }
 
     async function appendHashValidCheckpointDrift(name: string, mutate: (checkpoint: CommanderInvestigationCheckpoint) => CommanderInvestigationCheckpoint) {
@@ -4878,6 +4929,28 @@ describe("Commander in-memory investigation controller", () => {
     expect(await appendHashValidCheckpointDrift("bootstrap", (checkpoint) => ({ ...checkpoint, bootstrap_ref: { bootstrap_id: "bootstrap-B", bootstrap_hash: "bootstrap-hash-B" } }))).toContain("checkpoint bootstrap_id identity mismatch")
     expect(await appendHashValidCheckpointDrift("budget", (checkpoint) => ({ ...checkpoint, budget: { ...checkpoint.budget, budget_id: "budget-B", budget_hash: "budget-hash-B" } }))).toContain("checkpoint budget_id identity mismatch")
 
+    expect(await appendHashValidStartedDrift("missing_input", (event) => {
+      delete event.normalized_input
+      return event
+    })).toContain("malformed started payload")
+    expect(await appendHashValidStartedDrift("missing_input_hash", (event) => {
+      delete event.input_hash
+      return event
+    })).toContain("malformed started payload")
+    expect(await appendHashValidStartedDrift("bad_input_hash", (event) => ({ ...event, input_hash: "bad_input_hash" }))).toContain("started input_hash mismatch")
+    expect(await appendHashValidStartedDrift("input_objective", (event) => {
+      const normalized_input = { ...(event.normalized_input as Record<string, unknown>), objective: "normalized objective B" }
+      return { ...event, normalized_input, input_hash: stableHash(normalized_input) }
+    })).toContain("started normalized_input objective mismatch")
+    expect(await appendHashValidStartedDrift("input_provider", (event) => {
+      const normalized_input = { ...(event.normalized_input as Record<string, unknown>), provider_id: "provider-B", model_id: "model-B" }
+      return { ...event, normalized_input, input_hash: stableHash(normalized_input) }
+    })).toContain("started normalized_input provider_id mismatch")
+    expect(await appendHashValidStartedDrift("input_linkage", (event) => {
+      const normalized_input = { ...(event.normalized_input as Record<string, unknown>), session_id: "session-B", mission_id: "mission-B" }
+      return { ...event, normalized_input, input_hash: stableHash(normalized_input) }
+    })).toContain("started normalized_input mission_id mismatch")
+
     const initialRefsInput = baseInvestigation({ investigation_id: "inv_identity_initial_refs", objective: "identity initial refs drift" })
     const initialRefs = await start(initialRefsInput, 31)
     const initialRefsBad = finalizeTestCheckpoint({ ...initialRefs, investigation_id: "inv_identity_initial_refs_bad" })
@@ -4886,10 +4959,10 @@ describe("Commander in-memory investigation controller", () => {
       schema_version: 1,
       investigation_id: "inv_identity_initial_refs_bad",
       journal_sequence: 0,
-      requested_by: "tester",
+      requested_by: initialRefsInput.requested_by,
       occurred_at: "2026-01-01T00:02:00.000Z",
       normalized_input: { ...initialRefsInput, investigation_id: "inv_identity_initial_refs_bad" },
-      input_hash: "input_hash_refs_bad",
+      input_hash: stableHash({ ...initialRefsInput, investigation_id: "inv_identity_initial_refs_bad" }),
       phase: initialRefsBad.phase,
       objective: "identity initial refs drift",
       objective_hash: initialRefsBad.objective_hash,
@@ -4911,6 +4984,43 @@ describe("Commander in-memory investigation controller", () => {
     const badRefs = await service.get("inv_identity_initial_refs_bad")
     expect(badRefs).toMatchObject({ projection_status: "corrupt", checkpoint_available: false })
     expect(badRefs?.integrity_errors.join("\n")).toContain("initial checkpoint loaded-tool references mismatch started event")
+
+    const fakeLoadedToolRef: CommanderInvestigationLoadedToolRef = { tool_id: "memory.search", descriptor_version: "v1", authority_id: "authority", input_schema_hash: "input", output_schema_hash: "output", load_policy: "deferred", trust_class: "runtime_authoritative", instruction_semantics: "none" }
+    const modelLoadedInput = baseInvestigation({ investigation_id: "inv_identity_model_loaded_refs", objective: "model loaded refs drift" })
+    const modelLoadedInitial = await start(modelLoadedInput, 32)
+    const modelLoadedEvent = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: modelLoadedInput.investigation_id!,
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_loaded_refs_drift",
+      provider_id: modelLoadedInput.provider_id,
+      provider_kind: modelLoadedInput.provider_kind,
+      model_id: modelLoadedInput.model_id,
+      tool_protocol: "native",
+      base_checkpoint_id: modelLoadedInitial.checkpoint_id,
+      base_checkpoint_sequence: modelLoadedInitial.checkpoint_sequence,
+      base_checkpoint_hash: modelLoadedInitial.checkpoint_hash,
+      working_set_hash: modelLoadedInitial.working_set.working_set_hash,
+      context_hash: "context_hash_loaded_refs_drift",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: [fakeLoadedToolRef],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:02:30.000Z",
+      requested_by: "tester",
+      occurred_at: "2026-01-01T00:02:30.000Z",
+      event_payload_hash: "",
+    }
+    modelLoadedEvent.event_payload_hash = journalPayloadHash(modelLoadedEvent)
+    await server.eventStore.append(modelLoadedEvent as Parameters<EventStore["append"]>[0])
+    const modelLoadedRecord = await service.get("inv_identity_model_loaded_refs")
+    expect(modelLoadedRecord).toMatchObject({ projection_status: "corrupt", latest_checkpoint_id: modelLoadedInitial.checkpoint_id })
+    expect(modelLoadedRecord?.integrity_errors.join("\n")).toContain("model-step loaded_tool_refs mismatch base checkpoint")
+
+    expect(await appendHashValidCheckpointDrift("checkpoint_loaded_ids", (checkpoint) => ({ ...checkpoint, loaded_tools: [fakeLoadedToolRef], working_set: { ...checkpoint.working_set, loaded_tool_ids: [] } }))).toContain("checkpoint loaded_tools mismatch working_set.loaded_tool_ids")
 
     const terminalInput = baseInvestigation({ investigation_id: "inv_identity_terminal", objective: "identity terminal drift" })
     const terminalCheckpoint = await start(terminalInput, 33)
@@ -4973,6 +5083,83 @@ describe("Commander in-memory investigation controller", () => {
 
     const corruptSearch = await server.searchCommanderOperationalMemory({ query: "provideruniquexyz", source_kinds: ["commander_investigation"] })
     expect(corruptSearch.result?.candidates).toEqual([])
+
+    async function appendHashValidTerminalDrift(name: string, mutate: (terminal: CommanderInvestigationTerminalRecord, checkpoint: CommanderInvestigationCheckpoint) => CommanderInvestigationTerminalRecord) {
+      const input = baseInvestigation({ investigation_id: `inv_terminal_${name}`, objective: `terminal drift ${name}` })
+      const checkpoint = await start(input, 50 + name.length)
+      let terminalRecord: CommanderInvestigationTerminalRecord = {
+        schema_version: 1,
+        investigation_id: input.investigation_id!,
+        status: "final",
+        stop_reason: "model_final",
+        phase: checkpoint.phase,
+        objective_hash: checkpoint.objective_hash,
+        provider_id: checkpoint.provider_id,
+        provider_kind: checkpoint.provider_kind,
+        model_id: checkpoint.model_id,
+        tool_protocol: checkpoint.tool_protocol,
+        final_output: { text_persisted: false, text_hash: "text_hash_terminal_valid", text_chars: 10 },
+        conclusion: { status: "final", stop_reason: "model_final", evidence_ids: [], evidence_titles: [], safe_evidence_summaries: [], blockers: [], warnings: [], final_output_text_hash: "text_hash_terminal_valid" },
+        bootstrap_id: checkpoint.bootstrap_ref.bootstrap_id,
+        bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
+        budget_id: checkpoint.budget.budget_id,
+        budget_hash: checkpoint.budget.budget_hash,
+        last_checkpoint_id: checkpoint.checkpoint_id,
+        last_checkpoint_sequence: checkpoint.checkpoint_sequence,
+        last_checkpoint_hash: checkpoint.checkpoint_hash,
+        model_turn_count: 0,
+        provider_request_count: 0,
+        tool_call_count: 0,
+        tool_search_call_count: 0,
+        loaded_tool_ids: checkpoint.loaded_tools.map((tool) => tool.tool_id),
+        evidence_cards: [],
+        turn_summaries: [],
+        omitted_evidence_count: 0,
+        omitted_turn_count: 0,
+        provider_audit: checkpoint.working_set.provider_audit,
+        blockers: [],
+        warnings: [],
+        semantic_result_hash: `semantic_terminal_${name}`,
+        started_at: "2026-01-01T00:05:00.000Z",
+        completed_at: "2026-01-01T00:05:01.000Z",
+        terminal_hash: "",
+        transcript_persisted: false,
+        raw_tool_results_persisted: false,
+        chain_of_thought_persisted: false,
+      }
+      terminalRecord = mutate(terminalRecord, checkpoint)
+      terminalRecord.terminal_hash = stableHash({ ...terminalRecord, terminal_hash: "" })
+      const event = {
+        kind: "runtime_commander_investigation_finished",
+        schema_version: 1,
+        investigation_id: input.investigation_id!,
+        journal_sequence: 1,
+        requested_by: "tester",
+        occurred_at: "2026-01-01T00:05:01.000Z",
+        terminal: terminalRecord,
+        event_payload_hash: "",
+      }
+      event.event_payload_hash = journalPayloadHash(event)
+      await server.eventStore.append(event as Parameters<EventStore["append"]>[0])
+      const record = await service.get(input.investigation_id!)
+      expect(record).toMatchObject({ projection_status: "corrupt", status: "running" })
+      const search = await server.searchCommanderOperationalMemory({ query: `semantic_terminal_${name}`, source_kinds: ["commander_investigation"] })
+      expect(search.result?.candidates).toEqual([])
+      return record?.integrity_errors.join("\n") ?? ""
+    }
+
+    expect(await appendHashValidTerminalDrift("loaded_ids", (terminalRecord) => ({ ...terminalRecord, loaded_tool_ids: ["memory.search"] }))).toContain("terminal loaded_tool_ids mismatch latest checkpoint")
+    expect(await appendHashValidTerminalDrift("conclusion_status", (terminalRecord) => ({ ...terminalRecord, conclusion: { ...terminalRecord.conclusion, status: "failed" } }))).toContain("terminal conclusion status mismatch")
+    expect(await appendHashValidTerminalDrift("conclusion_stop", (terminalRecord) => ({ ...terminalRecord, conclusion: { ...terminalRecord.conclusion, stop_reason: "provider_failed" } }))).toContain("terminal conclusion stop_reason mismatch")
+    expect(await appendHashValidTerminalDrift("final_output_hash", (terminalRecord) => ({ ...terminalRecord, conclusion: { ...terminalRecord.conclusion, final_output_text_hash: "different_text_hash" } }))).toContain("terminal conclusion final_output_text_hash mismatch")
+    expect(await appendHashValidTerminalDrift("conclusion_evidence", (terminalRecord) => {
+      const card = evidenceCard("evidence_terminal_conclusion_drift")
+      return {
+        ...terminalRecord,
+        evidence_cards: [card],
+        conclusion: { ...terminalRecord.conclusion, evidence_ids: [], evidence_titles: [card.title], safe_evidence_summaries: [card.summary_preview] },
+      }
+    })).toContain("terminal conclusion evidence_ids mismatch")
   })
 
   test("durable journal pending model-step start advances running record updated_at", async () => {
