@@ -38,7 +38,7 @@ export type CommanderOperationalMemoryRecord = {
 
 export type CommanderOperationalMemorySearchOptions = {
   now?: () => Date
-  collectRecords: () => Promise<CommanderOperationalMemoryRecord[]>
+  collectRecords: (input?: CommanderOperationalMemorySearchInput) => Promise<CommanderOperationalMemoryRecord[]>
 }
 
 export class CommanderOperationalMemorySearchService {
@@ -58,7 +58,7 @@ export class CommanderOperationalMemorySearchService {
     const sourceKinds = readCsv(input.source_kinds)
     const statuses = readCsv(input.statuses)
     let records: CommanderOperationalMemoryRecord[] = []
-    if (blockers.length === 0) records = await this.options.collectRecords()
+    if (blockers.length === 0) records = await this.options.collectRecords(input)
     const filteredRecords = records
       .filter((record) => !input.session_id || record.session_id === input.session_id)
       .filter((record) => !input.launch_id || record.launch_id === input.launch_id)
@@ -67,14 +67,15 @@ export class CommanderOperationalMemorySearchService {
       .filter((record) => statuses.length === 0 || (record.status && statuses.includes(record.status)))
       .filter((record) => input.include_closed !== false || !isClosedOperationalStatus(record.status))
       .filter((record) => withinTime(record.occurred_at, input.since, input.until))
-    const scanned = Math.min(filteredRecords.length, SCAN_LIMIT)
-    const candidates = query
-      ? filteredRecords
-          .slice(0, SCAN_LIMIT)
+    const scanRecords = selectScanRecords(filteredRecords, sourceKinds.length === 1)
+    const scanned = scanRecords.length
+    const rankedCandidates = query
+      ? scanRecords
           .map((record) => scoreRecord(record, query))
           .filter((candidate) => candidate.relevance_score > 0)
-          .sort((a, b) => b.relevance_score - a.relevance_score || `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`))
+          .sort(compareCandidatesForScan)
       : []
+    const candidates = rankedCandidates.slice(0, SCAN_LIMIT)
     const returned = candidates.slice(0, limit)
     let result = {
       query_preview: redactText(query ?? ""),
@@ -245,7 +246,48 @@ function withinTime(value: string | undefined, since?: string, until?: string): 
 
 function isClosedOperationalStatus(status: string | undefined): boolean {
   const normalized = (status ?? "").toLowerCase()
+  if (["final", "refused", "blocked", "budget_exhausted", "no_progress", "needs_human_review"].includes(normalized)) return true
   return ["closed", "complete", "completed", "accepted", "rejected", "failed", "cancelled", "canceled", "superseded", "resolved"].some((term) => normalized.includes(term))
+}
+
+function selectScanRecords(records: CommanderOperationalMemoryRecord[], singleSourceFilter: boolean): CommanderOperationalMemoryRecord[] {
+  const ordered = orderByRecency(records)
+  if (ordered.length <= SCAN_LIMIT || singleSourceFilter) return ordered.slice(0, SCAN_LIMIT)
+  const bySource = new Map<string, CommanderOperationalMemoryRecord[]>()
+  for (const record of ordered) {
+    const bucket = bySource.get(record.source_kind)
+    if (bucket) bucket.push(record)
+    else bySource.set(record.source_kind, [record])
+  }
+  const sourceKinds = [...bySource.keys()].sort()
+  const selected: CommanderOperationalMemoryRecord[] = []
+  for (let index = 0; selected.length < SCAN_LIMIT; index += 1) {
+    let added = false
+    for (const sourceKind of sourceKinds) {
+      const record = bySource.get(sourceKind)?.[index]
+      if (!record) continue
+      selected.push(record)
+      added = true
+      if (selected.length >= SCAN_LIMIT) break
+    }
+    if (!added) break
+  }
+  return selected
+}
+
+function orderByRecency(records: CommanderOperationalMemoryRecord[]): CommanderOperationalMemoryRecord[] {
+  return [...records].sort((a, b) => {
+    const time = Date.parse(b.occurred_at ?? "") - Date.parse(a.occurred_at ?? "")
+    if (Number.isFinite(time) && time !== 0) return time
+    return `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`)
+  })
+}
+
+function compareCandidatesForScan(a: CommanderOperationalMemoryCandidate, b: CommanderOperationalMemoryCandidate): number {
+  if (b.relevance_score !== a.relevance_score) return b.relevance_score - a.relevance_score
+  const time = Date.parse(b.occurred_at ?? "") - Date.parse(a.occurred_at ?? "")
+  if (Number.isFinite(time) && time !== 0) return time
+  return `${a.source_kind}:${a.source_id}`.localeCompare(`${b.source_kind}:${b.source_id}`)
 }
 
 function readCsv(value: unknown): string[] {

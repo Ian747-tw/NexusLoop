@@ -66,7 +66,10 @@ through `ExternalApiRequestService` and `ExternalApiTransport`. Branch 9W2B2
 activates that substrate only for RuntimeServer's internal in-memory
 investigation method, behind explicit credential-free provider config,
 readiness checks, active/ready-lifecycle/run-lock preflight, and complete
-external API audit accounting.
+external API audit accounting. Branch 9W3A adds a separate internal durable
+method that writes bounded Commander investigation lifecycle events and turn
+checkpoints to the existing EventStore for restart analysis. It does not add
+resume, public commands, TUI state, proposal generation, or automatic recovery.
 
 ```text
 NexusLoop domain control plane
@@ -84,6 +87,19 @@ NexusLoop domain control plane
 -> bounded in-memory working set
 ```
 
+Durable Commander execution adds the journal boundary around the same
+controller:
+
+```text
+RuntimeServer.runCommanderInvestigationDurable
+-> bounded Commander controller
+-> runtime_commander_investigation_model_step_started
+-> external_api_request_executed|failed
+-> runtime_commander_investigation_checkpointed
+-> runtime_commander_investigation_finished
+-> typed journal projection
+```
+
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
 connector-backed mode, AI SDK receives no real provider credential; connector
@@ -91,19 +107,29 @@ configuration owns base URL, host/method policy, credential references, timeout,
 and response caps. RuntimeServer drains in-flight configured-provider
 investigations before appending `runtime_shutdown` or releasing the run lock, so
 provider audit writes remain inside the owning runtime lifecycle. Provider calls
-append existing external API audit events, but the Commander transcript and
-working set are not persisted. The public
+append existing external API audit events. Durable Commander journal events are
+separate from those provider audits and persist only bounded operational state:
+objective preview/hash, loaded-tool refs, evidence cards, summary-only replay
+protocol relationships, model-text fingerprints, checkpoint hashes,
+repeat/no-progress guard state, and safe evidence-based conclusion cards. Full
+provider transcripts, raw model prose, raw tool results, raw file/diff bodies,
+chain of thought, credentials, SDK session state, exact assistant replay, and
+automatic replay state are not persisted.
+The public
 Commander provider loop remains disabled: there is no public investigation
-command, TUI surface, durable investigation run, proposal gate, streaming
+command, TUI surface, resumable investigation, proposal gate, streaming
 connector transport, provider failover, GitHub/MCP gateway, or external read
-gateway. SDK session memory is not research or operational memory, and SDK
+gateway. 9W3B owns recovery and resume decisions. SDK session memory is not
+research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
 
 Follow-on sequencing:
 
 - 9W2B2: RuntimeServer provider activation and audit gate.
-- 9W3: durable Commander working set, pause/resume, and recovery.
+- 9W3A: durable Commander investigation journal and checkpoints.
+- 9W3B: pause/resume and restart recovery.
+- 9W3C: public/operator investigation surface decision.
 - 9X: external GitHub and research read gateway.
 - 9Y: evidence-backed proposal gate.
 - 9Z: GitHub governance intents and approval gate.
@@ -226,3 +252,5 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-021-commander-model-adapter-and-tool-execution-kernel.md`
 - `agentcore/adr/ADR-022-commander-in-memory-investigation-controller.md`
 - `agentcore/adr/ADR-023-commander-connector-model-transport.md`
+- `agentcore/adr/ADR-024-commander-provider-activation-and-audit-gate.md`
+- `agentcore/adr/ADR-025-commander-durable-investigation-journal.md`

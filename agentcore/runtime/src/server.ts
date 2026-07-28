@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { EventStore } from "./events/event-store"
@@ -119,7 +120,7 @@ import { CommanderContinuityService, readCommanderContinuityOpenLoopInput, readC
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityPacket, CommanderProposalContinuityPacket } from "./continuity/commander-continuity-types"
 import { CommanderToolService, readCommanderToolGetInput, readCommanderToolListInput, readCommanderToolSearchInput } from "./commander-tools/commander-tool-service"
 import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolPhase, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchPreview } from "./commander-tools/commander-tool-types"
-import { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput, type CommanderOperationalMemoryRecord } from "./commander-tools/commander-operational-memory-search-service"
+import { CommanderOperationalMemorySearchService, readCommanderOperationalMemorySearchInput, type CommanderOperationalMemoryRecord, type CommanderOperationalMemorySearchInput } from "./commander-tools/commander-operational-memory-search-service"
 import { CommanderRepoReadService } from "./commander-tools/commander-repo-read-service"
 import type { CommanderDependencyManifestResult, CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult, CommanderInternalReadResult, CommanderOperationalMemorySearchPreview, CommanderRepoFileResult, CommanderRepoSearchResult, CommanderRepoSymbolResult, CommanderRepoTreeResult, CommanderTestManifestResult } from "./commander-tools/commander-read-types"
 import { OpenCodeSessionContinuityService, readOpenCodeContinuationInput, readOpenCodeSessionContinuityInput } from "./opencode-session/opencode-session-continuity-service"
@@ -180,6 +181,9 @@ import {
   CommanderInvestigationBootstrapService,
   CommanderInvestigationContextService,
   CommanderInvestigationController,
+  CommanderInvestigationJournalService,
+  CommanderInvestigationJournalConflictError,
+  CommanderInvestigationPersistenceError,
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
   commanderInvestigationModelCapability,
@@ -190,6 +194,10 @@ import {
   type CommanderInvestigationControlSnapshot,
   type CommanderInvestigationInput,
   type CommanderInvestigationResult,
+  type CommanderInvestigationJournalListOptions,
+  type CommanderInvestigationRecord,
+  type CommanderInvestigationCheckpoint,
+  type CommanderInvestigationJournalSummary,
   type CommanderInvestigationProviderConfig,
   type CommanderInvestigationProviderGate,
   type CommanderInvestigationProviderPreflightSnapshot,
@@ -424,6 +432,7 @@ export class RuntimeServer {
   private commanderInvestigationBootstrapServiceInstance: CommanderInvestigationBootstrapService | null = null
   private commanderInvestigationContextServiceInstance: CommanderInvestigationContextService | null = null
   private commanderInvestigationControllerInstance: CommanderInvestigationController | null = null
+  private commanderInvestigationJournalServiceInstance: CommanderInvestigationJournalService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -470,6 +479,10 @@ export class RuntimeServer {
   private lifecycleShutdownRequested = false
   private commanderInvestigationLifecycleAbort = new AbortController()
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
+  private readonly activeDurableCommanderInvestigations = new Set<{
+    promise: Promise<unknown>
+    run?: import("./commander-agent").CommanderInvestigationJournalRun
+  }>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2685,13 +2698,106 @@ export class RuntimeServer {
     if (this.lifecycleState !== "ready" || this.lifecycleShutdownRequested) return this.commanderInvestigationController().run(input)
 
     const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
-    let tracked: Promise<CommanderInvestigationResult>
+    let tracked!: Promise<CommanderInvestigationResult>
     tracked = this.commanderInvestigationController().run({ ...input, abort_signal: combined.signal }).finally(() => {
       this.activeConfiguredCommanderInvestigations.delete(tracked)
       combined.cleanup()
     })
     this.activeConfiguredCommanderInvestigations.add(tracked)
     return tracked
+  }
+
+  async runCommanderInvestigationDurable(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
+    if (this.mode !== "active" || !this.started || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
+      const blocked = await this.commanderInvestigationController().run({ ...input, abort_signal: alreadyAbortedSignal("durable Commander investigation requires active ready runtime with run lock") })
+      return durableOverrideResult(blocked, {
+        ...blocked,
+        status: "blocked",
+        stop_reason: "provider_preflight_blocked",
+        blockers: ["durable Commander investigation requires active ready runtime with run lock"],
+      })
+    }
+    const journal = this.commanderInvestigationJournalService()
+    const durableInput = { ...input, investigation_id: input.investigation_id ?? this.generatedCommanderInvestigationId(input) }
+    const combined = this.commanderInvestigationAbortSignal(durableInput.abort_signal)
+    const active: { promise: Promise<CommanderInvestigationResult>; run?: import("./commander-agent").CommanderInvestigationJournalRun } = {} as { promise: Promise<CommanderInvestigationResult>; run?: import("./commander-agent").CommanderInvestigationJournalRun }
+    let tracked!: Promise<CommanderInvestigationResult>
+    tracked = (async () => {
+      let run
+      try {
+        try {
+          run = await journal.createObserver(durableInput)
+        } catch (error) {
+          const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation journal conflict") })
+          return durableOverrideResult(blocked, {
+            ...blocked,
+            status: error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed",
+            stop_reason: error instanceof CommanderInvestigationJournalConflictError ? "durable_state_conflict" : "persistence_failed",
+            blockers: [error instanceof Error ? redactText(error.message) : String(error)].slice(0, 1),
+          })
+        }
+        active.run = run
+        if (combined.signal.aborted || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld()) {
+          const blocked = await this.commanderInvestigationController().run({ ...durableInput, abort_signal: alreadyAbortedSignal("durable Commander investigation stopped before journal start") })
+          return durableOverrideResult(blocked, {
+            ...blocked,
+            status: "blocked",
+            stop_reason: "provider_preflight_blocked",
+            blockers: ["durable Commander investigation stopped before journal start"],
+          })
+        }
+        let result: CommanderInvestigationResult
+        try {
+          result = await this.commanderInvestigationController(run.observer).run({ ...durableInput, abort_signal: combined.signal })
+        } catch (error) {
+          if (!run.state.started_persisted) throw error
+          if (run.state.pending_model_request_id) {
+            const uncertain = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
+            return durablePersistenceFailedResult(uncertain, run.state, error, await commanderInvestigationProjectionAfterFailure(journal, run.investigation_id))
+          }
+          result = durableControllerRejectedResult(run.state, error, this.researchSynthesisNow?.() ?? new Date())
+        }
+        if (!run.state.started_persisted) {
+          if (result.stop_reason === "persistence_failed") {
+            return durablePersistenceFailedResult(result, run.state, result.blockers[0] ?? "Commander investigation durable start was not persisted", await commanderInvestigationProjectionAfterFailure(journal, run.investigation_id))
+          }
+          return result
+        }
+        try {
+          const durability = await journal.finish(run, result)
+          return durableResult(result, durability)
+        } catch (error) {
+          return durablePersistenceFailedResult(result, run.state, error, await commanderInvestigationProjectionAfterFailure(journal, run.investigation_id))
+        }
+      } finally {
+        if (run) journal.release(run)
+        combined.cleanup()
+        this.activeDurableCommanderInvestigations.delete(active)
+      }
+    })()
+    active.promise = tracked
+    this.activeDurableCommanderInvestigations.add(active)
+    return tracked
+  }
+
+  getCommanderInvestigationRecord(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
+    return this.commanderInvestigationJournalService().get(investigationId)
+  }
+
+  listCommanderInvestigationRecords(options: CommanderInvestigationJournalListOptions = {}): Promise<CommanderInvestigationRecord[]> {
+    return this.commanderInvestigationJournalService().list(options)
+  }
+
+  getLatestCommanderInvestigationCheckpoint(investigationId: string): Promise<CommanderInvestigationCheckpoint | undefined> {
+    return this.commanderInvestigationJournalService().latestCheckpoint(investigationId)
+  }
+
+  commanderInvestigationJournalSummary(): Promise<CommanderInvestigationJournalSummary> {
+    return this.commanderInvestigationJournalService().summary()
+  }
+
+  verifyCommanderInvestigationJournal(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
+    return this.commanderInvestigationJournalService().verify(investigationId)
   }
 
   private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
@@ -2717,8 +2823,13 @@ export class RuntimeServer {
     }
   }
 
+  private generatedCommanderInvestigationId(input: CommanderInvestigationInput): string {
+    return `commander_investigation_${stableHash({ input: { ...input, abort_signal: undefined }, generated_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString(), nonce: randomUUID() }).slice(0, 16)}`
+  }
+
   private async drainConfiguredCommanderInvestigations(): Promise<void> {
-    const pending = Array.from(this.activeConfiguredCommanderInvestigations)
+    const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
@@ -2731,12 +2842,32 @@ export class RuntimeServer {
     ])
     if (timeoutId) clearTimeout(timeoutId)
     if (result === timedOut) {
+      const journal = this.commanderInvestigationJournalService()
+      for (const entry of activeDurable) {
+        if (this.activeDurableCommanderInvestigations.has(entry) && entry.run) {
+          journal.fence(entry.run, "RuntimeServer shutdown drain timed out before durable investigation settled")
+        }
+      }
+      const inFlightPersistence = activeDurable
+        .filter((entry) => this.activeDurableCommanderInvestigations.has(entry) && entry.run && journal.inFlightPersistenceCount(entry.run) > 0)
+        .map((entry) => journal.settleInFlightPersistence(entry.run!))
+      if (inFlightPersistence.length > 0) {
+        const persistenceSettled = Symbol("commander-journal-persistence-settled")
+        const persistenceTimedOut = Symbol("commander-journal-persistence-timeout")
+        const persistenceResult = await Promise.race([
+          Promise.allSettled(inFlightPersistence).then(() => persistenceSettled),
+          new Promise<typeof persistenceTimedOut>((resolve) => setTimeout(() => resolve(persistenceTimedOut), 1000)),
+        ])
+        if (persistenceResult === persistenceTimedOut) {
+          throw new Error("Commander durable investigation persistence did not settle before shutdown; run lock retained")
+        }
+      }
       this.eventBus.emit({
         type: "ExecutorLifecycle",
-        phase: "runtime-commander-provider-drain-timeout",
-        message: "Configured Commander investigations did not settle before the shutdown drain timeout",
+        phase: "runtime_commander_investigation_drain_timeout",
+        message: "Commander investigations did not settle before the shutdown drain timeout",
       })
-      throw new Error("configured Commander investigation drain timed out")
+      throw new Error("Commander investigations did not settle before shutdown; run lock retained")
     }
   }
 
@@ -4813,7 +4944,7 @@ export class RuntimeServer {
   private commanderOperationalMemorySearchService(): CommanderOperationalMemorySearchService {
     this.commanderOperationalMemorySearchServiceInstance ??= new CommanderOperationalMemorySearchService({
       now: this.researchSynthesisNow,
-      collectRecords: () => this.collectCommanderOperationalMemoryRecords(),
+      collectRecords: (input) => this.collectCommanderOperationalMemoryRecords(input),
     })
     return this.commanderOperationalMemorySearchServiceInstance
   }
@@ -4860,8 +4991,23 @@ export class RuntimeServer {
     return this.commanderInvestigationContextServiceInstance
   }
 
-  private commanderInvestigationController(): CommanderInvestigationController {
+  private commanderInvestigationController(persistenceObserver?: import("./commander-agent").CommanderInvestigationPersistenceObserver): CommanderInvestigationController {
+    if (persistenceObserver) return this.createCommanderInvestigationController(persistenceObserver)
     this.commanderInvestigationControllerInstance ??= new CommanderInvestigationController({
+      ...this.commanderInvestigationControllerOptions(),
+    })
+    return this.commanderInvestigationControllerInstance
+  }
+
+  private createCommanderInvestigationController(persistenceObserver?: import("./commander-agent").CommanderInvestigationPersistenceObserver): CommanderInvestigationController {
+    return new CommanderInvestigationController({
+      ...this.commanderInvestigationControllerOptions(),
+      persistenceObserver,
+    })
+  }
+
+  private commanderInvestigationControllerOptions(): ConstructorParameters<typeof CommanderInvestigationController>[0] {
+    return {
       modelAdapter: this.commanderModelStepAdapter,
       toolExecutor: this.commanderToolExecutor(),
       toolService: this.commanderToolService(),
@@ -4875,8 +5021,15 @@ export class RuntimeServer {
       capabilityRegistry: this.modelCapabilityRegistry,
       contextBudgetService: this.contextBudgetService(),
       now: this.researchSynthesisNow,
+    }
+  }
+
+  private commanderInvestigationJournalService(): CommanderInvestigationJournalService {
+    this.commanderInvestigationJournalServiceInstance ??= new CommanderInvestigationJournalService({
+      eventStore: this.eventStore,
+      now: this.researchSynthesisNow,
     })
-    return this.commanderInvestigationControllerInstance
+    return this.commanderInvestigationJournalServiceInstance
   }
 
   private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {
@@ -4975,7 +5128,11 @@ export class RuntimeServer {
     return records.find((record) => record.projected_state_after !== "noted") ?? records[0]
   }
 
-  private async collectCommanderOperationalMemoryRecords(): Promise<CommanderOperationalMemoryRecord[]> {
+  private async collectCommanderOperationalMemoryRecords(input: CommanderOperationalMemorySearchInput = {}): Promise<CommanderOperationalMemoryRecord[]> {
+    const requestedSourceKinds = operationalMemorySourceKinds(input.source_kinds)
+    if (requestedSourceKinds.length === 1 && requestedSourceKinds[0] === "commander_investigation") {
+      return this.collectCommanderInvestigationOperationalMemoryRecords(input)
+    }
     const records: CommanderOperationalMemoryRecord[] = []
     const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
     const missions = await this.listRecentMissions(100)
@@ -5014,6 +5171,52 @@ export class RuntimeServer {
     for (const review of await this.listOpenCodeResultReviews({ limit: 100 })) push({ source_kind: "result_review", source_id: review.review_id, label: "Result review", status: review.review_disposition, summary_preview: `${review.decision}: ${review.rationale_preview}`, session_id: review.session_id, launch_id: review.launch_id, occurred_at: review.recorded_at, fields: { decision: review.decision, next_step: review.next_step, report_id: review.report_id } })
     for (const ingestion of await this.listResearchIngestions({ limit: 100 })) push({ source_kind: "research_ingestion", source_id: ingestion.ingestion_id, label: "Research ingestion", status: ingestion.research_db_written ? "research_db_written" : "not_written", summary_preview: ingestion.research_title_preview, session_id: ingestion.session_id, launch_id: ingestion.launch_id, occurred_at: ingestion.recorded_at, fields: { evidence_kind: ingestion.evidence_kind, review_id: ingestion.review_id, report_id: ingestion.report_id } })
     for (const refresh of await this.listOpenCodeContextRefreshes({ limit: 100 })) push({ source_kind: "context_refresh", source_id: refresh.refresh_id, label: "Context refresh", status: refresh.status, summary_preview: refresh.summary_preview, session_id: refresh.target_session_id, launch_id: refresh.launch_id, occurred_at: refresh.written_at, fields: { mode: refresh.continuity_mode, packet_kind: refresh.packet_kind, previous_refresh_id: refresh.previous_refresh_id } })
+    records.push(...await this.collectCommanderInvestigationOperationalMemoryRecords(input))
+    return records
+  }
+
+  private async collectCommanderInvestigationOperationalMemoryRecords(input: CommanderOperationalMemorySearchInput = {}): Promise<CommanderOperationalMemoryRecord[]> {
+    const records: CommanderOperationalMemoryRecord[] = []
+    const push = (record: CommanderOperationalMemoryRecord | null | undefined) => { if (record) records.push(record) }
+    const statuses = operationalMemoryStatuses(input.statuses)
+    for (const investigation of await this.commanderInvestigationJournalService().listForOperationalMemorySearch({
+      limit: 800,
+      session_id: input.session_id,
+      mission_id: input.mission_id,
+      statuses,
+    })) {
+      if (investigation.projection_status !== "ready") continue
+      push({
+        source_kind: "commander_investigation",
+        source_id: investigation.investigation_id,
+        label: "Commander investigation",
+        status: investigation.status,
+        summary_preview: [
+          investigation.objective_preview,
+          `phase ${investigation.phase}`,
+          investigation.stop_reason ? `stop ${investigation.stop_reason}` : "running",
+          ...investigation.evidence_previews.map((preview) => `evidence ${preview}`),
+          `evidence ${investigation.evidence_count}`,
+          `recovery ${investigation.recovery_state}`,
+        ].filter(Boolean).join("; "),
+        session_id: investigation.session_id,
+        launch_id: investigation.launch_id,
+        mission_id: investigation.mission_id,
+        occurred_at: investigation.updated_at,
+        fields: {
+          phase: investigation.phase,
+          stop_reason: investigation.stop_reason,
+          provider_id: investigation.provider_id,
+          model_id: investigation.model_id,
+          latest_checkpoint_id: investigation.latest_checkpoint_id,
+          recovery_state: investigation.recovery_state,
+          evidence_previews: investigation.evidence_previews.join(" "),
+          evidence_count: String(investigation.evidence_count),
+          model_turn_count: String(investigation.model_turn_count),
+          tool_call_count: String(investigation.tool_call_count),
+        },
+      })
+    }
     return records
   }
 
@@ -5470,6 +5673,190 @@ function readRebuildProjectionOptions(value: unknown): { force: boolean } {
   if (!isRecord(value)) throw new Error("options must be an object")
   if (value.force !== undefined && typeof value.force !== "boolean") throw new Error("force must be a boolean")
   return { force: value.force ?? false }
+}
+
+function alreadyAbortedSignal(reason: string): AbortSignal {
+  const controller = new AbortController()
+  controller.abort(new Error(reason))
+  return controller.signal
+}
+
+function durableResult(result: CommanderInvestigationResult, durability: import("./commander-agent").CommanderInvestigationDurabilitySummary): CommanderInvestigationResult {
+  return {
+    ...result,
+    durability,
+    investigation_event_count: durability.investigation_event_count,
+    in_memory_only: false,
+    working_set_persisted: true,
+    investigation_events_appended: durability.investigation_event_count > 0,
+    events_appended: result.external_api_audit_events_appended > 0 || durability.investigation_event_count > 0,
+  }
+}
+
+async function commanderInvestigationProjectionAfterFailure(journal: import("./commander-agent").CommanderInvestigationJournalService, investigationId: string): Promise<import("./commander-agent").CommanderInvestigationRecord | undefined> {
+  try {
+    return await journal.get(investigationId)
+  } catch {
+    return undefined
+  }
+}
+
+function durablePersistenceFailedResult(result: CommanderInvestigationResult, state: import("./commander-agent").CommanderInvestigationJournalRunState, error: unknown, projected?: import("./commander-agent").CommanderInvestigationRecord): CommanderInvestigationResult {
+  const message = error instanceof Error ? redactText(error.message) : redactText(String(error))
+  const projectedTerminalPersisted = projected ? projected.status !== "running" : undefined
+  const projectedWarnings = projected ? [...projected.integrity_errors, ...projected.warnings].map((item) => redactText(item)).filter(Boolean) : []
+  const durability = {
+    mode: "event_journal" as const,
+    started_persisted: state.started_persisted || Boolean(projected),
+    initial_checkpoint_persisted: projected?.checkpoint_available ?? state.checkpoint_count > 0,
+    terminal_persisted: projectedTerminalPersisted ?? false,
+    investigation_event_count: projected?.investigation_event_count ?? state.investigation_event_count,
+    started_event_id: state.started_event_id,
+    latest_checkpoint_event_id: state.latest_checkpoint_event_id,
+    latest_checkpoint_id: projected?.latest_checkpoint_id ?? state.latest_checkpoint?.checkpoint_id,
+    latest_checkpoint_sequence: projected?.latest_checkpoint_sequence ?? state.latest_checkpoint?.checkpoint_sequence,
+    latest_checkpoint_hash: projected?.latest_checkpoint_hash ?? state.latest_checkpoint?.checkpoint_hash,
+    checkpoint_count: projected?.latest_checkpoint_sequence === undefined ? state.checkpoint_count : projected.latest_checkpoint_sequence + 1,
+    pending_model_request_id: projected?.pending_model_request_id ?? state.pending_model_request_id,
+    projection_status: projected?.projection_status ?? "corrupt" as const,
+    resume_supported: false as const,
+    full_transcript_persisted: false as const,
+    raw_tool_results_persisted: false as const,
+    chain_of_thought_persisted: false as const,
+    original_terminal_status_if_persistence_failed: result.status,
+    warnings: [message, ...projectedWarnings].filter(Boolean).slice(0, 12),
+    durability_hash: "",
+  }
+  durability.durability_hash = stableHash({ ...durability, started_event_id: "", latest_checkpoint_event_id: "", durability_hash: "" })
+  return {
+    ...result,
+    status: "failed",
+    stop_reason: "persistence_failed",
+    blockers: [message || "Commander investigation terminal persistence failed"],
+    durability,
+    investigation_event_count: durability.investigation_event_count,
+    in_memory_only: false,
+    working_set_persisted: durability.checkpoint_count > 0,
+    investigation_events_appended: durability.investigation_event_count > 0,
+    events_appended: result.external_api_audit_events_appended > 0 || durability.investigation_event_count > 0,
+    result_hash: result.result_hash,
+  }
+}
+
+function durableControllerRejectedResult(state: import("./commander-agent").CommanderInvestigationJournalRunState, error: unknown, now: Date): CommanderInvestigationResult {
+  const checkpoint = state.latest_checkpoint
+  if (!checkpoint) throw error
+  const message = error instanceof Error ? redactText(error.message) : redactText(String(error))
+  const completedAt = now.toISOString()
+  const startedAt = state.started_at ?? checkpoint.created_at
+  const resultHash = stableHash({
+    status: "failed",
+    stop_reason: "controller_error",
+    phase: checkpoint.phase,
+    objective_hash: checkpoint.objective_hash,
+    provider_id: checkpoint.provider_id,
+    provider_kind: checkpoint.provider_kind,
+    model_id: checkpoint.model_id,
+    tool_protocol: checkpoint.tool_protocol,
+    bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
+    budget_hash: checkpoint.budget.budget_hash,
+    loaded_tool_ids: checkpoint.working_set.loaded_tool_ids,
+    evidence: checkpoint.working_set.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+    turn_summaries: checkpoint.turn_summaries.map((item) => ({ ...item, model_request_id: "", model_result_hash: "", tool_execution_ids: [], provider_audit_request_ids: [], warnings: [], turn_hash: "" })),
+    counters: {
+      model_turn_count: checkpoint.working_set.model_turn_count,
+      provider_request_count: checkpoint.provider_request_count,
+      tool_call_count: checkpoint.working_set.tool_call_count,
+      tool_search_call_count: checkpoint.working_set.tool_search_call_count,
+      cumulative_tool_result_bytes: checkpoint.working_set.cumulative_tool_result_bytes,
+      omitted_evidence_count: checkpoint.working_set.omitted_evidence_count,
+      omitted_turn_count: checkpoint.working_set.omitted_turn_count,
+      consecutive_no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns,
+    },
+    provider_audit: {
+      ...checkpoint.working_set.provider_audit,
+      audit_request_ids: [],
+    },
+    pending_model_request: Boolean(state.pending_model_request_id),
+    blocker: message,
+  })
+  return {
+    investigation_id: checkpoint.investigation_id,
+    status: "failed",
+    stop_reason: "controller_error",
+    phase: checkpoint.phase,
+    objective_preview: checkpoint.working_set.objective_preview,
+    provider_id: checkpoint.provider_id,
+    provider_kind: checkpoint.provider_kind,
+    model_id: checkpoint.model_id,
+    tool_protocol: checkpoint.tool_protocol,
+    bootstrap_id: checkpoint.bootstrap_ref.bootstrap_id,
+    bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
+    context_budget_id: checkpoint.budget.source_context_budget_id,
+    budget: checkpoint.budget,
+    model_turn_count: checkpoint.working_set.model_turn_count,
+    provider_request_count: checkpoint.provider_request_count,
+    tool_call_count: checkpoint.working_set.tool_call_count,
+    tool_search_call_count: checkpoint.working_set.tool_search_call_count,
+    loaded_tool_ids: checkpoint.working_set.loaded_tool_ids.slice(),
+    loaded_schema_bytes: 0,
+    loaded_schema_tokens: 0,
+    cumulative_tool_result_bytes: checkpoint.working_set.cumulative_tool_result_bytes,
+    evidence: checkpoint.working_set.evidence_cards.slice(),
+    turn_summaries: checkpoint.turn_summaries.slice(),
+    omitted_evidence_count: checkpoint.working_set.omitted_evidence_count,
+    omitted_turn_count: checkpoint.working_set.omitted_turn_count,
+    provider_audit: checkpoint.working_set.provider_audit,
+    blockers: [message || "Commander investigation controller rejected after durable start"],
+    warnings: [...checkpoint.working_set.current_warnings, "Durable Commander investigation was terminalized after controller rejection."].slice(0, 16),
+    started_at: startedAt,
+    completed_at: completedAt,
+    duration_ms: Math.max(0, now.getTime() - Date.parse(startedAt || completedAt)),
+    investigation_event_count: state.investigation_event_count,
+    in_memory_only: false,
+    transcript_persisted: false,
+    working_set_persisted: state.checkpoint_count > 0,
+    investigation_events_appended: state.investigation_event_count > 0,
+    external_api_audit_events_appended: checkpoint.external_api_audit_count,
+    events_appended: state.investigation_event_count > 0 || checkpoint.external_api_audit_count > 0,
+    files_written: false,
+    research_db_written: false,
+    mission_mutated: false,
+    proposal_mutated: false,
+    opencode_action_performed: false,
+    github_action_performed: false,
+    mcp_called: false,
+    external_research_called: false,
+    result_hash: resultHash,
+  }
+}
+
+function durableOverrideResult(original: CommanderInvestigationResult, result: CommanderInvestigationResult): CommanderInvestigationResult {
+  return {
+    ...result,
+    result_hash: stableHash({
+      semantic: original.result_hash,
+      status: result.status,
+      stop_reason: result.stop_reason,
+      blockers: result.blockers,
+      provider_request_count: result.provider_request_count,
+      tool_call_count: result.tool_call_count,
+      investigation_event_count: result.investigation_event_count,
+      external_api_audit_events_appended: result.external_api_audit_events_appended,
+    }),
+  }
+}
+
+function operationalMemorySourceKinds(value: CommanderOperationalMemorySearchInput["source_kinds"]): string[] {
+  if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean)
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean)
+  return []
+}
+
+function operationalMemoryStatuses(value: CommanderOperationalMemorySearchInput["statuses"]): string[] {
+  if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean)
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean)
+  return []
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
