@@ -328,6 +328,8 @@ export class CommanderInvestigationJournalService {
     if (objective.length !== snapshot.input.objective.replace(/\s+/g, " ").trim().length && snapshot.input.objective.replace(/\s+/g, " ").trim().length > 1000) {
       throw new CommanderInvestigationPersistenceError("durable investigation objective exceeds 1000 characters")
     }
+    const identityErrors = persistedIdentityErrors(snapshot.input, snapshot.investigation_id)
+    if (identityErrors.length) throw new CommanderInvestigationPersistenceError(`durable investigation identity is not persistable: ${identityErrors.join("; ")}`)
     const objectiveHash = stableHash(objective)
     state.objective_hash = objectiveHash
     const checkpoint = this.buildCheckpoint({
@@ -885,6 +887,33 @@ function sanitizeInput(input: CommanderInvestigationInput): Omit<CommanderInvest
     provider_kind: bound(input.provider_kind, 80),
     model_id: bound(input.model_id, 200),
   }) as Omit<CommanderInvestigationInput, "abort_signal">
+}
+
+function persistedIdentityErrors(input: CommanderInvestigationInput, investigationId: string): string[] {
+  const errors: string[] = []
+  const fields: Array<[string, unknown, number, boolean]> = [
+    ["investigation_id", investigationId, 200, true],
+    ["objective", input.objective, 1000, true],
+    ["requested_by", input.requested_by, 200, true],
+    ["provider_id", input.provider_id, 120, true],
+    ["provider_kind", input.provider_kind, 80, true],
+    ["model_id", input.model_id, 200, true],
+    ["mission_id", input.mission_id, 200, false],
+    ["session_id", input.session_id, 200, false],
+    ["launch_id", input.launch_id, 200, false],
+  ]
+  for (const [key, value, max, required] of fields) {
+    if (value === undefined && !required) continue
+    if (typeof value !== "string") {
+      errors.push(`${key} must be a string`)
+      continue
+    }
+    const normalized = value.replace(/\s+/g, " ").trim()
+    if (normalized.length === 0) errors.push(`${key} is required`)
+    if (normalized.length > max) errors.push(`${key} exceeds ${max} characters`)
+    if (normalized !== value) errors.push(`${key} must already be normalized`)
+  }
+  return errors
 }
 
 function withPayloadHash<T extends { event_payload_hash: string }>(payload: T): T {

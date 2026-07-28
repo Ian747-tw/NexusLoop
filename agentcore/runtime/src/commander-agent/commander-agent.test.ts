@@ -3015,6 +3015,47 @@ describe("Commander in-memory investigation controller", () => {
     expect(ambiguousTerminal.investigation_event_count).toBe(ambiguousTerminalRecord!.investigation_event_count)
   })
 
+  test("durable journal rejects identity fields the projection cannot read before start persistence", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-unpersistable-identity-"))
+    await writeApprovedSpec(projectDir)
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "must not be called" }])
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: adapter,
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const badInputs = [
+      ["empty_provider", { provider_id: "" }],
+      ["long_model", { model_id: "m".repeat(201) }],
+      ["long_session", { session_id: "s".repeat(201) }],
+      ["long_mission", { mission_id: "m".repeat(201) }],
+      ["long_launch", { launch_id: "l".repeat(201) }],
+    ] as const
+
+    for (const [name, override] of badInputs) {
+      const investigationId = `inv_unpersistable_${name}`
+      const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: investigationId, ...override }))
+      expect(result).toMatchObject({
+        status: "failed",
+        stop_reason: "persistence_failed",
+        provider_request_count: 0,
+        tool_call_count: 0,
+        investigation_event_count: 0,
+        investigation_events_appended: false,
+      })
+      expect(await server.getCommanderInvestigationRecord(investigationId)).toBeUndefined()
+      expect(await server.getLatestCommanderInvestigationCheckpoint(investigationId)).toBeUndefined()
+    }
+
+    expect(adapter.request_summaries).toHaveLength(0)
+    const text = await eventText(projectDir)
+    expect(text).not.toContain("runtime_commander_investigation_started")
+    for (const [name] of badInputs) expect(text).not.toContain(`inv_unpersistable_${name}`)
+  })
+
   test("durable adapter rejection after model-step start preserves pending uncertainty", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-controller-reject-"))
     await writeApprovedSpec(projectDir)
