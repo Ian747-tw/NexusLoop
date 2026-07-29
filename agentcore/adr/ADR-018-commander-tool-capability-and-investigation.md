@@ -105,6 +105,13 @@ hashes, repeat/no-progress guard state, and recovery classification. Capability
 envelopes still do not prescribe investigation order, and public
 `provider_tool_loop_enabled` remains false.
 
+9W3B1 adds read-only recovery readiness preview over those projections. Preview
+uses the same capability, phase, authority, and binding envelopes to verify
+that stored loaded-tool references and provider/model identity remain
+compatible with the current runtime. It does not load new schemas, execute
+tools, call a provider, append events, create approval records, or activate a
+public provider loop.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.
@@ -118,7 +125,8 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9W2B1: connector-backed model transport substrate.
 - 9W2B2: RuntimeServer provider activation and audit gate.
 - 9W3A: durable investigation journal and checkpoints.
-- 9W3B: pause/resume and restart recovery.
+- 9W3B1: recovery readiness and compatibility preview.
+- 9W3B2: human disposition and recovery execution.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.
 - 9Y: Commander research proposal gate.

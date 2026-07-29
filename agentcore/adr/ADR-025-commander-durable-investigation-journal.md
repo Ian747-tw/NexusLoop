@@ -99,6 +99,13 @@ Projection replays typed event objects in append order and verifies:
 One corrupt investigation record does not make unrelated investigation records
 unreadable.
 
+9W3B1 adds a read-only recovery-source projection over the same replay. The
+journal service reads the event log once, projects the record, and returns the
+validated normalized input, immutable identity, accepted latest checkpoint,
+pending model-step boundary, and terminal metadata from that single snapshot.
+Corrupt and unsupported records expose diagnostics only; they do not expose an
+authoritative checkpoint or normalized input for recovery.
+
 ### Failure And Lifecycle
 
 Persistence failures stop execution. A start or model-step-start append failure
@@ -153,7 +160,11 @@ automatic restart recovery, resumable investigation, scheduled Commander run,
 proposal generation, GitHub/MCP gateway, external research tool, or OpenCode
 action in 9W3A.
 
-9W3B owns recovery preview, checkpoint compatibility checks, uncertain provider
-outcome gates, and human-reviewed resume. 9W3C owns any public/operator
-start/list/show/pause/resume/cancel surface decision. 9Y owns proposal
-generation.
+9W3B1 owns read-only recovery preview, checkpoint compatibility checks,
+uncertain provider outcome classification, current continuity/human-control
+inspection, and recovery-plan hashes. It writes no journal event and leaves
+`resume_supported=false` in stored records. 9W3B2 owns durable recovery
+disposition, plan-hash revalidation, uncertain-provider resolution, fresh
+context reconstruction, and human-reviewed resume. 9W3C owns any
+public/operator start/list/show/pause/resume/cancel surface decision. 9Y owns
+proposal generation.

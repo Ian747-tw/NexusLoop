@@ -68,7 +68,8 @@ investigation method, behind explicit credential-free provider config,
 readiness checks, active/ready-lifecycle/run-lock preflight, and complete
 external API audit accounting. Branch 9W3A adds a separate internal durable
 method that writes bounded Commander investigation lifecycle events and turn
-checkpoints to the existing EventStore for restart analysis. It does not add
+checkpoints to the existing EventStore for restart analysis. Branch 9W3B1 adds
+a read-only recovery readiness preview over that journal. It does not add
 resume, public commands, TUI state, proposal generation, or automatic recovery.
 
 ```text
@@ -100,6 +101,22 @@ RuntimeServer.runCommanderInvestigationDurable
 -> typed journal projection
 ```
 
+Recovery preview reads that projection atomically and performs compatibility
+analysis without execution:
+
+```text
+durable journal
+-> atomic recovery source
+-> tool/schema/authority compatibility checks
+-> provider/model/capability compatibility checks
+-> remaining-budget and context checks
+-> current continuity/human-control checks
+-> bounded recovery packet
+-> recovery-plan hash
+-> human review required
+-> no execution
+```
+
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
 connector-backed mode, AI SDK receives no real provider credential; connector
@@ -114,12 +131,17 @@ protocol relationships, model-text fingerprints, checkpoint hashes,
 repeat/no-progress guard state, and safe evidence-based conclusion cards. Full
 provider transcripts, raw model prose, raw tool results, raw file/diff bodies,
 chain of thought, credentials, SDK session state, exact assistant replay, and
-automatic replay state are not persisted.
+automatic replay state are not persisted. Recovery preview therefore always
+reports that exact replay is unsupported, original assistant prose is
+unavailable, and any future recovery must construct a fresh bounded context
+from compatible durable state.
 The public
 Commander provider loop remains disabled: there is no public investigation
 command, TUI surface, resumable investigation, proposal gate, streaming
 connector transport, provider failover, GitHub/MCP gateway, or external read
-gateway. 9W3B owns recovery and resume decisions. SDK session memory is not
+gateway. 9W3B2 owns durable recovery disposition, plan-hash revalidation,
+uncertain-provider resolution, fresh context reconstruction, and bounded
+recovery execution. SDK session memory is not
 research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
@@ -128,7 +150,8 @@ Follow-on sequencing:
 
 - 9W2B2: RuntimeServer provider activation and audit gate.
 - 9W3A: durable Commander investigation journal and checkpoints.
-- 9W3B: pause/resume and restart recovery.
+- 9W3B1: recovery readiness and compatibility preview.
+- 9W3B2: human disposition and recovery execution.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external GitHub and research read gateway.
 - 9Y: evidence-backed proposal gate.

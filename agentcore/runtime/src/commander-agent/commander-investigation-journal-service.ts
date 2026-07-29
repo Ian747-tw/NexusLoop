@@ -30,6 +30,7 @@ import type {
   CommanderInvestigationStartedPayload,
   CommanderInvestigationTerminalRecord,
 } from "./commander-investigation-journal-types"
+import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import { projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
 
 const CHECKPOINT_DEFAULT_CAP = 64_000
@@ -313,6 +314,11 @@ export class CommanderInvestigationJournalService {
 
   async verify(investigationId: string): Promise<CommanderInvestigationRecord | undefined> {
     return this.get(investigationId)
+  }
+
+  async recoverySource(investigationId: string): Promise<CommanderInvestigationRecoverySource | undefined> {
+    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
+    return projection.recovery_sources.find((source) => source.investigation_id === investigationId)
   }
 
   private async readJournalEvents(): Promise<JsonlEvent[]> {

@@ -1,0 +1,333 @@
+import type { CommanderEvidenceCard } from "../commander-tools/commander-read-types"
+import type { CommanderToolPhase } from "../commander-tools/commander-tool-types"
+import type { CommanderInvestigationProviderReadiness, CommanderInvestigationProviderSource } from "./commander-investigation-provider-types"
+import type {
+  CommanderInvestigationBudget,
+  CommanderInvestigationControlSnapshot,
+  CommanderInvestigationStatus,
+  CommanderInvestigationStopReason,
+} from "./commander-investigation-types"
+import type {
+  CommanderInvestigationCheckpointKind,
+  CommanderInvestigationJournalIdentity,
+  CommanderInvestigationJournalProjectionStatus,
+  CommanderInvestigationLoadedToolRef,
+  CommanderInvestigationRecoveryState,
+} from "./commander-investigation-journal-types"
+import type { CommanderModelToolProtocol } from "./commander-model-types"
+
+export type CommanderInvestigationRecoveryPreviewInput = {
+  investigation_id: string
+  include_current_continuity?: boolean
+}
+
+export type CommanderInvestigationRecoveryPreviewStatus =
+  | "not_found"
+  | "not_applicable"
+  | "blocked"
+  | "human_review_required"
+  | "ready_for_approval"
+
+export type CommanderInvestigationRecoveryKind = "none" | "checkpoint" | "uncertain_provider_outcome"
+
+export type CommanderInvestigationRecoveryRecommendedAction =
+  | "none"
+  | "inspect_corrupt_record"
+  | "reconfigure_runtime"
+  | "review_uncertain_provider_outcome"
+  | "approve_resume_from_checkpoint"
+  | "start_new_investigation"
+
+export type CommanderInvestigationRecoveryCheckpointSummary = {
+  checkpoint_id: string
+  checkpoint_sequence: number
+  checkpoint_hash: string
+  semantic_state_hash: string
+  checkpoint_kind: CommanderInvestigationCheckpointKind
+  turn_index: number
+  next_turn_index: number
+  created_at: string
+  provider_request_count: number
+  external_api_audit_count: number
+  model_turn_count: number
+  tool_call_count: number
+  tool_search_call_count: number
+  cumulative_tool_result_bytes: number
+  consecutive_no_progress_turns: number
+  loaded_tool_ids: string[]
+  evidence_ids: string[]
+  evidence_count: number
+  omitted_evidence_count: number
+  repeat_signature_count: number
+  replay_protocol_available: boolean
+  assistant_text_persisted: false
+  exact_replay_supported: false
+  full_tool_results_persisted: false
+}
+
+export type CommanderInvestigationRecoveryPendingModelStep = {
+  model_request_id: string
+  turn_index: number
+  started_at: string
+  base_checkpoint_id: string
+  base_checkpoint_sequence: number
+  base_checkpoint_hash: string
+  working_set_hash: string
+  context_hash: string
+  input_bytes: number
+  estimated_input_tokens: number
+  provider_request_count_before: number
+  external_api_audit_count_before: number
+  loaded_tool_ids: string[]
+  outcome: "uncertain"
+  human_disposition_required: true
+  provider_request_may_have_been_sent: true
+  provider_response_available: false
+  tool_execution_known_to_have_occurred: false
+}
+
+export type CommanderInvestigationRecoveryToolCompatibility = {
+  tool_id: string
+  stored_descriptor_version: string
+  current_descriptor_version?: string
+  stored_authority_id: string
+  current_authority_id?: string
+  stored_input_schema_hash: string
+  current_input_schema_hash?: string
+  stored_output_schema_hash: string
+  current_output_schema_hash?: string
+  stored_load_policy: string
+  current_load_policy?: string
+  stored_trust_class: string
+  current_trust_class?: string
+  binding_present: boolean
+  implemented_read_surface: boolean
+  allowed_in_phase: boolean
+  authority_match: boolean
+  safe_read_authority: boolean
+  schema_match: boolean
+  descriptor_match: boolean
+  compatible: boolean
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryToolCompatibilitySummary = {
+  tools: CommanderInvestigationRecoveryToolCompatibility[]
+  binding_count: number
+  stored_subset_of_current_bindings: boolean
+  compatible: boolean
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryProviderCompatibility = {
+  provider_source: CommanderInvestigationProviderSource
+  stored_provider_id?: string
+  stored_provider_kind?: string
+  stored_model_id?: string
+  configured_provider_id?: string
+  configured_provider_kind?: string
+  configured_model_id?: string
+  identity_match: boolean
+  phase_enabled: boolean
+  configuration_ready: boolean
+  execution_ready_now: boolean
+  capability_id?: string
+  commander_role_supported: boolean
+  stored_tool_protocol_supported: boolean
+  connector_available: boolean
+  credentials_ready: boolean
+  supports_streaming: false
+  compatible: boolean
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryBudgetCompatibility = {
+  stored_budget_id?: string
+  stored_budget_hash?: string
+  current_profile_id?: string
+  current_context_budget_id?: string
+  stored_limits: Record<string, number | undefined>
+  consumed: Record<string, number>
+  stored_remaining: Record<string, number>
+  current_policy_limits: Record<string, number | undefined>
+  effective_remaining: Record<string, number>
+  model_turns_remaining: number
+  tool_calls_remaining: number
+  tool_search_calls_remaining: number
+  result_bytes_remaining: number
+  wall_time_remaining_ms: number
+  evidence_slots_remaining: number
+  turn_summary_slots_remaining: number
+  no_progress_count: number
+  repeat_signature_count: number
+  exhausted_dimensions: string[]
+  stricter_current_policy_dimensions: string[]
+  compatible: boolean
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryContextCompatibility = {
+  current_context_budget_id?: string
+  stored_checkpoint_bytes: number
+  estimated_recovery_packet_bytes: number
+  estimated_recovery_packet_tokens: number
+  loaded_schema_bytes: number
+  loaded_schema_tokens: number
+  latest_protocol_summary_bytes: number
+  evidence_summary_bytes: number
+  within_current_context_budget: boolean
+  exact_replay_supported: false
+  fresh_context_required: true
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryContinuityCompatibility = {
+  original_bootstrap_id?: string
+  original_bootstrap_hash?: string
+  current_bootstrap_id?: string
+  current_bootstrap_hash?: string
+  current_bootstrap_ready: boolean
+  continuity_drift_detected: boolean
+  current_readiness?: string
+  current_open_loop_count: number
+  current_blocker_count: number
+  human_control_summary?: string
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryHumanControl = {
+  checked: boolean
+  source_kind: string
+  control_id?: string
+  projected_state?: string
+  action: "continue" | "blocked" | "human_review_required"
+  summary_preview?: string
+  blockers: string[]
+  warnings: string[]
+  compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryEvidencePointer = {
+  evidence_id: string
+  tool_id?: string
+  source_kind: string
+  source_id: string
+  title: string
+  summary_preview: string
+  evidence_hash?: string
+  source_refs: Array<{ source_kind: string; source_id: string; label?: string; summary_preview?: string; pointer_only: true }>
+}
+
+export type CommanderInvestigationRecoveryPacket = {
+  packet_id: string
+  packet_version: 1
+  investigation_id: string
+  recovery_kind: CommanderInvestigationRecoveryKind
+  immutable_identity?: CommanderInvestigationJournalIdentity
+  objective_preview?: string
+  phase?: CommanderToolPhase
+  original_bootstrap_ref?: { bootstrap_id: string; bootstrap_hash: string }
+  current_continuity_ref?: { bootstrap_id: string; bootstrap_hash: string }
+  checkpoint_ref?: { checkpoint_id: string; checkpoint_sequence: number; checkpoint_hash: string }
+  pending_model_step_ref?: { model_request_id: string; turn_index: number; base_checkpoint_id: string; base_checkpoint_hash: string }
+  loaded_tool_refs: CommanderInvestigationLoadedToolRef[]
+  evidence_pointers: CommanderInvestigationRecoveryEvidencePointer[]
+  execution_digests: Array<Record<string, unknown>>
+  repeat_signatures: Array<{ signature_hash: string; count: number; last_turn_index: number }>
+  no_progress_state: { consecutive_no_progress_turns: number; max_consecutive_no_progress_turns?: number }
+  remaining_budget?: Pick<CommanderInvestigationRecoveryBudgetCompatibility, "effective_remaining" | "exhausted_dimensions">
+  current_human_control?: CommanderInvestigationRecoveryHumanControl
+  warnings: string[]
+  blockers: string[]
+  assistant_text_persisted: false
+  exact_replay_supported: false
+  raw_tool_results_persisted: false
+  full_transcript_persisted: false
+  provider_request_replay_allowed: false
+  tool_execution_replay_allowed: false
+  fresh_context_required: true
+  packet_hash: string
+}
+
+export type CommanderInvestigationRecoveryPreview = {
+  preview_id: string
+  preview_version: 1
+  status: CommanderInvestigationRecoveryPreviewStatus
+  recovery_kind: CommanderInvestigationRecoveryKind
+  recommended_action: CommanderInvestigationRecoveryRecommendedAction
+  investigation_id: string
+  record_status?: "running" | CommanderInvestigationStatus
+  record_hash?: string
+  projection_status?: CommanderInvestigationJournalProjectionStatus
+  recovery_state?: CommanderInvestigationRecoveryState
+  phase?: CommanderToolPhase
+  objective_preview?: string
+  mission_id?: string
+  session_id?: string
+  launch_id?: string
+  provider_id?: string
+  provider_kind?: string
+  model_id?: string
+  tool_protocol?: CommanderModelToolProtocol
+  checkpoint?: CommanderInvestigationRecoveryCheckpointSummary
+  pending_model_step?: CommanderInvestigationRecoveryPendingModelStep
+  tool_compatibility: CommanderInvestigationRecoveryToolCompatibilitySummary
+  provider_compatibility: CommanderInvestigationRecoveryProviderCompatibility
+  budget_compatibility: CommanderInvestigationRecoveryBudgetCompatibility
+  context_compatibility: CommanderInvestigationRecoveryContextCompatibility
+  continuity_compatibility: CommanderInvestigationRecoveryContinuityCompatibility
+  human_control: CommanderInvestigationRecoveryHumanControl
+  recovery_packet?: CommanderInvestigationRecoveryPacket
+  automatic_resume_allowed: false
+  human_approval_required: boolean
+  exact_replay_supported: false
+  original_assistant_text_available: false
+  provider_request_replay_allowed: false
+  tool_execution_replay_allowed: false
+  fresh_context_required: true
+  same_journal_resume_candidate: boolean
+  terminal_continuation_requires_new_investigation: boolean
+  recovery_plan_hash?: string
+  blockers: string[]
+  warnings: string[]
+  generated_at: string
+  network_called: false
+  provider_called: false
+  tool_executed: false
+  events_appended: false
+  files_written: false
+  research_db_written: false
+  mission_mutated: false
+  proposal_mutated: false
+  opencode_action_performed: false
+  github_action_performed: false
+  mcp_called: false
+  preview_hash: string
+}
+
+export type CommanderInvestigationRecoveryServiceOptions = {
+  recoverySource(input: { investigation_id: string }): Promise<import("./commander-investigation-recovery-source").CommanderInvestigationRecoverySource | undefined>
+  descriptors: import("../commander-tools/commander-tool-types").CommanderToolDescriptor[]
+  boundToolIds: readonly string[]
+  providerReadiness(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationProviderReadiness
+  modelCapability(input: { provider_kind?: string; model_id?: string; role?: string }): import("../context/model-capability-types").ModelCapability
+  currentProfile(input: { phase?: string }): import("../commander-tools/commander-tool-types").CommanderToolProfile
+  currentBootstrap(input: Omit<import("./commander-investigation-types").CommanderInvestigationInput, "abort_signal">): Promise<import("./commander-investigation-types").CommanderInvestigationBootstrap>
+  currentHumanControl(input: { phase: CommanderToolPhase; session_id?: string; launch_id?: string }): Promise<CommanderInvestigationControlSnapshot>
+  now?: () => Date
+}
+
+export type CommanderInvestigationRecoverySafeEvidence = Pick<CommanderEvidenceCard, "evidence_id" | "tool_id" | "source_kind" | "source_id" | "title" | "summary_preview" | "evidence_hash" | "source_refs">
+export type CommanderInvestigationRecoveryStoredBudget = CommanderInvestigationBudget
