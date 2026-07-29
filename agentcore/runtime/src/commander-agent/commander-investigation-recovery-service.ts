@@ -61,7 +61,23 @@ export class CommanderInvestigationRecoveryService {
     const budgetCompatibility = this.budgetCompatibility(checkpoint)
     const continuityCompatibility = await this.continuityCompatibility(source, checkpoint, validated.include_current_continuity !== false)
     const humanControl = await this.humanControl(checkpoint.phase, record.session_id, record.launch_id)
-    const contextCompatibility = this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility)
+    const preliminaryBlockers = [
+      ...toolCompatibility.blockers,
+      ...providerCompatibility.blockers,
+      ...budgetCompatibility.blockers,
+      ...continuityCompatibility.blockers,
+      ...humanControl.blockers,
+    ].slice(0, 24)
+    const preliminaryWarnings = [
+      ...toolCompatibility.warnings,
+      ...providerCompatibility.warnings,
+      ...budgetCompatibility.warnings,
+      ...continuityCompatibility.warnings,
+      ...humanControl.warnings,
+      ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
+    ].slice(0, 32)
+    const packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings)
+    const contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet) : emptyContextCompatibility()
     let blockers = [
       ...toolCompatibility.blockers,
       ...providerCompatibility.blockers,
@@ -79,7 +95,6 @@ export class CommanderInvestigationRecoveryService {
       ...humanControl.warnings,
       ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
     ].slice(0, 32)
-    const packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings)
     if (!packet) blockers = [...blockers, "recovery packet could not fit within the durable preview cap"].slice(0, 24)
     const humanReview = recoveryKind === "uncertain_provider_outcome" || humanControl.action === "human_review_required"
     const compatible = blockers.length === 0 && toolCompatibility.compatible && providerCompatibility.compatible && budgetCompatibility.compatible && contextCompatibility.within_current_context_budget && continuityCompatibility.current_bootstrap_ready
@@ -241,7 +256,27 @@ export class CommanderInvestigationRecoveryService {
       warnings,
       compatibility_hash: "",
     }
-    result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })
+    result.compatibility_hash = stableHash({
+      provider_source: result.provider_source,
+      stored_provider_id: result.stored_provider_id,
+      stored_provider_kind: result.stored_provider_kind,
+      stored_model_id: result.stored_model_id,
+      configured_provider_id: result.configured_provider_id,
+      configured_provider_kind: result.configured_provider_kind,
+      configured_model_id: result.configured_model_id,
+      identity_match: result.identity_match,
+      phase_enabled: result.phase_enabled,
+      configuration_ready: result.configuration_ready,
+      capability_id: result.capability_id,
+      commander_role_supported: result.commander_role_supported,
+      stored_tool_protocol_supported: result.stored_tool_protocol_supported,
+      connector_available: result.connector_available,
+      credentials_ready: result.credentials_ready,
+      supports_streaming: result.supports_streaming,
+      compatible: result.compatible,
+      blockers: result.blockers,
+      warnings: result.warnings,
+    })
     return result
   }
 
@@ -341,7 +376,7 @@ export class CommanderInvestigationRecoveryService {
     return result
   }
 
-  private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility): CommanderInvestigationRecoveryContextCompatibility {
+  private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility, packet: CommanderInvestigationRecoveryPacket): CommanderInvestigationRecoveryContextCompatibility {
     const capability = this.options.modelCapability({ provider_kind: checkpoint.provider_kind, model_id: checkpoint.model_id, role: "commander" })
     const loadedSchemaBytes = tools.tools.reduce((sum, tool) => {
       const descriptor = this.options.descriptors.find((candidate) => candidate.tool_id === tool.tool_id)
@@ -352,18 +387,13 @@ export class CommanderInvestigationRecoveryService {
       return sum + (descriptor?.schema_metadata.estimated_schema_tokens ?? 0)
     }, 0)
     const latestBytes = checkpoint.replay_exchange ? bytes(checkpoint.replay_exchange) : 0
-    const evidenceBytes = bytes(checkpoint.working_set.evidence_cards.map((card) => ({ evidence_id: card.evidence_id, title: card.title, summary_preview: card.summary_preview })))
-    const packetBytes = bytes({
-      identity: checkpoint.investigation_id,
-      loaded_tools: checkpoint.loaded_tools,
-      evidence: checkpoint.working_set.evidence_cards,
-      digests: checkpoint.working_set.recent_execution_digests,
-    })
+    const evidenceBytes = bytes(packet.evidence_pointers)
+    const packetBytes = bytes(packet)
     const storedMaxContextBytes = checkpoint.budget.max_context_bytes ?? 65_536
     const currentMaxContextBytes = Math.min(storedMaxContextBytes, capability.max_context_bytes ?? storedMaxContextBytes)
     const currentMaxContextTokens = capability.max_context_tokens
-    const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes + evidenceBytes
-    const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil((latestBytes + evidenceBytes) / 4)
+    const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes
+    const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil(latestBytes / 4)
     const blockers = [
       ...(estimatedBytes > currentMaxContextBytes ? ["estimated recovery context exceeds current model context byte budget"] : []),
       ...(currentMaxContextTokens !== undefined && estimatedTokens > currentMaxContextTokens ? ["estimated recovery context exceeds current model context token budget"] : []),
@@ -548,7 +578,7 @@ export class CommanderInvestigationRecoveryService {
       recovery_plan_hash: packet ? stableHash({
         record_hash: record?.record_hash,
         checkpoint_hash: checkpoint?.checkpoint_hash,
-        pending_model_request_id: pending?.model_request_id,
+        pending_model_boundary: pending ? recoveryPendingPlanHash(pending) : undefined,
         tool: compat?.toolCompatibility.compatibility_hash,
         provider: compat?.providerCompatibility.compatibility_hash,
         budget: compat?.budgetCompatibility.compatibility_hash,
@@ -647,6 +677,28 @@ function pendingSummaryFrom(pending: NonNullable<CommanderInvestigationRecoveryS
     provider_response_available: false,
     tool_execution_known_to_have_occurred: false,
   }
+}
+
+function recoveryPendingPlanHash(pending: CommanderInvestigationRecoveryPendingModelStep): string {
+  return stableHash({
+    model_request_id: pending.model_request_id,
+    turn_index: pending.turn_index,
+    base_checkpoint_id: pending.base_checkpoint_id,
+    base_checkpoint_sequence: pending.base_checkpoint_sequence,
+    base_checkpoint_hash: pending.base_checkpoint_hash,
+    working_set_hash: pending.working_set_hash,
+    context_hash: pending.context_hash,
+    input_bytes: pending.input_bytes,
+    estimated_input_tokens: pending.estimated_input_tokens,
+    provider_request_count_before: pending.provider_request_count_before,
+    external_api_audit_count_before: pending.external_api_audit_count_before,
+    loaded_tool_ids: pending.loaded_tool_ids,
+    outcome: pending.outcome,
+    human_disposition_required: pending.human_disposition_required,
+    provider_request_may_have_been_sent: pending.provider_request_may_have_been_sent,
+    provider_response_available: pending.provider_response_available,
+    tool_execution_known_to_have_occurred: pending.tool_execution_known_to_have_occurred,
+  })
 }
 
 function finalizeHumanControl(input: Omit<CommanderInvestigationRecoveryHumanControl, "compatibility_hash">): CommanderInvestigationRecoveryHumanControl {

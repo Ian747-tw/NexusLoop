@@ -5534,6 +5534,74 @@ describe("Commander in-memory investigation controller", () => {
     expect(validPreview.recovery_packet?.evidence_pointers[0]).toMatchObject({ evidence_id: "evidence_recovery_pointer", source_id: "evidence_recovery_pointer", summary_preview: "bounded evidence evidence_recovery_pointer" })
     expect(JSON.stringify(validPreview)).not.toContain("raw tool")
 
+    const executionReadyPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      providerReadiness: () => ({
+        readiness_id: "ready-execution",
+        status: "ready" as const,
+        configuration_ready: true,
+        execution_ready: true,
+        provider_source: "configured_connector" as const,
+        provider_id: "fixture_provider",
+        provider_kind: "openai",
+        connector_id: "openai-test",
+        model_id: "fixture-model",
+        enabled_phases: ["proposal_investigation" as const],
+        capability_id: "capability_fixture",
+        default_tool_protocol: "native" as const,
+        runtime_mode: "active",
+        runtime_lifecycle_state: "ready" as const,
+        runtime_started: true,
+        run_lock_required: true,
+        run_lock_held: true,
+        adapter_id: "external_api_connector_ai_sdk_core",
+        supports_streaming: false,
+        would_call_network: true,
+        would_append_external_api_audit: true,
+        checks: [
+          { name: "connector_exists", ok: true, severity: "info" as const, summary: "connector exists" },
+          { name: "credential_values_present", ok: true, severity: "info" as const, summary: "credentials present" },
+        ],
+        blockers: [],
+        warnings: [],
+        generated_at: "2026-01-01T00:00:00.000Z",
+        network_called: false as const,
+        events_appended: false as const,
+        readiness_hash: "readiness_hash_execution",
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(executionReadyPreview.provider_compatibility.execution_ready_now).toBe(true)
+    expect(executionReadyPreview.provider_compatibility.compatibility_hash).toBe(validPreview.provider_compatibility.compatibility_hash)
+    expect(executionReadyPreview.recovery_plan_hash).toBe(validPreview.recovery_plan_hash)
+
+    const compactedContextCap = validPreview.context_compatibility.estimated_recovery_packet_bytes
+      + validPreview.context_compatibility.loaded_schema_bytes
+      + validPreview.context_compatibility.latest_protocol_summary_bytes
+      + 1
+    const compactedContextPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      modelCapability: () => ({
+        capability_id: "capability_compacted_context",
+        provider_kind: "openai",
+        provider_id: "fixture_provider",
+        model_id: "fixture-model",
+        display_name: "Fixture compacted",
+        role_support: ["commander" as const],
+        max_context_bytes: compactedContextCap,
+        max_output_tokens: 1024,
+        supports_tools: true,
+        supports_json_schema: "unknown" as const,
+        supports_mcp: false,
+        supports_long_context: "unknown" as const,
+        supports_streaming: false,
+        supports_local_execution: false,
+        safety_margin_ratio: 0.18,
+        source: "runtime_config" as const,
+        warnings: [],
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(compactedContextPreview.status).toBe("ready_for_approval")
+    expect(compactedContextPreview.context_compatibility.evidence_summary_bytes).toBeGreaterThan(0)
+    expect(compactedContextPreview.context_compatibility.within_current_context_budget).toBe(true)
+
     const driftedDescriptors = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? { ...tool, version: "9.9.9" } : tool)
     const driftedPreview = await new CommanderInvestigationRecoveryService(baseOptions({ descriptors: driftedDescriptors })).preview({ investigation_id: "inv_recovery_compat" })
     expect(driftedPreview).toMatchObject({ status: "blocked", tool_compatibility: { compatible: false } })
@@ -5626,6 +5694,19 @@ describe("Commander in-memory investigation controller", () => {
       currentHumanControl: async () => ({ action: "stop" as const, source_kind: "human_control", projected_state: "stop_requested", summary_preview: "human stop", checked_at: "2026-01-01T00:00:00.000Z", warnings: [] }),
     })).preview({ investigation_id: "inv_recovery_compat" })
     expect(pendingHumanStopPreview).toMatchObject({ status: "blocked", recovery_kind: "uncertain_provider_outcome", human_control: { action: "blocked" } })
+
+    const pendingPlanPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => pendingStopSource })).preview({ investigation_id: "inv_recovery_compat" })
+    const pendingContextDriftPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => ({
+        ...pendingStopSource,
+        pending_model_step: {
+          ...pendingStopSource.pending_model_step,
+          context_hash: "context_hash_pending_stop_changed",
+        },
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(pendingPlanPreview.pending_model_step?.model_request_id).toBe(pendingContextDriftPreview.pending_model_step?.model_request_id)
+    expect(pendingContextDriftPreview.recovery_plan_hash).not.toBe(pendingPlanPreview.recovery_plan_hash)
 
     const repeatPreview = await new CommanderInvestigationRecoveryService(baseOptions({ now: () => new Date("2026-01-02T00:00:00.000Z") })).preview({ investigation_id: "inv_recovery_compat" })
     expect(repeatPreview.recovery_plan_hash).toBe(validPreview.recovery_plan_hash)
