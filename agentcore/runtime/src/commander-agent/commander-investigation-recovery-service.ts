@@ -59,7 +59,8 @@ export class CommanderInvestigationRecoveryService {
     const toolCompatibility = this.toolCompatibility(checkpoint.loaded_tools, checkpoint.phase)
     const providerCompatibility = this.providerCompatibility(source, checkpoint.phase)
     const budgetCompatibility = this.budgetCompatibility(checkpoint)
-    const continuityCompatibility = await this.continuityCompatibility(source, checkpoint, validated.include_current_continuity !== false)
+    const includeCurrentContinuity = validated.include_current_continuity !== false
+    const continuityCompatibility = await this.continuityCompatibility(source, checkpoint, includeCurrentContinuity)
     const humanControl = await this.humanControl(checkpoint.phase, record.session_id, record.launch_id)
     const preliminaryBlockers = [
       ...toolCompatibility.blockers,
@@ -77,7 +78,7 @@ export class CommanderInvestigationRecoveryService {
       ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
     ].slice(0, 32)
     const packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings)
-    const contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet) : emptyContextCompatibility()
+    const contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility) : emptyContextCompatibility()
     let blockers = [
       ...toolCompatibility.blockers,
       ...providerCompatibility.blockers,
@@ -97,7 +98,8 @@ export class CommanderInvestigationRecoveryService {
     ].slice(0, 32)
     if (!packet) blockers = [...blockers, "recovery packet could not fit within the durable preview cap"].slice(0, 24)
     const humanReview = recoveryKind === "uncertain_provider_outcome" || humanControl.action === "human_review_required"
-    const compatible = blockers.length === 0 && toolCompatibility.compatible && providerCompatibility.compatible && budgetCompatibility.compatible && contextCompatibility.within_current_context_budget && continuityCompatibility.current_bootstrap_ready
+    const continuityReady = continuityCompatibility.current_bootstrap_ready || !includeCurrentContinuity && checkpoint.phase !== "mid_mission_supervision"
+    const compatible = blockers.length === 0 && toolCompatibility.compatible && providerCompatibility.compatible && budgetCompatibility.compatible && contextCompatibility.within_current_context_budget && continuityReady
     const status = blockers.length ? "blocked" : humanReview ? "human_review_required" : compatible ? "ready_for_approval" : "blocked"
     const recommendedAction: CommanderInvestigationRecoveryRecommendedAction = recoveryKind === "uncertain_provider_outcome"
       ? blockers.length ? "reconfigure_runtime" : "review_uncertain_provider_outcome"
@@ -376,7 +378,7 @@ export class CommanderInvestigationRecoveryService {
     return result
   }
 
-  private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility, packet: CommanderInvestigationRecoveryPacket): CommanderInvestigationRecoveryContextCompatibility {
+  private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility, packet: CommanderInvestigationRecoveryPacket, continuity: CommanderInvestigationRecoveryContinuityCompatibility): CommanderInvestigationRecoveryContextCompatibility {
     const capability = this.options.modelCapability({ provider_kind: checkpoint.provider_kind, model_id: checkpoint.model_id, role: "commander" })
     const loadedSchemaBytes = tools.tools.reduce((sum, tool) => {
       const descriptor = this.options.descriptors.find((candidate) => candidate.tool_id === tool.tool_id)
@@ -389,11 +391,13 @@ export class CommanderInvestigationRecoveryService {
     const latestBytes = checkpoint.replay_exchange ? bytes(checkpoint.replay_exchange) : 0
     const evidenceBytes = bytes(packet.evidence_pointers)
     const packetBytes = bytes(packet)
+    const bootstrapBytes = continuity.current_bootstrap_bytes
+    const bootstrapTokens = continuity.current_bootstrap_tokens
     const storedMaxContextBytes = checkpoint.budget.max_context_bytes ?? 65_536
     const currentMaxContextBytes = Math.min(storedMaxContextBytes, capability.max_context_bytes ?? storedMaxContextBytes)
     const currentMaxContextTokens = capability.max_context_tokens
-    const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes
-    const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil(latestBytes / 4)
+    const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes + bootstrapBytes
+    const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil(latestBytes / 4) + bootstrapTokens
     const blockers = [
       ...(estimatedBytes > currentMaxContextBytes ? ["estimated recovery context exceeds current model context byte budget"] : []),
       ...(currentMaxContextTokens !== undefined && estimatedTokens > currentMaxContextTokens ? ["estimated recovery context exceeds current model context token budget"] : []),
@@ -407,6 +411,8 @@ export class CommanderInvestigationRecoveryService {
       loaded_schema_tokens: loadedSchemaTokens,
       latest_protocol_summary_bytes: latestBytes,
       evidence_summary_bytes: evidenceBytes,
+      current_bootstrap_bytes: bootstrapBytes,
+      current_bootstrap_tokens: bootstrapTokens,
       within_current_context_budget: blockers.length === 0 && budget.compatible,
       exact_replay_supported: false as const,
       fresh_context_required: true as const,
@@ -427,7 +433,7 @@ export class CommanderInvestigationRecoveryService {
       if (checkpoint.phase === "mid_mission_supervision") blockers.push("mid-mission recovery requires current continuity assessment")
     } else if (source.normalized_input) {
       try {
-        current = await this.options.currentBootstrap(source.normalized_input)
+        current = await this.options.currentBootstrap({ ...source.normalized_input, include_continuity: true })
         blockers.push(...current.blockers.slice(0, 8))
         warnings.push(...current.warnings.slice(0, 8))
       } catch (error) {
@@ -448,6 +454,8 @@ export class CommanderInvestigationRecoveryService {
       current_readiness: current?.readiness,
       current_open_loop_count: current?.open_loops.length ?? 0,
       current_blocker_count: current?.blockers.length ?? blockers.length,
+      current_bootstrap_bytes: current?.estimated_bytes ?? 0,
+      current_bootstrap_tokens: current?.estimated_tokens ?? 0,
       human_control_summary: current?.human_control_summary,
       blockers: blockers.slice(0, 12),
       warnings: warnings.slice(0, 12),
@@ -582,6 +590,7 @@ export class CommanderInvestigationRecoveryService {
         tool: compat?.toolCompatibility.compatibility_hash,
         provider: compat?.providerCompatibility.compatibility_hash,
         budget: compat?.budgetCompatibility.compatibility_hash,
+        context: compat?.contextCompatibility.compatibility_hash,
         continuity: compat?.continuityCompatibility.compatibility_hash,
         human: compat?.humanControl.compatibility_hash,
         packet: packet.packet_hash,
@@ -754,13 +763,13 @@ function emptyBudgetCompatibility(): CommanderInvestigationRecoveryBudgetCompati
 }
 
 function emptyContextCompatibility(): CommanderInvestigationRecoveryContextCompatibility {
-  const result = { stored_checkpoint_bytes: 0, estimated_recovery_packet_bytes: 0, estimated_recovery_packet_tokens: 0, loaded_schema_bytes: 0, loaded_schema_tokens: 0, latest_protocol_summary_bytes: 0, evidence_summary_bytes: 0, within_current_context_budget: false, exact_replay_supported: false as const, fresh_context_required: true as const, blockers: [], warnings: [], compatibility_hash: "" }
+  const result = { stored_checkpoint_bytes: 0, estimated_recovery_packet_bytes: 0, estimated_recovery_packet_tokens: 0, loaded_schema_bytes: 0, loaded_schema_tokens: 0, latest_protocol_summary_bytes: 0, evidence_summary_bytes: 0, current_bootstrap_bytes: 0, current_bootstrap_tokens: 0, within_current_context_budget: false, exact_replay_supported: false as const, fresh_context_required: true as const, blockers: [], warnings: [], compatibility_hash: "" }
   result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })
   return result
 }
 
 function emptyContinuityCompatibility(): CommanderInvestigationRecoveryContinuityCompatibility {
-  const result = { current_bootstrap_ready: false, continuity_drift_detected: false, current_open_loop_count: 0, current_blocker_count: 0, blockers: [], warnings: [], compatibility_hash: "" }
+  const result = { current_bootstrap_ready: false, continuity_drift_detected: false, current_open_loop_count: 0, current_blocker_count: 0, current_bootstrap_bytes: 0, current_bootstrap_tokens: 0, blockers: [], warnings: [], compatibility_hash: "" }
   result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })
   return result
 }

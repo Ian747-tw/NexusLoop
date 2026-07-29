@@ -194,6 +194,8 @@ export type CommanderInvestigationRecoveryContextCompatibility = {
   loaded_schema_tokens: number
   latest_protocol_summary_bytes: number
   evidence_summary_bytes: number
+  current_bootstrap_bytes: number
+  current_bootstrap_tokens: number
   within_current_context_budget: boolean
   exact_replay_supported: false
   fresh_context_required: true
@@ -212,6 +214,8 @@ export type CommanderInvestigationRecoveryContinuityCompatibility = {
   current_readiness?: string
   current_open_loop_count: number
   current_blocker_count: number
+  current_bootstrap_bytes: number
+  current_bootstrap_tokens: number
   human_control_summary?: string
   blockers: string[]
   warnings: string[]
