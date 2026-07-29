@@ -626,6 +626,7 @@ export class CommanderInvestigationJournalService {
 function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigationLoadedToolRef[] {
   return tools.map((tool) => ({
     tool_id: tool.tool_id,
+    namespace: tool.namespace,
     descriptor_version: tool.version,
     authority_id: tool.authority_id ?? "",
     input_schema_hash: tool.schema_metadata.input_schema_hash,
@@ -633,6 +634,17 @@ function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigatio
     load_policy: tool.load_policy,
     trust_class: tool.trust_class,
     instruction_semantics: "none" as const,
+    risk: tool.risk,
+    side_effect_class: tool.side_effect_class,
+    execution_backend: tool.execution_backend,
+    process_policy: tool.process_policy,
+    creates_external_process: tool.creates_external_process,
+    calls_provider: tool.calls_provider,
+    mutates_events: tool.mutates_events,
+    requires_network: tool.requires_network,
+    requires_credentials: tool.requires_credentials,
+    requires_approval: tool.requires_approval,
+    requires_run_lock: tool.requires_run_lock,
   })).sort((a, b) => a.tool_id.localeCompare(b.tool_id))
 }
 

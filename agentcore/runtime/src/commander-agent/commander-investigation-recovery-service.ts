@@ -128,6 +128,19 @@ export class CommanderInvestigationRecoveryService {
     const authorityMatch = Boolean(current && (current.authority_id ?? "") === stored.authority_id)
     const schemaMatch = Boolean(current && current.schema_metadata.input_schema_hash === stored.input_schema_hash && current.schema_metadata.output_schema_hash === stored.output_schema_hash)
     const descriptorMatch = Boolean(current && current.version === stored.descriptor_version && current.load_policy === stored.load_policy && current.trust_class === stored.trust_class && current.instruction_semantics === stored.instruction_semantics)
+    const capabilityEnvelopeMatch = Boolean(current &&
+      stored.namespace === current.namespace &&
+      stored.risk === current.risk &&
+      stored.side_effect_class === current.side_effect_class &&
+      stored.execution_backend === current.execution_backend &&
+      stored.process_policy === current.process_policy &&
+      stored.creates_external_process === current.creates_external_process &&
+      stored.calls_provider === current.calls_provider &&
+      stored.mutates_events === current.mutates_events &&
+      stored.requires_network === current.requires_network &&
+      stored.requires_credentials === current.requires_credentials &&
+      stored.requires_approval === current.requires_approval &&
+      stored.requires_run_lock === current.requires_run_lock)
     const safeReadAuthority = Boolean(current && current.risk === "safe_read" && (current.side_effect_class === "none" || current.side_effect_class === "internal_read") && !current.mutates_events && !current.calls_provider && !current.requires_network && !current.requires_credentials && !current.requires_approval && !current.requires_run_lock && (!current.creates_external_process || fixedGitException && current.execution_backend === "restricted_git_read" && current.process_policy === "fixed_git_read_only"))
     const blockers: string[] = []
     if (!current) blockers.push(`stored loaded tool ${stored.tool_id} no longer has a descriptor`)
@@ -137,9 +150,12 @@ export class CommanderInvestigationRecoveryService {
     if (current && !authorityMatch) blockers.push(`stored loaded tool ${stored.tool_id} authority_id changed`)
     if (current && !schemaMatch) blockers.push(`stored loaded tool ${stored.tool_id} schema hash changed`)
     if (current && !descriptorMatch) blockers.push(`stored loaded tool ${stored.tool_id} descriptor metadata changed`)
+    if (current && !capabilityEnvelopeMatch) blockers.push(`stored loaded tool ${stored.tool_id} capability envelope changed or is incomplete`)
     if (current && !safeReadAuthority) blockers.push(`stored loaded tool ${stored.tool_id} no longer satisfies safe-read recovery authority`)
     const result = {
       tool_id: stored.tool_id,
+      stored_namespace: stored.namespace,
+      current_namespace: current?.namespace,
       stored_descriptor_version: stored.descriptor_version,
       current_descriptor_version: current?.version,
       stored_authority_id: stored.authority_id,
@@ -152,6 +168,14 @@ export class CommanderInvestigationRecoveryService {
       current_load_policy: current?.load_policy,
       stored_trust_class: stored.trust_class,
       current_trust_class: current?.trust_class,
+      stored_risk: stored.risk,
+      current_risk: current?.risk,
+      stored_side_effect_class: stored.side_effect_class,
+      current_side_effect_class: current?.side_effect_class,
+      stored_execution_backend: stored.execution_backend,
+      current_execution_backend: current?.execution_backend,
+      stored_process_policy: stored.process_policy,
+      current_process_policy: current?.process_policy,
       binding_present: bindingPresent,
       implemented_read_surface: implemented,
       allowed_in_phase: allowedInPhase,
@@ -159,6 +183,7 @@ export class CommanderInvestigationRecoveryService {
       safe_read_authority: safeReadAuthority,
       schema_match: schemaMatch,
       descriptor_match: descriptorMatch,
+      capability_envelope_match: capabilityEnvelopeMatch,
       compatible: blockers.length === 0,
       blockers: blockers.slice(0, 8),
       warnings: [],
@@ -232,13 +257,17 @@ export class CommanderInvestigationRecoveryService {
       elapsed_ms: checkpoint.elapsed_active_ms,
       evidence_cards: checkpoint.working_set.evidence_cards.length + checkpoint.working_set.omitted_evidence_count,
       turn_summaries: checkpoint.turn_summaries.length + checkpoint.working_set.omitted_turn_count,
+      loaded_schemas: checkpoint.loaded_tools.length,
+      no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns,
     }
     const currentLimits = {
       max_model_turns: Math.min(stored.max_model_turns, Math.max(4, Math.ceil(profile.max_tool_calls_future / 2) + profile.max_tool_search_calls_future + 2)),
       max_tool_calls: Math.min(stored.max_tool_calls, profile.max_tool_calls_future),
       max_tool_search_calls: Math.min(stored.max_tool_search_calls, profile.max_tool_search_calls_future),
+      max_loaded_schemas: Math.min(stored.max_loaded_schemas, profile.max_loaded_schemas),
       max_cumulative_tool_result_bytes: Math.min(stored.max_cumulative_tool_result_bytes, profile.max_cumulative_result_bytes_future),
       max_wall_time_ms: Math.min(stored.max_wall_time_ms, profile.max_wall_time_ms_future),
+      max_consecutive_no_progress_turns: stored.max_consecutive_no_progress_turns,
       max_evidence_cards: stored.max_evidence_cards,
       max_turn_summaries: stored.max_turn_summaries,
     }
@@ -250,18 +279,23 @@ export class CommanderInvestigationRecoveryService {
       wall_time_ms: stored.max_wall_time_ms - consumed.elapsed_ms,
       evidence_cards: stored.max_evidence_cards - consumed.evidence_cards,
       turn_summaries: stored.max_turn_summaries - consumed.turn_summaries,
+      loaded_schemas: stored.max_loaded_schemas - consumed.loaded_schemas,
+      no_progress_turns: stored.max_consecutive_no_progress_turns - consumed.no_progress_turns,
     }
     const effective = {
       model_turns: Math.min(storedRemaining.model_turns, currentLimits.max_model_turns - consumed.model_turns),
       tool_calls: Math.min(storedRemaining.tool_calls, currentLimits.max_tool_calls - consumed.tool_calls),
       tool_search_calls: Math.min(storedRemaining.tool_search_calls, currentLimits.max_tool_search_calls - consumed.tool_search_calls),
+      loaded_schemas: Math.min(storedRemaining.loaded_schemas, currentLimits.max_loaded_schemas - consumed.loaded_schemas),
       result_bytes: Math.min(storedRemaining.result_bytes, currentLimits.max_cumulative_tool_result_bytes - consumed.result_bytes),
       wall_time_ms: Math.min(storedRemaining.wall_time_ms, currentLimits.max_wall_time_ms - consumed.elapsed_ms),
       evidence_cards: storedRemaining.evidence_cards,
       turn_summaries: storedRemaining.turn_summaries,
+      no_progress_turns: storedRemaining.no_progress_turns,
     }
-    const optionalDimensions = new Set(["evidence_cards", "turn_summaries"])
+    const optionalDimensions = new Set(["evidence_cards", "turn_summaries", "loaded_schemas"])
     const exhausted = Object.entries(effective).filter(([key, value]) => value <= 0 && !optionalDimensions.has(key)).map(([key]) => key)
+    if (effective.loaded_schemas < 0) exhausted.push("loaded_schemas")
     const stricter = Object.entries(currentLimits).filter(([key, value]) => {
       const storedValue = (stored as unknown as Record<string, number>)[key]
       return typeof storedValue === "number" && typeof value === "number" && value < storedValue
@@ -276,8 +310,10 @@ export class CommanderInvestigationRecoveryService {
         max_model_turns: stored.max_model_turns,
         max_tool_calls: stored.max_tool_calls,
         max_tool_search_calls: stored.max_tool_search_calls,
+        max_loaded_schemas: stored.max_loaded_schemas,
         max_cumulative_tool_result_bytes: stored.max_cumulative_tool_result_bytes,
         max_wall_time_ms: stored.max_wall_time_ms,
+        max_consecutive_no_progress_turns: stored.max_consecutive_no_progress_turns,
         max_evidence_cards: stored.max_evidence_cards,
         max_turn_summaries: stored.max_turn_summaries,
       },
@@ -306,6 +342,7 @@ export class CommanderInvestigationRecoveryService {
   }
 
   private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility): CommanderInvestigationRecoveryContextCompatibility {
+    const capability = this.options.modelCapability({ provider_kind: checkpoint.provider_kind, model_id: checkpoint.model_id, role: "commander" })
     const loadedSchemaBytes = tools.tools.reduce((sum, tool) => {
       const descriptor = this.options.descriptors.find((candidate) => candidate.tool_id === tool.tool_id)
       return sum + (descriptor?.schema_metadata.input_schema_bytes ?? 0) + (descriptor?.schema_metadata.output_schema_bytes ?? 0)
@@ -322,10 +359,17 @@ export class CommanderInvestigationRecoveryService {
       evidence: checkpoint.working_set.evidence_cards,
       digests: checkpoint.working_set.recent_execution_digests,
     })
-    const maxContextBytes = checkpoint.budget.max_context_bytes ?? 65_536
-    const blockers = packetBytes + loadedSchemaBytes + latestBytes > maxContextBytes ? ["estimated recovery context exceeds current context byte budget"] : []
+    const storedMaxContextBytes = checkpoint.budget.max_context_bytes ?? 65_536
+    const currentMaxContextBytes = Math.min(storedMaxContextBytes, capability.max_context_bytes ?? storedMaxContextBytes)
+    const currentMaxContextTokens = capability.max_context_tokens
+    const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes + evidenceBytes
+    const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil((latestBytes + evidenceBytes) / 4)
+    const blockers = [
+      ...(estimatedBytes > currentMaxContextBytes ? ["estimated recovery context exceeds current model context byte budget"] : []),
+      ...(currentMaxContextTokens !== undefined && estimatedTokens > currentMaxContextTokens ? ["estimated recovery context exceeds current model context token budget"] : []),
+    ]
     const result = {
-      current_context_budget_id: checkpoint.budget.source_context_budget_id,
+      current_context_budget_id: capability.capability_id,
       stored_checkpoint_bytes: bytes(checkpoint),
       estimated_recovery_packet_bytes: packetBytes,
       estimated_recovery_packet_tokens: Math.ceil(packetBytes / 4),

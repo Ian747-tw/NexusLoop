@@ -88,6 +88,8 @@ export type CommanderInvestigationRecoveryPendingModelStep = {
 
 export type CommanderInvestigationRecoveryToolCompatibility = {
   tool_id: string
+  stored_namespace?: string
+  current_namespace?: string
   stored_descriptor_version: string
   current_descriptor_version?: string
   stored_authority_id: string
@@ -100,6 +102,14 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   current_load_policy?: string
   stored_trust_class: string
   current_trust_class?: string
+  stored_risk?: string
+  current_risk?: string
+  stored_side_effect_class?: string
+  current_side_effect_class?: string
+  stored_execution_backend?: string
+  current_execution_backend?: string
+  stored_process_policy?: string
+  current_process_policy?: string
   binding_present: boolean
   implemented_read_surface: boolean
   allowed_in_phase: boolean
@@ -107,6 +117,7 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   safe_read_authority: boolean
   schema_match: boolean
   descriptor_match: boolean
+  capability_envelope_match: boolean
   compatible: boolean
   blockers: string[]
   warnings: string[]
