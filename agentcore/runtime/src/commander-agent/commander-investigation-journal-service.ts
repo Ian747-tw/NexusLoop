@@ -17,6 +17,7 @@ import type {
   CommanderInvestigationTurnSummary,
   CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
+import { COMMANDER_INVESTIGATION_EVENT_KINDS } from "./commander-investigation-journal-types"
 import type {
   CommanderDurableModelTextFingerprint,
   CommanderDurableAssistantMessage,
@@ -39,6 +40,7 @@ const MODEL_STEP_CAP = 8_000
 const TERMINAL_CAP = 48_000
 const STARTED_HARD_CAP = 112_000
 const MIN_TEST_CAP = 16_000
+const COMMANDER_INVESTIGATION_EVENT_KIND_SET = new Set<string>(COMMANDER_INVESTIGATION_EVENT_KINDS)
 const PERSISTED_INPUT_INTEGER_LIMITS = {
   max_model_turns: 24,
   max_tool_calls: 32,
@@ -320,19 +322,23 @@ export class CommanderInvestigationJournalService {
     const journal = await this.readJournalEventsWithDiagnostics()
     const projection = projectCommanderInvestigationJournal(journal.events)
     const source = projection.recovery_sources.find((candidate) => candidate.investigation_id === investigationId)
-    if (!source || !journal.unassignable_malformed_commander_tail) return source
-    return recoverySourceBlockedByUnassignableTail(source)
+    if (!source) return source
+    if (journal.unassignable_dropped_commander_event) return recoverySourceBlockedByDroppedCommanderEvent(source, "unassignable Commander journal event prevents authoritative recovery")
+    const droppedReasons = journal.dropped_commander_events_by_investigation_id.get(investigationId)
+    if (droppedReasons?.length) return recoverySourceBlockedByDroppedCommanderEvent(source, droppedReasons[0] ?? "dropped Commander journal event prevents authoritative recovery")
+    return source
   }
 
   private async readJournalEvents(): Promise<JsonlEvent[]> {
     return (await this.readJournalEventsWithDiagnostics()).events
   }
 
-  private async readJournalEventsWithDiagnostics(): Promise<{ events: JsonlEvent[]; unassignable_malformed_commander_tail: boolean }> {
+  private async readJournalEventsWithDiagnostics(): Promise<{ events: JsonlEvent[]; unassignable_dropped_commander_event: boolean; dropped_commander_events_by_investigation_id: Map<string, string[]> }> {
     try {
       const text = await readFile(this.options.eventStore.eventsPath, "utf8")
       const events: JsonlEvent[] = []
       let unassignable = false
+      const dropped = new Map<string, string[]>()
       const lines = text.split(/\r?\n/)
       const lastNonemptyIndex = (() => {
         for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -343,16 +349,27 @@ export class CommanderInvestigationJournalService {
       lines.forEach((line, index) => {
         if (!line) return
         try {
-          events.push(JSON.parse(line) as JsonlEvent)
+          const event = JSON.parse(line) as JsonlEvent
+          const droppedCommander = droppedCommanderEventDiagnostic(event)
+          if (droppedCommander) {
+            if (droppedCommander.investigation_id) {
+              const current = dropped.get(droppedCommander.investigation_id) ?? []
+              current.push(droppedCommander.reason)
+              dropped.set(droppedCommander.investigation_id, current.slice(-12))
+            } else {
+              unassignable = true
+            }
+          }
+          events.push(event)
         } catch {
           const recovered = recoverInvestigationIdFromMalformedLine(line, index, index === lastNonemptyIndex)
           if (recovered.investigation_id) events.push(malformedJournalLineEvent(recovered.investigation_id, index))
           if (recovered.unassignable_commander_tail) unassignable = true
         }
       })
-      return { events, unassignable_malformed_commander_tail: unassignable }
+      return { events, unassignable_dropped_commander_event: unassignable, dropped_commander_events_by_investigation_id: dropped }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], unassignable_malformed_commander_tail: false }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], unassignable_dropped_commander_event: false, dropped_commander_events_by_investigation_id: new Map() }
       throw error
     }
   }
@@ -800,6 +817,40 @@ function durableConclusion(result: CommanderInvestigationResult) {
   }
 }
 
+function droppedCommanderEventDiagnostic(event: JsonlEvent): { investigation_id?: string; reason: string } | undefined {
+  const kind = typeof event.kind === "string" ? event.kind : ""
+  if (!kind.startsWith("runtime_commander_investigation_")) return undefined
+  const topLevelInvestigationId = typeof event.investigation_id === "string" && event.investigation_id ? bound(event.investigation_id, 200) : undefined
+  const nestedInvestigationId = nestedCommanderInvestigationId(event)
+  const investigationId = topLevelInvestigationId ?? nestedInvestigationId
+  if (!COMMANDER_INVESTIGATION_EVENT_KIND_SET.has(kind)) {
+    return {
+      investigation_id: investigationId,
+      reason: "unsupported Commander journal event kind prevents authoritative recovery",
+    }
+  }
+  if (!topLevelInvestigationId) {
+    return {
+      investigation_id: nestedInvestigationId,
+      reason: "Commander journal event without top-level investigation_id prevents authoritative recovery",
+    }
+  }
+  return undefined
+}
+
+function nestedCommanderInvestigationId(event: JsonlEvent): string | undefined {
+  const candidate = (event as {
+    normalized_input?: { investigation_id?: unknown }
+    initial_checkpoint?: { investigation_id?: unknown }
+    checkpoint?: { investigation_id?: unknown }
+    terminal?: { investigation_id?: unknown }
+  }).normalized_input?.investigation_id
+    ?? (event as { initial_checkpoint?: { investigation_id?: unknown } }).initial_checkpoint?.investigation_id
+    ?? (event as { checkpoint?: { investigation_id?: unknown } }).checkpoint?.investigation_id
+    ?? (event as { terminal?: { investigation_id?: unknown } }).terminal?.investigation_id
+  return typeof candidate === "string" && candidate ? bound(candidate, 200) : undefined
+}
+
 function recoverInvestigationIdFromMalformedLine(line: string, index: number, isTail: boolean): { investigation_id?: string; unassignable_commander_tail: boolean } {
   const hasCommanderInvestigationKindPrefix = /"kind"\s*:\s*"runtime_commander_investigation_/.test(line)
   const hasCommanderRuntimePrefix = /"kind"\s*:\s*"runtime_commander/.test(line)
@@ -828,8 +879,8 @@ function malformedJournalLineEvent(investigationId: string, lineIndex: number): 
   return event as JsonlEvent
 }
 
-function recoverySourceBlockedByUnassignableTail(source: CommanderInvestigationRecoverySource): CommanderInvestigationRecoverySource {
-  const integrityError = "unassignable malformed Commander journal tail prevents authoritative recovery"
+function recoverySourceBlockedByDroppedCommanderEvent(source: CommanderInvestigationRecoverySource, reason: string): CommanderInvestigationRecoverySource {
+  const integrityError = bound(reason, 240)
   if (!source.record) {
     const blocked = {
       ...source,
@@ -845,7 +896,7 @@ function recoverySourceBlockedByUnassignableTail(source: CommanderInvestigationR
       investigation_id: blocked.investigation_id,
       projection_status: blocked.projection_status,
       source_event_count: blocked.source_event_count,
-      unassignable_malformed_commander_tail: true,
+      dropped_commander_journal_event: true,
     })
     return blocked
   }
@@ -856,7 +907,7 @@ function recoverySourceBlockedByUnassignableTail(source: CommanderInvestigationR
     uncertain_provider_outcome: false,
     recovery_state: "no_checkpoint_resume_not_implemented" as const,
     integrity_errors: [...source.record.integrity_errors, integrityError].slice(0, 24),
-    warnings: [...source.record.warnings, "Commander recovery preview blocked by an unassignable malformed journal tail"].slice(0, 12),
+    warnings: [...source.record.warnings, "Commander recovery preview blocked by a dropped Commander journal event"].slice(0, 12),
     record_hash: "",
   }
   record.record_hash = stableHash({ ...record, record_hash: "" })
@@ -876,7 +927,7 @@ function recoverySourceBlockedByUnassignableTail(source: CommanderInvestigationR
     projection_status: blocked.projection_status,
     record_hash: blocked.record.record_hash,
     source_event_count: blocked.source_event_count,
-    unassignable_malformed_commander_tail: true,
+    dropped_commander_journal_event: true,
   })
   return blocked
 }

@@ -5445,10 +5445,57 @@ describe("Commander in-memory investigation controller", () => {
     const search = await server.searchCommanderOperationalMemory({ query: "uniquedriftxyz", source_kinds: ["commander_investigation"] })
     expect(search.result?.candidates).toEqual([])
 
+    const futureKindBase = await startOnly("inv_recovery_future_kind", 5)
+    const futureKindEvent = {
+      kind: "runtime_commander_investigation_future_kind_recorded",
+      schema_version: 1,
+      investigation_id: "inv_recovery_future_kind",
+      journal_sequence: 1,
+      requested_by: "test",
+      occurred_at: "2026-01-01T00:04:00.000Z",
+      recovery_plan_hash: "future_plan_hash",
+      base_checkpoint_id: futureKindBase.checkpoint.checkpoint_id,
+      event_payload_hash: "",
+    }
+    futureKindEvent.event_payload_hash = journalPayloadHash(futureKindEvent)
+    await server.eventStore.append(futureKindEvent as Parameters<EventStore["append"]>[0])
+    const futureKindSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_future_kind")
+    expect(futureKindSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(futureKindSource?.record?.integrity_errors.join("\n")).toContain("unsupported Commander journal event kind")
+    const futureKindPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_future_kind", include_current_continuity: false })
+    expect(futureKindPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
+
+    const missingTopLevelBase = await startOnly("inv_recovery_missing_top_level", 6)
+    const missingTopLevelCheckpoint = finalizeTestCheckpoint({
+      ...missingTopLevelBase.checkpoint,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: missingTopLevelBase.checkpoint.checkpoint_id,
+      previous_checkpoint_hash: missingTopLevelBase.checkpoint.checkpoint_hash,
+    })
+    const missingTopLevelEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      journal_sequence: 1,
+      requested_by: "test",
+      occurred_at: "2026-01-01T00:05:00.000Z",
+      checkpoint: missingTopLevelCheckpoint,
+      event_payload_hash: "",
+    }
+    missingTopLevelEvent.event_payload_hash = journalPayloadHash(missingTopLevelEvent)
+    await server.eventStore.append(missingTopLevelEvent as Parameters<EventStore["append"]>[0])
+    const missingTopLevelSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_missing_top_level")
+    expect(missingTopLevelSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(missingTopLevelSource?.record?.integrity_errors.join("\n")).toContain("without top-level investigation_id")
+    const missingTopLevelPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_missing_top_level", include_current_continuity: false })
+    expect(missingTopLevelPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
+
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv', { flag: "a" })
     const blockedByTailSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_checkpoint")
     expect(blockedByTailSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
-    expect(blockedByTailSource?.record?.integrity_errors.join("\n")).toContain("unassignable malformed Commander journal tail")
+    expect(blockedByTailSource?.record?.integrity_errors.join("\n")).toContain("unassignable Commander journal event")
     const blockedByTailPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_checkpoint", include_current_continuity: false })
     expect(blockedByTailPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record" })
     expect(blockedByTailPreview.checkpoint).toBeUndefined()
