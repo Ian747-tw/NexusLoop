@@ -74,9 +74,19 @@ and safe evidence-based conclusion cards. Recovery preview always reports:
 
 Current continuity is compiled read-only from the persisted normalized input and
 compared with the original bootstrap reference. Drift warns; current bootstrap
-blockers block. Current stop, pause, correction, override, and escalation
-controls take precedence. An OpenCode resume request is not Commander recovery
-approval.
+blockers block. The bootstrap compiler reports a structured continuity
+assessment status: omitted continuity is allowed only when the preview caller
+explicitly opts out and the phase is not mid-mission; degraded continuity means
+the requested assessment did not complete and blocks recovery readiness. Current
+stop, pause, correction, override, and escalation controls take precedence. A
+human hold never recommends resume approval, and an OpenCode resume request is
+not Commander recovery approval.
+
+Recommended actions distinguish journal integrity from current runtime policy.
+`inspect_corrupt_record` is reserved for corrupt or unsupported projections.
+Provider misconfiguration, injected adapters, schema drift, context overflow,
+and continuity degradation recommend runtime reconfiguration. Exhausted original
+budgets recommend a new investigation.
 
 ### Recovery Packet And Plan Hash
 

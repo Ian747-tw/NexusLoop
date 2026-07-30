@@ -100,6 +100,7 @@ export type CommanderInvestigationBootstrap = {
   objective_preview: string
   authority_kernel: string
   continuity_kind: "proposal" | "mid_mission" | "summary" | "omitted"
+  continuity_assessment_status?: "ready" | "omitted" | "degraded"
   continuity_packet_id?: string
   continuity_packet_hash?: string
   readiness: string

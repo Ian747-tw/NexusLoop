@@ -25,6 +25,7 @@ import {
   COMMANDER_BOUND_TOOL_IDS,
   CONNECTOR_MANAGED_API_KEY_SENTINEL,
   ConnectorBackedCommanderModelStepAdapter,
+  CommanderInvestigationBootstrapService,
   CommanderInvestigationContextService,
   CommanderInvestigationController,
   CommanderInvestigationJournalService,
@@ -5550,6 +5551,52 @@ describe("Commander in-memory investigation controller", () => {
     expect(forcedContinuityPreview.status).toBe("ready_for_approval")
     expect(capturedBootstrapInput).toMatchObject({ include_continuity: true })
 
+    const throwingContinuityBootstrap = new CommanderInvestigationBootstrapService({
+      continuityService: {
+        proposal: async () => { throw new Error("proposal continuity unavailable") },
+        midMission: async () => { throw new Error("mid mission continuity unavailable") },
+        summary: async () => { throw new Error("summary continuity unavailable") },
+        openLoops: async () => { throw new Error("open loops continuity unavailable") },
+      } as any,
+    })
+    for (const [phase, linkage] of [
+      ["proposal_investigation", {}],
+      ["mid_mission_supervision", { session_id: "session_recovery_compat" }],
+      ["result_review", {}],
+    ] as const) {
+      const degradedSource = {
+        ...source!,
+        record: { ...source!.record!, phase, session_id: linkage.session_id },
+        normalized_input: { ...source!.normalized_input!, phase, session_id: linkage.session_id },
+        latest_checkpoint: { ...source!.latest_checkpoint!, phase },
+      }
+      const degradedPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+        recoverySource: async () => degradedSource,
+        currentBootstrap: async (bootstrapInput) => throwingContinuityBootstrap.compile(bootstrapInput),
+      })).preview({ investigation_id: "inv_recovery_compat" })
+      expect(degradedPreview).toMatchObject({
+        status: "blocked",
+        recommended_action: "reconfigure_runtime",
+        continuity_compatibility: { current_bootstrap_ready: false },
+        provider_called: false,
+        tool_executed: false,
+        events_appended: false,
+        files_written: false,
+      })
+      expect(degradedPreview.continuity_compatibility.blockers.join("\n")).toContain("current continuity assessment is degraded")
+    }
+
+    const warningContinuityPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      currentBootstrap: async () => ({
+        ...minimalTestBootstrap(),
+        bootstrap_id: source!.latest_checkpoint!.bootstrap_ref.bootstrap_id,
+        bootstrap_hash: source!.latest_checkpoint!.bootstrap_ref.bootstrap_hash,
+        warnings: ["ordinary nonfatal continuity warning"],
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(warningContinuityPreview).toMatchObject({ status: "ready_for_approval", continuity_compatibility: { current_bootstrap_ready: true } })
+    expect(warningContinuityPreview.warnings.join("\n")).toContain("ordinary nonfatal continuity warning")
+
     const executionReadyPreview = await new CommanderInvestigationRecoveryService(baseOptions({
       providerReadiness: () => ({
         readiness_id: "ready-execution",
@@ -5650,6 +5697,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(driftedPreview).toMatchObject({ status: "blocked", tool_compatibility: { compatible: false } })
     expect(driftedPreview.tool_compatibility.blockers.join("\n")).toContain("descriptor metadata changed")
     expect(driftedPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
+    expect(driftedPreview.recommended_action).toBe("reconfigure_runtime")
 
     const envelopeDriftDescriptors = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? { ...tool, namespace: "runtime_read" as const } : tool)
     const envelopeDriftPreview = await new CommanderInvestigationRecoveryService(baseOptions({ descriptors: envelopeDriftDescriptors })).preview({ investigation_id: "inv_recovery_compat" })
@@ -5661,11 +5709,13 @@ describe("Commander in-memory investigation controller", () => {
     const budgetPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => exhaustedSource })).preview({ investigation_id: "inv_recovery_compat" })
     expect(budgetPreview).toMatchObject({ status: "blocked" })
     expect(budgetPreview.budget_compatibility.exhausted_dimensions).toContain("model_turns")
+    expect(budgetPreview.recommended_action).toBe("start_new_investigation")
 
     const noProgressExhausted = { ...source!.latest_checkpoint!, working_set: { ...source!.latest_checkpoint!.working_set, consecutive_no_progress_turns: source!.latest_checkpoint!.budget.max_consecutive_no_progress_turns } }
     const noProgressPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => ({ ...source!, latest_checkpoint: noProgressExhausted }) })).preview({ investigation_id: "inv_recovery_compat" })
     expect(noProgressPreview).toMatchObject({ status: "blocked" })
     expect(noProgressPreview.budget_compatibility.exhausted_dimensions).toContain("no_progress_turns")
+    expect(noProgressPreview.recommended_action).toBe("start_new_investigation")
 
     const loadedSchemaCapPreview = await new CommanderInvestigationRecoveryService(baseOptions({
       currentProfile: (profileInput: { phase?: string }) => ({ ...new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }).profile(profileInput), max_loaded_schemas: 0 }),
@@ -5703,7 +5753,47 @@ describe("Commander in-memory investigation controller", () => {
     const humanStopPreview = await new CommanderInvestigationRecoveryService(baseOptions({
       currentHumanControl: async () => ({ action: "stop" as const, source_kind: "human_control", projected_state: "stop_requested", summary_preview: "human stop", checked_at: "2026-01-01T00:00:00.000Z", warnings: [] }),
     })).preview({ investigation_id: "inv_recovery_compat" })
-    expect(humanStopPreview).toMatchObject({ status: "blocked", human_control: { action: "blocked" } })
+    expect(humanStopPreview).toMatchObject({ status: "blocked", recommended_action: "none", human_control: { action: "blocked" } })
+
+    for (const projected_state of ["pause_requested", "correction_pending", "override_pending"] as const) {
+      const humanHoldPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+        currentHumanControl: async () => ({ action: projected_state === "pause_requested" ? "pause" as const : "needs_human_review" as const, source_kind: "human_control", projected_state, summary_preview: projected_state, checked_at: "2026-01-01T00:00:00.000Z", warnings: [] }),
+      })).preview({ investigation_id: "inv_recovery_compat" })
+      expect(humanHoldPreview.status).toBe("human_review_required")
+      expect(humanHoldPreview.recommended_action).toBe("none")
+    }
+
+    const injectedProviderReadiness = () => ({
+      readiness_id: "injected",
+      status: "ready" as const,
+      configuration_ready: true,
+      execution_ready: true,
+      provider_source: "injected_adapter" as const,
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      enabled_phases: ["proposal_investigation" as const],
+      default_tool_protocol: "native" as const,
+      runtime_mode: "active",
+      runtime_lifecycle_state: "ready" as const,
+      runtime_started: true,
+      run_lock_required: false,
+      run_lock_held: false,
+      adapter_id: "scripted",
+      supports_streaming: false,
+      would_call_network: false,
+      would_append_external_api_audit: false,
+      checks: [],
+      blockers: [],
+      warnings: [],
+      generated_at: "2026-01-01T00:00:00.000Z",
+      network_called: false as const,
+      events_appended: false as const,
+      readiness_hash: "injected_hash",
+    })
+    const injectedCheckpointPreview = await new CommanderInvestigationRecoveryService(baseOptions({ providerReadiness: injectedProviderReadiness })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(injectedCheckpointPreview).toMatchObject({ status: "blocked", recommended_action: "reconfigure_runtime", provider_compatibility: { provider_source: "injected_adapter", compatible: false } })
+    expect(injectedCheckpointPreview.provider_compatibility.blockers.join("\n")).toContain("configured connector-backed provider is required for production recovery")
 
     const pendingStopSource = {
       ...source!,
@@ -5733,6 +5823,9 @@ describe("Commander in-memory investigation controller", () => {
         event_payload_hash: "hash_not_authoritative_in_preview_fixture",
       },
     }
+    const injectedPendingPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => pendingStopSource, providerReadiness: injectedProviderReadiness })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(injectedPendingPreview).toMatchObject({ status: "blocked", recovery_kind: "uncertain_provider_outcome", recommended_action: "reconfigure_runtime" })
+
     const pendingHumanStopPreview = await new CommanderInvestigationRecoveryService(baseOptions({
       recoverySource: async () => pendingStopSource,
       currentHumanControl: async () => ({ action: "stop" as const, source_kind: "human_control", projected_state: "stop_requested", summary_preview: "human stop", checked_at: "2026-01-01T00:00:00.000Z", warnings: [] }),
@@ -6220,6 +6313,7 @@ function minimalTestBootstrap() {
     objective_preview: "provider audit test",
     authority_kernel: "authority kernel",
     continuity_kind: "summary" as const,
+    continuity_assessment_status: "ready" as const,
     readiness: "ready",
     current_project_summary: "project",
     open_loops: [],

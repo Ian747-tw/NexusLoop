@@ -99,15 +99,20 @@ export class CommanderInvestigationRecoveryService {
     if (!packet) blockers = [...blockers, "recovery packet could not fit within the durable preview cap"].slice(0, 24)
     const humanReview = recoveryKind === "uncertain_provider_outcome" || humanControl.action === "human_review_required"
     const continuityReady = continuityCompatibility.current_bootstrap_ready || !includeCurrentContinuity && checkpoint.phase !== "mid_mission_supervision"
-    const compatible = blockers.length === 0 && toolCompatibility.compatible && providerCompatibility.compatible && budgetCompatibility.compatible && contextCompatibility.within_current_context_budget && continuityReady
+    const compatible = blockers.length === 0 && toolCompatibility.compatible && providerCompatibility.compatible && budgetCompatibility.compatible && contextCompatibility.within_current_context_budget && continuityReady && humanControl.action === "continue"
     const status = blockers.length ? "blocked" : humanReview ? "human_review_required" : compatible ? "ready_for_approval" : "blocked"
-    const recommendedAction: CommanderInvestigationRecoveryRecommendedAction = recoveryKind === "uncertain_provider_outcome"
-      ? blockers.length ? "reconfigure_runtime" : "review_uncertain_provider_outcome"
-      : compatible
-        ? "approve_resume_from_checkpoint"
-        : providerCompatibility.blockers.length
-          ? "reconfigure_runtime"
-          : "inspect_corrupt_record"
+    const recommendedAction = recommendedActionFor({
+      recoveryKind,
+      compatible,
+      blockers,
+      toolCompatibility,
+      providerCompatibility,
+      budgetCompatibility,
+      contextCompatibility,
+      continuityCompatibility,
+      continuityReady,
+      humanControl,
+    })
     return this.withSource(source, status, recoveryKind, recommendedAction, checkpointSummary, pending, packet, {
       toolCompatibility,
       providerCompatibility,
@@ -233,6 +238,7 @@ export class CommanderInvestigationRecoveryService {
       ...(!phaseEnabled ? ["durable investigation phase is not enabled for the configured provider"] : []),
       ...(!commanderRole ? ["current model capability does not support Commander role"] : []),
       ...(!protocolSupported ? ["stored tool protocol is not supported by the current model capability"] : []),
+      ...(providerSource === "injected_adapter" ? ["configured connector-backed provider is required for production recovery"] : []),
       ...(providerSource === "none" ? ["Commander investigation provider is not configured"] : []),
     ].slice(0, 16)
     const result = {
@@ -434,6 +440,9 @@ export class CommanderInvestigationRecoveryService {
     } else if (source.normalized_input) {
       try {
         current = await this.options.currentBootstrap({ ...source.normalized_input, include_continuity: true })
+        if (current.continuity_assessment_status === "degraded") {
+          blockers.push("current continuity assessment is degraded and cannot authorize recovery")
+        }
         blockers.push(...current.blockers.slice(0, 8))
         warnings.push(...current.warnings.slice(0, 8))
       } catch (error) {
@@ -449,7 +458,7 @@ export class CommanderInvestigationRecoveryService {
       original_bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
       current_bootstrap_id: current?.bootstrap_id,
       current_bootstrap_hash: current?.bootstrap_hash,
-      current_bootstrap_ready: Boolean(current && blockers.length === 0),
+      current_bootstrap_ready: Boolean(current && (current.continuity_assessment_status ?? "ready") === "ready" && blockers.length === 0),
       continuity_drift_detected: drift,
       current_readiness: current?.readiness,
       current_open_loop_count: current?.open_loops.length ?? 0,
@@ -620,6 +629,30 @@ export class CommanderInvestigationRecoveryService {
   private empty(investigationId: string, status: CommanderInvestigationRecoveryPreview["status"], kind: CommanderInvestigationRecoveryPreview["recovery_kind"], action: CommanderInvestigationRecoveryRecommendedAction, blockers: string[], warnings: string[], generatedAt: string): CommanderInvestigationRecoveryPreview {
     return this.withSource({ investigation_id: investigationId, projection_status: "corrupt", source_event_count: 0, source_hash: stableHash({ investigationId, missing: true }) }, status, kind, action, undefined, undefined, undefined, undefined, blockers, warnings, generatedAt)
   }
+}
+
+function recommendedActionFor(input: {
+  recoveryKind: "checkpoint" | "uncertain_provider_outcome"
+  compatible: boolean
+  blockers: string[]
+  toolCompatibility: CommanderInvestigationRecoveryToolCompatibilitySummary
+  providerCompatibility: CommanderInvestigationRecoveryProviderCompatibility
+  budgetCompatibility: CommanderInvestigationRecoveryBudgetCompatibility
+  contextCompatibility: CommanderInvestigationRecoveryContextCompatibility
+  continuityCompatibility: CommanderInvestigationRecoveryContinuityCompatibility
+  continuityReady: boolean
+  humanControl: CommanderInvestigationRecoveryHumanControl
+}): CommanderInvestigationRecoveryRecommendedAction {
+  if (input.humanControl.action === "blocked") return "none"
+  if (input.humanControl.action === "human_review_required") return "none"
+  if (input.budgetCompatibility.exhausted_dimensions.length) return "start_new_investigation"
+  if (!input.providerCompatibility.compatible || input.providerCompatibility.blockers.length) return "reconfigure_runtime"
+  if (!input.toolCompatibility.compatible || input.toolCompatibility.blockers.length) return "reconfigure_runtime"
+  if (!input.contextCompatibility.within_current_context_budget || input.contextCompatibility.blockers.length) return "reconfigure_runtime"
+  if (!input.continuityReady || input.continuityCompatibility.blockers.length) return "reconfigure_runtime"
+  if (input.compatible) return input.recoveryKind === "uncertain_provider_outcome" ? "review_uncertain_provider_outcome" : "approve_resume_from_checkpoint"
+  if (input.recoveryKind === "uncertain_provider_outcome" && input.blockers.length === 0) return "review_uncertain_provider_outcome"
+  return "reconfigure_runtime"
 }
 
 function validateInput(input: CommanderInvestigationRecoveryPreviewInput): { investigation_id: string; include_current_continuity: boolean; blocker?: string } {

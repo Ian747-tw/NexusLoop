@@ -117,6 +117,13 @@ durable journal
 -> no execution
 ```
 
+Continuity comparison is structured: a current bootstrap that reports degraded
+continuity cannot authorize recovery, while ordinary nonfatal continuity
+warnings remain warnings. Recovery recommendations also separate corrupt
+journals from current runtime incompatibility; injected adapters, provider
+misconfiguration, schema drift, context overflow, and degraded continuity are
+runtime reconfiguration blockers, not corrupt-record diagnoses.
+
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
 connector-backed mode, AI SDK receives no real provider credential; connector
