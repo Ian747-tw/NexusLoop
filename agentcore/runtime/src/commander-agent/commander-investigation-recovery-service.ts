@@ -1,6 +1,7 @@
 import { redactText, redactValue } from "../security/redaction"
 import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-tools/commander-tool-types"
 import { COMMANDER_TOOL_PHASES } from "../commander-tools/commander-tool-registry"
+import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
 import { stableHash } from "./commander-model-schema"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import type {
@@ -160,7 +161,7 @@ export class CommanderInvestigationRecoveryService {
     const bindingPresent = this.options.boundToolIds.includes(stored.tool_id)
     const fixedGitException = stored.tool_id === "repo.git_status" || stored.tool_id === "repo.git_diff"
     const implemented = current?.availability === "implemented_read_surface"
-    const allowedInPhase = Boolean(current?.allowed_phases.includes(phase))
+    const allowedInPhase = Boolean(current && isToolAllowedInPhase(current, phase))
     const authorityMatch = Boolean(current && (current.authority_id ?? "") === stored.authority_id)
     const currentDescriptionHash = current ? commanderProviderVisibleDescriptionHash(current) : undefined
     const descriptionMatch = Boolean(current && stored.description_hash !== undefined && stored.description_hash === currentDescriptionHash)

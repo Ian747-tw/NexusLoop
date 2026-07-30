@@ -6104,6 +6104,28 @@ describe("Commander in-memory investigation controller", () => {
     expect(envelopeDriftPreview).toMatchObject({ status: "blocked", tool_compatibility: { compatible: false } })
     expect(envelopeDriftPreview.tool_compatibility.blockers.join("\n")).toContain("capability envelope changed")
 
+    const namespaceExcludedDescriptor = { ...memorySearch!, namespace: "governance" as const, allowed_phases: ["proposal_investigation" as const] }
+    const namespaceExcludedCheckpoint = finalizeTestCheckpoint({
+      ...source!.latest_checkpoint!,
+      loaded_tools: source!.latest_checkpoint!.loaded_tools.map((tool) => tool.tool_id === "memory.search" ? {
+        ...tool,
+        namespace: namespaceExcludedDescriptor.namespace,
+      } : tool),
+    })
+    const namespaceExcludedPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      descriptors: COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? namespaceExcludedDescriptor : tool),
+      recoverySource: async () => ({ ...source!, latest_checkpoint: namespaceExcludedCheckpoint }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(namespaceExcludedPreview).toMatchObject({ status: "blocked", recommended_action: "reconfigure_runtime", tool_compatibility: { compatible: false } })
+    expect(namespaceExcludedPreview.tool_compatibility.tools.find((tool) => tool.tool_id === "memory.search")).toMatchObject({
+      allowed_in_phase: false,
+      capability_envelope_match: true,
+      compatible: false,
+    })
+    expect(namespaceExcludedPreview.tool_compatibility.blockers.join("\n")).toContain("no longer allowed in phase proposal_investigation")
+    expect(namespaceExcludedPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
+    expect(namespaceExcludedPreview).toMatchObject({ provider_called: false, tool_executed: false, network_called: false, events_appended: false, files_written: false })
+
     const exhausted = { ...source!.latest_checkpoint!, working_set: { ...source!.latest_checkpoint!.working_set, model_turn_count: 4 } }
     const exhaustedSource = { ...source!, latest_checkpoint: exhausted, record: { ...source!.record!, model_turn_count: 4 } }
     const budgetPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => exhaustedSource })).preview({ investigation_id: "inv_recovery_compat" })
