@@ -81,6 +81,12 @@ refs, credential environment names or values, bootstrap bodies, full evidence
 bodies, raw tool results, assistant prose, provider prompts/responses, or chain
 of thought.
 
+The human note preview is bounded for display, but idempotency hashes the full
+bounded redacted note so two accepted notes that differ after the preview limit
+remain distinct approval records. Replay enforces the exact approval allowlist,
+nested checkpoint/pending-reference allowlists, and bounded string fields before
+an approval can become recovery-authoritative.
+
 Exact duplicate approval input for the same investigation, current basis,
 plan, decision, approver, and note hash is idempotent and appends no second
 event. A changed plan can receive a new approval only after fresh revalidation.

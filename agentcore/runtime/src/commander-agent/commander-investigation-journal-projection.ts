@@ -778,6 +778,14 @@ function hasNumber(value: Record<string, unknown>, key: string): boolean {
   return typeof value[key] === "number" && Number.isFinite(value[key])
 }
 
+function boundedJournalString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength
+}
+
+function looksCredentialLike(value: string): boolean {
+  return /https?:\/\/|authorization|api[_-]?key|bearer\s+|credential|secret|token/i.test(value)
+}
+
 function isNormalizedInput(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) return false
   if ("abort_signal" in value) return false
@@ -814,6 +822,43 @@ function isRecoveryApprovedPayload(value: unknown): value is CommanderInvestigat
 
 function isApprovalRecord(value: unknown): value is CommanderInvestigationRecoveryApprovalRecord {
   if (!isRecord(value)) return false
+  const allowedKeys = new Set([
+    "schema_version",
+    "approval_version",
+    "approval_id",
+    "approval_sequence",
+    "investigation_id",
+    "recovery_kind",
+    "decision",
+    "approved_by",
+    "approval_source",
+    "human_note_preview",
+    "human_note_hash",
+    "acknowledgements",
+    "recovery_basis_hash",
+    "recovery_plan_hash",
+    "recovery_packet_hash",
+    "preview_hash",
+    "checkpoint_ref",
+    "pending_model_step_ref",
+    "provider_execution_envelope_hash",
+    "tool_compatibility_hash",
+    "provider_compatibility_hash",
+    "budget_compatibility_hash",
+    "context_compatibility_hash",
+    "continuity_compatibility_hash",
+    "human_control_compatibility_hash",
+    "one_shot",
+    "automatic",
+    "fresh_context_required",
+    "exact_replay_supported",
+    "provider_request_replay_allowed",
+    "tool_execution_replay_allowed",
+    "execution_supported_in_this_branch",
+    "approved_at",
+    "approval_hash",
+  ])
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false
   const decision = value.decision
   const recoveryKind = value.recovery_kind
   if (value.schema_version !== 1 || value.approval_version !== 1) return false
@@ -837,7 +882,11 @@ function isApprovalRecord(value: unknown): value is CommanderInvestigationRecove
     "approval_hash",
   ]) {
     if (!hasString(value, key)) return false
+    if (!boundedJournalString(value[key], 240)) return false
   }
+  if (!boundedJournalString(value.approval_id, 120) || !boundedJournalString(value.investigation_id, 200) || !boundedJournalString(value.approved_by, 200)) return false
+  if (value.human_note_preview !== undefined && (!boundedJournalString(value.human_note_preview, 500) || looksCredentialLike(value.human_note_preview))) return false
+  if (value.human_note_hash !== undefined && !boundedJournalString(value.human_note_hash, 240)) return false
   if (!Number.isInteger(value.approval_sequence) || Number(value.approval_sequence) < 0) return false
   if (decision !== "approve_resume_from_checkpoint" && decision !== "approve_continue_after_uncertain_provider_outcome") return false
   if (recoveryKind !== "checkpoint" && recoveryKind !== "uncertain_provider_outcome") return false
@@ -852,14 +901,18 @@ function isApprovalRecord(value: unknown): value is CommanderInvestigationRecove
     : ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden"].sort()
   if (stableHash(acknowledgementKeys) !== stableHash(expectedAcknowledgementKeys)) return false
   if (decision === "approve_continue_after_uncertain_provider_outcome" && value.acknowledgements.uncertain_provider_outcome !== true) return false
-  if (!isRecord(value.checkpoint_ref) || !hasString(value.checkpoint_ref, "checkpoint_id") || !hasString(value.checkpoint_ref, "checkpoint_hash") || !hasNumber(value.checkpoint_ref, "checkpoint_sequence")) return false
+  if (!isRecord(value.checkpoint_ref) || stableHash(Object.keys(value.checkpoint_ref).sort()) !== stableHash(["checkpoint_hash", "checkpoint_id", "checkpoint_sequence"].sort()) || !hasString(value.checkpoint_ref, "checkpoint_id") || !hasString(value.checkpoint_ref, "checkpoint_hash") || !hasNumber(value.checkpoint_ref, "checkpoint_sequence")) return false
+  if (!boundedJournalString(value.checkpoint_ref.checkpoint_id, 160) || !boundedJournalString(value.checkpoint_ref.checkpoint_hash, 240)) return false
   if (decision === "approve_continue_after_uncertain_provider_outcome" && value.pending_model_step_ref === undefined) return false
   if (decision === "approve_resume_from_checkpoint" && value.pending_model_step_ref !== undefined) return false
   if (value.pending_model_step_ref !== undefined) {
     const pending = value.pending_model_step_ref
     if (!isRecord(pending)) return false
+    const expectedPendingKeys = ["base_checkpoint_hash", "base_checkpoint_id", "base_checkpoint_sequence", "context_hash", "fresh_request_required_later", "model_request_id", "provider_outcome_remains_unknown", "provider_request_may_have_been_sent", "provider_request_replay_forbidden", "provider_response_available", "tool_execution_known_to_have_occurred", "tool_execution_replay_forbidden", "turn_index", "working_set_hash"].sort()
+    if (stableHash(Object.keys(pending).sort()) !== stableHash(expectedPendingKeys)) return false
     for (const key of ["model_request_id", "base_checkpoint_id", "base_checkpoint_hash", "working_set_hash", "context_hash"]) {
       if (!hasString(pending, key)) return false
+      if (!boundedJournalString(pending[key], 240)) return false
     }
     if (!hasNumber(pending, "turn_index") || !hasNumber(pending, "base_checkpoint_sequence")) return false
     if (pending.provider_request_may_have_been_sent !== true || pending.provider_response_available !== false || pending.provider_outcome_remains_unknown !== true || pending.tool_execution_known_to_have_occurred !== false || pending.provider_request_replay_forbidden !== true || pending.tool_execution_replay_forbidden !== true || pending.fresh_request_required_later !== true) return false
