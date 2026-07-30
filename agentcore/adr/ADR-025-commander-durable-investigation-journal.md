@@ -57,7 +57,7 @@ records are explicit allowlists, not blind spreads of the in-memory result.
 Checkpoints persist operational state needed for restart analysis:
 
 - budget and bootstrap references
-- loaded-tool references with descriptor/schema hashes
+- loaded-tool references with descriptor, provider-visible description, and schema hashes
 - bounded evidence cards
 - bounded execution digests and turn summaries
 - provider audit counts

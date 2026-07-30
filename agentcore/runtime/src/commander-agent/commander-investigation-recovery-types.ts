@@ -94,6 +94,8 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   current_descriptor_version?: string
   stored_authority_id: string
   current_authority_id?: string
+  stored_description_hash?: string
+  current_description_hash?: string
   stored_input_schema_hash: string
   current_input_schema_hash?: string
   stored_output_schema_hash: string
@@ -121,6 +123,7 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   safe_read_authority: boolean
   schema_match: boolean
   descriptor_match: boolean
+  description_match: boolean
   capability_envelope_match: boolean
   compatible: boolean
   blockers: string[]
@@ -211,6 +214,14 @@ export type CommanderInvestigationRecoveryBudgetCompatibility = {
   blockers: string[]
   warnings: string[]
   compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryCurrentContextBudget = {
+  context_budget_id?: string
+  tool_schema_allocation_bytes?: number
+  tool_schema_allocation_tokens?: number
+  blockers: string[]
+  warnings: string[]
 }
 
 export type CommanderInvestigationRecoveryContextCompatibility = {
@@ -369,6 +380,7 @@ export type CommanderInvestigationRecoveryServiceOptions = {
   providerExecutionEnvelope?(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationRecoveryExecutionEnvelope | undefined
   modelCapability(input: { provider_kind?: string; model_id?: string; role?: string }): import("../context/model-capability-types").ModelCapability
   currentProfile(input: { phase?: string }): import("../commander-tools/commander-tool-types").CommanderToolProfile
+  currentContextBudget(input: { phase: CommanderToolPhase; provider_kind: string; model_id: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderInvestigationRecoveryCurrentContextBudget>
   currentBootstrap(input: Omit<import("./commander-investigation-types").CommanderInvestigationInput, "abort_signal">): Promise<import("./commander-investigation-types").CommanderInvestigationBootstrap>
   currentHumanControl(input: { phase: CommanderToolPhase; session_id?: string; launch_id?: string }): Promise<CommanderInvestigationControlSnapshot>
   now?: () => Date

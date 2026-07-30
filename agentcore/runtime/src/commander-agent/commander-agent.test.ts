@@ -5604,6 +5604,8 @@ describe("Commander in-memory investigation controller", () => {
     const input = baseInvestigation({ investigation_id: "inv_recovery_compat", objective: "Recover with exact tool compatibility", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native", session_id: "session_recovery_compat" })
     const run = await journal.createObserver(input)
     const snapshot = durableStartedSnapshot(input, 8, "inv_recovery_compat") as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
     snapshot.loaded_tools = [memorySearch!]
     snapshot.working_set.loaded_tool_ids = ["memory.search"]
     snapshot.working_set.evidence_cards = [evidenceCard("evidence_recovery_pointer")]
@@ -5745,6 +5747,13 @@ describe("Commander in-memory investigation controller", () => {
         warnings: [],
       }),
       currentProfile: (profileInput: { phase?: string }) => new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }).profile(profileInput),
+      currentContextBudget: async () => ({
+        context_budget_id: source!.latest_checkpoint!.budget.source_context_budget_id,
+        tool_schema_allocation_bytes: source!.latest_checkpoint!.budget.tool_schema_allocation_bytes,
+        tool_schema_allocation_tokens: source!.latest_checkpoint!.budget.tool_schema_allocation_tokens,
+        blockers: [],
+        warnings: [],
+      }),
       currentBootstrap: async () => ({ ...minimalTestBootstrap(), bootstrap_id: source!.latest_checkpoint!.bootstrap_ref.bootstrap_id, bootstrap_hash: source!.latest_checkpoint!.bootstrap_ref.bootstrap_hash }),
       currentHumanControl: async () => ({ action: "continue" as const, source_kind: "human_control", checked_at: "2026-01-01T00:00:00.000Z", warnings: [] }),
       now: () => new Date("2026-01-01T00:00:00.000Z"),
@@ -5781,14 +5790,14 @@ describe("Commander in-memory investigation controller", () => {
     await legacyRun.observer.onStarted(legacySnapshot as Parameters<typeof legacyRun.observer.onStarted>[0])
     legacyJournal.release(legacyRun)
     const legacyEvent = JSON.parse((await readFile(legacyStore.eventsPath, "utf8")).trim()) as any
-    const stripExecutionLimits = (tool: CommanderInvestigationLoadedToolRef) => {
-      const { max_output_bytes: _maxOutputBytes, timeout_ms: _timeoutMs, ...legacyTool } = tool
+    const stripLegacyCompatibilityFields = (tool: CommanderInvestigationLoadedToolRef) => {
+      const { max_output_bytes: _maxOutputBytes, timeout_ms: _timeoutMs, description_hash: _descriptionHash, ...legacyTool } = tool
       return legacyTool
     }
-    legacyEvent.initial_loaded_tool_refs = legacyEvent.initial_loaded_tool_refs.map(stripExecutionLimits)
+    legacyEvent.initial_loaded_tool_refs = legacyEvent.initial_loaded_tool_refs.map(stripLegacyCompatibilityFields)
     legacyEvent.initial_checkpoint = finalizeTestCheckpoint({
       ...legacyEvent.initial_checkpoint,
-      loaded_tools: legacyEvent.initial_checkpoint.loaded_tools.map(stripExecutionLimits),
+      loaded_tools: legacyEvent.initial_checkpoint.loaded_tools.map(stripLegacyCompatibilityFields),
     })
     legacyEvent.event_payload_hash = journalPayloadHash(legacyEvent)
     await writeFile(legacyStore.eventsPath, `${JSON.stringify(legacyEvent)}\n`)
@@ -5803,6 +5812,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(legacyPreview.status).toBe("blocked")
     expect(legacyPreview.recommended_action).toBe("reconfigure_runtime")
     expect(legacyPreview.tool_compatibility.blockers.join("\n")).toContain("capability envelope changed or is incomplete")
+    expect(legacyPreview.tool_compatibility.blockers.join("\n")).toContain("provider-visible description changed or is incomplete")
 
     for (const [label, mutate] of [
       ["tool max output", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, max_output_bytes: (tool.max_output_bytes ?? 0) + 1 })],
@@ -6032,6 +6042,13 @@ describe("Commander in-memory investigation controller", () => {
     expect(driftedPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
     expect(driftedPreview.recommended_action).toBe("reconfigure_runtime")
 
+    const descriptionDriftDescriptors = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? { ...tool, description: `${tool.description} Changed provider-visible recovery text.` } : tool)
+    const descriptionDriftPreview = await new CommanderInvestigationRecoveryService(baseOptions({ descriptors: descriptionDriftDescriptors })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(descriptionDriftPreview).toMatchObject({ status: "blocked", tool_compatibility: { compatible: false } })
+    expect(descriptionDriftPreview.tool_compatibility.blockers.join("\n")).toContain("provider-visible description changed")
+    expect(descriptionDriftPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
+    expect(descriptionDriftPreview.recommended_action).toBe("reconfigure_runtime")
+
     const envelopeDriftDescriptors = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? { ...tool, namespace: "runtime_read" as const } : tool)
     const envelopeDriftPreview = await new CommanderInvestigationRecoveryService(baseOptions({ descriptors: envelopeDriftDescriptors })).preview({ investigation_id: "inv_recovery_compat" })
     expect(envelopeDriftPreview).toMatchObject({ status: "blocked", tool_compatibility: { compatible: false } })
@@ -6057,14 +6074,19 @@ describe("Commander in-memory investigation controller", () => {
     expect(loadedSchemaCapPreview.budget_compatibility.exhausted_dimensions).toContain("loaded_schemas")
 
     const schemaByteCapPreview = await new CommanderInvestigationRecoveryService(baseOptions({
-      currentProfile: (profileInput: { phase?: string }) => ({
-        ...new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }).profile(profileInput),
-        max_initial_schema_bytes: Math.max(0, validPreview.context_compatibility.loaded_schema_bytes - 1),
+      currentContextBudget: async () => ({
+        context_budget_id: "context_budget_smaller_schema_allocation",
+        tool_schema_allocation_bytes: Math.max(0, validPreview.context_compatibility.loaded_schema_bytes - 1),
+        tool_schema_allocation_tokens: source!.latest_checkpoint!.budget.tool_schema_allocation_tokens,
+        blockers: [],
+        warnings: [],
       }),
     })).preview({ investigation_id: "inv_recovery_compat" })
     expect(schemaByteCapPreview).toMatchObject({ status: "blocked" })
     expect(schemaByteCapPreview.budget_compatibility.exhausted_dimensions).toContain("tool_schema_allocation_bytes")
     expect(schemaByteCapPreview.budget_compatibility.blockers.join("\n")).toContain("tool_schema_allocation_bytes")
+    expect(schemaByteCapPreview.budget_compatibility.current_context_budget_id).toBe("context_budget_smaller_schema_allocation")
+    expect(schemaByteCapPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
 
     const schemaTokenBudget = { ...source!.latest_checkpoint!.budget, tool_schema_allocation_tokens: Math.max(0, validPreview.context_compatibility.loaded_schema_tokens - 1), budget_hash: "" }
     schemaTokenBudget.budget_hash = stableHash({ ...schemaTokenBudget, budget_hash: "" })

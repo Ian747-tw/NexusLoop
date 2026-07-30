@@ -23,6 +23,7 @@ import type {
   CommanderInvestigationCheckpoint,
   CommanderInvestigationLoadedToolRef,
 } from "./commander-investigation-journal-types"
+import { commanderProviderVisibleDescriptionHash } from "./commander-model-schema"
 
 const PACKET_DEFAULT_CAP = 32_000
 const PACKET_HARD_CAP = 48_000
@@ -66,7 +67,14 @@ export class CommanderInvestigationRecoveryService {
     }
     const toolCompatibility = this.toolCompatibility(checkpoint.loaded_tools, checkpoint.phase)
     const providerCompatibility = this.providerCompatibility(source, checkpoint.phase)
-    const budgetCompatibility = this.budgetCompatibility(checkpoint)
+    const currentContextBudget = await this.options.currentContextBudget({
+      phase: checkpoint.phase,
+      provider_kind: checkpoint.provider_kind,
+      model_id: checkpoint.model_id,
+      max_context_tokens: checkpoint.budget.max_context_tokens,
+      max_context_bytes: checkpoint.budget.max_context_bytes,
+    })
+    const budgetCompatibility = this.budgetCompatibility(checkpoint, currentContextBudget)
     const includeCurrentContinuity = validated.include_current_continuity !== false
     const continuityCompatibility = await this.continuityCompatibility(source, checkpoint, includeCurrentContinuity)
     const humanControl = await this.humanControl(checkpoint.phase, record.session_id, record.launch_id)
@@ -156,6 +164,8 @@ export class CommanderInvestigationRecoveryService {
     const implemented = current?.availability === "implemented_read_surface"
     const allowedInPhase = Boolean(current?.allowed_phases.includes(phase))
     const authorityMatch = Boolean(current && (current.authority_id ?? "") === stored.authority_id)
+    const currentDescriptionHash = current ? commanderProviderVisibleDescriptionHash(current) : undefined
+    const descriptionMatch = Boolean(current && stored.description_hash !== undefined && stored.description_hash === currentDescriptionHash)
     const schemaMatch = Boolean(current && current.schema_metadata.input_schema_hash === stored.input_schema_hash && current.schema_metadata.output_schema_hash === stored.output_schema_hash)
     const descriptorMatch = Boolean(current && current.version === stored.descriptor_version && current.load_policy === stored.load_policy && current.trust_class === stored.trust_class && current.instruction_semantics === stored.instruction_semantics)
     const capabilityEnvelopeMatch = Boolean(current &&
@@ -180,6 +190,7 @@ export class CommanderInvestigationRecoveryService {
     if (current && !implemented) blockers.push(`stored loaded tool ${stored.tool_id} is not an implemented read surface`)
     if (current && !allowedInPhase) blockers.push(`stored loaded tool ${stored.tool_id} is no longer allowed in phase ${phase}`)
     if (current && !authorityMatch) blockers.push(`stored loaded tool ${stored.tool_id} authority_id changed`)
+    if (current && !descriptionMatch) blockers.push(`stored loaded tool ${stored.tool_id} provider-visible description changed or is incomplete`)
     if (current && !schemaMatch) blockers.push(`stored loaded tool ${stored.tool_id} schema hash changed`)
     if (current && !descriptorMatch) blockers.push(`stored loaded tool ${stored.tool_id} descriptor metadata changed`)
     if (current && !capabilityEnvelopeMatch) blockers.push(`stored loaded tool ${stored.tool_id} capability envelope changed or is incomplete`)
@@ -192,6 +203,8 @@ export class CommanderInvestigationRecoveryService {
       current_descriptor_version: current?.version,
       stored_authority_id: stored.authority_id,
       current_authority_id: current?.authority_id ?? "",
+      stored_description_hash: stored.description_hash,
+      current_description_hash: currentDescriptionHash,
       stored_input_schema_hash: stored.input_schema_hash,
       current_input_schema_hash: current?.schema_metadata.input_schema_hash,
       stored_output_schema_hash: stored.output_schema_hash,
@@ -219,6 +232,7 @@ export class CommanderInvestigationRecoveryService {
       safe_read_authority: safeReadAuthority,
       schema_match: schemaMatch,
       descriptor_match: descriptorMatch,
+      description_match: descriptionMatch,
       capability_envelope_match: capabilityEnvelopeMatch,
       compatible: blockers.length === 0,
       blockers: blockers.slice(0, 8),
@@ -305,7 +319,7 @@ export class CommanderInvestigationRecoveryService {
     return result
   }
 
-  private budgetCompatibility(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationRecoveryBudgetCompatibility {
+  private budgetCompatibility(checkpoint: CommanderInvestigationCheckpoint, currentContextBudget: import("./commander-investigation-recovery-types").CommanderInvestigationRecoveryCurrentContextBudget): CommanderInvestigationRecoveryBudgetCompatibility {
     const stored = checkpoint.budget
     const profile = this.options.currentProfile({ phase: checkpoint.phase })
     const loadedSchemaUsage = this.loadedSchemaUsage(checkpoint)
@@ -328,8 +342,8 @@ export class CommanderInvestigationRecoveryService {
       max_tool_calls: Math.min(stored.max_tool_calls, profile.max_tool_calls_future),
       max_tool_search_calls: Math.min(stored.max_tool_search_calls, profile.max_tool_search_calls_future),
       max_loaded_schemas: Math.min(stored.max_loaded_schemas, profile.max_loaded_schemas),
-      tool_schema_allocation_bytes: minDefined(stored.tool_schema_allocation_bytes, profile.max_initial_schema_bytes),
-      tool_schema_allocation_tokens: minDefined(stored.tool_schema_allocation_tokens, profile.max_initial_schema_tokens),
+      tool_schema_allocation_bytes: minDefined(stored.tool_schema_allocation_bytes, currentContextBudget.tool_schema_allocation_bytes),
+      tool_schema_allocation_tokens: minDefined(stored.tool_schema_allocation_tokens, currentContextBudget.tool_schema_allocation_tokens),
       max_cumulative_tool_result_bytes: Math.min(stored.max_cumulative_tool_result_bytes, profile.max_cumulative_result_bytes_future),
       max_wall_time_ms: Math.min(stored.max_wall_time_ms, profile.max_wall_time_ms_future),
       max_consecutive_no_progress_turns: stored.max_consecutive_no_progress_turns,
@@ -367,12 +381,15 @@ export class CommanderInvestigationRecoveryService {
       const storedValue = (stored as unknown as Record<string, number>)[key]
       return typeof storedValue === "number" && typeof value === "number" && value < storedValue
     }).map(([key]) => key)
-    const blockers = exhausted.map((dimension) => `remaining recovery budget exhausted for ${dimension}`).slice(0, 12)
+    const blockers = [
+      ...exhausted.map((dimension) => `remaining recovery budget exhausted for ${dimension}`),
+      ...currentContextBudget.blockers.map((item) => `current context budget blocks recovery: ${item}`),
+    ].slice(0, 12)
     const result = {
       stored_budget_id: stored.budget_id,
       stored_budget_hash: stored.budget_hash,
       current_profile_id: profile.profile_id,
-      current_context_budget_id: stored.source_context_budget_id,
+      current_context_budget_id: currentContextBudget.context_budget_id ?? stored.source_context_budget_id,
       stored_limits: {
         max_model_turns: stored.max_model_turns,
         max_tool_calls: stored.max_tool_calls,
@@ -403,7 +420,10 @@ export class CommanderInvestigationRecoveryService {
       stricter_current_policy_dimensions: stricter,
       compatible: blockers.length === 0,
       blockers,
-      warnings: stricter.map((dimension) => `current phase profile is stricter for ${dimension}`).slice(0, 12),
+      warnings: [
+        ...stricter.map((dimension) => `current phase/context policy is stricter for ${dimension}`),
+        ...currentContextBudget.warnings.map((item) => `current context budget warning: ${item}`),
+      ].slice(0, 12),
       compatibility_hash: "",
     }
     result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })

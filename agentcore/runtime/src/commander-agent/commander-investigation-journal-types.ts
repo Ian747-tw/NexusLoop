@@ -28,6 +28,7 @@ export type CommanderInvestigationLoadedToolRef = {
   namespace?: string
   descriptor_version: string
   authority_id: string
+  description_hash?: string
   input_schema_hash: string
   output_schema_hash: string
   load_policy: string

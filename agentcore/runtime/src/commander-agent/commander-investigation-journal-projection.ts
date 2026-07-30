@@ -971,6 +971,7 @@ function isLoadedToolRef(value: unknown): boolean {
     hasString(value, "tool_id") &&
     hasString(value, "descriptor_version") &&
     hasString(value, "authority_id") &&
+    (!("description_hash" in value) || hasString(value, "description_hash")) &&
     hasString(value, "input_schema_hash") &&
     hasString(value, "output_schema_hash") &&
     hasString(value, "load_policy") &&

@@ -110,7 +110,7 @@ durable journal
 -> tool/schema/authority compatibility checks
 -> provider/model/capability compatibility checks
 -> current connector/capability execution envelope hash
--> remaining-budget and context checks
+-> remaining-budget and context-derived schema-allocation checks
 -> current continuity/human-control checks
 -> bounded recovery packet
 -> recovery-plan hash

@@ -4,7 +4,7 @@ import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
 import type { CommanderEvidenceCard, CommanderReadSourceRef } from "../commander-tools/commander-read-types"
 import type { CommanderToolDescriptor } from "../commander-tools/commander-tool-types"
-import { stableHash } from "./commander-model-schema"
+import { commanderProviderVisibleDescriptionHash, stableHash } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelToolCallPart, CommanderModelToolResultMessage } from "./commander-model-types"
 import type {
   CommanderInvestigationCheckpointSnapshot,
@@ -662,6 +662,7 @@ function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigatio
     namespace: tool.namespace,
     descriptor_version: tool.version,
     authority_id: tool.authority_id ?? "",
+    description_hash: commanderProviderVisibleDescriptionHash(tool),
     input_schema_hash: tool.schema_metadata.input_schema_hash,
     output_schema_hash: tool.schema_metadata.output_schema_hash,
     load_policy: tool.load_policy,

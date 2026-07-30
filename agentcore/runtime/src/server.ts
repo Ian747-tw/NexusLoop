@@ -5055,6 +5055,24 @@ export class RuntimeServer {
       providerExecutionEnvelope: (input) => this.commanderInvestigationRecoveryExecutionEnvelope(input),
       modelCapability: (input) => this.modelCapabilityRegistry.get(input),
       currentProfile: (input) => this.commanderToolService().profile(input),
+      currentContextBudget: async (input) => {
+        const preview = await this.contextBudgetService().preview({
+          purpose: "commander_research_decision",
+          role: "commander",
+          provider_kind: input.provider_kind,
+          model_id: input.model_id,
+          max_context_tokens: input.max_context_tokens,
+          max_context_bytes: input.max_context_bytes,
+        })
+        const allocation = preview.budget.allocations.find((item) => item.section === "tool_or_mcp_schema")
+        return {
+          context_budget_id: preview.budget.budget_id,
+          tool_schema_allocation_bytes: allocation?.max_bytes,
+          tool_schema_allocation_tokens: allocation?.max_tokens,
+          blockers: preview.blockers,
+          warnings: preview.warnings,
+        }
+      },
       currentBootstrap: (input) => this.commanderInvestigationBootstrapService().compile(input),
       currentHumanControl: (input) => this.readDurableCommanderInvestigationControl({
         phase: input.phase,

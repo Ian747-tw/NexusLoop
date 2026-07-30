@@ -45,12 +45,12 @@ External API audit counts do not resolve that uncertainty.
 ### Compatibility
 
 Tool compatibility is exact. Every stored loaded-tool reference must still have
-the same descriptor version, authority ID, input/output schema hashes,
-load policy, trust class, instruction semantics, max output bytes, timeout,
-binding presence, phase eligibility, namespace envelope, and safe-read
-authority. The fixed Git process exception remains limited to `repo.git_status`
-and `repo.git_diff` with the restricted read-only backend and fixed read-only
-process policy.
+the same descriptor version, authority ID, provider-visible description hash,
+input/output schema hashes, load policy, trust class, instruction semantics,
+max output bytes, timeout, binding presence, phase eligibility, namespace
+envelope, and safe-read authority. The fixed Git process exception remains
+limited to `repo.git_status` and `repo.git_diff` with the restricted read-only
+backend and fixed read-only process policy.
 
 Provider compatibility revalidates the persisted provider/model/phase identity
 against the current configured connector provider and Commander model
@@ -67,8 +67,9 @@ starting the runtime or rotating a secret does not change the recovery plan.
 
 Budget compatibility never resets counters or broadens stored limits. Remaining
 budget is derived from the accepted checkpoint and current policy, using the
-stricter value. No-progress and repeated-result state stay part of the recovery
-state.
+stricter value. Current tool-schema allocation is recomputed through the
+runtime context-budget service, not from a static Commander profile fallback.
+No-progress and repeated-result state stay part of the recovery state.
 
 ### Context And Continuity
 
