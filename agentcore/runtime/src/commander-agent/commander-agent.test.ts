@@ -5314,6 +5314,100 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(checkpointPreview)).not.toContain("real-provider-key")
     expect(checkpointPreview.recovery_plan_hash).toBeString()
 
+    const terminalCheckpointBase = await startOnly("inv_recovery_terminal_checkpoint_only", 7)
+    const terminalCheckpointModelStep = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_recovery_terminal_checkpoint_only",
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_terminal_checkpoint_only",
+      provider_id: terminalCheckpointBase.input.provider_id,
+      provider_kind: terminalCheckpointBase.input.provider_kind,
+      model_id: terminalCheckpointBase.input.model_id,
+      tool_protocol: "native",
+      base_checkpoint_id: terminalCheckpointBase.checkpoint.checkpoint_id,
+      base_checkpoint_sequence: terminalCheckpointBase.checkpoint.checkpoint_sequence,
+      base_checkpoint_hash: terminalCheckpointBase.checkpoint.checkpoint_hash,
+      working_set_hash: terminalCheckpointBase.checkpoint.working_set.working_set_hash,
+      context_hash: "context_hash_terminal_checkpoint_only",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: terminalCheckpointBase.checkpoint.loaded_tools,
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:30.000Z",
+      requested_by: terminalCheckpointBase.input.requested_by,
+      occurred_at: "2026-01-01T00:00:30.000Z",
+      event_payload_hash: "",
+    }
+    terminalCheckpointModelStep.event_payload_hash = journalPayloadHash(terminalCheckpointModelStep)
+    await server.eventStore.append(terminalCheckpointModelStep as Parameters<EventStore["append"]>[0])
+    const terminalCheckpoint = finalizeTestCheckpoint({
+      ...terminalCheckpointBase.checkpoint,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: terminalCheckpointBase.checkpoint.checkpoint_id,
+      previous_checkpoint_hash: terminalCheckpointBase.checkpoint.checkpoint_hash,
+      provider_request_count: 1,
+      external_api_audit_count: 0,
+      working_set: { ...terminalCheckpointBase.checkpoint.working_set, model_turn_count: 1 },
+      turn_summaries: [{
+        turn_index: 1,
+        model_request_id: "model_request_terminal_checkpoint_only",
+        model_result_hash: "model_result_hash_terminal_checkpoint_only",
+        model_status: "final",
+        provider_request_count: 1,
+        assistant_text_preview: undefined,
+        tool_call_ids: [],
+        tool_ids: [],
+        tool_execution_ids: [],
+        tool_execution_statuses: [],
+        newly_loaded_tool_ids: [],
+        new_evidence_ids: [],
+        input_estimated_tokens: 32,
+        input_bytes: 128,
+        cumulative_tool_calls: 0,
+        progress_made: true,
+        no_progress_reasons: [],
+        warnings: [],
+        provider_audit_request_ids: [],
+        provider_audit_event_kinds: [],
+        provider_audit_event_count: 0,
+        provider_audit_complete: true,
+        turn_hash: "turn_hash_terminal_checkpoint_only",
+      }],
+    })
+    const terminalCheckpointEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_recovery_terminal_checkpoint_only",
+      journal_sequence: 2,
+      requested_by: "test",
+      occurred_at: "2026-01-01T00:00:31.000Z",
+      checkpoint: terminalCheckpoint,
+      event_payload_hash: "",
+    }
+    terminalCheckpointEvent.event_payload_hash = journalPayloadHash(terminalCheckpointEvent)
+    await server.eventStore.append(terminalCheckpointEvent as Parameters<EventStore["append"]>[0])
+    const terminalCheckpointSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_terminal_checkpoint_only")
+    expect(terminalCheckpointSource).toMatchObject({ projection_status: "ready", latest_checkpoint: { checkpoint_id: terminalCheckpoint.checkpoint_id } })
+    const terminalCheckpointPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_terminal_checkpoint_only", include_current_continuity: false })
+    expect(terminalCheckpointPreview).toMatchObject({
+      status: "blocked",
+      recovery_kind: "none",
+      recommended_action: "start_new_investigation",
+      checkpoint: { checkpoint_id: terminalCheckpoint.checkpoint_id },
+      recovery_packet: undefined,
+      provider_called: false,
+      tool_executed: false,
+      events_appended: false,
+    })
+    expect(terminalCheckpointPreview.blockers.join("\n")).toContain("terminal model status final")
+    expect(terminalCheckpointPreview.same_journal_resume_candidate).toBe(false)
+
     const pending = await startOnly("inv_recovery_pending", 2)
     const pendingEvent = {
       kind: "runtime_commander_investigation_model_step_started",

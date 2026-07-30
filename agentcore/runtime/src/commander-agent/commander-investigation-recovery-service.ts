@@ -56,6 +56,14 @@ export class CommanderInvestigationRecoveryService {
     const recoveryKind = source.pending_model_step ? "uncertain_provider_outcome" : "checkpoint"
     const checkpointSummary = checkpointSummaryFrom(checkpoint)
     const pending = source.pending_model_step ? pendingSummaryFrom(source.pending_model_step) : undefined
+    const terminalCheckpoint = terminalCheckpointOutcome(checkpoint)
+    if (terminalCheckpoint) {
+      return this.withSource(source, "blocked", "none", "start_new_investigation", checkpointSummary, undefined, undefined, undefined, [
+        `latest checkpoint already records terminal model status ${terminalCheckpoint}; same-journal recovery is not supported without a terminal event`,
+      ], [
+        "terminal model outcome was checkpointed before the durable finished event; original assistant prose is unavailable for exact replay",
+      ], generatedAt)
+    }
     const toolCompatibility = this.toolCompatibility(checkpoint.loaded_tools, checkpoint.phase)
     const providerCompatibility = this.providerCompatibility(source, checkpoint.phase)
     const budgetCompatibility = this.budgetCompatibility(checkpoint)
@@ -697,6 +705,11 @@ function validateInput(input: CommanderInvestigationRecoveryPreviewInput): { inv
 
 function terminalAction(_status: string): CommanderInvestigationRecoveryRecommendedAction {
   return "start_new_investigation"
+}
+
+function terminalCheckpointOutcome(checkpoint: CommanderInvestigationCheckpoint): string | undefined {
+  const status = checkpoint.turn_summaries.at(-1)?.model_status
+  return status && ["cancelled", "failed", "final", "malformed", "refusal"].includes(status) ? status : undefined
 }
 
 function checkpointSummaryFrom(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationRecoveryCheckpointSummary {
