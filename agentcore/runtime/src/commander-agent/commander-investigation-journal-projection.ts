@@ -975,8 +975,8 @@ function isLoadedToolRef(value: unknown): boolean {
     hasString(value, "output_schema_hash") &&
     hasString(value, "load_policy") &&
     hasString(value, "trust_class") &&
-    hasNumber(value, "max_output_bytes") &&
-    hasNumber(value, "timeout_ms") &&
+    (!("max_output_bytes" in value) || hasNumber(value, "max_output_bytes")) &&
+    (!("timeout_ms" in value) || hasNumber(value, "timeout_ms")) &&
     value.instruction_semantics === "none"
   )
 }

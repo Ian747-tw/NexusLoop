@@ -333,12 +333,19 @@ export class CommanderInvestigationJournalService {
       const text = await readFile(this.options.eventStore.eventsPath, "utf8")
       const events: JsonlEvent[] = []
       let unassignable = false
-      text.split(/\r?\n/).forEach((line, index) => {
+      const lines = text.split(/\r?\n/)
+      const lastNonemptyIndex = (() => {
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          if (lines[index]) return index
+        }
+        return -1
+      })()
+      lines.forEach((line, index) => {
         if (!line) return
         try {
           events.push(JSON.parse(line) as JsonlEvent)
         } catch {
-          const recovered = recoverInvestigationIdFromMalformedLine(line, index)
+          const recovered = recoverInvestigationIdFromMalformedLine(line, index, index === lastNonemptyIndex)
           if (recovered.investigation_id) events.push(malformedJournalLineEvent(recovered.investigation_id, index))
           if (recovered.unassignable_commander_tail) unassignable = true
         }
@@ -793,8 +800,13 @@ function durableConclusion(result: CommanderInvestigationResult) {
   }
 }
 
-function recoverInvestigationIdFromMalformedLine(line: string, index: number): { investigation_id?: string; unassignable_commander_tail: boolean } {
-  if (!/"kind"\s*:\s*"runtime_commander_investigation_/.test(line)) return { unassignable_commander_tail: false }
+function recoverInvestigationIdFromMalformedLine(line: string, index: number, isTail: boolean): { investigation_id?: string; unassignable_commander_tail: boolean } {
+  const hasCommanderInvestigationKindPrefix = /"kind"\s*:\s*"runtime_commander_investigation_/.test(line)
+  const hasCommanderRuntimePrefix = /"kind"\s*:\s*"runtime_commander/.test(line)
+  const hasCompleteNonCommanderKind = /"kind"\s*:\s*"(?!runtime_commander_investigation_)[^"\\]+"/.test(line)
+  if (!hasCommanderInvestigationKindPrefix) {
+    return { unassignable_commander_tail: isTail && (hasCommanderRuntimePrefix || !hasCompleteNonCommanderKind) }
+  }
   const match = line.match(/"investigation_id"\s*:\s*"([^"\\]{1,200})"/)
   if (match?.[1]) return { investigation_id: bound(match[1], 200), unassignable_commander_tail: false }
   return { investigation_id: `malformed_commander_journal_line_${index}`, unassignable_commander_tail: true }

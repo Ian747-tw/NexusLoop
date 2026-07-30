@@ -5445,7 +5445,7 @@ describe("Commander in-memory investigation controller", () => {
     const search = await server.searchCommanderOperationalMemory({ query: "uniquedriftxyz", source_kinds: ["commander_investigation"] })
     expect(search.result?.candidates).toEqual([])
 
-    await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_investigation_finished","schema_version":1,"journal_sequence":99', { flag: "a" })
+    await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv', { flag: "a" })
     const blockedByTailSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_checkpoint")
     expect(blockedByTailSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
     expect(blockedByTailSource?.record?.integrity_errors.join("\n")).toContain("unassignable malformed Commander journal tail")
@@ -5629,9 +5629,43 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(validPreview)).not.toContain("NXL_TEST_MODEL_KEY")
     expect(JSON.stringify(validPreview)).not.toContain("real-provider-key")
 
+    const legacyProjectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b1-legacy-loaded-tool-limits-"))
+    const legacyStore = new EventStore(join(legacyProjectDir, ".nxl", "events.jsonl"))
+    const legacyJournal = new CommanderInvestigationJournalService({ eventStore: legacyStore })
+    const legacyInput = baseInvestigation({ investigation_id: "inv_recovery_legacy_limits", objective: "Recover old schema loaded tools", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" })
+    const legacyRun = await legacyJournal.createObserver(legacyInput)
+    const legacySnapshot = durableStartedSnapshot(legacyInput, 18, "inv_recovery_legacy_limits") as any
+    legacySnapshot.loaded_tools = [memorySearch!]
+    legacySnapshot.working_set.loaded_tool_ids = ["memory.search"]
+    await legacyRun.observer.onStarted(legacySnapshot as Parameters<typeof legacyRun.observer.onStarted>[0])
+    legacyJournal.release(legacyRun)
+    const legacyEvent = JSON.parse((await readFile(legacyStore.eventsPath, "utf8")).trim()) as any
+    const stripExecutionLimits = (tool: CommanderInvestigationLoadedToolRef) => {
+      const { max_output_bytes: _maxOutputBytes, timeout_ms: _timeoutMs, ...legacyTool } = tool
+      return legacyTool
+    }
+    legacyEvent.initial_loaded_tool_refs = legacyEvent.initial_loaded_tool_refs.map(stripExecutionLimits)
+    legacyEvent.initial_checkpoint = finalizeTestCheckpoint({
+      ...legacyEvent.initial_checkpoint,
+      loaded_tools: legacyEvent.initial_checkpoint.loaded_tools.map(stripExecutionLimits),
+    })
+    legacyEvent.event_payload_hash = journalPayloadHash(legacyEvent)
+    await writeFile(legacyStore.eventsPath, `${JSON.stringify(legacyEvent)}\n`)
+    const legacySource = await legacyJournal.recoverySource("inv_recovery_legacy_limits")
+    expect(legacySource).toMatchObject({ projection_status: "ready", latest_checkpoint: { checkpoint_id: legacyEvent.initial_checkpoint.checkpoint_id } })
+    expect(legacySource?.latest_checkpoint?.loaded_tools[0].max_output_bytes).toBeUndefined()
+    expect(legacySource?.latest_checkpoint?.loaded_tools[0].timeout_ms).toBeUndefined()
+    const legacyPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => legacySource,
+      currentBootstrap: async () => ({ ...minimalTestBootstrap(), bootstrap_id: legacySource!.latest_checkpoint!.bootstrap_ref.bootstrap_id, bootstrap_hash: legacySource!.latest_checkpoint!.bootstrap_ref.bootstrap_hash }),
+    })).preview({ investigation_id: "inv_recovery_legacy_limits" })
+    expect(legacyPreview.status).toBe("blocked")
+    expect(legacyPreview.recommended_action).toBe("reconfigure_runtime")
+    expect(legacyPreview.tool_compatibility.blockers.join("\n")).toContain("capability envelope changed or is incomplete")
+
     for (const [label, mutate] of [
-      ["tool max output", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, max_output_bytes: tool.max_output_bytes + 1 })],
-      ["tool timeout", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, timeout_ms: tool.timeout_ms + 1 })],
+      ["tool max output", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, max_output_bytes: (tool.max_output_bytes ?? 0) + 1 })],
+      ["tool timeout", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, timeout_ms: (tool.timeout_ms ?? 0) + 1 })],
     ] as const) {
       const driftedToolCheckpoint = finalizeTestCheckpoint({
         ...source!.latest_checkpoint!,

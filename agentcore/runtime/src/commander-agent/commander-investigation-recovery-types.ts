@@ -102,9 +102,9 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   current_load_policy?: string
   stored_trust_class: string
   current_trust_class?: string
-  stored_max_output_bytes: number
+  stored_max_output_bytes?: number
   current_max_output_bytes?: number
-  stored_timeout_ms: number
+  stored_timeout_ms?: number
   current_timeout_ms?: number
   stored_risk?: string
   current_risk?: string

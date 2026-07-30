@@ -33,8 +33,8 @@ export type CommanderInvestigationLoadedToolRef = {
   load_policy: string
   trust_class: CommanderToolTrustClass
   instruction_semantics: "none"
-  max_output_bytes: number
-  timeout_ms: number
+  max_output_bytes?: number
+  timeout_ms?: number
   risk?: string
   side_effect_class?: string
   execution_backend?: string
