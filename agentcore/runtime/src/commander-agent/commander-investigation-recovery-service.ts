@@ -371,7 +371,12 @@ export class CommanderInvestigationRecoveryService {
       no_progress_turns: storedRemaining.no_progress_turns,
     }
     const optionalDimensions = new Set(["evidence_cards", "turn_summaries", "loaded_schemas"])
-    const exhausted = Object.entries(effective).filter(([key, value]) => value <= 0 && !optionalDimensions.has(key)).map(([key]) => key)
+    const finalAnswerConditionalDimensions = new Set(["tool_calls", "tool_search_calls", "result_bytes"])
+    const exhausted = Object.entries(effective).filter(([key, value]) => {
+      if (optionalDimensions.has(key)) return false
+      if (finalAnswerConditionalDimensions.has(key)) return value < 0
+      return value <= 0
+    }).map(([key]) => key)
     if (effective.loaded_schemas < 0) exhausted.push("loaded_schemas")
     if (currentLimits.tool_schema_allocation_bytes !== undefined && consumed.loaded_schema_bytes > currentLimits.tool_schema_allocation_bytes) exhausted.push("tool_schema_allocation_bytes")
     if (currentLimits.tool_schema_allocation_tokens !== undefined && consumed.loaded_schema_tokens > currentLimits.tool_schema_allocation_tokens) exhausted.push("tool_schema_allocation_tokens")

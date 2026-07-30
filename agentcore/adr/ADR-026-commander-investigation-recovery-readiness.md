@@ -97,8 +97,10 @@ objective kernel required by future recovery.
 Recommended actions distinguish journal integrity from current runtime policy.
 `inspect_corrupt_record` is reserved for corrupt or unsupported projections.
 Provider misconfiguration, injected adapters, schema drift, context overflow,
-and continuity degradation recommend runtime reconfiguration. Exhausted original
-budgets recommend a new investigation.
+and continuity degradation recommend runtime reconfiguration. Exhausted
+model-turn, wall-time, or no-progress budgets recommend a new investigation.
+Tool-call, tool-search, and cumulative-result-byte budgets at exactly zero do
+not block a final model-only turn; overconsumed counters still block recovery.
 
 ### Recovery Packet And Plan Hash
 

@@ -857,7 +857,7 @@ function recoverInvestigationIdFromMalformedLine(line: string, index: number, is
   const hasCommanderRuntimePrefix = /"kind"\s*:\s*"runtime_commander/.test(line)
   const hasCompleteNonCommanderKind = /"kind"\s*:\s*"(?!runtime_commander_investigation_)[^"\\]+"/.test(line)
   if (!hasCommanderInvestigationKindPrefix) {
-    return { unassignable_commander_tail: hasCommanderRuntimePrefix || isTail && !hasCompleteNonCommanderKind }
+    return { unassignable_commander_tail: hasCommanderRuntimePrefix || !hasCompleteNonCommanderKind }
   }
   const match = line.match(/"investigation_id"\s*:\s*"([^"\\]{1,200})"/)
   if (match?.[1]) return { investigation_id: bound(match[1], 200), unassignable_commander_tail: false }

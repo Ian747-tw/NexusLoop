@@ -5597,6 +5597,14 @@ describe("Commander in-memory investigation controller", () => {
     const interiorMalformedPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_interior_malformed", include_current_continuity: false })
     expect(interiorMalformedPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
 
+    await startOnly("inv_recovery_indeterminate_malformed", 8)
+    await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_command\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_indeterminate_malformed","timestamp":"2026-01-01T00:04:30.000Z"}\n', { flag: "a" })
+    const indeterminateMalformedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_indeterminate_malformed")
+    expect(indeterminateMalformedSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(indeterminateMalformedSource?.record?.integrity_errors.join("\n")).toContain("unassignable Commander journal event")
+    const indeterminateMalformedPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_indeterminate_malformed", include_current_continuity: false })
+    expect(indeterminateMalformedPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
+
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv', { flag: "a" })
     const blockedByTailSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_checkpoint")
     expect(blockedByTailSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
@@ -6087,6 +6095,37 @@ describe("Commander in-memory investigation controller", () => {
     expect(budgetPreview).toMatchObject({ status: "blocked" })
     expect(budgetPreview.budget_compatibility.exhausted_dimensions).toContain("model_turns")
     expect(budgetPreview.recommended_action).toBe("start_new_investigation")
+
+    const finalOnlyBudgetCheckpoint = finalizeTestCheckpoint({
+      ...source!.latest_checkpoint!,
+      working_set: {
+        ...source!.latest_checkpoint!.working_set,
+        tool_call_count: source!.latest_checkpoint!.budget.max_tool_calls,
+        tool_search_call_count: source!.latest_checkpoint!.budget.max_tool_search_calls,
+        cumulative_tool_result_bytes: source!.latest_checkpoint!.budget.max_cumulative_tool_result_bytes,
+      },
+    })
+    const finalOnlyBudgetPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => ({ ...source!, latest_checkpoint: finalOnlyBudgetCheckpoint }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(finalOnlyBudgetPreview).toMatchObject({ status: "ready_for_approval", recommended_action: "approve_resume_from_checkpoint" })
+    expect(finalOnlyBudgetPreview.budget_compatibility.exhausted_dimensions).not.toContain("tool_calls")
+    expect(finalOnlyBudgetPreview.budget_compatibility.exhausted_dimensions).not.toContain("tool_search_calls")
+    expect(finalOnlyBudgetPreview.budget_compatibility.exhausted_dimensions).not.toContain("result_bytes")
+    expect(finalOnlyBudgetPreview.budget_compatibility.model_turns_remaining).toBeGreaterThan(0)
+
+    const overConsumedToolBudgetCheckpoint = finalizeTestCheckpoint({
+      ...source!.latest_checkpoint!,
+      working_set: {
+        ...source!.latest_checkpoint!.working_set,
+        tool_call_count: source!.latest_checkpoint!.budget.max_tool_calls + 1,
+      },
+    })
+    const overConsumedToolBudgetPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => ({ ...source!, latest_checkpoint: overConsumedToolBudgetCheckpoint }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(overConsumedToolBudgetPreview).toMatchObject({ status: "blocked" })
+    expect(overConsumedToolBudgetPreview.budget_compatibility.exhausted_dimensions).toContain("tool_calls")
 
     const noProgressExhausted = { ...source!.latest_checkpoint!, working_set: { ...source!.latest_checkpoint!.working_set, consecutive_no_progress_turns: source!.latest_checkpoint!.budget.max_consecutive_no_progress_turns } }
     const noProgressPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => ({ ...source!, latest_checkpoint: noProgressExhausted }) })).preview({ investigation_id: "inv_recovery_compat" })
