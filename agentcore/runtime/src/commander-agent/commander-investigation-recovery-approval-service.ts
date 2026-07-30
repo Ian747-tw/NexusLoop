@@ -75,39 +75,88 @@ export class CommanderInvestigationRecoveryApprovalService {
         eventsAppended: false,
       })
     }
-    const source = await this.options.recoverySource(preview.investigation_id)
-    if (!source?.recovery_basis) {
+    const appendPreview = await this.preview(input)
+    if (appendPreview.status === "already_recorded" && appendPreview.existing_current_approval) {
       return result({
-        status: "blocked",
-        investigationId: preview.investigation_id,
-        decision: preview.decision,
-        approvalState: "none",
-        recoveryBasisHash: preview.recovery_basis_hash,
-        recoveryPlanHash: preview.current_recovery_plan_hash,
-        checkpointRef: preview.checkpoint_ref,
-        pendingRef: preview.pending_model_step_ref,
-        blockers: ["Commander recovery basis was not authoritative at approval append"],
-        warnings: preview.warnings,
+        status: "already_recorded",
+        investigationId: appendPreview.investigation_id,
+        decision: appendPreview.decision,
+        approvalState: "current",
+        recoveryBasisHash: appendPreview.recovery_basis_hash,
+        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+        checkpointRef: appendPreview.checkpoint_ref,
+        pendingRef: appendPreview.pending_model_step_ref,
+        blockers: [],
+        warnings: appendPreview.warnings,
         generatedAt,
         eventsAppended: false,
       })
     }
-    const approval = buildApprovalRecord(input, preview, generatedAt)
+    if (appendPreview.status !== "ready" || appendPreview.recovery_plan_hash_match !== true || appendPreview.current_recovery_plan_hash !== preview.current_recovery_plan_hash || appendPreview.recovery_basis_hash !== preview.recovery_basis_hash) {
+      return result({
+        status: "blocked",
+        investigationId: appendPreview.investigation_id,
+        decision: appendPreview.decision,
+        approvalState: "none",
+        recoveryBasisHash: appendPreview.recovery_basis_hash,
+        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+        checkpointRef: appendPreview.checkpoint_ref,
+        pendingRef: appendPreview.pending_model_step_ref,
+        blockers: [...appendPreview.blockers, "Commander recovery approval plan changed before append"].slice(0, 24),
+        warnings: appendPreview.warnings,
+        generatedAt,
+        eventsAppended: false,
+      })
+    }
+    const source = await this.options.recoverySource(appendPreview.investigation_id)
+    if (!source?.recovery_basis) {
+      return result({
+        status: "blocked",
+        investigationId: appendPreview.investigation_id,
+        decision: appendPreview.decision,
+        approvalState: "none",
+        recoveryBasisHash: appendPreview.recovery_basis_hash,
+        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+        checkpointRef: appendPreview.checkpoint_ref,
+        pendingRef: appendPreview.pending_model_step_ref,
+        blockers: ["Commander recovery basis was not authoritative at approval append"],
+        warnings: appendPreview.warnings,
+        generatedAt,
+        eventsAppended: false,
+      })
+    }
+    if (source.recovery_basis.basis_hash !== appendPreview.recovery_basis_hash) {
+      return result({
+        status: "blocked",
+        investigationId: appendPreview.investigation_id,
+        decision: appendPreview.decision,
+        approvalState: "none",
+        recoveryBasisHash: appendPreview.recovery_basis_hash,
+        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+        checkpointRef: appendPreview.checkpoint_ref,
+        pendingRef: appendPreview.pending_model_step_ref,
+        blockers: ["Commander recovery basis changed before approval append"],
+        warnings: appendPreview.warnings,
+        generatedAt,
+        eventsAppended: false,
+      })
+    }
+    const approval = buildApprovalRecord(input, appendPreview, generatedAt)
     try {
       const appended = await this.options.journalService.recordRecoveryApproval({ expected_basis: source.recovery_basis, approval })
       return result({
         status: appended.status,
-        investigationId: preview.investigation_id,
-        decision: preview.decision,
+        investigationId: appendPreview.investigation_id,
+        decision: appendPreview.decision,
         approval: appended.approval,
         approvalState: "current",
-        recoveryBasisHash: preview.recovery_basis_hash,
-        recoveryPlanHash: preview.current_recovery_plan_hash,
-        checkpointRef: preview.checkpoint_ref,
-        pendingRef: preview.pending_model_step_ref,
+        recoveryBasisHash: appendPreview.recovery_basis_hash,
+        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+        checkpointRef: appendPreview.checkpoint_ref,
+        pendingRef: appendPreview.pending_model_step_ref,
         eventId: appended.event_id,
         blockers: [],
-        warnings: preview.warnings,
+        warnings: appendPreview.warnings,
         generatedAt,
         eventsAppended: appended.events_appended,
       })
@@ -115,15 +164,15 @@ export class CommanderInvestigationRecoveryApprovalService {
       const failed = error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed"
       return result({
         status: failed,
-        investigationId: preview.investigation_id,
-        decision: preview.decision,
+        investigationId: appendPreview.investigation_id,
+        decision: appendPreview.decision,
         approvalState: "none",
-        recoveryBasisHash: preview.recovery_basis_hash,
-        recoveryPlanHash: preview.current_recovery_plan_hash,
-        checkpointRef: preview.checkpoint_ref,
-        pendingRef: preview.pending_model_step_ref,
+        recoveryBasisHash: appendPreview.recovery_basis_hash,
+        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+        checkpointRef: appendPreview.checkpoint_ref,
+        pendingRef: appendPreview.pending_model_step_ref,
         blockers: [redactText(error instanceof Error ? error.message : String(error)).slice(0, 240)],
-        warnings: preview.warnings,
+        warnings: appendPreview.warnings,
         generatedAt,
         eventsAppended: false,
       })

@@ -6442,6 +6442,42 @@ describe("Commander in-memory investigation controller", () => {
       network_called: false,
     })
     expect(approvalPreview.recovery_basis_hash).toBe(before.recovery_basis_hash)
+    let appendBoundaryPreviewCalls = 0
+    let staleAppendCalls = 0
+    const staleBoundaryApproval = await new CommanderInvestigationRecoveryApprovalService({
+      recoveryPreview: async () => {
+        appendBoundaryPreviewCalls += 1
+        if (appendBoundaryPreviewCalls === 1) return before
+        return {
+          ...before,
+          status: "blocked" as const,
+          recommended_action: "reconfigure_runtime" as const,
+          human_control: {
+            ...before.human_control,
+            action: "blocked" as const,
+            blockers: ["human stop changed before approval append"],
+          },
+          blockers: ["human stop changed before approval append"],
+        }
+      },
+      recoverySource: async () => journal.recoverySource("inv_recovery_approval_checkpoint"),
+      journalService: {
+        recordRecoveryApproval: async () => {
+          staleAppendCalls += 1
+          throw new Error("must not append stale approval")
+        },
+      } as any,
+    }).record(approvalInput)
+    expect(staleBoundaryApproval).toMatchObject({
+      status: "blocked",
+      events_appended: false,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+    })
+    expect(staleBoundaryApproval.blockers.join("\n")).toContain("changed before approval append")
+    expect(appendBoundaryPreviewCalls).toBe(2)
+    expect(staleAppendCalls).toBe(0)
     const recorded = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
     expect(recorded).toMatchObject({
       status: "recorded",
@@ -6786,6 +6822,38 @@ describe("Commander in-memory investigation controller", () => {
       resume_supported: false,
       recovery_approval_recorded: true,
       recovery_approval_consumed: false,
+    })
+    const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>)
+    const approvalEvent = events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")
+    expect(approvalEvent).toBeDefined()
+    const malformedApprovalEvent = {
+      ...approvalEvent!,
+      approval: {
+        ...approvalEvent!.approval,
+        acknowledgements: {
+          fresh_context_required: true,
+          exact_replay_unavailable: true,
+          provider_request_replay_forbidden: true,
+          tool_execution_replay_forbidden: true,
+        },
+        approval_hash: "",
+      },
+      event_payload_hash: "",
+    }
+    malformedApprovalEvent.approval.approval_hash = stableHash({ ...malformedApprovalEvent.approval, approved_at: "", approval_hash: "" })
+    malformedApprovalEvent.event_payload_hash = journalPayloadHash(malformedApprovalEvent)
+    const malformedDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-malformed-approval-"))
+    const malformedStore = new EventStore(join(malformedDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((candidate) => candidate.kind !== "runtime_commander_investigation_recovery_approved")) {
+      await malformedStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+    await malformedStore.append(malformedApprovalEvent as Parameters<EventStore["append"]>[0])
+    const malformedJournal = new CommanderInvestigationJournalService({ eventStore: malformedStore })
+    const malformedRecord = await malformedJournal.get("inv_recovery_approval_uncertain")
+    expect(malformedRecord).toMatchObject({
+      projection_status: "corrupt",
+      recovery_approval_recorded: false,
+      latest_recovery_approval_id: undefined,
     })
   })
 

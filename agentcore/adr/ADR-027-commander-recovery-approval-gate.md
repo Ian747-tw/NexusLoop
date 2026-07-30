@@ -84,6 +84,16 @@ of thought.
 Exact duplicate approval input for the same investigation, current basis,
 plan, decision, approver, and note hash is idempotent and appends no second
 event. A changed plan can receive a new approval only after fresh revalidation.
+The approval service reruns the recovery preview immediately before asking the
+journal to append; if the basis, plan hash, compatibility, continuity, or human
+control state changed between preview and append, the write is blocked and no
+stale approval event is recorded.
+
+Projection validates approval payload completeness during replay, including the
+decision-specific acknowledgement set and fixed no-replay safety flags. A
+hash-valid event that omits the uncertainty acknowledgement for an uncertain
+provider decision, flips `automatic`, clears `one_shot`, or claims exact replay
+support is corrupt rather than recovery-authoritative.
 
 ### Runtime Authority
 

@@ -492,6 +492,7 @@ export class RuntimeServer {
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
   private readonly activeDurableCommanderInvestigations = new Set<{
     promise: Promise<unknown>
+    investigation_id?: string
     run?: import("./commander-agent").CommanderInvestigationJournalRun
   }>()
   private readonly activeCommanderRecoveryApprovalWrites = new Set<Promise<unknown>>()
@@ -2732,7 +2733,7 @@ export class RuntimeServer {
     const journal = this.commanderInvestigationJournalService()
     const durableInput = { ...input, investigation_id: input.investigation_id ?? this.generatedCommanderInvestigationId(input) }
     const combined = this.commanderInvestigationAbortSignal(durableInput.abort_signal)
-    const active: { promise: Promise<CommanderInvestigationResult>; run?: import("./commander-agent").CommanderInvestigationJournalRun } = {} as { promise: Promise<CommanderInvestigationResult>; run?: import("./commander-agent").CommanderInvestigationJournalRun }
+    const active: { promise: Promise<CommanderInvestigationResult>; investigation_id?: string; run?: import("./commander-agent").CommanderInvestigationJournalRun } = { investigation_id: durableInput.investigation_id } as { promise: Promise<CommanderInvestigationResult>; investigation_id?: string; run?: import("./commander-agent").CommanderInvestigationJournalRun }
     let tracked!: Promise<CommanderInvestigationResult>
     tracked = (async () => {
       let run
@@ -2828,6 +2829,10 @@ export class RuntimeServer {
     if (this.mode !== "active" || !this.started || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld() || !this.commanderInvestigationProviderConfig) {
       const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
       return commanderRecoveryApprovalBlockedResult(input, preview, "Commander recovery approval write requires active ready runtime with run lock and configured connector provider", this.researchSynthesisNow?.() ?? new Date())
+    }
+    if (typeof input.investigation_id === "string" && Array.from(this.activeDurableCommanderInvestigations).some((entry) => entry.investigation_id === input.investigation_id || entry.run?.investigation_id === input.investigation_id)) {
+      const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
+      return commanderRecoveryApprovalBlockedResult(input, preview, "Commander recovery approval write requires inactive durable investigation", this.researchSynthesisNow?.() ?? new Date())
     }
     let tracked!: Promise<CommanderInvestigationRecoveryApprovalResult>
     tracked = this.commanderInvestigationRecoveryApprovalService().record(input).finally(() => {

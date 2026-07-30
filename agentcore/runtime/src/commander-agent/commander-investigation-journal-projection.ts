@@ -841,9 +841,20 @@ function isApprovalRecord(value: unknown): value is CommanderInvestigationRecove
   if (!Number.isInteger(value.approval_sequence) || Number(value.approval_sequence) < 0) return false
   if (decision !== "approve_resume_from_checkpoint" && decision !== "approve_continue_after_uncertain_provider_outcome") return false
   if (recoveryKind !== "checkpoint" && recoveryKind !== "uncertain_provider_outcome") return false
+  if (decision === "approve_resume_from_checkpoint" && recoveryKind !== "checkpoint") return false
+  if (decision === "approve_continue_after_uncertain_provider_outcome" && recoveryKind !== "uncertain_provider_outcome") return false
   if (value.approval_source !== "human") return false
+  if (value.one_shot !== true || value.automatic !== false || value.fresh_context_required !== true || value.exact_replay_supported !== false || value.provider_request_replay_allowed !== false || value.tool_execution_replay_allowed !== false || value.execution_supported_in_this_branch !== false) return false
   if (!isRecord(value.acknowledgements) || value.acknowledgements.fresh_context_required !== true || value.acknowledgements.exact_replay_unavailable !== true || value.acknowledgements.provider_request_replay_forbidden !== true || value.acknowledgements.tool_execution_replay_forbidden !== true) return false
+  const acknowledgementKeys = Object.keys(value.acknowledgements).sort()
+  const expectedAcknowledgementKeys = decision === "approve_continue_after_uncertain_provider_outcome"
+    ? ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome"].sort()
+    : ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden"].sort()
+  if (stableHash(acknowledgementKeys) !== stableHash(expectedAcknowledgementKeys)) return false
+  if (decision === "approve_continue_after_uncertain_provider_outcome" && value.acknowledgements.uncertain_provider_outcome !== true) return false
   if (!isRecord(value.checkpoint_ref) || !hasString(value.checkpoint_ref, "checkpoint_id") || !hasString(value.checkpoint_ref, "checkpoint_hash") || !hasNumber(value.checkpoint_ref, "checkpoint_sequence")) return false
+  if (decision === "approve_continue_after_uncertain_provider_outcome" && value.pending_model_step_ref === undefined) return false
+  if (decision === "approve_resume_from_checkpoint" && value.pending_model_step_ref !== undefined) return false
   if (value.pending_model_step_ref !== undefined) {
     const pending = value.pending_model_step_ref
     if (!isRecord(pending)) return false
