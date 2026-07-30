@@ -109,6 +109,7 @@ durable journal
 -> atomic recovery source
 -> tool/schema/authority compatibility checks
 -> provider/model/capability compatibility checks
+-> current connector/capability execution envelope hash
 -> remaining-budget and context checks
 -> current continuity/human-control checks
 -> bounded recovery packet
@@ -123,6 +124,12 @@ warnings remain warnings. Recovery recommendations also separate corrupt
 journals from current runtime incompatibility; injected adapters, provider
 misconfiguration, schema drift, context overflow, and degraded continuity are
 runtime reconfiguration blockers, not corrupt-record diagnoses.
+For configured providers, the recovery plan additionally binds a stable
+credential-free execution envelope derived from the current connector policy,
+transport limits, model context/output limits, and Commander capability flags.
+The preview exposes hashes and safe identifiers, not raw connector URLs, header
+values, credential environment names, or credential values. Runtime started
+state, run-lock state, and secret rotation do not change the plan hash.
 
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In

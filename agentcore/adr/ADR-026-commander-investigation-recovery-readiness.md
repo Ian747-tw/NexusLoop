@@ -56,6 +56,13 @@ against the current configured connector provider and Commander model
 capability. Injected adapters remain internal/test overrides and do not become
 the production recovery path. Preview can inspect state before start, after
 shutdown, and without a run lock, but execution readiness remains separate.
+For configured providers, preview also computes a credential-free recovery
+execution envelope. The envelope binds the current connector ID, connector
+policy hash, transport limits, model context/output limits, capability flags,
+and capability envelope hash. Raw connector URLs, header values, credential
+environment names, and credential values are not exposed. Runtime lifecycle
+state, run-lock state, and credential values are deliberately excluded so that
+starting the runtime or rotating a secret does not change the recovery plan.
 
 Budget compatibility never resets counters or broadens stored limits. Remaining
 budget is derived from the accepted checkpoint and current policy, using the
@@ -98,11 +105,12 @@ lines, Git patches, full research records, provider prompts/responses, raw tool
 results, assistant prose, credentials, or hidden reasoning.
 
 The recovery-plan hash binds the record hash, checkpoint hash, pending boundary,
-tool/provider/budget/continuity/human compatibility hashes, recovery packet
-hash, recovery kind, and recommended action. It excludes generated timestamps,
-EventStore event IDs, provider audit request IDs, process IDs, and duration
-measurements. 9W3B2 must require a human-approved plan hash to still match after
-revalidation.
+tool/provider/budget/continuity/human compatibility hashes, the current provider
+execution-envelope hash, recovery packet hash, recovery kind, and recommended
+action. It excludes generated timestamps, EventStore event IDs, provider audit
+request IDs, process IDs, runtime start/lock state, credential values, and
+duration measurements. 9W3B2 must require a human-approved plan hash to still
+match after revalidation.
 
 ## Consequences
 

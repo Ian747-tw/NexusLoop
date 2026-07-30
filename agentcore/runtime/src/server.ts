@@ -201,6 +201,7 @@ import {
   type CommanderInvestigationJournalSummary,
   type CommanderInvestigationRecoveryPreview,
   type CommanderInvestigationRecoveryPreviewInput,
+  type CommanderInvestigationRecoveryExecutionEnvelope,
   type CommanderInvestigationRecoverySource,
   type CommanderInvestigationProviderConfig,
   type CommanderInvestigationProviderGate,
@@ -5051,6 +5052,7 @@ export class RuntimeServer {
       descriptors: COMMANDER_TOOL_REGISTRY,
       boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
       providerReadiness: (input) => this.previewCommanderInvestigationProviderReadiness(input),
+      providerExecutionEnvelope: (input) => this.commanderInvestigationRecoveryExecutionEnvelope(input),
       modelCapability: (input) => this.modelCapabilityRegistry.get(input),
       currentProfile: (input) => this.commanderToolService().profile(input),
       currentBootstrap: (input) => this.commanderInvestigationBootstrapService().compile(input),
@@ -5083,6 +5085,65 @@ export class RuntimeServer {
       requestService: this.externalApiRequestService(),
       now: this.externalApiNow,
     })
+  }
+
+  private commanderInvestigationRecoveryExecutionEnvelope(input: CommanderInvestigationProviderReadinessInput): CommanderInvestigationRecoveryExecutionEnvelope | undefined {
+    const config = this.commanderInvestigationProviderConfig
+    if (!config) return undefined
+    const connector = this.externalApiConnectorRegistry.get(config.connector_id)
+    const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id, role: "commander" })
+    const connectorPolicyHash = stableHash({
+      connector_id: config.connector_id,
+      chat_completions_url: connector ? connectorChatCompletionsUrl(connector).toString() : undefined,
+      allowed_hosts: connector?.allowed_hosts.slice().sort() ?? [],
+      allowed_methods: connector?.allowed_methods.slice().sort() ?? [],
+      default_headers: Object.entries(connector?.default_headers ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+      credential_ref_injection_shape: (connector?.credential_refs ?? []).map((ref) => ({ source: ref.source, inject_as: ref.inject_as, target_name: ref.target_name, prefix: ref.prefix })).sort((a, b) => `${a.inject_as}:${a.target_name}`.localeCompare(`${b.inject_as}:${b.target_name}`)),
+      connector_timeout_ms: connector?.timeout_ms,
+      connector_max_response_bytes: connector?.max_response_bytes,
+      allow_local_http: connector?.allow_local_http === true,
+    })
+    const capabilityEnvelopeHash = stableHash({
+      provider_kind: capability.provider_kind,
+      provider_id: capability.provider_id,
+      model_id: capability.model_id,
+      role_support: capability.role_support.slice().sort(),
+      max_context_bytes: capability.max_context_bytes,
+      max_context_tokens: capability.max_context_tokens,
+      max_output_tokens: capability.max_output_tokens,
+      supports_tools: capability.supports_tools,
+      supports_json_schema: capability.supports_json_schema,
+      supports_mcp: capability.supports_mcp,
+      supports_long_context: capability.supports_long_context,
+      supports_streaming: capability.supports_streaming,
+      supports_local_execution: capability.supports_local_execution,
+      safety_margin_ratio: capability.safety_margin_ratio,
+      source: capability.source,
+    })
+    const envelope = {
+      envelope_version: 1 as const,
+      transport_kind: "openai_compatible_connector" as const,
+      provider_id: config.provider_id,
+      provider_kind: config.provider_kind,
+      connector_id: config.connector_id,
+      model_id: config.model_id,
+      timeout_ms: config.timeout_ms,
+      max_request_bytes: config.max_request_bytes,
+      max_response_bytes: config.max_response_bytes,
+      max_context_bytes: config.max_context_bytes,
+      max_context_tokens: config.max_context_tokens,
+      max_output_tokens: config.max_output_tokens,
+      supports_tools: config.supports_tools,
+      supports_json_schema: config.supports_json_schema,
+      supports_long_context: config.supports_long_context,
+      supports_local_execution: config.supports_local_execution,
+      supports_streaming: false as const,
+      connector_policy_hash: connectorPolicyHash,
+      capability_envelope_hash: capabilityEnvelopeHash,
+      execution_envelope_hash: "",
+    }
+    envelope.execution_envelope_hash = stableHash({ ...envelope, execution_envelope_hash: "" })
+    return redactValue(envelope)
   }
 
   private defaultCommanderInvestigationProviderGate(): CommanderInvestigationProviderGate {

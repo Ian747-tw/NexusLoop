@@ -152,10 +152,34 @@ export type CommanderInvestigationRecoveryProviderCompatibility = {
   connector_available: boolean
   credentials_ready: boolean
   supports_streaming: false
+  execution_envelope?: CommanderInvestigationRecoveryExecutionEnvelope
   compatible: boolean
   blockers: string[]
   warnings: string[]
   compatibility_hash: string
+}
+
+export type CommanderInvestigationRecoveryExecutionEnvelope = {
+  envelope_version: 1
+  transport_kind: "openai_compatible_connector"
+  provider_id: string
+  provider_kind: string
+  connector_id: string
+  model_id: string
+  timeout_ms: number
+  max_request_bytes: number
+  max_response_bytes: number
+  max_context_bytes: number
+  max_context_tokens?: number
+  max_output_tokens: number
+  supports_tools: boolean | "unknown"
+  supports_json_schema: boolean | "unknown"
+  supports_long_context: boolean | "unknown"
+  supports_local_execution: boolean | "unknown"
+  supports_streaming: false
+  connector_policy_hash: string
+  capability_envelope_hash: string
+  execution_envelope_hash: string
 }
 
 export type CommanderInvestigationRecoveryBudgetCompatibility = {
@@ -263,6 +287,7 @@ export type CommanderInvestigationRecoveryPacket = {
   repeat_signatures: Array<{ signature_hash: string; count: number; last_turn_index: number }>
   no_progress_state: { consecutive_no_progress_turns: number; max_consecutive_no_progress_turns?: number }
   remaining_budget?: Pick<CommanderInvestigationRecoveryBudgetCompatibility, "effective_remaining" | "exhausted_dimensions">
+  provider_execution_envelope_hash?: string
   current_human_control?: CommanderInvestigationRecoveryHumanControl
   warnings: string[]
   blockers: string[]
@@ -337,6 +362,7 @@ export type CommanderInvestigationRecoveryServiceOptions = {
   descriptors: import("../commander-tools/commander-tool-types").CommanderToolDescriptor[]
   boundToolIds: readonly string[]
   providerReadiness(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationProviderReadiness
+  providerExecutionEnvelope?(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationRecoveryExecutionEnvelope | undefined
   modelCapability(input: { provider_kind?: string; model_id?: string; role?: string }): import("../context/model-capability-types").ModelCapability
   currentProfile(input: { phase?: string }): import("../commander-tools/commander-tool-types").CommanderToolProfile
   currentBootstrap(input: Omit<import("./commander-investigation-types").CommanderInvestigationInput, "abort_signal">): Promise<import("./commander-investigation-types").CommanderInvestigationBootstrap>

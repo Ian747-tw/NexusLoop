@@ -77,7 +77,7 @@ export class CommanderInvestigationRecoveryService {
       ...humanControl.warnings,
       ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
     ].slice(0, 32)
-    const packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings)
+    const packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings, providerCompatibility)
     const contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility) : emptyContextCompatibility()
     let blockers = [
       ...toolCompatibility.blockers,
@@ -218,6 +218,7 @@ export class CommanderInvestigationRecoveryService {
   private providerCompatibility(source: CommanderInvestigationRecoverySource, phase: CommanderToolPhase): CommanderInvestigationRecoveryProviderCompatibility {
     const record = source.record
     const readiness = this.options.providerReadiness({ phase, provider_id: record?.provider_id, provider_kind: record?.provider_kind, model_id: record?.model_id })
+    const executionEnvelope = this.options.providerExecutionEnvelope?.({ phase, provider_id: record?.provider_id, provider_kind: record?.provider_kind, model_id: record?.model_id })
     const capability = this.options.modelCapability({ provider_kind: record?.provider_kind, model_id: record?.model_id, role: "commander" })
     const providerSource = readiness.provider_source
     const identityMatch = providerSource === "configured_connector"
@@ -259,6 +260,7 @@ export class CommanderInvestigationRecoveryService {
       connector_available: readiness.checks.find((check) => check.name === "connector_exists")?.ok ?? providerSource !== "configured_connector",
       credentials_ready: readiness.checks.find((check) => check.name === "credential_values_present")?.ok ?? providerSource !== "configured_connector",
       supports_streaming: false as const,
+      execution_envelope: executionEnvelope,
       compatible: blockers.length === 0 && readiness.configuration_ready && identityMatch && phaseEnabled && commanderRole && protocolSupported && providerSource === "configured_connector",
       blockers,
       warnings,
@@ -281,6 +283,7 @@ export class CommanderInvestigationRecoveryService {
       connector_available: result.connector_available,
       credentials_ready: result.credentials_ready,
       supports_streaming: result.supports_streaming,
+      execution_envelope_hash: result.execution_envelope?.execution_envelope_hash,
       compatible: result.compatible,
       blockers: result.blockers,
       warnings: result.warnings,
@@ -496,7 +499,7 @@ export class CommanderInvestigationRecoveryService {
     })
   }
 
-  private recoveryPacket(source: CommanderInvestigationRecoverySource, checkpoint: CommanderInvestigationCheckpoint, recoveryKind: "checkpoint" | "uncertain_provider_outcome", budget: CommanderInvestigationRecoveryBudgetCompatibility, human: CommanderInvestigationRecoveryHumanControl, continuity: CommanderInvestigationRecoveryContinuityCompatibility, blockers: string[], warnings: string[]): CommanderInvestigationRecoveryPacket | undefined {
+  private recoveryPacket(source: CommanderInvestigationRecoverySource, checkpoint: CommanderInvestigationCheckpoint, recoveryKind: "checkpoint" | "uncertain_provider_outcome", budget: CommanderInvestigationRecoveryBudgetCompatibility, human: CommanderInvestigationRecoveryHumanControl, continuity: CommanderInvestigationRecoveryContinuityCompatibility, blockers: string[], warnings: string[], provider?: CommanderInvestigationRecoveryProviderCompatibility): CommanderInvestigationRecoveryPacket | undefined {
     let packet: CommanderInvestigationRecoveryPacket = {
       packet_id: "",
       packet_version: 1,
@@ -515,6 +518,7 @@ export class CommanderInvestigationRecoveryService {
       repeat_signatures: checkpoint.working_set.recent_result_signatures.slice(-64),
       no_progress_state: { consecutive_no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns, max_consecutive_no_progress_turns: checkpoint.budget.max_consecutive_no_progress_turns },
       remaining_budget: { effective_remaining: budget.effective_remaining, exhausted_dimensions: budget.exhausted_dimensions },
+      provider_execution_envelope_hash: provider?.execution_envelope?.execution_envelope_hash,
       current_human_control: human,
       warnings: warnings.slice(0, 16),
       blockers: blockers.slice(0, 16),
@@ -598,6 +602,7 @@ export class CommanderInvestigationRecoveryService {
         pending_model_boundary: pending ? recoveryPendingPlanHash(pending) : undefined,
         tool: compat?.toolCompatibility.compatibility_hash,
         provider: compat?.providerCompatibility.compatibility_hash,
+        provider_execution_envelope: compat?.providerCompatibility.execution_envelope?.execution_envelope_hash,
         budget: compat?.budgetCompatibility.compatibility_hash,
         context: compat?.contextCompatibility.compatibility_hash,
         continuity: compat?.continuityCompatibility.compatibility_hash,

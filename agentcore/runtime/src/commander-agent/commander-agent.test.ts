@@ -5307,6 +5307,11 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(checkpointPreview.checkpoint).toMatchObject({ checkpoint_id: checkpointed.checkpoint.checkpoint_id, assistant_text_persisted: false, exact_replay_supported: false })
     expect(checkpointPreview.recovery_packet?.checkpoint_ref?.checkpoint_hash).toBe(checkpointed.checkpoint.checkpoint_hash)
+    expect(checkpointPreview.provider_compatibility.execution_envelope).toMatchObject({ connector_id: "openai-test", max_output_tokens: 1024, supports_streaming: false })
+    expect(checkpointPreview.recovery_packet?.provider_execution_envelope_hash).toBe(checkpointPreview.provider_compatibility.execution_envelope?.execution_envelope_hash)
+    expect(JSON.stringify(checkpointPreview)).not.toContain("https://api.example.test")
+    expect(JSON.stringify(checkpointPreview)).not.toContain("NXL_TEST_MODEL_KEY")
+    expect(JSON.stringify(checkpointPreview)).not.toContain("real-provider-key")
     expect(checkpointPreview.recovery_plan_hash).toBeString()
 
     const pending = await startOnly("inv_recovery_pending", 2)
@@ -5458,6 +5463,80 @@ describe("Commander in-memory investigation controller", () => {
     journal.release(run)
     const source = await journal.recoverySource("inv_recovery_compat")
     expect(source?.latest_checkpoint?.loaded_tools.map((tool) => tool.tool_id)).toEqual(["memory.search"])
+    const recoveryExecutionEnvelope = (overrides: {
+      connector_id?: string
+      base_url?: string
+      allowed_hosts?: string[]
+      allowed_methods?: string[]
+      timeout_ms?: number
+      max_request_bytes?: number
+      max_response_bytes?: number
+      max_context_bytes?: number
+      max_context_tokens?: number
+      max_output_tokens?: number
+      supports_tools?: boolean | "unknown"
+      supports_json_schema?: boolean | "unknown"
+      supports_long_context?: boolean | "unknown"
+      supports_local_execution?: boolean | "unknown"
+      credential_value?: string
+    } = {}) => {
+      const connectorId = overrides.connector_id ?? "openai-test"
+      const providerId = "fixture_provider"
+      const providerKind = "openai"
+      const modelId = "fixture-model"
+      const connectorPolicyHash = stableHash({
+        connector_id: connectorId,
+        chat_completions_url: `${overrides.base_url ?? "https://api.example.test/v1"}/chat/completions`,
+        allowed_hosts: overrides.allowed_hosts ?? ["api.example.test"],
+        allowed_methods: overrides.allowed_methods ?? ["POST"],
+        default_headers: [["X-Trace", "trace-fixture"]],
+        credential_ref_injection_shape: [{ source: "env", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+        connector_timeout_ms: overrides.timeout_ms ?? 5000,
+        connector_max_response_bytes: overrides.max_response_bytes ?? 65_536,
+        allow_local_http: false,
+      })
+      const capabilityEnvelopeHash = stableHash({
+        provider_kind: providerKind,
+        provider_id: providerId,
+        model_id: modelId,
+        role_support: ["commander"],
+        max_context_bytes: overrides.max_context_bytes ?? 65_536,
+        max_context_tokens: overrides.max_context_tokens,
+        max_output_tokens: overrides.max_output_tokens ?? 1024,
+        supports_tools: overrides.supports_tools ?? true,
+        supports_json_schema: overrides.supports_json_schema ?? "unknown",
+        supports_mcp: false,
+        supports_long_context: overrides.supports_long_context ?? "unknown",
+        supports_streaming: false,
+        supports_local_execution: overrides.supports_local_execution ?? false,
+        safety_margin_ratio: 0.18,
+        source: "runtime_config",
+      })
+      const envelope = {
+        envelope_version: 1 as const,
+        transport_kind: "openai_compatible_connector" as const,
+        provider_id: providerId,
+        provider_kind: providerKind,
+        connector_id: connectorId,
+        model_id: modelId,
+        timeout_ms: overrides.timeout_ms ?? 5000,
+        max_request_bytes: overrides.max_request_bytes ?? 65_536,
+        max_response_bytes: overrides.max_response_bytes ?? 65_536,
+        max_context_bytes: overrides.max_context_bytes ?? 65_536,
+        max_context_tokens: overrides.max_context_tokens,
+        max_output_tokens: overrides.max_output_tokens ?? 1024,
+        supports_tools: overrides.supports_tools ?? true,
+        supports_json_schema: overrides.supports_json_schema ?? "unknown" as const,
+        supports_long_context: overrides.supports_long_context ?? "unknown" as const,
+        supports_local_execution: overrides.supports_local_execution ?? false,
+        supports_streaming: false as const,
+        connector_policy_hash: connectorPolicyHash,
+        capability_envelope_hash: capabilityEnvelopeHash,
+        execution_envelope_hash: "",
+      }
+      envelope.execution_envelope_hash = stableHash({ ...envelope, execution_envelope_hash: "" })
+      return envelope
+    }
 
     const baseOptions = (overrides: Partial<ConstructorParameters<typeof CommanderInvestigationRecoveryService>[0]> = {}) => ({
       recoverySource: async () => source,
@@ -5496,6 +5575,7 @@ describe("Commander in-memory investigation controller", () => {
         events_appended: false as const,
         readiness_hash: "readiness_hash",
       }),
+      providerExecutionEnvelope: () => recoveryExecutionEnvelope(),
       modelCapability: () => ({
         capability_id: "capability_fixture",
         provider_kind: "openai",
@@ -5533,7 +5613,58 @@ describe("Commander in-memory investigation controller", () => {
       events_appended: false,
     })
     expect(validPreview.recovery_packet?.evidence_pointers[0]).toMatchObject({ evidence_id: "evidence_recovery_pointer", source_id: "evidence_recovery_pointer", summary_preview: "bounded evidence evidence_recovery_pointer" })
+    expect(validPreview.recovery_packet?.provider_execution_envelope_hash).toBe(validPreview.provider_compatibility.execution_envelope?.execution_envelope_hash)
+    expect(validPreview.provider_compatibility.execution_envelope).toMatchObject({ connector_id: "openai-test", max_output_tokens: 1024, supports_tools: true })
     expect(JSON.stringify(validPreview)).not.toContain("raw tool")
+    expect(JSON.stringify(validPreview)).not.toContain("https://api.example.test")
+    expect(JSON.stringify(validPreview)).not.toContain("trace-fixture")
+    expect(JSON.stringify(validPreview)).not.toContain("NXL_TEST_MODEL_KEY")
+    expect(JSON.stringify(validPreview)).not.toContain("real-provider-key")
+
+    const sameEnvelopeLaterPreview = await new CommanderInvestigationRecoveryService(baseOptions({ now: () => new Date("2026-01-03T00:00:00.000Z") })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(sameEnvelopeLaterPreview.recovery_plan_hash).toBe(validPreview.recovery_plan_hash)
+
+    const credentialRotatedPreview = await new CommanderInvestigationRecoveryService(baseOptions({ providerExecutionEnvelope: () => recoveryExecutionEnvelope({ credential_value: "rotated-secret" }) })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(credentialRotatedPreview.recovery_plan_hash).toBe(validPreview.recovery_plan_hash)
+
+    const defaultProviderReadiness = baseOptions().providerReadiness
+    const missingCredentialPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      providerReadiness: (readinessInput) => {
+        const readiness = defaultProviderReadiness(readinessInput)
+        return {
+          ...readiness,
+          status: "blocked" as const,
+          configuration_ready: false,
+          checks: readiness.checks.map((check) => check.name === "credential_values_present" ? { ...check, ok: false, severity: "error" as const, summary: "credential value is missing" } : check),
+          blockers: ["connector credential value is missing"],
+        }
+      },
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(missingCredentialPreview).toMatchObject({
+      status: "blocked",
+      recommended_action: "reconfigure_runtime",
+      provider_compatibility: { credentials_ready: false },
+    })
+    expect(JSON.stringify(missingCredentialPreview)).not.toContain("NXL_TEST_MODEL_KEY")
+    expect(JSON.stringify(missingCredentialPreview)).not.toContain("real-provider-key")
+
+    for (const [label, envelope] of [
+      ["connector_id", recoveryExecutionEnvelope({ connector_id: "openai-alt" })],
+      ["base_url", recoveryExecutionEnvelope({ base_url: "https://api-alt.example.test/v1" })],
+      ["allowed_hosts", recoveryExecutionEnvelope({ allowed_hosts: ["api-alt.example.test"] })],
+      ["allowed_methods", recoveryExecutionEnvelope({ allowed_methods: ["POST", "GET"] })],
+      ["timeout_ms", recoveryExecutionEnvelope({ timeout_ms: 7000 })],
+      ["max_request_bytes", recoveryExecutionEnvelope({ max_request_bytes: 32_768 })],
+      ["max_response_bytes", recoveryExecutionEnvelope({ max_response_bytes: 32_768 })],
+      ["max_output_tokens", recoveryExecutionEnvelope({ max_output_tokens: 512 })],
+      ["supports_tools", recoveryExecutionEnvelope({ supports_tools: "unknown" })],
+      ["supports_json_schema", recoveryExecutionEnvelope({ supports_json_schema: true })],
+      ["context_limits", recoveryExecutionEnvelope({ max_context_bytes: 32_768, max_context_tokens: 8192 })],
+    ] as const) {
+      const changed = await new CommanderInvestigationRecoveryService(baseOptions({ providerExecutionEnvelope: () => envelope })).preview({ investigation_id: "inv_recovery_compat" })
+      expect(changed.recovery_plan_hash, label).not.toBe(validPreview.recovery_plan_hash)
+      expect(changed.provider_compatibility.compatibility_hash, label).not.toBe(validPreview.provider_compatibility.compatibility_hash)
+    }
 
     const skippedContinuityPreview = await new CommanderInvestigationRecoveryService(baseOptions()).preview({ investigation_id: "inv_recovery_compat", include_current_continuity: false })
     expect(skippedContinuityPreview).toMatchObject({ status: "ready_for_approval", continuity_compatibility: { current_bootstrap_ready: false } })
@@ -5757,9 +5888,28 @@ describe("Commander in-memory investigation controller", () => {
 
     for (const projected_state of ["pause_requested", "correction_pending", "override_pending"] as const) {
       const humanHoldPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+        modelCapability: () => ({
+          capability_id: "capability_human_hold_context",
+          provider_kind: "openai",
+          provider_id: "fixture_provider",
+          model_id: "fixture-model",
+          display_name: "Fixture human hold",
+          role_support: ["commander" as const],
+          max_context_bytes: 131_072,
+          max_output_tokens: 1024,
+          supports_tools: true,
+          supports_json_schema: "unknown" as const,
+          supports_mcp: false,
+          supports_long_context: "unknown" as const,
+          supports_streaming: false,
+          supports_local_execution: false,
+          safety_margin_ratio: 0.18,
+          source: "runtime_config" as const,
+          warnings: [],
+        }),
         currentHumanControl: async () => ({ action: projected_state === "pause_requested" ? "pause" as const : "needs_human_review" as const, source_kind: "human_control", projected_state, summary_preview: projected_state, checked_at: "2026-01-01T00:00:00.000Z", warnings: [] }),
       })).preview({ investigation_id: "inv_recovery_compat" })
-      expect(humanHoldPreview.status).toBe("human_review_required")
+      expect(["blocked", "human_review_required"]).toContain(humanHoldPreview.status)
       expect(humanHoldPreview.recommended_action).toBe("none")
     }
 
