@@ -59,6 +59,7 @@ export type CommanderInvestigationRecoveryApprovalSummary = {
   recovery_plan_hash: string
   recovery_packet_hash: string
   checkpoint_ref: CommanderInvestigationRecoveryCheckpointApprovalRef
+  pending_model_step_ref?: CommanderInvestigationRecoveryPendingApprovalRef
   pending_model_request_id?: string
   provider_execution_envelope_hash: string
   tool_compatibility_hash: string

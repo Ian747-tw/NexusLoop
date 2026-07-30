@@ -36,6 +36,7 @@ import type {
   CommanderInvestigationRecoveryApprovalAppendInput,
   CommanderInvestigationRecoveryApprovalRecord,
   CommanderInvestigationRecoveryApprovalResult,
+  CommanderInvestigationRecoveryApprovalSummary,
   CommanderInvestigationRecoveryApprovedPayload,
 } from "./commander-investigation-recovery-approval-types"
 import { projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
@@ -384,13 +385,20 @@ export class CommanderInvestigationJournalService {
           throw new CommanderInvestigationJournalConflictError("pending model boundary changed before approval append")
         }
       }
-      const duplicate = source.recovery_approvals?.find((candidate) =>
-        candidate.recovery_basis_hash === approval.recovery_basis_hash &&
-        candidate.recovery_plan_hash === approval.recovery_plan_hash &&
-        candidate.decision === approval.decision &&
-        candidate.approved_by === approval.approved_by &&
-        candidate.human_note_hash === approval.human_note_hash)
-      if (duplicate) return { status: "already_recorded", approval, events_appended: false }
+      const duplicate = source.recovery_approvals?.find((candidate) => isSameRecoveryApprovalAuthority(candidate, approval))
+      if (duplicate) {
+        return {
+          status: "already_recorded",
+          approval: {
+            ...approval,
+            approval_id: duplicate.approval_id,
+            approval_sequence: duplicate.approval_sequence,
+            approved_at: duplicate.approved_at,
+            approval_hash: duplicate.approval_hash,
+          },
+          events_appended: false,
+        }
+      }
       if ((source.recovery_approvals?.length ?? 0) >= 16) throw new CommanderInvestigationJournalConflictError("Commander recovery approval history cap reached")
       const journalSequence = source.source_event_count
       const approvalSequence = source.recovery_approvals?.length ?? 0
@@ -742,6 +750,32 @@ export class CommanderInvestigationJournalService {
     summary.durability_hash = stableHash({ ...summary, started_event_id: "", latest_checkpoint_event_id: "", finished_event_id: "", durability_hash: "" })
     return summary
   }
+}
+
+function isSameRecoveryApprovalAuthority(candidate: CommanderInvestigationRecoveryApprovalSummary, approval: CommanderInvestigationRecoveryApprovalRecord): boolean {
+  return candidate.recovery_basis_hash === approval.recovery_basis_hash &&
+    candidate.recovery_plan_hash === approval.recovery_plan_hash &&
+    candidate.recovery_packet_hash === approval.recovery_packet_hash &&
+    candidate.decision === approval.decision &&
+    candidate.approved_by === approval.approved_by &&
+    candidate.human_note_hash === approval.human_note_hash &&
+    candidate.checkpoint_ref.checkpoint_id === approval.checkpoint_ref.checkpoint_id &&
+    candidate.checkpoint_ref.checkpoint_sequence === approval.checkpoint_ref.checkpoint_sequence &&
+    candidate.checkpoint_ref.checkpoint_hash === approval.checkpoint_ref.checkpoint_hash &&
+    candidate.pending_model_step_ref?.model_request_id === approval.pending_model_step_ref?.model_request_id &&
+    candidate.pending_model_step_ref?.turn_index === approval.pending_model_step_ref?.turn_index &&
+    candidate.pending_model_step_ref?.base_checkpoint_id === approval.pending_model_step_ref?.base_checkpoint_id &&
+    candidate.pending_model_step_ref?.base_checkpoint_sequence === approval.pending_model_step_ref?.base_checkpoint_sequence &&
+    candidate.pending_model_step_ref?.base_checkpoint_hash === approval.pending_model_step_ref?.base_checkpoint_hash &&
+    candidate.pending_model_step_ref?.working_set_hash === approval.pending_model_step_ref?.working_set_hash &&
+    candidate.pending_model_step_ref?.context_hash === approval.pending_model_step_ref?.context_hash &&
+    candidate.provider_execution_envelope_hash === approval.provider_execution_envelope_hash &&
+    candidate.tool_compatibility_hash === approval.tool_compatibility_hash &&
+    candidate.provider_compatibility_hash === approval.provider_compatibility_hash &&
+    candidate.budget_compatibility_hash === approval.budget_compatibility_hash &&
+    candidate.context_compatibility_hash === approval.context_compatibility_hash &&
+    candidate.continuity_compatibility_hash === approval.continuity_compatibility_hash &&
+    candidate.human_control_compatibility_hash === approval.human_control_compatibility_hash
 }
 
 function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigationLoadedToolRef[] {

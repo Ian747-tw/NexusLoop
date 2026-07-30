@@ -495,6 +495,7 @@ function approvalSummary(approval: CommanderInvestigationRecoveryApprovalRecord)
     recovery_plan_hash: approval.recovery_plan_hash,
     recovery_packet_hash: approval.recovery_packet_hash,
     checkpoint_ref: approval.checkpoint_ref,
+    pending_model_step_ref: approval.pending_model_step_ref,
     pending_model_request_id: approval.pending_model_step_ref?.model_request_id,
     provider_execution_envelope_hash: approval.provider_execution_envelope_hash,
     tool_compatibility_hash: approval.tool_compatibility_hash,

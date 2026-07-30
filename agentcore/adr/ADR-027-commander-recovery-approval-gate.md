@@ -93,9 +93,11 @@ remain distinct approval records. Replay enforces the exact approval allowlist,
 nested checkpoint/pending-reference allowlists, and bounded string fields before
 an approval can become recovery-authoritative.
 
-Exact duplicate approval input for the same investigation, current basis,
-plan, decision, approver, and note hash is idempotent and appends no second
-event. A changed plan can receive a new approval only after fresh revalidation.
+Exact duplicate approval input for the same investigation, current basis, plan,
+recovery packet, checkpoint or pending reference, provider execution envelope,
+compatibility hashes, decision, approver, and note hash is idempotent and
+appends no second event. A changed plan or stale packet/reference can receive a
+new approval only after fresh revalidation.
 The approval service reruns the recovery preview immediately before asking the
 journal to append; if the basis, plan hash, compatibility, continuity, or human
 control state changed between preview and append, the write is blocked and no

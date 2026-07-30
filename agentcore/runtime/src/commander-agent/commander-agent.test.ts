@@ -6952,6 +6952,14 @@ describe("Commander in-memory investigation controller", () => {
       current_approval: undefined,
       stale_approval_count: 1,
     })
+    const replacementPacketApproval = await stalePacketServer.recordCommanderInvestigationRecoveryApproval(approvalInput)
+    expect(replacementPacketApproval).toMatchObject({
+      status: "recorded",
+      approval_state: "current",
+      events_appended: true,
+    })
+    const replacementPacketEvents = (await readFile(stalePacketServer.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>)
+    expect(replacementPacketEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(2)
     const malformedApprovalEvent = {
       ...approvalEvent!,
       approval: {
