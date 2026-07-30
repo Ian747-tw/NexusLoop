@@ -5033,7 +5033,7 @@ describe("Commander in-memory investigation controller", () => {
       budget: initialRefsBad.budget,
       budget_hash: initialRefsBad.budget.budget_hash,
       bootstrap_ref: initialRefsBad.bootstrap_ref,
-      initial_loaded_tool_refs: [{ tool_id: "memory.search", descriptor_version: "v1", authority_id: "authority", input_schema_hash: "input", output_schema_hash: "output", load_policy: "deferred", trust_class: "runtime_authoritative", instruction_semantics: "none" }],
+      initial_loaded_tool_refs: [{ tool_id: "memory.search", descriptor_version: "v1", authority_id: "authority", input_schema_hash: "input", output_schema_hash: "output", load_policy: "deferred", trust_class: "runtime_authoritative", instruction_semantics: "none", max_output_bytes: 1000, timeout_ms: 100 }],
       initial_checkpoint: initialRefsBad,
       started_at: "2026-01-01T00:02:00.000Z",
       summary_preview: "identity initial refs drift",
@@ -5045,7 +5045,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(badRefs).toMatchObject({ projection_status: "corrupt", checkpoint_available: false })
     expect(badRefs?.integrity_errors.join("\n")).toContain("initial checkpoint loaded-tool references mismatch started event")
 
-    const fakeLoadedToolRef: CommanderInvestigationLoadedToolRef = { tool_id: "memory.search", descriptor_version: "v1", authority_id: "authority", input_schema_hash: "input", output_schema_hash: "output", load_policy: "deferred", trust_class: "runtime_authoritative", instruction_semantics: "none" }
+    const fakeLoadedToolRef: CommanderInvestigationLoadedToolRef = { tool_id: "memory.search", descriptor_version: "v1", authority_id: "authority", input_schema_hash: "input", output_schema_hash: "output", load_policy: "deferred", trust_class: "runtime_authoritative", instruction_semantics: "none", max_output_bytes: 1000, timeout_ms: 100 }
     const modelLoadedInput = baseInvestigation({ investigation_id: "inv_identity_model_loaded_refs", objective: "model loaded refs drift" })
     const modelLoadedInitial = await start(modelLoadedInput, 32)
     const modelLoadedEvent = {
@@ -5621,6 +5621,21 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(validPreview)).not.toContain("NXL_TEST_MODEL_KEY")
     expect(JSON.stringify(validPreview)).not.toContain("real-provider-key")
 
+    for (const [label, mutate] of [
+      ["tool max output", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, max_output_bytes: tool.max_output_bytes + 1 })],
+      ["tool timeout", (tool: CommanderInvestigationLoadedToolRef) => ({ ...tool, timeout_ms: tool.timeout_ms + 1 })],
+    ] as const) {
+      const driftedToolCheckpoint = finalizeTestCheckpoint({
+        ...source!.latest_checkpoint!,
+        loaded_tools: source!.latest_checkpoint!.loaded_tools.map((tool) => tool.tool_id === "memory.search" ? mutate(tool) : tool),
+      })
+      const driftedToolPreview = await new CommanderInvestigationRecoveryService(baseOptions({ recoverySource: async () => ({ ...source!, latest_checkpoint: driftedToolCheckpoint }) })).preview({ investigation_id: "inv_recovery_compat" })
+      expect(driftedToolPreview.status, label).toBe("blocked")
+      expect(driftedToolPreview.recommended_action, label).toBe("reconfigure_runtime")
+      expect(driftedToolPreview.tool_compatibility.blockers.join("\n"), label).toContain("capability envelope changed")
+      expect(driftedToolPreview.recovery_plan_hash, label).not.toBe(validPreview.recovery_plan_hash)
+    }
+
     const sameEnvelopeLaterPreview = await new CommanderInvestigationRecoveryService(baseOptions({ now: () => new Date("2026-01-03T00:00:00.000Z") })).preview({ investigation_id: "inv_recovery_compat" })
     expect(sameEnvelopeLaterPreview.recovery_plan_hash).toBe(validPreview.recovery_plan_hash)
 
@@ -5717,7 +5732,11 @@ describe("Commander in-memory investigation controller", () => {
       expect(degradedPreview.continuity_compatibility.blockers.join("\n")).toContain("current continuity assessment is degraded")
     }
 
+    const warningBudget = { ...source!.latest_checkpoint!.budget, max_context_bytes: 8192, budget_hash: "" }
+    warningBudget.budget_hash = stableHash({ ...warningBudget, budget_hash: "" })
+    const warningCheckpoint = finalizeTestCheckpoint({ ...source!.latest_checkpoint!, budget: warningBudget })
     const warningContinuityPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => ({ ...source!, latest_checkpoint: warningCheckpoint }),
       currentBootstrap: async () => ({
         ...minimalTestBootstrap(),
         bootstrap_id: source!.latest_checkpoint!.bootstrap_ref.bootstrap_id,
@@ -5853,6 +5872,34 @@ describe("Commander in-memory investigation controller", () => {
     })).preview({ investigation_id: "inv_recovery_compat" })
     expect(loadedSchemaCapPreview).toMatchObject({ status: "blocked" })
     expect(loadedSchemaCapPreview.budget_compatibility.exhausted_dimensions).toContain("loaded_schemas")
+
+    const tokenLimitedBudget = { ...source!.latest_checkpoint!.budget, max_context_tokens: 1, budget_hash: "" }
+    tokenLimitedBudget.budget_hash = stableHash({ ...tokenLimitedBudget, budget_hash: "" })
+    const tokenLimitedCheckpoint = finalizeTestCheckpoint({ ...source!.latest_checkpoint!, budget: tokenLimitedBudget })
+    const storedTokenCapPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => ({ ...source!, latest_checkpoint: tokenLimitedCheckpoint }),
+      modelCapability: () => ({
+        capability_id: "capability_no_token_ceiling",
+        provider_kind: "openai",
+        provider_id: "fixture_provider",
+        model_id: "fixture-model",
+        display_name: "Fixture no token ceiling",
+        role_support: ["commander" as const],
+        max_context_bytes: 65_536,
+        max_output_tokens: 1024,
+        supports_tools: true,
+        supports_json_schema: "unknown" as const,
+        supports_mcp: false,
+        supports_long_context: "unknown" as const,
+        supports_streaming: false,
+        supports_local_execution: false,
+        safety_margin_ratio: 0.18,
+        source: "runtime_config" as const,
+        warnings: [],
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(storedTokenCapPreview).toMatchObject({ status: "blocked", context_compatibility: { within_current_context_budget: false } })
+    expect(storedTokenCapPreview.context_compatibility.blockers.join("\n")).toContain("token budget")
 
     const smallContextPreview = await new CommanderInvestigationRecoveryService(baseOptions({
       modelCapability: () => ({

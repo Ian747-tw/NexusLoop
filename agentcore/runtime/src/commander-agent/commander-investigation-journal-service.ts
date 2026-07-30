@@ -634,6 +634,8 @@ function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigatio
     load_policy: tool.load_policy,
     trust_class: tool.trust_class,
     instruction_semantics: "none" as const,
+    max_output_bytes: tool.max_output_bytes,
+    timeout_ms: tool.timeout_ms,
     risk: tool.risk,
     side_effect_class: tool.side_effect_class,
     execution_backend: tool.execution_backend,

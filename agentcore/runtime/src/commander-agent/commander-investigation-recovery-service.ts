@@ -156,6 +156,8 @@ export class CommanderInvestigationRecoveryService {
       stored.side_effect_class === current.side_effect_class &&
       stored.execution_backend === current.execution_backend &&
       stored.process_policy === current.process_policy &&
+      stored.max_output_bytes === current.max_output_bytes &&
+      stored.timeout_ms === current.timeout_ms &&
       stored.creates_external_process === current.creates_external_process &&
       stored.calls_provider === current.calls_provider &&
       stored.mutates_events === current.mutates_events &&
@@ -190,6 +192,10 @@ export class CommanderInvestigationRecoveryService {
       current_load_policy: current?.load_policy,
       stored_trust_class: stored.trust_class,
       current_trust_class: current?.trust_class,
+      stored_max_output_bytes: stored.max_output_bytes,
+      current_max_output_bytes: current?.max_output_bytes,
+      stored_timeout_ms: stored.timeout_ms,
+      current_timeout_ms: current?.timeout_ms,
       stored_risk: stored.risk,
       current_risk: current?.risk,
       stored_side_effect_class: stored.side_effect_class,
@@ -404,7 +410,12 @@ export class CommanderInvestigationRecoveryService {
     const bootstrapTokens = continuity.current_bootstrap_tokens
     const storedMaxContextBytes = checkpoint.budget.max_context_bytes ?? 65_536
     const currentMaxContextBytes = Math.min(storedMaxContextBytes, capability.max_context_bytes ?? storedMaxContextBytes)
-    const currentMaxContextTokens = capability.max_context_tokens
+    const storedMaxContextTokens = checkpoint.budget.max_context_tokens
+    const currentMaxContextTokens = storedMaxContextTokens === undefined
+      ? capability.max_context_tokens
+      : capability.max_context_tokens === undefined
+        ? storedMaxContextTokens
+        : Math.min(storedMaxContextTokens, capability.max_context_tokens)
     const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes + bootstrapBytes
     const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil(latestBytes / 4) + bootstrapTokens
     const blockers = [
