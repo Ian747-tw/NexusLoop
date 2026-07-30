@@ -94,6 +94,13 @@ connector-backed provider authority. RuntimeServer tracks active approval
 writes and drains them before appending `runtime_shutdown` or releasing the run
 lock.
 
+Approval recording also requires the durable investigation to be inactive.
+Approval is a recovery authority for interrupted journal state, not a way to
+mutate a live investigation while it may still append model-step, checkpoint,
+or terminal events. The journal serializes approval writes by investigation ID,
+then rereads the source inside that critical section, so concurrent distinct
+approval attempts cannot derive duplicate journal or approval sequences.
+
 ## Consequences
 
 The internal stack is:

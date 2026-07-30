@@ -6552,6 +6552,132 @@ describe("Commander in-memory investigation controller", () => {
     expect(shutdownIndex).toBe(-1)
   })
 
+  test("recovery approval blocks while the durable investigation is still active", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-active-journal-"))
+    const eventStore = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const journal = new CommanderInvestigationJournalService({ eventStore })
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_approval_active",
+      objective: "Block approval while provider request is active",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const run = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 17, "inv_recovery_approval_active") as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
+    const checkpoint = await journal.latestCheckpoint("inv_recovery_approval_active")
+    expect(checkpoint).toBeDefined()
+    const approval = {
+      schema_version: 1,
+      approval_version: 1,
+      approval_id: "commander_recovery_approval_active",
+      approval_sequence: 0,
+      investigation_id: "inv_recovery_approval_active",
+      recovery_kind: "checkpoint",
+      decision: "approve_continue_after_uncertain_provider_outcome",
+      approved_by: "human_operator",
+      approval_source: "human",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+        uncertain_provider_outcome: true,
+      },
+      recovery_basis_hash: "basis_active",
+      recovery_plan_hash: "plan_active",
+      recovery_packet_hash: "packet_active",
+      preview_hash: "preview_active",
+      checkpoint_ref: {
+        checkpoint_id: checkpoint!.checkpoint_id,
+        checkpoint_sequence: checkpoint!.checkpoint_sequence,
+        checkpoint_hash: checkpoint!.checkpoint_hash,
+      },
+      provider_execution_envelope_hash: "provider_hash",
+      tool_compatibility_hash: "tool_hash",
+      provider_compatibility_hash: "provider_compat_hash",
+      budget_compatibility_hash: "budget_hash",
+      context_compatibility_hash: "context_hash",
+      continuity_compatibility_hash: "continuity_hash",
+      human_control_compatibility_hash: "human_hash",
+      one_shot: true,
+      automatic: false,
+      fresh_context_required: true,
+      exact_replay_supported: false,
+      provider_request_replay_allowed: false,
+      tool_execution_replay_allowed: false,
+      execution_supported_in_this_branch: false,
+      approved_at: "2026-01-01T00:00:10.000Z",
+      approval_hash: "approval_hash",
+    } as any
+    await expect(journal.recordRecoveryApproval({ expected_basis: { basis_hash: "basis_active" } as any, approval })).rejects.toThrow("inactive durable investigation")
+    journal.release(run)
+    const events = (await readFile(eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(0)
+  })
+
+  test("recovery approval serializes concurrent writes for the same investigation", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-concurrent-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_approval_concurrent",
+      objective: "Serialize concurrent recovery approvals",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const run = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 16, "inv_recovery_approval_concurrent") as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
+    journal.release(run)
+    await server.start()
+    const preview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_concurrent" })
+    expect(preview).toMatchObject({ status: "ready_for_approval", recovery_kind: "checkpoint" })
+    const baseApproval = {
+      investigation_id: "inv_recovery_approval_concurrent",
+      recovery_plan_hash: preview.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint" as const,
+      approved_by: "human_operator",
+      acknowledgements: {
+        fresh_context_required: true as const,
+        exact_replay_unavailable: true as const,
+        provider_request_replay_forbidden: true as const,
+        tool_execution_replay_forbidden: true as const,
+      },
+    }
+    const [first, second] = await Promise.all([
+      server.recordCommanderInvestigationRecoveryApproval({ ...baseApproval, human_note: "first approval note" }),
+      server.recordCommanderInvestigationRecoveryApproval({ ...baseApproval, human_note: "second approval note" }),
+    ])
+    const results = [first, second]
+    expect(results.filter((result) => result.status === "recorded")).toHaveLength(1)
+    expect(results.filter((result) => result.events_appended)).toHaveLength(1)
+    expect(results.filter((result) => result.status === "blocked" || result.status === "already_recorded")).toHaveLength(1)
+    const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_concurrent")
+    expect(record).toMatchObject({
+      projection_status: "ready",
+      recovery_approval_count: 1,
+      recovery_approval_recorded: true,
+      recovery_approval_consumed: false,
+    })
+    const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string; journal_sequence?: number; approval?: { approval_sequence?: number } })
+    const approvals = events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0]?.journal_sequence).toBe(1)
+    expect(approvals[0]?.approval?.approval_sequence).toBe(0)
+    await server.shutdown("concurrent approval test")
+  })
+
   test("recovery approval records uncertain-provider continuation without resolving the pending outcome", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-uncertain-"))
     await writeApprovedSpec(projectDir)

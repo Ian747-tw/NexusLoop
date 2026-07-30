@@ -339,17 +339,13 @@ export class CommanderInvestigationJournalService {
 
   async recordRecoveryApproval(input: CommanderInvestigationRecoveryApprovalAppendInput): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
     const approval = input.approval
-    const lockKey = stableHash({
-      investigation_id: approval.investigation_id,
-      recovery_basis_hash: approval.recovery_basis_hash,
-      recovery_plan_hash: approval.recovery_plan_hash,
-      decision: approval.decision,
-      approved_by: approval.approved_by,
-      human_note_hash: approval.human_note_hash,
-    })
-    if (this.activeApprovals.has(lockKey)) throw new CommanderInvestigationJournalConflictError("duplicate concurrent recovery approval write")
+    const lockKey = approval.investigation_id
+    if (this.activeApprovals.has(lockKey)) throw new CommanderInvestigationJournalConflictError("concurrent recovery approval write for investigation")
     this.activeApprovals.add(lockKey)
     try {
+      if (this.active.has(approval.investigation_id)) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires inactive durable investigation")
+      }
       const source = await this.recoverySource(approval.investigation_id)
       if (!source || source.projection_status !== "ready" || !source.record || source.record.status !== "running" || !source.recovery_basis || !source.latest_checkpoint) {
         throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires a ready nonterminal journal with an accepted checkpoint")
