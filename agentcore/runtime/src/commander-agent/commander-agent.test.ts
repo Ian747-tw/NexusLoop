@@ -6689,7 +6689,9 @@ describe("Commander in-memory investigation controller", () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-env-snapshot-"))
     await writeApprovedSpec(projectDir)
     const externalApiEnv: Record<string, string | undefined> = { NXL_TEST_MODEL_KEY: "real-provider-key" }
-    const server = configuredProviderRuntimeServer(projectDir, { externalApiEnv })
+    const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1")])
+    const connectorCopy = registry.get("openai-test")!
+    const server = configuredProviderRuntimeServer(projectDir, { externalApiEnv, externalApiConnectorRegistry: registry })
     servers.push({ stop: () => server.shutdown() })
     const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
     const input = baseInvestigation({
@@ -6707,6 +6709,8 @@ describe("Commander in-memory investigation controller", () => {
     await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
     journal.release(run)
     externalApiEnv.NXL_TEST_MODEL_KEY = undefined
+    connectorCopy.base_url = "https://api-mutated.example.test/v1"
+    connectorCopy.allowed_hosts = ["api-mutated.example.test"]
     await server.start()
     const preview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_env_snapshot" })
     expect(preview).toMatchObject({
@@ -6718,6 +6722,7 @@ describe("Commander in-memory investigation controller", () => {
       recovery_plan_hash: preview.recovery_plan_hash!,
       decision: "approve_resume_from_checkpoint",
       approved_by: "human_operator",
+      human_note: "   \n\t  ",
       acknowledgements: {
         fresh_context_required: true,
         exact_replay_unavailable: true,
@@ -6732,6 +6737,10 @@ describe("Commander in-memory investigation controller", () => {
       tool_executed: false,
       network_called: false,
     })
+    expect(recorded.approval?.human_note_preview).toBeUndefined()
+    expect(recorded.approval?.human_note_hash).toBeString()
+    const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_env_snapshot")
+    expect(record?.projection_status).toBe("ready")
   })
 
   test("recovery approval blocks while the durable investigation is still active", async () => {
@@ -7483,12 +7492,13 @@ function providerLaunchEnv(baseUrl: string) {
   }
 }
 
-function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport; externalApiEnv?: Record<string, string | undefined> } = {}) {
+function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport; externalApiEnv?: Record<string, string | undefined>; externalApiConnectorRegistry?: ExternalApiConnectorRegistry } = {}) {
   return new RuntimeServer({
     projectDir,
     adapter: options.adapter ?? new FakeOpenCodeAdapter(),
     commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
-    externalApiConnectors: [connector("openai-test", "https://api.example.test/v1")],
+    externalApiConnectorRegistry: options.externalApiConnectorRegistry,
+    externalApiConnectors: options.externalApiConnectorRegistry ? undefined : [connector("openai-test", "https://api.example.test/v1")],
     externalApiTransport: options.transport ?? new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured final") }]),
     externalApiEnv: options.externalApiEnv ?? { NXL_TEST_MODEL_KEY: "real-provider-key" },
     externalApiRequestId: (() => {

@@ -165,7 +165,7 @@ export class CommanderInvestigationRecoveryApprovalService {
       investigation_id: investigationId,
       decision: input.decision,
       approved_by_preview: bound(input.approved_by, 200),
-      human_note_preview: input.human_note ? bound(redactText(input.human_note), 500) : undefined,
+      human_note_preview: humanNotePreview(input.human_note),
       supplied_recovery_plan_hash: typeof input.recovery_plan_hash === "string" ? bound(input.recovery_plan_hash, 160) : undefined,
       current_recovery_plan_hash: recovery?.recovery_plan_hash,
       recovery_plan_hash_match: Boolean(recovery?.recovery_plan_hash && recovery.recovery_plan_hash === input.recovery_plan_hash),
@@ -264,7 +264,7 @@ function buildApprovalRecord(input: CommanderInvestigationRecoveryApprovalInput,
     decision: input.decision,
     approved_by: bound(input.approved_by, 200),
     approval_source: "human" as const,
-    human_note_preview: input.human_note ? bound(redactText(input.human_note), 500) : undefined,
+    human_note_preview: humanNotePreview(input.human_note),
     human_note_hash: humanNoteHash(input.human_note),
     acknowledgements: input.acknowledgements,
     recovery_basis_hash: preview.recovery_basis_hash,
@@ -328,6 +328,12 @@ function approvalHash(approval: CommanderInvestigationRecoveryApprovalRecord): C
 
 function humanNoteHash(note: string | undefined): string | undefined {
   return note === undefined ? undefined : stableHash(redactText(note))
+}
+
+function humanNotePreview(note: string | undefined): string | undefined {
+  if (note === undefined) return undefined
+  const preview = bound(redactText(note), 500)
+  return preview.length > 0 ? preview : undefined
 }
 
 function acknowledgementsComplete(ack: CommanderInvestigationRecoveryApprovalAcknowledgements | undefined, decision: CommanderInvestigationRecoveryApprovalInput["decision"]): boolean {

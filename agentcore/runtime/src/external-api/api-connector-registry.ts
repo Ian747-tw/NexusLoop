@@ -45,7 +45,10 @@ export class ExternalApiConnectorRegistry {
   private readonly connectors: Map<string, ExternalApiConnector>
 
   constructor(connectors: ExternalApiConnector[] = BUILTIN_EXTERNAL_API_CONNECTORS) {
-    this.connectors = new Map(connectors.map((connector) => [connector.connector_id, validateExternalApiConnector(connector)]))
+    this.connectors = new Map(connectors.map((connector) => {
+      const validated = validateExternalApiConnector(connector)
+      return [validated.connector_id, cloneConnector(validated)]
+    }))
   }
 
   list(): ExternalApiConnectorSummary[] {
@@ -53,12 +56,23 @@ export class ExternalApiConnectorRegistry {
   }
 
   get(connectorId: string): ExternalApiConnector | null {
-    return this.connectors.get(connectorId) ?? null
+    const connector = this.connectors.get(connectorId)
+    return connector ? cloneConnector(connector) : null
   }
 
   getSummary(connectorId: string): ExternalApiConnectorSummary | null {
     const connector = this.get(connectorId)
     return connector ? summarizeConnector(connector) : null
+  }
+}
+
+function cloneConnector(connector: ExternalApiConnector): ExternalApiConnector {
+  return {
+    ...connector,
+    allowed_hosts: [...connector.allowed_hosts],
+    allowed_methods: [...connector.allowed_methods],
+    default_headers: connector.default_headers ? { ...connector.default_headers } : undefined,
+    credential_refs: connector.credential_refs?.map((ref) => ({ ...ref })),
   }
 }
 

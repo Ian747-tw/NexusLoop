@@ -108,8 +108,9 @@ entry. A concurrent compatibility-changing event therefore orders before the
 approval and blocks it, or orders after the approval and cannot make the
 recorded approval stale at its own append point.
 RuntimeServer also snapshots caller-provided external API environment values at
-construction so later mutation of the caller's environment object cannot change
-credential-readiness inputs between approval preview and append.
+construction, and the connector registry stores/returns defensive connector
+copies, so later mutation of caller-held environment or connector objects cannot
+change approval compatibility inputs between approval preview and append.
 
 Projection validates approval payload completeness during replay, including the
 outer event envelope allowlist, event-to-approval requested-by/time bindings,
