@@ -814,13 +814,19 @@ function isNormalizedInput(value: unknown): value is Record<string, unknown> {
 
 function isRecoveryApprovedPayload(value: unknown): value is CommanderInvestigationRecoveryApprovedPayload {
   if (!isRecord(value)) return false
+  const allowedKeys = new Set(["kind", "event_id", "timestamp", "schema_version", "investigation_id", "journal_sequence", "requested_by", "occurred_at", "approval", "event_payload_hash"])
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false
+  if (value.kind !== undefined && value.kind !== "runtime_commander_investigation_recovery_approved") return false
   if (value.schema_version !== 1) return false
-  if (!hasString(value, "investigation_id")) return false
+  if (!hasString(value, "investigation_id") || !boundedJournalString(value.investigation_id, 200)) return false
   if (!hasNumber(value, "journal_sequence")) return false
-  if (!hasString(value, "requested_by")) return false
-  if (!hasString(value, "occurred_at")) return false
-  if (!hasString(value, "event_payload_hash")) return false
+  if (!hasString(value, "requested_by") || !boundedJournalString(value.requested_by, 200)) return false
+  if (!hasString(value, "occurred_at") || !boundedJournalString(value.occurred_at, 80)) return false
+  if (!hasString(value, "event_payload_hash") || !boundedJournalString(value.event_payload_hash, 240)) return false
   if (!isApprovalRecord(value.approval)) return false
+  if (value.investigation_id !== value.approval.investigation_id) return false
+  if (value.requested_by !== value.approval.approved_by) return false
+  if (value.occurred_at !== value.approval.approved_at) return false
   return true
 }
 

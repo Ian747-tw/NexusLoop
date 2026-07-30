@@ -101,10 +101,12 @@ approval and blocks it, or orders after the approval and cannot make the
 recorded approval stale at its own append point.
 
 Projection validates approval payload completeness during replay, including the
-decision-specific acknowledgement set and fixed no-replay safety flags. A
+outer event envelope allowlist, event-to-approval requested-by/time bindings,
+decision-specific acknowledgement set, and fixed no-replay safety flags. A
 hash-valid event that omits the uncertainty acknowledgement for an uncertain
-provider decision, flips `automatic`, clears `one_shot`, or claims exact replay
-support is corrupt rather than recovery-authoritative.
+provider decision, attributes the event to a different requester, flips
+`automatic`, clears `one_shot`, or claims exact replay support is corrupt
+rather than recovery-authoritative.
 
 ### Runtime Authority
 

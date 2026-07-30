@@ -6969,6 +6969,26 @@ describe("Commander in-memory investigation controller", () => {
       recovery_approval_recorded: false,
       latest_recovery_approval_id: undefined,
     })
+    const mismatchedEnvelopeEvent = {
+      ...approvalEvent!,
+      requested_by: "different_human_operator",
+      unexpected_outer_payload: "raw provider response sentinel must not be accepted",
+      event_payload_hash: "",
+    }
+    mismatchedEnvelopeEvent.event_payload_hash = journalPayloadHash(mismatchedEnvelopeEvent)
+    const mismatchedEnvelopeDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-mismatched-approval-envelope-"))
+    const mismatchedEnvelopeStore = new EventStore(join(mismatchedEnvelopeDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((candidate) => candidate.kind !== "runtime_commander_investigation_recovery_approved")) {
+      await mismatchedEnvelopeStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+    await mismatchedEnvelopeStore.append(mismatchedEnvelopeEvent as Parameters<EventStore["append"]>[0])
+    const mismatchedEnvelopeJournal = new CommanderInvestigationJournalService({ eventStore: mismatchedEnvelopeStore })
+    const mismatchedEnvelopeRecord = await mismatchedEnvelopeJournal.get("inv_recovery_approval_uncertain")
+    expect(mismatchedEnvelopeRecord).toMatchObject({
+      projection_status: "corrupt",
+      recovery_approval_recorded: false,
+      latest_recovery_approval_id: undefined,
+    })
   })
 
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {
