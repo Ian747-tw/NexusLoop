@@ -518,7 +518,7 @@ export class RuntimeServer {
     this.commanderPlaybookDraftRegistry = options.commanderPlaybookDraftRegistry ?? new CommanderPlaybookDraftRegistry({ eventStore: this.eventStore, proposalRegistry: this.proposalRegistry, proposalBundleRegistry: this.proposalBundleRegistry, reviewRegistry: this.reviewRegistry })
     this.externalApiConnectorRegistry = options.externalApiConnectorRegistry ?? new ExternalApiConnectorRegistry(options.externalApiConnectors)
     this.externalApiTransport = options.externalApiTransport ?? new FetchExternalApiTransport({ resolveHostAddresses: options.externalApiResolveHostAddresses })
-    this.externalApiEnv = options.externalApiEnv ?? {}
+    this.externalApiEnv = Object.freeze({ ...(options.externalApiEnv ?? {}) })
     this.externalApiResolveHostAddresses = options.externalApiResolveHostAddresses
     this.externalApiNow = options.externalApiNow
     this.externalApiRequestId = options.externalApiRequestId
