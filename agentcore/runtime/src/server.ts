@@ -184,6 +184,7 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationJournalConflictError,
   CommanderInvestigationPersistenceError,
+  CommanderInvestigationRecoveryApprovalService,
   CommanderInvestigationRecoveryService,
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
@@ -201,6 +202,9 @@ import {
   type CommanderInvestigationJournalSummary,
   type CommanderInvestigationRecoveryPreview,
   type CommanderInvestigationRecoveryPreviewInput,
+  type CommanderInvestigationRecoveryApprovalInput,
+  type CommanderInvestigationRecoveryApprovalPreview,
+  type CommanderInvestigationRecoveryApprovalResult,
   type CommanderInvestigationRecoveryExecutionEnvelope,
   type CommanderInvestigationRecoverySource,
   type CommanderInvestigationProviderConfig,
@@ -439,6 +443,7 @@ export class RuntimeServer {
   private commanderInvestigationControllerInstance: CommanderInvestigationController | null = null
   private commanderInvestigationJournalServiceInstance: CommanderInvestigationJournalService | null = null
   private commanderInvestigationRecoveryServiceInstance: CommanderInvestigationRecoveryService | null = null
+  private commanderInvestigationRecoveryApprovalServiceInstance: CommanderInvestigationRecoveryApprovalService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -489,6 +494,7 @@ export class RuntimeServer {
     promise: Promise<unknown>
     run?: import("./commander-agent").CommanderInvestigationJournalRun
   }>()
+  private readonly activeCommanderRecoveryApprovalWrites = new Set<Promise<unknown>>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2814,6 +2820,23 @@ export class RuntimeServer {
     return this.commanderInvestigationRecoveryService().preview(input)
   }
 
+  previewCommanderInvestigationRecoveryApproval(input: CommanderInvestigationRecoveryApprovalInput): Promise<CommanderInvestigationRecoveryApprovalPreview> {
+    return this.commanderInvestigationRecoveryApprovalService().preview(input)
+  }
+
+  async recordCommanderInvestigationRecoveryApproval(input: CommanderInvestigationRecoveryApprovalInput): Promise<CommanderInvestigationRecoveryApprovalResult> {
+    if (this.mode !== "active" || !this.started || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld() || !this.commanderInvestigationProviderConfig) {
+      const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
+      return commanderRecoveryApprovalBlockedResult(input, preview, "Commander recovery approval write requires active ready runtime with run lock and configured connector provider", this.researchSynthesisNow?.() ?? new Date())
+    }
+    let tracked!: Promise<CommanderInvestigationRecoveryApprovalResult>
+    tracked = this.commanderInvestigationRecoveryApprovalService().record(input).finally(() => {
+      this.activeCommanderRecoveryApprovalWrites.delete(tracked)
+    })
+    this.activeCommanderRecoveryApprovalWrites.add(tracked)
+    return tracked
+  }
+
   private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
     const controller = new AbortController()
     const runtimeSignal = this.commanderInvestigationLifecycleAbort.signal
@@ -2843,7 +2866,7 @@ export class RuntimeServer {
 
   private async drainConfiguredCommanderInvestigations(): Promise<void> {
     const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
-    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise)]
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
@@ -5094,6 +5117,16 @@ export class RuntimeServer {
     return this.commanderInvestigationRecoveryServiceInstance
   }
 
+  private commanderInvestigationRecoveryApprovalService(): CommanderInvestigationRecoveryApprovalService {
+    this.commanderInvestigationRecoveryApprovalServiceInstance ??= new CommanderInvestigationRecoveryApprovalService({
+      recoveryPreview: (input) => this.commanderInvestigationRecoveryService().preview(input),
+      recoverySource: (investigationId) => this.commanderInvestigationJournalService().recoverySource(investigationId),
+      journalService: this.commanderInvestigationJournalService(),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationRecoveryApprovalServiceInstance
+  }
+
   private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {
     const config = this.commanderInvestigationProviderConfig
     if (!config) return undefined
@@ -5319,6 +5352,7 @@ export class RuntimeServer {
           ...investigation.evidence_previews.map((preview) => `evidence ${preview}`),
           `evidence ${investigation.evidence_count}`,
           `recovery ${investigation.recovery_state}`,
+          investigation.recovery_approval_recorded ? `recovery approval ${investigation.latest_recovery_approval_decision}` : "",
         ].filter(Boolean).join("; "),
         session_id: investigation.session_id,
         launch_id: investigation.launch_id,
@@ -5331,6 +5365,11 @@ export class RuntimeServer {
           model_id: investigation.model_id,
           latest_checkpoint_id: investigation.latest_checkpoint_id,
           recovery_state: investigation.recovery_state,
+          recovery_approval_recorded: String(investigation.recovery_approval_recorded),
+          recovery_approval_decision: investigation.latest_recovery_approval_decision,
+          recovery_approval_id: investigation.latest_recovery_approval_id,
+          recovery_approved_by: investigation.latest_recovery_approved_by,
+          recovery_approval_plan_hash_preview: investigation.latest_recovery_approval_plan_hash?.slice(0, 16),
           evidence_previews: investigation.evidence_previews.join(" "),
           evidence_count: String(investigation.evidence_count),
           model_turn_count: String(investigation.model_turn_count),
@@ -5800,6 +5839,38 @@ function alreadyAbortedSignal(reason: string): AbortSignal {
   const controller = new AbortController()
   controller.abort(new Error(reason))
   return controller.signal
+}
+
+function commanderRecoveryApprovalBlockedResult(input: CommanderInvestigationRecoveryApprovalInput, preview: CommanderInvestigationRecoveryApprovalPreview, blocker: string, now: Date): CommanderInvestigationRecoveryApprovalResult {
+  const generatedAt = now.toISOString()
+  const result = {
+    result_id: `commander_recovery_approval_result_${stableHash({ investigation_id: input.investigation_id, generated_at: generatedAt, blocked: true }).slice(0, 16)}`,
+    status: "blocked" as const,
+    investigation_id: input.investigation_id,
+    decision: input.decision,
+    approval_state: preview.existing_current_approval ? "current" as const : "none" as const,
+    recovery_basis_hash: preview.recovery_basis_hash,
+    recovery_plan_hash: preview.current_recovery_plan_hash,
+    checkpoint_ref: preview.checkpoint_ref,
+    pending_model_step_ref: preview.pending_model_step_ref,
+    events_appended: false,
+    provider_called: false as const,
+    tool_executed: false as const,
+    network_called: false as const,
+    files_written: false as const,
+    research_db_written: false as const,
+    mission_mutated: false as const,
+    proposal_mutated: false as const,
+    opencode_action_performed: false as const,
+    github_action_performed: false as const,
+    mcp_called: false as const,
+    blockers: [blocker, ...preview.blockers].map((item) => redactText(item).slice(0, 240)).slice(0, 24),
+    warnings: preview.warnings.slice(0, 24),
+    generated_at: generatedAt,
+    result_hash: "",
+  }
+  result.result_hash = stableHash({ ...result, result_id: "", generated_at: "", result_hash: "" })
+  return result
 }
 
 function durableResult(result: CommanderInvestigationResult, durability: import("./commander-agent").CommanderInvestigationDurabilitySummary): CommanderInvestigationResult {

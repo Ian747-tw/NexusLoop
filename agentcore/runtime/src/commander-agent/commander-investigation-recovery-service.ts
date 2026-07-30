@@ -633,12 +633,32 @@ export class CommanderInvestigationRecoveryService {
     generatedAt: string = this.now().toISOString(),
   ): CommanderInvestigationRecoveryPreview {
     const record = source.record
+    const planHash = packet ? stableHash({
+      recovery_basis_hash: source.recovery_basis_hash,
+      checkpoint_hash: checkpoint?.checkpoint_hash,
+      pending_model_boundary: pending ? recoveryPendingPlanHash(pending) : undefined,
+      tool: compat?.toolCompatibility.compatibility_hash,
+      provider: compat?.providerCompatibility.compatibility_hash,
+      provider_execution_envelope: compat?.providerCompatibility.execution_envelope?.execution_envelope_hash,
+      budget: compat?.budgetCompatibility.compatibility_hash,
+      context: compat?.contextCompatibility.compatibility_hash,
+      continuity: compat?.continuityCompatibility.compatibility_hash,
+      human: compat?.humanControl.compatibility_hash,
+      packet: packet.packet_hash,
+      recoveryKind,
+      action,
+    }) : undefined
+    const approval = currentApprovalFor(source, planHash, recoveryKind, checkpoint, pending, compat)
+    const effectiveStatus = approval.current && (status === "ready_for_approval" || status === "human_review_required")
+      ? "approved_waiting_for_execution" as const
+      : status
+    const effectiveAction = approval.current ? "await_recovery_execution" as const : action
     const preview = {
       preview_id: `commander_recovery_preview_${stableHash({ source: source.source_hash, generated_at: generatedAt }).slice(0, 16)}`,
       preview_version: 1 as const,
-      status,
+      status: effectiveStatus,
       recovery_kind: recoveryKind,
-      recommended_action: action,
+      recommended_action: effectiveAction,
       investigation_id: source.investigation_id,
       record_status: record?.status,
       record_hash: record?.record_hash,
@@ -662,32 +682,27 @@ export class CommanderInvestigationRecoveryService {
       continuity_compatibility: compat?.continuityCompatibility ?? emptyContinuityCompatibility(),
       human_control: compat?.humanControl ?? finalizeHumanControl({ checked: false, source_kind: "none", action: "continue", blockers: [], warnings: [] }),
       recovery_packet: packet,
+      approval_state: approval.current ? "current" as const : approval.staleCount > 0 ? "stale" as const : "none" as const,
+      current_approval: approval.current,
+      stale_approval_count: approval.staleCount,
+      recovery_approval_required: !approval.current && (status === "ready_for_approval" || status === "human_review_required"),
+      recovery_approval_consumed: false as const,
       automatic_resume_allowed: false as const,
-      human_approval_required: status === "ready_for_approval" || status === "human_review_required",
+      human_approval_required: !approval.current && (status === "ready_for_approval" || status === "human_review_required"),
       exact_replay_supported: false as const,
       original_assistant_text_available: false as const,
       provider_request_replay_allowed: false as const,
       tool_execution_replay_allowed: false as const,
       fresh_context_required: true as const,
-      same_journal_resume_candidate: status === "ready_for_approval" || status === "human_review_required",
+      same_journal_resume_candidate: status === "ready_for_approval" || status === "human_review_required" || Boolean(approval.current),
       terminal_continuation_requires_new_investigation: record?.status !== undefined && record.status !== "running",
-      recovery_plan_hash: packet ? stableHash({
-        record_hash: record?.record_hash,
-        checkpoint_hash: checkpoint?.checkpoint_hash,
-        pending_model_boundary: pending ? recoveryPendingPlanHash(pending) : undefined,
-        tool: compat?.toolCompatibility.compatibility_hash,
-        provider: compat?.providerCompatibility.compatibility_hash,
-        provider_execution_envelope: compat?.providerCompatibility.execution_envelope?.execution_envelope_hash,
-        budget: compat?.budgetCompatibility.compatibility_hash,
-        context: compat?.contextCompatibility.compatibility_hash,
-        continuity: compat?.continuityCompatibility.compatibility_hash,
-        human: compat?.humanControl.compatibility_hash,
-        packet: packet.packet_hash,
-        recoveryKind,
-        action,
-      }) : undefined,
+      recovery_basis_hash: source.recovery_basis_hash,
+      recovery_plan_hash: planHash,
       blockers: blockers.map((item) => bound(item, 240)).slice(0, 24),
-      warnings: warnings.map((item) => bound(item, 240)).slice(0, 32),
+      warnings: [
+        ...warnings,
+        ...(!approval.current && approval.staleCount > 0 ? ["one or more prior recovery approvals are stale and do not authorize execution"] : []),
+      ].map((item) => bound(item, 240)).slice(0, 32),
       generated_at: generatedAt,
       network_called: false as const,
       provider_called: false as const,
@@ -864,6 +879,45 @@ function recoveryPendingPlanHash(pending: CommanderInvestigationRecoveryPendingM
     provider_response_available: pending.provider_response_available,
     tool_execution_known_to_have_occurred: pending.tool_execution_known_to_have_occurred,
   })
+}
+
+function currentApprovalFor(
+  source: CommanderInvestigationRecoverySource,
+  planHash: string | undefined,
+  recoveryKind: "none" | "checkpoint" | "uncertain_provider_outcome",
+  checkpoint: CommanderInvestigationRecoveryCheckpointSummary | undefined,
+  pending: CommanderInvestigationRecoveryPendingModelStep | undefined,
+  compat: {
+    toolCompatibility: CommanderInvestigationRecoveryToolCompatibilitySummary
+    providerCompatibility: CommanderInvestigationRecoveryProviderCompatibility
+    budgetCompatibility: CommanderInvestigationRecoveryBudgetCompatibility
+    contextCompatibility: CommanderInvestigationRecoveryContextCompatibility
+    continuityCompatibility: CommanderInvestigationRecoveryContinuityCompatibility
+    humanControl: CommanderInvestigationRecoveryHumanControl
+  } | undefined,
+): { current?: NonNullable<CommanderInvestigationRecoverySource["latest_recovery_approval"]>; staleCount: number } {
+  const approvals = source.recovery_approvals ?? []
+  if (!planHash || !source.recovery_basis_hash || recoveryKind === "none" || !checkpoint || !compat) return { staleCount: approvals.length }
+  const current = approvals.find((approval) => {
+    const decisionMatches = recoveryKind === "checkpoint"
+      ? approval.decision === "approve_resume_from_checkpoint"
+      : approval.decision === "approve_continue_after_uncertain_provider_outcome"
+    return decisionMatches &&
+      approval.recovery_basis_hash === source.recovery_basis_hash &&
+      approval.recovery_plan_hash === planHash &&
+      approval.checkpoint_ref.checkpoint_id === checkpoint.checkpoint_id &&
+      approval.checkpoint_ref.checkpoint_sequence === checkpoint.checkpoint_sequence &&
+      approval.checkpoint_ref.checkpoint_hash === checkpoint.checkpoint_hash &&
+      (pending ? approval.pending_model_request_id === pending.model_request_id : approval.pending_model_request_id === undefined) &&
+      approval.provider_execution_envelope_hash === compat.providerCompatibility.execution_envelope?.execution_envelope_hash &&
+      approval.tool_compatibility_hash === compat.toolCompatibility.compatibility_hash &&
+      approval.provider_compatibility_hash === compat.providerCompatibility.compatibility_hash &&
+      approval.budget_compatibility_hash === compat.budgetCompatibility.compatibility_hash &&
+      approval.context_compatibility_hash === compat.contextCompatibility.compatibility_hash &&
+      approval.continuity_compatibility_hash === compat.continuityCompatibility.compatibility_hash &&
+      approval.human_control_compatibility_hash === compat.humanControl.compatibility_hash
+  })
+  return { current, staleCount: approvals.length - (current ? 1 : 0) }
 }
 
 function finalizeHumanControl(input: Omit<CommanderInvestigationRecoveryHumanControl, "compatibility_hash">): CommanderInvestigationRecoveryHumanControl {

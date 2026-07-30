@@ -32,12 +32,19 @@ import type {
   CommanderInvestigationTerminalRecord,
 } from "./commander-investigation-journal-types"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
+import type {
+  CommanderInvestigationRecoveryApprovalAppendInput,
+  CommanderInvestigationRecoveryApprovalRecord,
+  CommanderInvestigationRecoveryApprovalResult,
+  CommanderInvestigationRecoveryApprovedPayload,
+} from "./commander-investigation-recovery-approval-types"
 import { projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
 
 const CHECKPOINT_DEFAULT_CAP = 64_000
 const CHECKPOINT_HARD_CAP = 96_000
 const MODEL_STEP_CAP = 8_000
 const TERMINAL_CAP = 48_000
+const APPROVAL_CAP = 16_000
 const STARTED_HARD_CAP = 112_000
 const MIN_TEST_CAP = 16_000
 const COMMANDER_INVESTIGATION_EVENT_KIND_SET = new Set<string>(COMMANDER_INVESTIGATION_EVENT_KINDS)
@@ -116,6 +123,7 @@ export class CommanderInvestigationJournalService {
   private readonly now: () => Date
   private readonly checkpointPayloadCapBytes: number
   private readonly active = new Set<string>()
+  private readonly activeApprovals = new Set<string>()
 
   constructor(private readonly options: CommanderInvestigationJournalServiceOptions) {
     this.now = options.now ?? (() => new Date())
@@ -327,6 +335,65 @@ export class CommanderInvestigationJournalService {
     const droppedReasons = journal.dropped_commander_events_by_investigation_id.get(investigationId)
     if (droppedReasons?.length) return recoverySourceBlockedByDroppedCommanderEvent(source, droppedReasons[0] ?? "dropped Commander journal event prevents authoritative recovery")
     return source
+  }
+
+  async recordRecoveryApproval(input: CommanderInvestigationRecoveryApprovalAppendInput): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
+    const approval = input.approval
+    const lockKey = stableHash({
+      investigation_id: approval.investigation_id,
+      recovery_basis_hash: approval.recovery_basis_hash,
+      recovery_plan_hash: approval.recovery_plan_hash,
+      decision: approval.decision,
+      approved_by: approval.approved_by,
+      human_note_hash: approval.human_note_hash,
+    })
+    if (this.activeApprovals.has(lockKey)) throw new CommanderInvestigationJournalConflictError("duplicate concurrent recovery approval write")
+    this.activeApprovals.add(lockKey)
+    try {
+      const source = await this.recoverySource(approval.investigation_id)
+      if (!source || source.projection_status !== "ready" || !source.record || source.record.status !== "running" || !source.recovery_basis || !source.latest_checkpoint) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires a ready nonterminal journal with an accepted checkpoint")
+      }
+      if (source.recovery_basis.basis_hash !== input.expected_basis.basis_hash || source.recovery_basis.basis_hash !== approval.recovery_basis_hash) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery basis changed before approval append")
+      }
+      if (source.latest_checkpoint.checkpoint_id !== approval.checkpoint_ref.checkpoint_id || source.latest_checkpoint.checkpoint_sequence !== approval.checkpoint_ref.checkpoint_sequence || source.latest_checkpoint.checkpoint_hash !== approval.checkpoint_ref.checkpoint_hash) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery checkpoint changed before approval append")
+      }
+      if (approval.decision === "approve_resume_from_checkpoint" && source.pending_model_step) {
+        throw new CommanderInvestigationJournalConflictError("checkpoint recovery approval cannot be appended while a model step is pending")
+      }
+      if (approval.decision === "approve_continue_after_uncertain_provider_outcome") {
+        if (!source.pending_model_step || !approval.pending_model_step_ref) throw new CommanderInvestigationJournalConflictError("uncertain-provider approval requires the current pending model boundary")
+        if (approval.pending_model_step_ref.model_request_id !== source.pending_model_step.model_request_id || approval.pending_model_step_ref.context_hash !== source.pending_model_step.context_hash) {
+          throw new CommanderInvestigationJournalConflictError("pending model boundary changed before approval append")
+        }
+      }
+      const duplicate = source.recovery_approvals?.find((candidate) =>
+        candidate.recovery_basis_hash === approval.recovery_basis_hash &&
+        candidate.recovery_plan_hash === approval.recovery_plan_hash &&
+        candidate.decision === approval.decision &&
+        candidate.approved_by === approval.approved_by &&
+        candidate.human_note_hash === approval.human_note_hash)
+      if (duplicate) return { status: "already_recorded", approval, events_appended: false }
+      if ((source.recovery_approvals?.length ?? 0) >= 16) throw new CommanderInvestigationJournalConflictError("Commander recovery approval history cap reached")
+      const journalSequence = source.source_event_count
+      const approvalSequence = source.recovery_approvals?.length ?? 0
+      const sequencedApproval = finalizeApprovalHash({ ...approval, approval_sequence: approvalSequence, approval_id: approval.approval_id || `commander_recovery_approval_${approval.recovery_plan_hash.slice(0, 16)}_${approvalSequence}` })
+      const payload = withPayloadHash({
+        schema_version: 1 as const,
+        investigation_id: sequencedApproval.investigation_id,
+        journal_sequence: journalSequence,
+        requested_by: sequencedApproval.approved_by,
+        occurred_at: sequencedApproval.approved_at,
+        approval: sequencedApproval,
+        event_payload_hash: "",
+      } satisfies CommanderInvestigationRecoveryApprovedPayload)
+      const eventId = await this.appendCapped("runtime_commander_investigation_recovery_approved", payload, APPROVAL_CAP)
+      return { status: "recorded", approval: sequencedApproval, event_id: eventId, events_appended: true }
+    } finally {
+      this.activeApprovals.delete(lockKey)
+    }
   }
 
   private async readJournalEvents(): Promise<JsonlEvent[]> {
@@ -1013,6 +1080,12 @@ function compactTerminalOnce(terminal: CommanderInvestigationTerminalRecord): Co
 function finalizeTerminalHash(terminal: CommanderInvestigationTerminalRecord): CommanderInvestigationTerminalRecord {
   const current = { ...terminal, terminal_hash: "" }
   current.terminal_hash = stableHash({ ...current, terminal_hash: "" })
+  return current
+}
+
+function finalizeApprovalHash(approval: CommanderInvestigationRecoveryApprovalRecord): CommanderInvestigationRecoveryApprovalRecord {
+  const current = { ...approval, approval_hash: "" }
+  current.approval_hash = stableHash({ ...current, approved_at: "", approval_hash: "" })
   return current
 }
 

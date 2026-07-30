@@ -15,6 +15,12 @@ import {
   type CommanderInvestigationStartedPayload,
 } from "./commander-investigation-journal-types"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
+import type {
+  CommanderInvestigationRecoveryApprovalRecord,
+  CommanderInvestigationRecoveryApprovalSummary,
+  CommanderInvestigationRecoveryApprovedPayload,
+} from "./commander-investigation-recovery-approval-types"
+import type { CommanderInvestigationRecoveryBasis } from "./commander-investigation-recovery-basis"
 
 export type CommanderInvestigationJournalProjection = {
   records: CommanderInvestigationRecord[]
@@ -55,9 +61,12 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
   let terminal: CommanderInvestigationFinishedPayload | undefined
   let pendingModel: CommanderInvestigationModelStepStartedPayload | undefined
   const checkpoints: CommanderInvestigationCheckpoint[] = []
+  const approvals: CommanderInvestigationRecoveryApprovalRecord[] = []
   let lastTransition: CommanderInvestigationJournalLastTransition = "started"
   const seenRequests = new Set<string>()
+  const seenApprovalIds = new Set<string>()
   let identity: CommanderInvestigationJournalIdentity | undefined
+  let startedInputHash: string | undefined
 
   events.forEach((event, index) => {
     if (event.schema_version !== 1) unsupportedVersion = true
@@ -74,6 +83,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (index !== 0) integrity.push("started event is not first")
       if (started) integrity.push("duplicate started event")
       started = event
+      startedInputHash = started.input_hash
       identity = identityFromStarted(started)
       const initialErrors = initialCheckpointErrors(investigationId, started, identity)
       initialErrors.push(...startedInputErrors(started))
@@ -158,6 +168,31 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
         pendingModel = undefined
         lastTransition = "finished"
       }
+    } else if (event.kind === "runtime_commander_investigation_recovery_approved") {
+      if (!isRecoveryApprovedPayload(event)) {
+        integrity.push(`malformed recovery approval payload at sequence ${event.journal_sequence}`)
+        return
+      }
+      if (afterTerminal) return
+      const approvalErrors: string[] = []
+      if (!started || !identity || !startedInputHash) approvalErrors.push("recovery approval missing started basis")
+      if (!latestAcceptedCheckpoint(checkpoints)) approvalErrors.push("recovery approval without accepted checkpoint")
+      if (approvals.length >= 16) approvalErrors.push("recovery approval history exceeds cap")
+      if (event.approval.approval_sequence !== approvals.length) approvalErrors.push(`recovery approval sequence gap at ${event.approval.approval_sequence}`)
+      if (seenApprovalIds.has(event.approval.approval_id)) approvalErrors.push("duplicate recovery approval_id")
+      seenApprovalIds.add(event.approval.approval_id)
+      const checkpoint = latestAcceptedCheckpoint(checkpoints)
+      if (checkpoint) approvalErrors.push(...approvalReferenceErrors(event.approval, checkpoint, pendingModel))
+      if (identity && startedInputHash && checkpoint) {
+        const basis = recoveryBasis(investigationId, projectionStatus, identity, startedInputHash, checkpoint, pendingModel, terminal)
+        if (event.approval.recovery_basis_hash !== basis?.basis_hash) approvalErrors.push("recovery approval basis hash mismatch")
+      }
+      if (!verifyApproval(event.approval)) approvalErrors.push("recovery approval hash mismatch")
+      integrity.push(...approvalErrors)
+      if (approvalErrors.length === 0) {
+        approvals.push(event.approval)
+        lastTransition = "recovery_approved"
+      }
     }
   })
 
@@ -169,10 +204,14 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
   if (integrity.length && projectionStatus === "ready") projectionStatus = "corrupt"
   const latestCheckpoint = checkpoints.at(-1)
   const terminalRecord = terminal?.terminal
+  const recoveryBasisValue = identity && startedInputHash && latestCheckpoint && projectionStatus === "ready"
+    ? recoveryBasisForReady(investigationId, identity, startedInputHash, latestCheckpoint, pendingModel, terminal)
+    : undefined
+  const latestApproval = approvals.at(-1)
   const evidenceCards = terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []
   const omittedEvidenceCount = terminalRecord?.omitted_evidence_count ?? latestCheckpoint?.working_set.omitted_evidence_count ?? 0
   const uncertain = Boolean(pendingModel && !terminalRecord)
-  const recoveryState = recovery(latestCheckpoint, uncertain, Boolean(terminalRecord))
+  const recoveryState = recovery(latestCheckpoint, uncertain, Boolean(terminalRecord), latestApproval)
   const record: CommanderInvestigationRecord = {
     investigation_id: investigationId,
     status: terminalRecord?.status ?? "running",
@@ -221,9 +260,19 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     integrity_errors: integrity,
     warnings: terminalRecord?.warnings ?? latestCheckpoint?.working_set.current_warnings ?? [],
     record_hash: "",
+    recovery_approval_count: approvals.length,
+    latest_recovery_approval_id: latestApproval?.approval_id,
+    latest_recovery_approval_sequence: latestApproval?.approval_sequence,
+    latest_recovery_approval_decision: latestApproval?.decision,
+    latest_recovery_approval_plan_hash: latestApproval?.recovery_plan_hash,
+    latest_recovery_approval_basis_hash: latestApproval?.recovery_basis_hash,
+    latest_recovery_approved_by: latestApproval?.approved_by,
+    latest_recovery_approved_at: latestApproval?.approved_at,
+    recovery_approval_recorded: approvals.length > 0,
+    recovery_approval_consumed: false as const,
   }
   record.record_hash = stableHash({ ...record, record_hash: "" })
-  return { record, checkpoints, recovery_source: recoverySource(investigationId, record, events, projectionStatus, started, identity, latestCheckpoint, pendingModel, terminal) }
+  return { record, checkpoints, recovery_source: recoverySource(investigationId, record, events, projectionStatus, started, identity, latestCheckpoint, pendingModel, terminal, recoveryBasisValue, approvals) }
 }
 
 function corruptRecord(investigationId: string, events: JsonlEvent[], errors: string[], status: CommanderInvestigationJournalProjectionStatus): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[]; recovery_source: CommanderInvestigationRecoverySource } {
@@ -263,6 +312,9 @@ function corruptRecord(investigationId: string, events: JsonlEvent[], errors: st
     integrity_errors: errors,
     warnings: [],
     record_hash: "",
+    recovery_approval_count: 0,
+    recovery_approval_recorded: false,
+    recovery_approval_consumed: false as const,
   }
   record.record_hash = stableHash({ ...record, record_hash: "" })
   return { record, checkpoints: [], recovery_source: recoverySource(investigationId, record, events, status) }
@@ -278,8 +330,11 @@ function recoverySource(
   latestCheckpoint?: CommanderInvestigationCheckpoint,
   pendingModel?: CommanderInvestigationModelStepStartedPayload,
   terminal?: CommanderInvestigationFinishedPayload,
+  recoveryBasis?: CommanderInvestigationRecoveryBasis,
+  approvals: CommanderInvestigationRecoveryApprovalRecord[] = [],
 ): CommanderInvestigationRecoverySource {
   const authoritative = projectionStatus === "ready"
+  const approvalSummaries = authoritative ? approvals.map(approvalSummary).slice(-16) : []
   const source: CommanderInvestigationRecoverySource = {
     investigation_id: investigationId,
     projection_status: projectionStatus,
@@ -289,6 +344,10 @@ function recoverySource(
     latest_checkpoint: authoritative ? latestCheckpoint : undefined,
     pending_model_step: authoritative && !terminal ? pendingModel : undefined,
     terminal: authoritative ? terminal?.terminal : undefined,
+    recovery_basis: authoritative ? recoveryBasis : undefined,
+    recovery_basis_hash: authoritative ? recoveryBasis?.basis_hash : undefined,
+    recovery_approvals: approvalSummaries,
+    latest_recovery_approval: approvalSummaries.at(-1),
     source_event_count: events.length,
     source_hash: "",
   }
@@ -301,16 +360,110 @@ function recoverySource(
     latest_checkpoint_hash: source.latest_checkpoint?.checkpoint_hash,
     pending_model_request_id: source.pending_model_step?.model_request_id,
     terminal_hash: source.terminal?.terminal_hash,
+    recovery_basis_hash: source.recovery_basis_hash,
+    recovery_approval_count: approvalSummaries.length,
+    latest_recovery_approval_hash: approvalSummaries.at(-1)?.approval_hash,
     source_event_count: source.source_event_count,
   })
   return source
 }
 
-function recovery(checkpoint: CommanderInvestigationCheckpoint | undefined, uncertain: boolean, terminal: boolean): CommanderInvestigationRecoveryState {
+function recovery(checkpoint: CommanderInvestigationCheckpoint | undefined, uncertain: boolean, terminal: boolean, latestApproval?: CommanderInvestigationRecoveryApprovalRecord): CommanderInvestigationRecoveryState {
   if (terminal) return "not_required"
+  if (latestApproval?.decision === "approve_continue_after_uncertain_provider_outcome") return "uncertain_outcome_approval_recorded_execution_not_implemented"
+  if (latestApproval?.decision === "approve_resume_from_checkpoint") return "checkpoint_approval_recorded_execution_not_implemented"
   if (uncertain) return "uncertain_provider_outcome_resume_not_implemented"
   if (checkpoint) return "checkpoint_available_resume_not_implemented"
   return "no_checkpoint_resume_not_implemented"
+}
+
+function latestAcceptedCheckpoint(checkpoints: CommanderInvestigationCheckpoint[]): CommanderInvestigationCheckpoint | undefined {
+  return checkpoints.at(-1)
+}
+
+function recoveryBasisForReady(
+  investigationId: string,
+  identity: CommanderInvestigationJournalIdentity,
+  normalizedInputHash: string,
+  checkpoint: CommanderInvestigationCheckpoint,
+  pendingModel?: CommanderInvestigationModelStepStartedPayload,
+  terminal?: CommanderInvestigationFinishedPayload,
+): CommanderInvestigationRecoveryBasis {
+  const recoveryKind: CommanderInvestigationRecoveryBasis["recovery_kind"] = terminal ? "none" : pendingModel ? "uncertain_provider_outcome" : "checkpoint"
+  const basis = {
+    basis_version: 1 as const,
+    investigation_id: investigationId,
+    projection_status: "ready" as const,
+    immutable_identity: identity,
+    normalized_input_hash: normalizedInputHash,
+    latest_checkpoint_id: checkpoint.checkpoint_id,
+    latest_checkpoint_sequence: checkpoint.checkpoint_sequence,
+    latest_checkpoint_hash: checkpoint.checkpoint_hash,
+    pending_model_request_id: pendingModel?.model_request_id,
+    pending_model_boundary_hash: pendingModel ? stableHash(pendingBoundaryForHash(pendingModel)) : undefined,
+    terminal_hash: terminal?.terminal.terminal_hash,
+    recovery_kind: recoveryKind,
+    basis_hash: "",
+  }
+  basis.basis_hash = stableHash({ ...basis, basis_hash: "" })
+  return basis
+}
+
+function recoveryBasis(
+  investigationId: string,
+  projectionStatus: CommanderInvestigationJournalProjectionStatus,
+  identity: CommanderInvestigationJournalIdentity,
+  normalizedInputHash: string,
+  checkpoint: CommanderInvestigationCheckpoint,
+  pendingModel?: CommanderInvestigationModelStepStartedPayload,
+  terminal?: CommanderInvestigationFinishedPayload,
+): CommanderInvestigationRecoveryBasis | undefined {
+  return projectionStatus === "ready" ? recoveryBasisForReady(investigationId, identity, normalizedInputHash, checkpoint, pendingModel, terminal) : undefined
+}
+
+function pendingBoundaryForHash(pending: CommanderInvestigationModelStepStartedPayload): unknown {
+  return {
+    investigation_id: pending.investigation_id,
+    turn_index: pending.turn_index,
+    model_request_id: pending.model_request_id,
+    provider_id: pending.provider_id,
+    provider_kind: pending.provider_kind,
+    model_id: pending.model_id,
+    tool_protocol: pending.tool_protocol,
+    base_checkpoint_id: pending.base_checkpoint_id,
+    base_checkpoint_sequence: pending.base_checkpoint_sequence,
+    base_checkpoint_hash: pending.base_checkpoint_hash,
+    working_set_hash: pending.working_set_hash,
+    context_hash: pending.context_hash,
+    input_bytes: pending.input_bytes,
+    estimated_input_tokens: pending.estimated_input_tokens,
+    loaded_tool_refs: pending.loaded_tool_refs,
+    provider_request_count_before: pending.provider_request_count_before,
+    external_api_audit_count_before: pending.external_api_audit_count_before,
+  }
+}
+
+function approvalSummary(approval: CommanderInvestigationRecoveryApprovalRecord): CommanderInvestigationRecoveryApprovalSummary {
+  return {
+    approval_id: approval.approval_id,
+    approval_sequence: approval.approval_sequence,
+    decision: approval.decision,
+    approved_by: approval.approved_by,
+    approved_at: approval.approved_at,
+    human_note_hash: approval.human_note_hash,
+    recovery_basis_hash: approval.recovery_basis_hash,
+    recovery_plan_hash: approval.recovery_plan_hash,
+    checkpoint_ref: approval.checkpoint_ref,
+    pending_model_request_id: approval.pending_model_step_ref?.model_request_id,
+    provider_execution_envelope_hash: approval.provider_execution_envelope_hash,
+    tool_compatibility_hash: approval.tool_compatibility_hash,
+    provider_compatibility_hash: approval.provider_compatibility_hash,
+    budget_compatibility_hash: approval.budget_compatibility_hash,
+    context_compatibility_hash: approval.context_compatibility_hash,
+    continuity_compatibility_hash: approval.continuity_compatibility_hash,
+    human_control_compatibility_hash: approval.human_control_compatibility_hash,
+    approval_hash: approval.approval_hash,
+  }
 }
 
 function identityFromStarted(started: CommanderInvestigationStartedPayload): CommanderInvestigationJournalIdentity {
@@ -450,6 +603,39 @@ function terminalConclusionErrors(terminal: CommanderInvestigationFinishedPayloa
     if (!conclusion.safe_evidence_summaries.includes(card.summary_preview)) errors.push("terminal conclusion safe_evidence_summaries mismatch")
   }
   return errors
+}
+
+function approvalReferenceErrors(approval: CommanderInvestigationRecoveryApprovalRecord, checkpoint: CommanderInvestigationCheckpoint, pendingModel: CommanderInvestigationModelStepStartedPayload | undefined): string[] {
+  const errors: string[] = []
+  if (approval.investigation_id !== checkpoint.investigation_id) errors.push("recovery approval investigation_id mismatch")
+  if (approval.checkpoint_ref.checkpoint_id !== checkpoint.checkpoint_id || approval.checkpoint_ref.checkpoint_sequence !== checkpoint.checkpoint_sequence || approval.checkpoint_ref.checkpoint_hash !== checkpoint.checkpoint_hash) {
+    errors.push("recovery approval checkpoint reference mismatch")
+  }
+  if (approval.decision === "approve_resume_from_checkpoint") {
+    if (approval.recovery_kind !== "checkpoint") errors.push("recovery approval decision/recovery-kind mismatch")
+    if (pendingModel || approval.pending_model_step_ref) errors.push("checkpoint recovery approval must not reference a pending model step")
+  }
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome") {
+    if (approval.recovery_kind !== "uncertain_provider_outcome") errors.push("recovery approval decision/recovery-kind mismatch")
+    if (!pendingModel || !approval.pending_model_step_ref) {
+      errors.push("uncertain provider recovery approval missing pending boundary")
+    } else if (
+      approval.pending_model_step_ref.model_request_id !== pendingModel.model_request_id ||
+      approval.pending_model_step_ref.turn_index !== pendingModel.turn_index ||
+      approval.pending_model_step_ref.base_checkpoint_id !== pendingModel.base_checkpoint_id ||
+      approval.pending_model_step_ref.base_checkpoint_sequence !== pendingModel.base_checkpoint_sequence ||
+      approval.pending_model_step_ref.base_checkpoint_hash !== pendingModel.base_checkpoint_hash ||
+      approval.pending_model_step_ref.working_set_hash !== pendingModel.working_set_hash ||
+      approval.pending_model_step_ref.context_hash !== pendingModel.context_hash
+    ) {
+      errors.push("recovery approval pending boundary reference mismatch")
+    }
+  }
+  return errors
+}
+
+function verifyApproval(approval: CommanderInvestigationRecoveryApprovalRecord): boolean {
+  return stableHash({ ...approval, approved_at: "", approval_hash: "" }) === approval.approval_hash
 }
 
 function sameLoadedToolRefs(left: unknown[], right: unknown[]): boolean {
@@ -611,6 +797,62 @@ function isNormalizedInput(value: unknown): value is Record<string, unknown> {
     if (value[key] !== undefined && (!Number.isInteger(value[key]) || Number(value[key]) <= 0 || Number(value[key]) > NORMALIZED_INPUT_INTEGER_LIMITS[key])) return false
   }
   if (value.include_continuity !== undefined && typeof value.include_continuity !== "boolean") return false
+  return true
+}
+
+function isRecoveryApprovedPayload(value: unknown): value is CommanderInvestigationRecoveryApprovedPayload {
+  if (!isRecord(value)) return false
+  if (value.schema_version !== 1) return false
+  if (!hasString(value, "investigation_id")) return false
+  if (!hasNumber(value, "journal_sequence")) return false
+  if (!hasString(value, "requested_by")) return false
+  if (!hasString(value, "occurred_at")) return false
+  if (!hasString(value, "event_payload_hash")) return false
+  if (!isApprovalRecord(value.approval)) return false
+  return true
+}
+
+function isApprovalRecord(value: unknown): value is CommanderInvestigationRecoveryApprovalRecord {
+  if (!isRecord(value)) return false
+  const decision = value.decision
+  const recoveryKind = value.recovery_kind
+  if (value.schema_version !== 1 || value.approval_version !== 1) return false
+  for (const key of [
+    "approval_id",
+    "investigation_id",
+    "approved_by",
+    "approval_source",
+    "recovery_basis_hash",
+    "recovery_plan_hash",
+    "recovery_packet_hash",
+    "preview_hash",
+    "provider_execution_envelope_hash",
+    "tool_compatibility_hash",
+    "provider_compatibility_hash",
+    "budget_compatibility_hash",
+    "context_compatibility_hash",
+    "continuity_compatibility_hash",
+    "human_control_compatibility_hash",
+    "approved_at",
+    "approval_hash",
+  ]) {
+    if (!hasString(value, key)) return false
+  }
+  if (!Number.isInteger(value.approval_sequence) || Number(value.approval_sequence) < 0) return false
+  if (decision !== "approve_resume_from_checkpoint" && decision !== "approve_continue_after_uncertain_provider_outcome") return false
+  if (recoveryKind !== "checkpoint" && recoveryKind !== "uncertain_provider_outcome") return false
+  if (value.approval_source !== "human") return false
+  if (!isRecord(value.acknowledgements) || value.acknowledgements.fresh_context_required !== true || value.acknowledgements.exact_replay_unavailable !== true || value.acknowledgements.provider_request_replay_forbidden !== true || value.acknowledgements.tool_execution_replay_forbidden !== true) return false
+  if (!isRecord(value.checkpoint_ref) || !hasString(value.checkpoint_ref, "checkpoint_id") || !hasString(value.checkpoint_ref, "checkpoint_hash") || !hasNumber(value.checkpoint_ref, "checkpoint_sequence")) return false
+  if (value.pending_model_step_ref !== undefined) {
+    const pending = value.pending_model_step_ref
+    if (!isRecord(pending)) return false
+    for (const key of ["model_request_id", "base_checkpoint_id", "base_checkpoint_hash", "working_set_hash", "context_hash"]) {
+      if (!hasString(pending, key)) return false
+    }
+    if (!hasNumber(pending, "turn_index") || !hasNumber(pending, "base_checkpoint_sequence")) return false
+    if (pending.provider_request_may_have_been_sent !== true || pending.provider_response_available !== false || pending.provider_outcome_remains_unknown !== true || pending.tool_execution_known_to_have_occurred !== false || pending.provider_request_replay_forbidden !== true || pending.tool_execution_replay_forbidden !== true || pending.fresh_request_required_later !== true) return false
+  }
   return true
 }
 

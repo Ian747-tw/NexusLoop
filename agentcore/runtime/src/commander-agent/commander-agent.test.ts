@@ -29,6 +29,7 @@ import {
   CommanderInvestigationContextService,
   CommanderInvestigationController,
   CommanderInvestigationJournalService,
+  CommanderInvestigationRecoveryApprovalService,
   CommanderInvestigationRecoveryService,
   CommanderToolExecutor,
   ScriptedCommanderModelStepAdapter,
@@ -6373,6 +6374,293 @@ describe("Commander in-memory investigation controller", () => {
     const repeatPreview = await new CommanderInvestigationRecoveryService(baseOptions({ now: () => new Date("2026-01-02T00:00:00.000Z") })).preview({ investigation_id: "inv_recovery_compat" })
     expect(repeatPreview.recovery_plan_hash).toBe(validPreview.recovery_plan_hash)
     expect(repeatPreview.preview_hash).toBe(validPreview.preview_hash)
+  })
+
+  test("recovery approval records one human checkpoint approval without invalidating the plan", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-checkpoint-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_approval_checkpoint",
+      objective: "Approve safe checkpoint recovery",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const run = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 14, "inv_recovery_approval_checkpoint") as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
+    journal.release(run)
+
+    const preStart = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_checkpoint" })
+    expect(preStart).toMatchObject({ status: "ready_for_approval", provider_called: false, tool_executed: false, network_called: false, events_appended: false })
+    const preStartApprovalInput = {
+      investigation_id: "inv_recovery_approval_checkpoint",
+      recovery_plan_hash: preStart.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint" as const,
+      approved_by: "human_operator",
+      human_note: "Reviewed compatible checkpoint plan.",
+      acknowledgements: {
+        fresh_context_required: true as const,
+        exact_replay_unavailable: true as const,
+        provider_request_replay_forbidden: true as const,
+        tool_execution_replay_forbidden: true as const,
+      },
+    }
+    const preStartRecord = await server.recordCommanderInvestigationRecoveryApproval(preStartApprovalInput)
+    expect(preStartRecord).toMatchObject({ status: "blocked", events_appended: false, provider_called: false, tool_executed: false, network_called: false })
+    await server.start()
+    const before = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_checkpoint" })
+    expect(before).toMatchObject({
+      status: "ready_for_approval",
+      recovery_kind: "checkpoint",
+      recommended_action: "approve_resume_from_checkpoint",
+      approval_state: "none",
+      recovery_approval_required: true,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+      events_appended: false,
+    })
+    expect(before.recovery_basis_hash).toBeString()
+    expect(before.recovery_plan_hash).toBeString()
+    const approvalInput = { ...preStartApprovalInput, recovery_plan_hash: before.recovery_plan_hash! }
+    const approvalPreview = await server.previewCommanderInvestigationRecoveryApproval(approvalInput)
+    expect(approvalPreview).toMatchObject({
+      status: "ready",
+      recovery_plan_hash_match: true,
+      acknowledgement_complete: true,
+      would_append_event: true,
+      events_appended: false,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+    })
+    expect(approvalPreview.recovery_basis_hash).toBe(before.recovery_basis_hash)
+    const recorded = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
+    expect(recorded).toMatchObject({
+      status: "recorded",
+      approval_state: "current",
+      recovery_basis_hash: before.recovery_basis_hash,
+      recovery_plan_hash: before.recovery_plan_hash,
+      events_appended: true,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+    })
+    expect(recorded.approval).toMatchObject({
+      decision: "approve_resume_from_checkpoint",
+      approval_source: "human",
+      one_shot: true,
+      automatic: false,
+      execution_supported_in_this_branch: false,
+      exact_replay_supported: false,
+      provider_request_replay_allowed: false,
+      tool_execution_replay_allowed: false,
+    })
+    const after = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_checkpoint" })
+    expect(after).toMatchObject({
+      status: "approved_waiting_for_execution",
+      recommended_action: "await_recovery_execution",
+      approval_state: "current",
+      recovery_approval_required: false,
+      recovery_approval_consumed: false,
+      automatic_resume_allowed: false,
+    })
+    expect(after.recovery_basis_hash).toBe(before.recovery_basis_hash)
+    expect(after.recovery_plan_hash).toBe(before.recovery_plan_hash)
+    const duplicate = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
+    expect(duplicate).toMatchObject({ status: "already_recorded", events_appended: false })
+    const approvedCheckpoint = await journal.latestCheckpoint("inv_recovery_approval_checkpoint")
+    const driftModelStep = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_recovery_approval_checkpoint",
+      journal_sequence: 2,
+      turn_index: 1,
+      model_request_id: "model_request_approval_checkpoint_drift",
+      provider_id: input.provider_id,
+      provider_kind: input.provider_kind,
+      model_id: input.model_id,
+      tool_protocol: "native",
+      base_checkpoint_id: approvedCheckpoint!.checkpoint_id,
+      base_checkpoint_sequence: approvedCheckpoint!.checkpoint_sequence,
+      base_checkpoint_hash: approvedCheckpoint!.checkpoint_hash,
+      working_set_hash: approvedCheckpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_approval_checkpoint_drift",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: approvedCheckpoint!.loaded_tools,
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:01:00.000Z",
+      requested_by: input.requested_by,
+      occurred_at: "2026-01-01T00:01:00.000Z",
+      event_payload_hash: "",
+    }
+    driftModelStep.event_payload_hash = journalPayloadHash(driftModelStep)
+    await server.eventStore.append(driftModelStep as Parameters<EventStore["append"]>[0])
+    const driftCheckpoint = finalizeTestCheckpoint({
+      ...approvedCheckpoint!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: approvedCheckpoint!.checkpoint_id,
+      previous_checkpoint_hash: approvedCheckpoint!.checkpoint_hash,
+      provider_request_count: 1,
+      working_set: {
+        ...approvedCheckpoint!.working_set,
+        model_turn_count: 1,
+        current_warnings: ["checkpoint changed after approval"],
+      },
+    })
+    const driftCheckpointEvent = {
+      kind: "runtime_commander_investigation_checkpointed",
+      schema_version: 1,
+      investigation_id: "inv_recovery_approval_checkpoint",
+      journal_sequence: 3,
+      requested_by: input.requested_by,
+      occurred_at: "2026-01-01T00:01:01.000Z",
+      checkpoint: driftCheckpoint,
+      event_payload_hash: "",
+    }
+    driftCheckpointEvent.event_payload_hash = journalPayloadHash(driftCheckpointEvent)
+    await server.eventStore.append(driftCheckpointEvent as Parameters<EventStore["append"]>[0])
+    const stale = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_checkpoint" })
+    expect(stale).toMatchObject({
+      status: "ready_for_approval",
+      approval_state: "stale",
+      stale_approval_count: 1,
+      recovery_approval_required: true,
+    })
+    expect(stale.recovery_basis_hash).not.toBe(before.recovery_basis_hash)
+    expect(stale.recovery_plan_hash).not.toBe(before.recovery_plan_hash)
+    const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string; [key: string]: unknown })
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
+    expect(JSON.stringify(events)).not.toContain("https://api.example.test")
+    expect(JSON.stringify(events)).not.toContain("real-provider-key")
+    expect(JSON.stringify(events)).not.toContain("authorization")
+    expect(JSON.stringify(events)).not.toContain("provider prompt")
+    await server.shutdown("approval checkpoint test")
+    const shutdownIndex = events.findIndex((event) => event.kind === "runtime_shutdown")
+    expect(shutdownIndex).toBe(-1)
+  })
+
+  test("recovery approval records uncertain-provider continuation without resolving the pending outcome", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-uncertain-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_approval_uncertain",
+      objective: "Approve uncertain provider continuation",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const run = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 15, "inv_recovery_approval_uncertain") as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
+    journal.release(run)
+    const checkpoint = await journal.latestCheckpoint("inv_recovery_approval_uncertain")
+    expect(checkpoint).toBeDefined()
+    const pendingEvent = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: "inv_recovery_approval_uncertain",
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_uncertain_approval",
+      provider_id: input.provider_id,
+      provider_kind: input.provider_kind,
+      model_id: input.model_id,
+      tool_protocol: "native",
+      base_checkpoint_id: checkpoint!.checkpoint_id,
+      base_checkpoint_sequence: checkpoint!.checkpoint_sequence,
+      base_checkpoint_hash: checkpoint!.checkpoint_hash,
+      working_set_hash: checkpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_uncertain_approval",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: checkpoint!.loaded_tools,
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:45.000Z",
+      requested_by: input.requested_by,
+      occurred_at: "2026-01-01T00:00:45.000Z",
+      event_payload_hash: "",
+    }
+    pendingEvent.event_payload_hash = journalPayloadHash(pendingEvent)
+    await server.eventStore.append(pendingEvent as Parameters<EventStore["append"]>[0])
+
+    await server.start()
+    const before = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_uncertain" })
+    expect(before).toMatchObject({
+      status: "human_review_required",
+      recovery_kind: "uncertain_provider_outcome",
+      recommended_action: "review_uncertain_provider_outcome",
+      pending_model_step: { model_request_id: "model_request_uncertain_approval", outcome: "uncertain" },
+    })
+    const approvalInput = {
+      investigation_id: "inv_recovery_approval_uncertain",
+      recovery_plan_hash: before.recovery_plan_hash!,
+      decision: "approve_continue_after_uncertain_provider_outcome" as const,
+      approved_by: "human_operator",
+      acknowledgements: {
+        fresh_context_required: true as const,
+        exact_replay_unavailable: true as const,
+        provider_request_replay_forbidden: true as const,
+        tool_execution_replay_forbidden: true as const,
+        uncertain_provider_outcome: true as const,
+      },
+    }
+    const recorded = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
+    expect(recorded).toMatchObject({
+      status: "recorded",
+      events_appended: true,
+      pending_model_step_ref: {
+        model_request_id: "model_request_uncertain_approval",
+        provider_request_may_have_been_sent: true,
+        provider_response_available: false,
+        provider_outcome_remains_unknown: true,
+        tool_execution_known_to_have_occurred: false,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+    })
+    const after = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_uncertain" })
+    expect(after).toMatchObject({
+      status: "approved_waiting_for_execution",
+      recommended_action: "await_recovery_execution",
+      approval_state: "current",
+      recovery_kind: "uncertain_provider_outcome",
+      pending_model_step: { model_request_id: "model_request_uncertain_approval" },
+      automatic_resume_allowed: false,
+    })
+    expect(after.recovery_basis_hash).toBe(before.recovery_basis_hash)
+    expect(after.recovery_plan_hash).toBe(before.recovery_plan_hash)
+    const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_uncertain")
+    expect(record).toMatchObject({
+      status: "running",
+      pending_model_request_id: "model_request_uncertain_approval",
+      uncertain_provider_outcome: true,
+      resume_supported: false,
+      recovery_approval_recorded: true,
+      recovery_approval_consumed: false,
+    })
   })
 
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {

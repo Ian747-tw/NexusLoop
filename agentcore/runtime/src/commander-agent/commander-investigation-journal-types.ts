@@ -11,12 +11,14 @@ import type {
   CommanderInvestigationStopReason,
   CommanderInvestigationTurnSummary,
 } from "./commander-investigation-types"
+import type { CommanderInvestigationRecoveryApprovedPayload } from "./commander-investigation-recovery-approval-types"
 
 export const COMMANDER_INVESTIGATION_EVENT_KINDS = [
   "runtime_commander_investigation_started",
   "runtime_commander_investigation_model_step_started",
   "runtime_commander_investigation_checkpointed",
   "runtime_commander_investigation_finished",
+  "runtime_commander_investigation_recovery_approved",
 ] as const
 
 export type CommanderInvestigationJournalEventKind = typeof COMMANDER_INVESTIGATION_EVENT_KINDS[number]
@@ -294,6 +296,7 @@ export type CommanderInvestigationJournalPayload =
   | CommanderInvestigationModelStepStartedPayload
   | CommanderInvestigationCheckpointedPayload
   | CommanderInvestigationFinishedPayload
+  | CommanderInvestigationRecoveryApprovedPayload
 
 export type CommanderInvestigationJsonlEvent = JsonlEvent & {
   kind: CommanderInvestigationJournalEventKind
@@ -304,8 +307,14 @@ export type CommanderInvestigationJsonlEvent = JsonlEvent & {
 }
 
 export type CommanderInvestigationJournalProjectionStatus = "ready" | "corrupt" | "unsupported_version"
-export type CommanderInvestigationJournalLastTransition = "started" | "model_step_started" | "checkpointed" | "finished"
-export type CommanderInvestigationRecoveryState = "not_required" | "checkpoint_available_resume_not_implemented" | "uncertain_provider_outcome_resume_not_implemented" | "no_checkpoint_resume_not_implemented"
+export type CommanderInvestigationJournalLastTransition = "started" | "model_step_started" | "checkpointed" | "finished" | "recovery_approved"
+export type CommanderInvestigationRecoveryState =
+  | "not_required"
+  | "checkpoint_available_resume_not_implemented"
+  | "uncertain_provider_outcome_resume_not_implemented"
+  | "checkpoint_approval_recorded_execution_not_implemented"
+  | "uncertain_outcome_approval_recorded_execution_not_implemented"
+  | "no_checkpoint_resume_not_implemented"
 
 export type CommanderInvestigationRecord = {
   investigation_id: string
@@ -355,6 +364,16 @@ export type CommanderInvestigationRecord = {
   integrity_errors: string[]
   warnings: string[]
   record_hash: string
+  recovery_approval_count: number
+  latest_recovery_approval_id?: string
+  latest_recovery_approval_sequence?: number
+  latest_recovery_approval_decision?: import("./commander-investigation-recovery-approval-types").CommanderInvestigationRecoveryApprovalDecision
+  latest_recovery_approval_plan_hash?: string
+  latest_recovery_approval_basis_hash?: string
+  latest_recovery_approved_by?: string
+  latest_recovery_approved_at?: string
+  recovery_approval_recorded: boolean
+  recovery_approval_consumed: false
 }
 
 export type CommanderInvestigationJournalSummary = {

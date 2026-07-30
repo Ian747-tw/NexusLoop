@@ -71,6 +71,9 @@ method that writes bounded Commander investigation lifecycle events and turn
 checkpoints to the existing EventStore for restart analysis. Branch 9W3B1 adds
 a read-only recovery readiness preview over that journal. It does not add
 resume, public commands, TUI state, proposal generation, or automatic recovery.
+Branch 9W3B2A adds durable human-only recovery approval bound to the exact
+recovery basis and plan hash. It records approval and stale-plan state only;
+recovery execution remains future work.
 
 ```text
 NexusLoop domain control plane
@@ -118,6 +121,18 @@ durable journal
 -> no execution
 ```
 
+Recovery approval records human authority without executing it:
+
+```text
+recovery preview
+-> exact human approval input
+-> fresh revalidation
+-> recovery basis check
+-> runtime_commander_investigation_recovery_approved
+-> approved_waiting_for_execution
+-> no provider/tool execution
+```
+
 Continuity comparison is structured: a current bootstrap that reports degraded
 continuity cannot authorize recovery, while ordinary nonfatal continuity
 warnings remain warnings. Recovery recommendations also separate corrupt
@@ -130,6 +145,12 @@ transport limits, model context/output limits, and Commander capability flags.
 The preview exposes hashes and safe identifiers, not raw connector URLs, header
 values, credential environment names, or credential values. Runtime started
 state, run-lock state, and secret rotation do not change the plan hash.
+Recovery approval binds that plan hash, the approval-insensitive recovery
+basis, checkpoint and pending-boundary refs, provider execution-envelope hash,
+and all compatibility hashes. Approval events are excluded from the recovery
+basis so an approval does not stale itself. Current/stale approval reporting is
+read-only; 9W3B2A does not consume approval, reopen terminal journals, clear
+pending uncertainty, or run recovery.
 
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
@@ -151,11 +172,12 @@ unavailable, and any future recovery must construct a fresh bounded context
 from compatible durable state.
 The public
 Commander provider loop remains disabled: there is no public investigation
-command, TUI surface, resumable investigation, proposal gate, streaming
+command, TUI surface, recovery approval command, resumable investigation,
+proposal gate, streaming
 connector transport, provider failover, GitHub/MCP gateway, or external read
-gateway. 9W3B2 owns durable recovery disposition, plan-hash revalidation,
-uncertain-provider resolution, fresh context reconstruction, and bounded
-recovery execution. SDK session memory is not
+gateway. 9W3B2B owns approval consumption, plan-hash revalidation,
+uncertain-provider resolution by policy, fresh context reconstruction, and
+bounded recovery execution. SDK session memory is not
 research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
@@ -165,7 +187,8 @@ Follow-on sequencing:
 - 9W2B2: RuntimeServer provider activation and audit gate.
 - 9W3A: durable Commander investigation journal and checkpoints.
 - 9W3B1: recovery readiness and compatibility preview.
-- 9W3B2: human disposition and recovery execution.
+- 9W3B2A: durable human approval and stale-plan gate.
+- 9W3B2B: bounded recovery execution from approved state.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external GitHub and research read gateway.
 - 9Y: evidence-backed proposal gate.
