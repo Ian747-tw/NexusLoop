@@ -25,13 +25,28 @@ export type CommanderInvestigationCheckpointKind = "initial" | "turn_complete"
 
 export type CommanderInvestigationLoadedToolRef = {
   tool_id: string
+  namespace?: string
   descriptor_version: string
   authority_id: string
+  description_hash?: string
   input_schema_hash: string
   output_schema_hash: string
   load_policy: string
   trust_class: CommanderToolTrustClass
   instruction_semantics: "none"
+  max_output_bytes?: number
+  timeout_ms?: number
+  risk?: string
+  side_effect_class?: string
+  execution_backend?: string
+  process_policy?: string
+  creates_external_process?: boolean
+  calls_provider?: boolean
+  mutates_events?: boolean
+  requires_network?: boolean
+  requires_credentials?: boolean
+  requires_approval?: boolean
+  requires_run_lock?: boolean
 }
 
 export type CommanderInvestigationJournalIdentity = {

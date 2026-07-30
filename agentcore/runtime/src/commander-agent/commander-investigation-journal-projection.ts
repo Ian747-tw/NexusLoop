@@ -14,10 +14,12 @@ import {
   type CommanderInvestigationRecoveryState,
   type CommanderInvestigationStartedPayload,
 } from "./commander-investigation-journal-types"
+import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 
 export type CommanderInvestigationJournalProjection = {
   records: CommanderInvestigationRecord[]
   checkpoints: CommanderInvestigationCheckpoint[]
+  recovery_sources: CommanderInvestigationRecoverySource[]
 }
 
 export function projectCommanderInvestigationJournal(events: JsonlEvent[]): CommanderInvestigationJournalProjection {
@@ -32,17 +34,20 @@ export function projectCommanderInvestigationJournal(events: JsonlEvent[]): Comm
   }
   const records: CommanderInvestigationRecord[] = []
   const checkpoints: CommanderInvestigationCheckpoint[] = []
+  const recoverySources: CommanderInvestigationRecoverySource[] = []
   for (const [investigationId, group] of groups) {
     const projected = projectOne(investigationId, group)
     records.push(projected.record)
     checkpoints.push(...projected.checkpoints)
+    recoverySources.push(projected.recovery_source)
   }
   records.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.investigation_id.localeCompare(b.investigation_id))
   checkpoints.sort((a, b) => a.investigation_id.localeCompare(b.investigation_id) || a.checkpoint_sequence - b.checkpoint_sequence)
-  return { records, checkpoints }
+  recoverySources.sort((a, b) => a.investigation_id.localeCompare(b.investigation_id))
+  return { records, checkpoints, recovery_sources: recoverySources }
 }
 
-function projectOne(investigationId: string, events: JsonlEvent[]): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[] } {
+function projectOne(investigationId: string, events: JsonlEvent[]): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[]; recovery_source: CommanderInvestigationRecoverySource } {
   const integrity: string[] = []
   let projectionStatus: CommanderInvestigationJournalProjectionStatus = "ready"
   let unsupportedVersion = false
@@ -218,10 +223,10 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     record_hash: "",
   }
   record.record_hash = stableHash({ ...record, record_hash: "" })
-  return { record, checkpoints }
+  return { record, checkpoints, recovery_source: recoverySource(investigationId, record, events, projectionStatus, started, identity, latestCheckpoint, pendingModel, terminal) }
 }
 
-function corruptRecord(investigationId: string, events: JsonlEvent[], errors: string[], status: CommanderInvestigationJournalProjectionStatus): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[] } {
+function corruptRecord(investigationId: string, events: JsonlEvent[], errors: string[], status: CommanderInvestigationJournalProjectionStatus): { record: CommanderInvestigationRecord; checkpoints: CommanderInvestigationCheckpoint[]; recovery_source: CommanderInvestigationRecoverySource } {
   const record = {
     investigation_id: investigationId,
     status: "running" as const,
@@ -260,7 +265,45 @@ function corruptRecord(investigationId: string, events: JsonlEvent[], errors: st
     record_hash: "",
   }
   record.record_hash = stableHash({ ...record, record_hash: "" })
-  return { record, checkpoints: [] }
+  return { record, checkpoints: [], recovery_source: recoverySource(investigationId, record, events, status) }
+}
+
+function recoverySource(
+  investigationId: string,
+  record: CommanderInvestigationRecord,
+  events: JsonlEvent[],
+  projectionStatus: CommanderInvestigationJournalProjectionStatus,
+  started?: CommanderInvestigationStartedPayload,
+  identity?: CommanderInvestigationJournalIdentity,
+  latestCheckpoint?: CommanderInvestigationCheckpoint,
+  pendingModel?: CommanderInvestigationModelStepStartedPayload,
+  terminal?: CommanderInvestigationFinishedPayload,
+): CommanderInvestigationRecoverySource {
+  const authoritative = projectionStatus === "ready"
+  const source: CommanderInvestigationRecoverySource = {
+    investigation_id: investigationId,
+    projection_status: projectionStatus,
+    record,
+    normalized_input: authoritative ? started?.normalized_input : undefined,
+    immutable_identity: authoritative ? identity : undefined,
+    latest_checkpoint: authoritative ? latestCheckpoint : undefined,
+    pending_model_step: authoritative && !terminal ? pendingModel : undefined,
+    terminal: authoritative ? terminal?.terminal : undefined,
+    source_event_count: events.length,
+    source_hash: "",
+  }
+  source.source_hash = stableHash({
+    investigation_id: source.investigation_id,
+    projection_status: source.projection_status,
+    record_hash: source.record?.record_hash,
+    input_hash: started?.input_hash,
+    immutable_identity: source.immutable_identity,
+    latest_checkpoint_hash: source.latest_checkpoint?.checkpoint_hash,
+    pending_model_request_id: source.pending_model_step?.model_request_id,
+    terminal_hash: source.terminal?.terminal_hash,
+    source_event_count: source.source_event_count,
+  })
+  return source
 }
 
 function recovery(checkpoint: CommanderInvestigationCheckpoint | undefined, uncertain: boolean, terminal: boolean): CommanderInvestigationRecoveryState {
@@ -928,10 +971,13 @@ function isLoadedToolRef(value: unknown): boolean {
     hasString(value, "tool_id") &&
     hasString(value, "descriptor_version") &&
     hasString(value, "authority_id") &&
+    (!("description_hash" in value) || hasString(value, "description_hash")) &&
     hasString(value, "input_schema_hash") &&
     hasString(value, "output_schema_hash") &&
     hasString(value, "load_policy") &&
     hasString(value, "trust_class") &&
+    (!("max_output_bytes" in value) || hasNumber(value, "max_output_bytes")) &&
+    (!("timeout_ms" in value) || hasNumber(value, "timeout_ms")) &&
     value.instruction_semantics === "none"
   )
 }

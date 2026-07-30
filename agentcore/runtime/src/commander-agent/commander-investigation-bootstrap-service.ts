@@ -27,6 +27,7 @@ export class CommanderInvestigationBootstrapService {
     const blockers: string[] = []
     const authorityKernel = authorityKernelFor(input.phase)
     let continuityKind: CommanderInvestigationBootstrap["continuity_kind"] = input.include_continuity === false ? "omitted" : "summary"
+    let continuityAssessmentStatus: CommanderInvestigationBootstrap["continuity_assessment_status"] = input.include_continuity === false ? "omitted" : "ready"
     let continuityPacketId: string | undefined
     let continuityPacketHash: string | undefined
     let readiness = "ready"
@@ -99,6 +100,7 @@ export class CommanderInvestigationBootstrapService {
           openLoops = loops.slice(0, 8).map(loopSummary)
         }
       } catch (error) {
+        continuityAssessmentStatus = "degraded"
         warnings.add(`continuity bootstrap failed: ${redactText(error instanceof Error ? error.message : String(error)).slice(0, 200)}`)
       }
     }
@@ -109,6 +111,7 @@ export class CommanderInvestigationBootstrapService {
       objective_preview: objective,
       authority_kernel: authorityKernel,
       continuity_kind: continuityKind,
+      continuity_assessment_status: continuityAssessmentStatus,
       continuity_packet_id: continuityPacketId,
       continuity_packet_hash: continuityPacketHash,
       readiness,

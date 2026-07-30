@@ -19,6 +19,13 @@ export function commanderToolSchemaFromDescriptor(descriptor: CommanderToolDescr
   }
 }
 
+export function commanderProviderVisibleDescriptionHash(descriptor: CommanderToolDescriptor): string {
+  return stableHash({
+    native_description: descriptor.description.slice(0, 800),
+    json_fallback_description: descriptor.description.slice(0, 500),
+  })
+}
+
 export function providerToolNameFor(toolId: string): string {
   const mapped = toolId.replace(/\./g, "__")
   if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/.test(mapped)) throw new Error("provider tool name is unsupported")

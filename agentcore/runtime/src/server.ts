@@ -184,6 +184,7 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationJournalConflictError,
   CommanderInvestigationPersistenceError,
+  CommanderInvestigationRecoveryService,
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
   commanderInvestigationModelCapability,
@@ -198,6 +199,10 @@ import {
   type CommanderInvestigationRecord,
   type CommanderInvestigationCheckpoint,
   type CommanderInvestigationJournalSummary,
+  type CommanderInvestigationRecoveryPreview,
+  type CommanderInvestigationRecoveryPreviewInput,
+  type CommanderInvestigationRecoveryExecutionEnvelope,
+  type CommanderInvestigationRecoverySource,
   type CommanderInvestigationProviderConfig,
   type CommanderInvestigationProviderGate,
   type CommanderInvestigationProviderPreflightSnapshot,
@@ -433,6 +438,7 @@ export class RuntimeServer {
   private commanderInvestigationContextServiceInstance: CommanderInvestigationContextService | null = null
   private commanderInvestigationControllerInstance: CommanderInvestigationController | null = null
   private commanderInvestigationJournalServiceInstance: CommanderInvestigationJournalService | null = null
+  private commanderInvestigationRecoveryServiceInstance: CommanderInvestigationRecoveryService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -2800,6 +2806,14 @@ export class RuntimeServer {
     return this.commanderInvestigationJournalService().verify(investigationId)
   }
 
+  getCommanderInvestigationRecoverySource(investigationId: string): Promise<CommanderInvestigationRecoverySource | undefined> {
+    return this.commanderInvestigationJournalService().recoverySource(investigationId)
+  }
+
+  previewCommanderInvestigationRecovery(input: CommanderInvestigationRecoveryPreviewInput): Promise<CommanderInvestigationRecoveryPreview> {
+    return this.commanderInvestigationRecoveryService().preview(input)
+  }
+
   private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
     const controller = new AbortController()
     const runtimeSignal = this.commanderInvestigationLifecycleAbort.signal
@@ -5032,6 +5046,54 @@ export class RuntimeServer {
     return this.commanderInvestigationJournalServiceInstance
   }
 
+  private commanderInvestigationRecoveryService(): CommanderInvestigationRecoveryService {
+    this.commanderInvestigationRecoveryServiceInstance ??= new CommanderInvestigationRecoveryService({
+      recoverySource: ({ investigation_id }) => this.commanderInvestigationJournalService().recoverySource(investigation_id),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
+      providerReadiness: (input) => this.previewCommanderInvestigationProviderReadiness(input),
+      providerExecutionEnvelope: (input) => this.commanderInvestigationRecoveryExecutionEnvelope(input),
+      modelCapability: (input) => this.modelCapabilityRegistry.get(input),
+      currentProfile: (input) => this.commanderToolService().profile(input),
+      currentContextBudget: async (input) => {
+        const preview = await this.contextBudgetService().preview({
+          purpose: "commander_research_decision",
+          role: "commander",
+          provider_kind: input.provider_kind,
+          model_id: input.model_id,
+          max_context_tokens: input.max_context_tokens,
+          max_context_bytes: input.max_context_bytes,
+        })
+        const allocation = preview.budget.allocations.find((item) => item.section === "tool_or_mcp_schema")
+        const inputContextBytes = preview.budget.max_context_bytes === undefined
+          ? undefined
+          : Math.max(0, preview.budget.max_context_bytes - (preview.budget.safety_margin_bytes ?? 0))
+        const inputContextTokens = preview.budget.max_context_tokens === undefined
+          ? undefined
+          : Math.max(0, preview.budget.max_context_tokens - (preview.budget.max_output_tokens ?? 0) - (preview.budget.safety_margin_tokens ?? 0))
+        return {
+          context_budget_id: preview.budget.budget_id,
+          input_context_bytes: inputContextBytes,
+          input_context_tokens: inputContextTokens,
+          tool_schema_allocation_bytes: allocation?.max_bytes,
+          tool_schema_allocation_tokens: allocation?.max_tokens,
+          blockers: preview.blockers,
+          warnings: preview.warnings,
+        }
+      },
+      currentBootstrap: (input) => this.commanderInvestigationBootstrapService().compile(input),
+      currentHumanControl: (input) => this.readDurableCommanderInvestigationControl({
+        phase: input.phase,
+        session_id: input.session_id,
+        launch_id: input.launch_id,
+        before: "model_step",
+        turn_index: 0,
+      }),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationRecoveryServiceInstance
+  }
+
   private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {
     const config = this.commanderInvestigationProviderConfig
     if (!config) return undefined
@@ -5049,6 +5111,65 @@ export class RuntimeServer {
       requestService: this.externalApiRequestService(),
       now: this.externalApiNow,
     })
+  }
+
+  private commanderInvestigationRecoveryExecutionEnvelope(input: CommanderInvestigationProviderReadinessInput): CommanderInvestigationRecoveryExecutionEnvelope | undefined {
+    const config = this.commanderInvestigationProviderConfig
+    if (!config) return undefined
+    const connector = this.externalApiConnectorRegistry.get(config.connector_id)
+    const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id, role: "commander" })
+    const connectorPolicyHash = stableHash({
+      connector_id: config.connector_id,
+      chat_completions_url: connector ? connectorChatCompletionsUrl(connector).toString() : undefined,
+      allowed_hosts: connector?.allowed_hosts.slice().sort() ?? [],
+      allowed_methods: connector?.allowed_methods.slice().sort() ?? [],
+      default_headers: Object.entries(connector?.default_headers ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+      credential_ref_injection_shape: (connector?.credential_refs ?? []).map((ref) => ({ source: ref.source, inject_as: ref.inject_as, target_name: ref.target_name, prefix: ref.prefix })).sort((a, b) => `${a.inject_as}:${a.target_name}`.localeCompare(`${b.inject_as}:${b.target_name}`)),
+      connector_timeout_ms: connector?.timeout_ms,
+      connector_max_response_bytes: connector?.max_response_bytes,
+      allow_local_http: connector?.allow_local_http === true,
+    })
+    const capabilityEnvelopeHash = stableHash({
+      provider_kind: capability.provider_kind,
+      provider_id: capability.provider_id,
+      model_id: capability.model_id,
+      role_support: capability.role_support.slice().sort(),
+      max_context_bytes: capability.max_context_bytes,
+      max_context_tokens: capability.max_context_tokens,
+      max_output_tokens: capability.max_output_tokens,
+      supports_tools: capability.supports_tools,
+      supports_json_schema: capability.supports_json_schema,
+      supports_mcp: capability.supports_mcp,
+      supports_long_context: capability.supports_long_context,
+      supports_streaming: capability.supports_streaming,
+      supports_local_execution: capability.supports_local_execution,
+      safety_margin_ratio: capability.safety_margin_ratio,
+      source: capability.source,
+    })
+    const envelope = {
+      envelope_version: 1 as const,
+      transport_kind: "openai_compatible_connector" as const,
+      provider_id: config.provider_id,
+      provider_kind: config.provider_kind,
+      connector_id: config.connector_id,
+      model_id: config.model_id,
+      timeout_ms: config.timeout_ms,
+      max_request_bytes: config.max_request_bytes,
+      max_response_bytes: config.max_response_bytes,
+      max_context_bytes: config.max_context_bytes,
+      max_context_tokens: config.max_context_tokens,
+      max_output_tokens: config.max_output_tokens,
+      supports_tools: config.supports_tools,
+      supports_json_schema: config.supports_json_schema,
+      supports_long_context: config.supports_long_context,
+      supports_local_execution: config.supports_local_execution,
+      supports_streaming: false as const,
+      connector_policy_hash: connectorPolicyHash,
+      capability_envelope_hash: capabilityEnvelopeHash,
+      execution_envelope_hash: "",
+    }
+    envelope.execution_envelope_hash = stableHash({ ...envelope, execution_envelope_hash: "" })
+    return redactValue(envelope)
   }
 
   private defaultCommanderInvestigationProviderGate(): CommanderInvestigationProviderGate {

@@ -57,7 +57,7 @@ records are explicit allowlists, not blind spreads of the in-memory result.
 Checkpoints persist operational state needed for restart analysis:
 
 - budget and bootstrap references
-- loaded-tool references with descriptor/schema hashes
+- loaded-tool references with descriptor, provider-visible description, and schema hashes
 - bounded evidence cards
 - bounded execution digests and turn summaries
 - provider audit counts
@@ -97,7 +97,16 @@ Projection replays typed event objects in append order and verifies:
 - payload, checkpoint, and terminal hashes
 
 One corrupt investigation record does not make unrelated investigation records
-unreadable.
+unreadable. Malformed JSONL lines whose investigation ownership cannot be
+proven, including lines torn before a complete Commander kind prefix, are
+recovery-unsafe even if later events were appended after the torn line.
+
+9W3B1 adds a read-only recovery-source projection over the same replay. The
+journal service reads the event log once, projects the record, and returns the
+validated normalized input, immutable identity, accepted latest checkpoint,
+pending model-step boundary, and terminal metadata from that single snapshot.
+Corrupt and unsupported records expose diagnostics only; they do not expose an
+authoritative checkpoint or normalized input for recovery.
 
 ### Failure And Lifecycle
 
@@ -153,7 +162,11 @@ automatic restart recovery, resumable investigation, scheduled Commander run,
 proposal generation, GitHub/MCP gateway, external research tool, or OpenCode
 action in 9W3A.
 
-9W3B owns recovery preview, checkpoint compatibility checks, uncertain provider
-outcome gates, and human-reviewed resume. 9W3C owns any public/operator
-start/list/show/pause/resume/cancel surface decision. 9Y owns proposal
-generation.
+9W3B1 owns read-only recovery preview, checkpoint compatibility checks,
+uncertain provider outcome classification, current continuity/human-control
+inspection, and recovery-plan hashes. It writes no journal event and leaves
+`resume_supported=false` in stored records. 9W3B2 owns durable recovery
+disposition, plan-hash revalidation, uncertain-provider resolution, fresh
+context reconstruction, and human-reviewed resume. 9W3C owns any
+public/operator start/list/show/pause/resume/cancel surface decision. 9Y owns
+proposal generation.

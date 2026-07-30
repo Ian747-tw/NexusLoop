@@ -90,6 +90,13 @@ durability metadata. Durable execution is a separate RuntimeServer method that
 installs an observer for journal writes; it does not turn the in-memory method
 into a persistent workflow.
 
+9W3B1 adds read-only recovery preview over durable journal projections. Because
+9W3A persists model-text fingerprints and summary-only protocol relationships
+rather than raw assistant prose or full tool results, future resume cannot
+replay the original transcript exactly. Recovery must build a fresh bounded
+context from runtime authority, compatible current tool schemas, pointer-only
+evidence, durable working-set state, and current continuity.
+
 ## Consequences
 
 The internal runtime seam can now compose:
@@ -114,9 +121,9 @@ are durable.
 
 9W2B2 owns RuntimeServer provider activation, connector preflight, run-lock
 policy, model capability registration, and investigation audit reporting. 9W3A
-adds durable records and checkpoints but does not resume. 9W3B owns recovery
-preview, checkpoint compatibility, uncertain-provider-outcome handling, and
-human-reviewed resume. 9Y owns proposal generation.
+adds durable records and checkpoints but does not resume. 9W3B1 owns read-only
+recovery preview and compatibility checks. 9W3B2 owns human-reviewed recovery
+disposition and execution. 9Y owns proposal generation.
 
 Existing one-shot Commander-cycle provider behavior remains a compatibility
 surface.

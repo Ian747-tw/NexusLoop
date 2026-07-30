@@ -4,7 +4,7 @@ import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
 import type { CommanderEvidenceCard, CommanderReadSourceRef } from "../commander-tools/commander-read-types"
 import type { CommanderToolDescriptor } from "../commander-tools/commander-tool-types"
-import { stableHash } from "./commander-model-schema"
+import { commanderProviderVisibleDescriptionHash, stableHash } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelToolCallPart, CommanderModelToolResultMessage } from "./commander-model-types"
 import type {
   CommanderInvestigationCheckpointSnapshot,
@@ -17,6 +17,7 @@ import type {
   CommanderInvestigationTurnSummary,
   CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
+import { COMMANDER_INVESTIGATION_EVENT_KINDS } from "./commander-investigation-journal-types"
 import type {
   CommanderDurableModelTextFingerprint,
   CommanderDurableAssistantMessage,
@@ -30,6 +31,7 @@ import type {
   CommanderInvestigationStartedPayload,
   CommanderInvestigationTerminalRecord,
 } from "./commander-investigation-journal-types"
+import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import { projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
 
 const CHECKPOINT_DEFAULT_CAP = 64_000
@@ -38,6 +40,7 @@ const MODEL_STEP_CAP = 8_000
 const TERMINAL_CAP = 48_000
 const STARTED_HARD_CAP = 112_000
 const MIN_TEST_CAP = 16_000
+const COMMANDER_INVESTIGATION_EVENT_KIND_SET = new Set<string>(COMMANDER_INVESTIGATION_EVENT_KINDS)
 const PERSISTED_INPUT_INTEGER_LIMITS = {
   max_model_turns: 24,
   max_tool_calls: 32,
@@ -315,22 +318,58 @@ export class CommanderInvestigationJournalService {
     return this.get(investigationId)
   }
 
+  async recoverySource(investigationId: string): Promise<CommanderInvestigationRecoverySource | undefined> {
+    const journal = await this.readJournalEventsWithDiagnostics()
+    const projection = projectCommanderInvestigationJournal(journal.events)
+    const source = projection.recovery_sources.find((candidate) => candidate.investigation_id === investigationId)
+    if (!source) return source
+    if (journal.unassignable_dropped_commander_event) return recoverySourceBlockedByDroppedCommanderEvent(source, "unassignable Commander journal event prevents authoritative recovery")
+    const droppedReasons = journal.dropped_commander_events_by_investigation_id.get(investigationId)
+    if (droppedReasons?.length) return recoverySourceBlockedByDroppedCommanderEvent(source, droppedReasons[0] ?? "dropped Commander journal event prevents authoritative recovery")
+    return source
+  }
+
   private async readJournalEvents(): Promise<JsonlEvent[]> {
+    return (await this.readJournalEventsWithDiagnostics()).events
+  }
+
+  private async readJournalEventsWithDiagnostics(): Promise<{ events: JsonlEvent[]; unassignable_dropped_commander_event: boolean; dropped_commander_events_by_investigation_id: Map<string, string[]> }> {
     try {
       const text = await readFile(this.options.eventStore.eventsPath, "utf8")
       const events: JsonlEvent[] = []
-      text.split(/\r?\n/).forEach((line, index) => {
+      let unassignable = false
+      const dropped = new Map<string, string[]>()
+      const lines = text.split(/\r?\n/)
+      const lastNonemptyIndex = (() => {
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          if (lines[index]) return index
+        }
+        return -1
+      })()
+      lines.forEach((line, index) => {
         if (!line) return
         try {
-          events.push(JSON.parse(line) as JsonlEvent)
+          const event = JSON.parse(line) as JsonlEvent
+          const droppedCommander = droppedCommanderEventDiagnostic(event)
+          if (droppedCommander) {
+            if (droppedCommander.investigation_id) {
+              const current = dropped.get(droppedCommander.investigation_id) ?? []
+              current.push(droppedCommander.reason)
+              dropped.set(droppedCommander.investigation_id, current.slice(-12))
+            } else {
+              unassignable = true
+            }
+          }
+          events.push(event)
         } catch {
-          const investigationId = recoverInvestigationIdFromMalformedLine(line, index)
-          if (investigationId) events.push(malformedJournalLineEvent(investigationId, index))
+          const recovered = recoverInvestigationIdFromMalformedLine(line, index, index === lastNonemptyIndex)
+          if (recovered.investigation_id) events.push(malformedJournalLineEvent(recovered.investigation_id, index))
+          if (recovered.unassignable_commander_tail) unassignable = true
         }
       })
-      return events
+      return { events, unassignable_dropped_commander_event: unassignable, dropped_commander_events_by_investigation_id: dropped }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], unassignable_dropped_commander_event: false, dropped_commander_events_by_investigation_id: new Map() }
       throw error
     }
   }
@@ -620,13 +659,28 @@ export class CommanderInvestigationJournalService {
 function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigationLoadedToolRef[] {
   return tools.map((tool) => ({
     tool_id: tool.tool_id,
+    namespace: tool.namespace,
     descriptor_version: tool.version,
     authority_id: tool.authority_id ?? "",
+    description_hash: commanderProviderVisibleDescriptionHash(tool),
     input_schema_hash: tool.schema_metadata.input_schema_hash,
     output_schema_hash: tool.schema_metadata.output_schema_hash,
     load_policy: tool.load_policy,
     trust_class: tool.trust_class,
     instruction_semantics: "none" as const,
+    max_output_bytes: tool.max_output_bytes,
+    timeout_ms: tool.timeout_ms,
+    risk: tool.risk,
+    side_effect_class: tool.side_effect_class,
+    execution_backend: tool.execution_backend,
+    process_policy: tool.process_policy,
+    creates_external_process: tool.creates_external_process,
+    calls_provider: tool.calls_provider,
+    mutates_events: tool.mutates_events,
+    requires_network: tool.requires_network,
+    requires_credentials: tool.requires_credentials,
+    requires_approval: tool.requires_approval,
+    requires_run_lock: tool.requires_run_lock,
   })).sort((a, b) => a.tool_id.localeCompare(b.tool_id))
 }
 
@@ -764,11 +818,50 @@ function durableConclusion(result: CommanderInvestigationResult) {
   }
 }
 
-function recoverInvestigationIdFromMalformedLine(line: string, index: number): string | undefined {
-  if (!/"kind"\s*:\s*"runtime_commander_investigation_(started|model_step_started|checkpointed|finished)"/.test(line)) return undefined
+function droppedCommanderEventDiagnostic(event: JsonlEvent): { investigation_id?: string; reason: string } | undefined {
+  const kind = typeof event.kind === "string" ? event.kind : ""
+  if (!kind.startsWith("runtime_commander_investigation_")) return undefined
+  const topLevelInvestigationId = typeof event.investigation_id === "string" && event.investigation_id ? bound(event.investigation_id, 200) : undefined
+  const nestedInvestigationId = nestedCommanderInvestigationId(event)
+  const investigationId = topLevelInvestigationId ?? nestedInvestigationId
+  if (!COMMANDER_INVESTIGATION_EVENT_KIND_SET.has(kind)) {
+    return {
+      investigation_id: investigationId,
+      reason: "unsupported Commander journal event kind prevents authoritative recovery",
+    }
+  }
+  if (!topLevelInvestigationId) {
+    return {
+      investigation_id: nestedInvestigationId,
+      reason: "Commander journal event without top-level investigation_id prevents authoritative recovery",
+    }
+  }
+  return undefined
+}
+
+function nestedCommanderInvestigationId(event: JsonlEvent): string | undefined {
+  const candidate = (event as {
+    normalized_input?: { investigation_id?: unknown }
+    initial_checkpoint?: { investigation_id?: unknown }
+    checkpoint?: { investigation_id?: unknown }
+    terminal?: { investigation_id?: unknown }
+  }).normalized_input?.investigation_id
+    ?? (event as { initial_checkpoint?: { investigation_id?: unknown } }).initial_checkpoint?.investigation_id
+    ?? (event as { checkpoint?: { investigation_id?: unknown } }).checkpoint?.investigation_id
+    ?? (event as { terminal?: { investigation_id?: unknown } }).terminal?.investigation_id
+  return typeof candidate === "string" && candidate ? bound(candidate, 200) : undefined
+}
+
+function recoverInvestigationIdFromMalformedLine(line: string, index: number, isTail: boolean): { investigation_id?: string; unassignable_commander_tail: boolean } {
+  const hasCommanderInvestigationKindPrefix = /"kind"\s*:\s*"runtime_commander_investigation_/.test(line)
+  const hasCommanderRuntimePrefix = /"kind"\s*:\s*"runtime_commander/.test(line)
+  const hasCompleteNonCommanderKind = /"kind"\s*:\s*"(?!runtime_commander_investigation_)[^"\\]+"/.test(line)
+  if (!hasCommanderInvestigationKindPrefix) {
+    return { unassignable_commander_tail: hasCommanderRuntimePrefix || !hasCompleteNonCommanderKind }
+  }
   const match = line.match(/"investigation_id"\s*:\s*"([^"\\]{1,200})"/)
-  if (match?.[1]) return bound(match[1], 200)
-  return `malformed_commander_journal_line_${index}`
+  if (match?.[1]) return { investigation_id: bound(match[1], 200), unassignable_commander_tail: false }
+  return { investigation_id: `malformed_commander_journal_line_${index}`, unassignable_commander_tail: true }
 }
 
 function malformedJournalLineEvent(investigationId: string, lineIndex: number): JsonlEvent {
@@ -785,6 +878,59 @@ function malformedJournalLineEvent(investigationId: string, lineIndex: number): 
   }
   event.event_payload_hash = stableHash({ ...event, event_payload_hash: "" })
   return event as JsonlEvent
+}
+
+function recoverySourceBlockedByDroppedCommanderEvent(source: CommanderInvestigationRecoverySource, reason: string): CommanderInvestigationRecoverySource {
+  const integrityError = bound(reason, 240)
+  if (!source.record) {
+    const blocked = {
+      ...source,
+      projection_status: "corrupt" as const,
+      normalized_input: undefined,
+      immutable_identity: undefined,
+      latest_checkpoint: undefined,
+      pending_model_step: undefined,
+      terminal: undefined,
+      source_hash: "",
+    }
+    blocked.source_hash = stableHash({
+      investigation_id: blocked.investigation_id,
+      projection_status: blocked.projection_status,
+      source_event_count: blocked.source_event_count,
+      dropped_commander_journal_event: true,
+    })
+    return blocked
+  }
+  const record: CommanderInvestigationRecord = {
+    ...source.record,
+    projection_status: "corrupt" as const,
+    checkpoint_available: false,
+    uncertain_provider_outcome: false,
+    recovery_state: "no_checkpoint_resume_not_implemented" as const,
+    integrity_errors: [...source.record.integrity_errors, integrityError].slice(0, 24),
+    warnings: [...source.record.warnings, "Commander recovery preview blocked by a dropped Commander journal event"].slice(0, 12),
+    record_hash: "",
+  }
+  record.record_hash = stableHash({ ...record, record_hash: "" })
+  const blocked = {
+    ...source,
+    projection_status: "corrupt" as const,
+    record,
+    normalized_input: undefined,
+    immutable_identity: undefined,
+    latest_checkpoint: undefined,
+    pending_model_step: undefined,
+    terminal: undefined,
+    source_hash: "",
+  }
+  blocked.source_hash = stableHash({
+    investigation_id: blocked.investigation_id,
+    projection_status: blocked.projection_status,
+    record_hash: blocked.record.record_hash,
+    source_event_count: blocked.source_event_count,
+    dropped_commander_journal_event: true,
+  })
+  return blocked
 }
 
 function durableToolResult(message: CommanderModelToolResultMessage): CommanderDurableToolResultSummaryMessage {
