@@ -5444,6 +5444,14 @@ describe("Commander in-memory investigation controller", () => {
     expect(corruptPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record" })
     const search = await server.searchCommanderOperationalMemory({ query: "uniquedriftxyz", source_kinds: ["commander_investigation"] })
     expect(search.result?.candidates).toEqual([])
+
+    await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_investigation_finished","schema_version":1,"journal_sequence":99', { flag: "a" })
+    const blockedByTailSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_checkpoint")
+    expect(blockedByTailSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(blockedByTailSource?.record?.integrity_errors.join("\n")).toContain("unassignable malformed Commander journal tail")
+    const blockedByTailPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_checkpoint", include_current_continuity: false })
+    expect(blockedByTailPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record" })
+    expect(blockedByTailPreview.checkpoint).toBeUndefined()
   })
 
   test("recovery preview enforces exact tool compatibility budgets human controls and deterministic plan hashes", async () => {
