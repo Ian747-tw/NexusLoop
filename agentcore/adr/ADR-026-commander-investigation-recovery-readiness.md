@@ -69,6 +69,9 @@ Budget compatibility never resets counters or broadens stored limits. Remaining
 budget is derived from the accepted checkpoint and current policy, using the
 stricter value. Current tool-schema allocation is recomputed through the
 runtime context-budget service, not from a static Commander profile fallback.
+Current context fit uses the usable input budget after reserved output and
+safety-margin space; a recovery packet that fits only the raw model window is
+blocked.
 No-progress and repeated-result state stay part of the recovery state.
 
 ### Context And Continuity

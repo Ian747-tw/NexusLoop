@@ -94,14 +94,14 @@ export class CommanderInvestigationRecoveryService {
       ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
     ].slice(0, 32)
     let packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings, providerCompatibility)
-    let contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility) : emptyContextCompatibility()
+    let contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility, currentContextBudget) : emptyContextCompatibility()
     let blockers: string[] = []
     let warnings: string[] = []
     for (let attempt = 0; attempt < 3; attempt += 1) {
       blockers = collectPreviewBlockers(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl)
       warnings = collectPreviewWarnings(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl, Boolean(source.pending_model_step))
       const nextPacket = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility)
-      const nextContext = nextPacket ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, nextPacket, continuityCompatibility) : emptyContextCompatibility()
+      const nextContext = nextPacket ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, nextPacket, continuityCompatibility, currentContextBudget) : emptyContextCompatibility()
       const stable = nextPacket?.packet_hash === packet?.packet_hash && nextContext.compatibility_hash === contextCompatibility.compatibility_hash
       packet = nextPacket
       contextCompatibility = nextContext
@@ -433,7 +433,7 @@ export class CommanderInvestigationRecoveryService {
     return result
   }
 
-  private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility, packet: CommanderInvestigationRecoveryPacket, continuity: CommanderInvestigationRecoveryContinuityCompatibility): CommanderInvestigationRecoveryContextCompatibility {
+  private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility, packet: CommanderInvestigationRecoveryPacket, continuity: CommanderInvestigationRecoveryContinuityCompatibility, currentContextBudget: import("./commander-investigation-recovery-types").CommanderInvestigationRecoveryCurrentContextBudget): CommanderInvestigationRecoveryContextCompatibility {
     const capability = this.options.modelCapability({ provider_kind: checkpoint.provider_kind, model_id: checkpoint.model_id, role: "commander" })
     const loadedSchemaUsage = this.loadedSchemaUsage(checkpoint)
     const loadedSchemaBytes = loadedSchemaUsage.bytes
@@ -451,11 +451,13 @@ export class CommanderInvestigationRecoveryService {
       : capability.max_context_tokens === undefined
         ? storedMaxContextTokens
         : Math.min(storedMaxContextTokens, capability.max_context_tokens)
+    const currentInputContextBytes = minDefined(currentMaxContextBytes, currentContextBudget.input_context_bytes) ?? currentMaxContextBytes
+    const currentInputContextTokens = minDefined(currentMaxContextTokens, currentContextBudget.input_context_tokens)
     const estimatedBytes = packetBytes + loadedSchemaBytes + latestBytes + bootstrapBytes
     const estimatedTokens = Math.ceil(packetBytes / 4) + loadedSchemaTokens + Math.ceil(latestBytes / 4) + bootstrapTokens
     const blockers = [
-      ...(estimatedBytes > currentMaxContextBytes ? ["estimated recovery context exceeds current model context byte budget"] : []),
-      ...(currentMaxContextTokens !== undefined && estimatedTokens > currentMaxContextTokens ? ["estimated recovery context exceeds current model context token budget"] : []),
+      ...(estimatedBytes > currentInputContextBytes ? ["estimated recovery context exceeds current model context byte budget"] : []),
+      ...(currentInputContextTokens !== undefined && estimatedTokens > currentInputContextTokens ? ["estimated recovery context exceeds current model context token budget"] : []),
     ]
     const result = {
       current_context_budget_id: capability.capability_id,
@@ -468,6 +470,8 @@ export class CommanderInvestigationRecoveryService {
       evidence_summary_bytes: evidenceBytes,
       current_bootstrap_bytes: bootstrapBytes,
       current_bootstrap_tokens: bootstrapTokens,
+      current_input_context_bytes: currentInputContextBytes,
+      current_input_context_tokens: currentInputContextTokens,
       within_current_context_budget: blockers.length === 0 && budget.compatible,
       exact_replay_supported: false as const,
       fresh_context_required: true as const,

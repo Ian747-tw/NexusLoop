@@ -5065,8 +5065,16 @@ export class RuntimeServer {
           max_context_bytes: input.max_context_bytes,
         })
         const allocation = preview.budget.allocations.find((item) => item.section === "tool_or_mcp_schema")
+        const inputContextBytes = preview.budget.max_context_bytes === undefined
+          ? undefined
+          : Math.max(0, preview.budget.max_context_bytes - (preview.budget.safety_margin_bytes ?? 0))
+        const inputContextTokens = preview.budget.max_context_tokens === undefined
+          ? undefined
+          : Math.max(0, preview.budget.max_context_tokens - (preview.budget.max_output_tokens ?? 0) - (preview.budget.safety_margin_tokens ?? 0))
         return {
           context_budget_id: preview.budget.budget_id,
+          input_context_bytes: inputContextBytes,
+          input_context_tokens: inputContextTokens,
           tool_schema_allocation_bytes: allocation?.max_bytes,
           tool_schema_allocation_tokens: allocation?.max_tokens,
           blockers: preview.blockers,

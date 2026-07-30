@@ -218,6 +218,8 @@ export type CommanderInvestigationRecoveryBudgetCompatibility = {
 
 export type CommanderInvestigationRecoveryCurrentContextBudget = {
   context_budget_id?: string
+  input_context_bytes?: number
+  input_context_tokens?: number
   tool_schema_allocation_bytes?: number
   tool_schema_allocation_tokens?: number
   blockers: string[]
@@ -235,6 +237,8 @@ export type CommanderInvestigationRecoveryContextCompatibility = {
   evidence_summary_bytes: number
   current_bootstrap_bytes: number
   current_bootstrap_tokens: number
+  current_input_context_bytes?: number
+  current_input_context_tokens?: number
   within_current_context_budget: boolean
   exact_replay_supported: false
   fresh_context_required: true

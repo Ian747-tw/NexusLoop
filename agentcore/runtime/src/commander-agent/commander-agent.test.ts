@@ -6070,6 +6070,21 @@ describe("Commander in-memory investigation controller", () => {
     expect(bootstrapSizedPreview.recovery_packet?.blockers.join("\n")).toContain("current model context")
     expect(bootstrapSizedPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
 
+    const reservedInputPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      currentContextBudget: async () => ({
+        context_budget_id: "context_budget_reserved_input",
+        input_context_bytes: 65_536,
+        input_context_tokens: 1,
+        tool_schema_allocation_bytes: source!.latest_checkpoint!.budget.tool_schema_allocation_bytes,
+        tool_schema_allocation_tokens: source!.latest_checkpoint!.budget.tool_schema_allocation_tokens,
+        blockers: [],
+        warnings: [],
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(reservedInputPreview).toMatchObject({ status: "blocked", context_compatibility: { within_current_context_budget: false, current_input_context_tokens: 1 } })
+    expect(reservedInputPreview.context_compatibility.blockers.join("\n")).toContain("current model context token budget")
+    expect(reservedInputPreview.recovery_packet?.blockers.join("\n")).toContain("current model context token budget")
+
     const driftedDescriptors = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? { ...tool, version: "9.9.9" } : tool)
     const driftedPreview = await new CommanderInvestigationRecoveryService(baseOptions({ descriptors: driftedDescriptors })).preview({ investigation_id: "inv_recovery_compat" })
     expect(driftedPreview).toMatchObject({ status: "blocked", tool_compatibility: { compatible: false } })
