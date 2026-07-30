@@ -457,6 +457,7 @@ function approvalSummary(approval: CommanderInvestigationRecoveryApprovalRecord)
     human_note_hash: approval.human_note_hash,
     recovery_basis_hash: approval.recovery_basis_hash,
     recovery_plan_hash: approval.recovery_plan_hash,
+    recovery_packet_hash: approval.recovery_packet_hash,
     checkpoint_ref: approval.checkpoint_ref,
     pending_model_request_id: approval.pending_model_step_ref?.model_request_id,
     provider_execution_envelope_hash: approval.provider_execution_envelope_hash,

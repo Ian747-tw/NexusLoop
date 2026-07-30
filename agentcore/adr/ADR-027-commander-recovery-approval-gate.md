@@ -37,6 +37,9 @@ therefore changes the journal record/source hash and approval history, but it
 does not invalidate the plan it approves. Any checkpoint, pending-boundary,
 identity, normalized-input, provider-envelope, tool/schema/authority, budget,
 context, continuity, or human-control change makes an older approval stale.
+Current-approval matching also compares the persisted recovery packet hash to
+the current preview packet hash, so a hash-valid approval cannot authorize a
+different recovery packet under the same plan hash.
 
 ### Decisions And Acknowledgements
 

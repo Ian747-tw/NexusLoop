@@ -648,7 +648,7 @@ export class CommanderInvestigationRecoveryService {
       recoveryKind,
       action,
     }) : undefined
-    const approval = currentApprovalFor(source, planHash, recoveryKind, checkpoint, pending, compat)
+    const approval = currentApprovalFor(source, planHash, packet?.packet_hash, recoveryKind, checkpoint, pending, compat)
     const effectiveStatus = approval.current && (status === "ready_for_approval" || status === "human_review_required")
       ? "approved_waiting_for_execution" as const
       : status
@@ -884,6 +884,7 @@ function recoveryPendingPlanHash(pending: CommanderInvestigationRecoveryPendingM
 function currentApprovalFor(
   source: CommanderInvestigationRecoverySource,
   planHash: string | undefined,
+  packetHash: string | undefined,
   recoveryKind: "none" | "checkpoint" | "uncertain_provider_outcome",
   checkpoint: CommanderInvestigationRecoveryCheckpointSummary | undefined,
   pending: CommanderInvestigationRecoveryPendingModelStep | undefined,
@@ -897,7 +898,7 @@ function currentApprovalFor(
   } | undefined,
 ): { current?: NonNullable<CommanderInvestigationRecoverySource["latest_recovery_approval"]>; staleCount: number } {
   const approvals = source.recovery_approvals ?? []
-  if (!planHash || !source.recovery_basis_hash || recoveryKind === "none" || !checkpoint || !compat) return { staleCount: approvals.length }
+  if (!planHash || !packetHash || !source.recovery_basis_hash || recoveryKind === "none" || !checkpoint || !compat) return { staleCount: approvals.length }
   const current = approvals.find((approval) => {
     const decisionMatches = recoveryKind === "checkpoint"
       ? approval.decision === "approve_resume_from_checkpoint"
@@ -905,6 +906,7 @@ function currentApprovalFor(
     return decisionMatches &&
       approval.recovery_basis_hash === source.recovery_basis_hash &&
       approval.recovery_plan_hash === planHash &&
+      approval.recovery_packet_hash === packetHash &&
       approval.checkpoint_ref.checkpoint_id === checkpoint.checkpoint_id &&
       approval.checkpoint_ref.checkpoint_sequence === checkpoint.checkpoint_sequence &&
       approval.checkpoint_ref.checkpoint_hash === checkpoint.checkpoint_hash &&

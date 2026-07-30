@@ -6916,6 +6916,35 @@ describe("Commander in-memory investigation controller", () => {
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>)
     const approvalEvent = events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")
     expect(approvalEvent).toBeDefined()
+    const stalePacketApprovalEvent = {
+      ...approvalEvent!,
+      approval: {
+        ...approvalEvent!.approval,
+        recovery_packet_hash: stableHash({ stale_packet_fixture: true }),
+        approval_hash: "",
+      },
+      event_payload_hash: "",
+    }
+    stalePacketApprovalEvent.approval.approval_hash = stableHash({ ...stalePacketApprovalEvent.approval, approved_at: "", approval_hash: "" })
+    stalePacketApprovalEvent.event_payload_hash = journalPayloadHash(stalePacketApprovalEvent)
+    const stalePacketDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-stale-packet-approval-"))
+    const stalePacketStore = new EventStore(join(stalePacketDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((candidate) => candidate.kind !== "runtime_commander_investigation_recovery_approved")) {
+      await stalePacketStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+    await stalePacketStore.append(stalePacketApprovalEvent as Parameters<EventStore["append"]>[0])
+    await writeApprovedSpec(stalePacketDir)
+    const stalePacketServer = configuredProviderRuntimeServer(stalePacketDir)
+    servers.push({ stop: () => stalePacketServer.shutdown() })
+    await stalePacketServer.start()
+    const stalePacketPreview = await stalePacketServer.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_uncertain" })
+    expect(stalePacketPreview).toMatchObject({
+      status: "human_review_required",
+      recommended_action: "review_uncertain_provider_outcome",
+      approval_state: "stale",
+      current_approval: undefined,
+      stale_approval_count: 1,
+    })
     const malformedApprovalEvent = {
       ...approvalEvent!,
       approval: {
