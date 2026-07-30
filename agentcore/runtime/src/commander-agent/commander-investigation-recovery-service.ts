@@ -300,6 +300,7 @@ export class CommanderInvestigationRecoveryService {
   private budgetCompatibility(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationRecoveryBudgetCompatibility {
     const stored = checkpoint.budget
     const profile = this.options.currentProfile({ phase: checkpoint.phase })
+    const loadedSchemaUsage = this.loadedSchemaUsage(checkpoint)
     const consumed = {
       model_turns: checkpoint.working_set.model_turn_count,
       provider_requests: checkpoint.provider_request_count,
@@ -310,6 +311,8 @@ export class CommanderInvestigationRecoveryService {
       evidence_cards: checkpoint.working_set.evidence_cards.length + checkpoint.working_set.omitted_evidence_count,
       turn_summaries: checkpoint.turn_summaries.length + checkpoint.working_set.omitted_turn_count,
       loaded_schemas: checkpoint.loaded_tools.length,
+      loaded_schema_bytes: loadedSchemaUsage.bytes,
+      loaded_schema_tokens: loadedSchemaUsage.tokens,
       no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns,
     }
     const currentLimits = {
@@ -317,6 +320,8 @@ export class CommanderInvestigationRecoveryService {
       max_tool_calls: Math.min(stored.max_tool_calls, profile.max_tool_calls_future),
       max_tool_search_calls: Math.min(stored.max_tool_search_calls, profile.max_tool_search_calls_future),
       max_loaded_schemas: Math.min(stored.max_loaded_schemas, profile.max_loaded_schemas),
+      tool_schema_allocation_bytes: minDefined(stored.tool_schema_allocation_bytes, profile.max_initial_schema_bytes),
+      tool_schema_allocation_tokens: minDefined(stored.tool_schema_allocation_tokens, profile.max_initial_schema_tokens),
       max_cumulative_tool_result_bytes: Math.min(stored.max_cumulative_tool_result_bytes, profile.max_cumulative_result_bytes_future),
       max_wall_time_ms: Math.min(stored.max_wall_time_ms, profile.max_wall_time_ms_future),
       max_consecutive_no_progress_turns: stored.max_consecutive_no_progress_turns,
@@ -348,6 +353,8 @@ export class CommanderInvestigationRecoveryService {
     const optionalDimensions = new Set(["evidence_cards", "turn_summaries", "loaded_schemas"])
     const exhausted = Object.entries(effective).filter(([key, value]) => value <= 0 && !optionalDimensions.has(key)).map(([key]) => key)
     if (effective.loaded_schemas < 0) exhausted.push("loaded_schemas")
+    if (currentLimits.tool_schema_allocation_bytes !== undefined && consumed.loaded_schema_bytes > currentLimits.tool_schema_allocation_bytes) exhausted.push("tool_schema_allocation_bytes")
+    if (currentLimits.tool_schema_allocation_tokens !== undefined && consumed.loaded_schema_tokens > currentLimits.tool_schema_allocation_tokens) exhausted.push("tool_schema_allocation_tokens")
     const stricter = Object.entries(currentLimits).filter(([key, value]) => {
       const storedValue = (stored as unknown as Record<string, number>)[key]
       return typeof storedValue === "number" && typeof value === "number" && value < storedValue
@@ -368,6 +375,8 @@ export class CommanderInvestigationRecoveryService {
         max_consecutive_no_progress_turns: stored.max_consecutive_no_progress_turns,
         max_evidence_cards: stored.max_evidence_cards,
         max_turn_summaries: stored.max_turn_summaries,
+        tool_schema_allocation_bytes: stored.tool_schema_allocation_bytes,
+        tool_schema_allocation_tokens: stored.tool_schema_allocation_tokens,
       },
       consumed,
       stored_remaining: storedRemaining,
@@ -395,14 +404,9 @@ export class CommanderInvestigationRecoveryService {
 
   private contextCompatibility(checkpoint: CommanderInvestigationCheckpoint, tools: CommanderInvestigationRecoveryToolCompatibilitySummary, budget: CommanderInvestigationRecoveryBudgetCompatibility, packet: CommanderInvestigationRecoveryPacket, continuity: CommanderInvestigationRecoveryContinuityCompatibility): CommanderInvestigationRecoveryContextCompatibility {
     const capability = this.options.modelCapability({ provider_kind: checkpoint.provider_kind, model_id: checkpoint.model_id, role: "commander" })
-    const loadedSchemaBytes = tools.tools.reduce((sum, tool) => {
-      const descriptor = this.options.descriptors.find((candidate) => candidate.tool_id === tool.tool_id)
-      return sum + (descriptor?.schema_metadata.input_schema_bytes ?? 0) + (descriptor?.schema_metadata.output_schema_bytes ?? 0)
-    }, 0)
-    const loadedSchemaTokens = tools.tools.reduce((sum, tool) => {
-      const descriptor = this.options.descriptors.find((candidate) => candidate.tool_id === tool.tool_id)
-      return sum + (descriptor?.schema_metadata.estimated_schema_tokens ?? 0)
-    }, 0)
+    const loadedSchemaUsage = this.loadedSchemaUsage(checkpoint)
+    const loadedSchemaBytes = loadedSchemaUsage.bytes
+    const loadedSchemaTokens = loadedSchemaUsage.tokens
     const latestBytes = checkpoint.replay_exchange ? bytes(checkpoint.replay_exchange) : 0
     const evidenceBytes = bytes(packet.evidence_pointers)
     const packetBytes = bytes(packet)
@@ -442,6 +446,16 @@ export class CommanderInvestigationRecoveryService {
     }
     result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })
     return result
+  }
+
+  private loadedSchemaUsage(checkpoint: CommanderInvestigationCheckpoint): { bytes: number; tokens: number } {
+    return checkpoint.loaded_tools.reduce((sum, tool) => {
+      const descriptor = this.options.descriptors.find((candidate) => candidate.tool_id === tool.tool_id)
+      return {
+        bytes: sum.bytes + (descriptor?.schema_metadata.input_schema_bytes ?? 0) + (descriptor?.schema_metadata.output_schema_bytes ?? 0),
+        tokens: sum.tokens + (descriptor?.schema_metadata.estimated_schema_tokens ?? 0),
+      }
+    }, { bytes: 0, tokens: 0 })
   }
 
   private async continuityCompatibility(source: CommanderInvestigationRecoverySource, checkpoint: CommanderInvestigationCheckpoint, include: boolean): Promise<CommanderInvestigationRecoveryContinuityCompatibility> {
@@ -829,6 +843,12 @@ function bound(value: string, max: number): string {
 
 function bytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value))
+}
+
+function minDefined(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined) return b
+  if (b === undefined) return a
+  return Math.min(a, b)
 }
 
 export function isKnownCommanderRecoveryPhase(value: string): value is CommanderToolPhase {

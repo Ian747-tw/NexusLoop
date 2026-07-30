@@ -5915,6 +5915,26 @@ describe("Commander in-memory investigation controller", () => {
     expect(loadedSchemaCapPreview).toMatchObject({ status: "blocked" })
     expect(loadedSchemaCapPreview.budget_compatibility.exhausted_dimensions).toContain("loaded_schemas")
 
+    const schemaByteCapPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      currentProfile: (profileInput: { phase?: string }) => ({
+        ...new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: new ModelCapabilityRegistry() }) }).profile(profileInput),
+        max_initial_schema_bytes: Math.max(0, validPreview.context_compatibility.loaded_schema_bytes - 1),
+      }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(schemaByteCapPreview).toMatchObject({ status: "blocked" })
+    expect(schemaByteCapPreview.budget_compatibility.exhausted_dimensions).toContain("tool_schema_allocation_bytes")
+    expect(schemaByteCapPreview.budget_compatibility.blockers.join("\n")).toContain("tool_schema_allocation_bytes")
+
+    const schemaTokenBudget = { ...source!.latest_checkpoint!.budget, tool_schema_allocation_tokens: Math.max(0, validPreview.context_compatibility.loaded_schema_tokens - 1), budget_hash: "" }
+    schemaTokenBudget.budget_hash = stableHash({ ...schemaTokenBudget, budget_hash: "" })
+    const schemaTokenCheckpoint = finalizeTestCheckpoint({ ...source!.latest_checkpoint!, budget: schemaTokenBudget })
+    const schemaTokenCapPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      recoverySource: async () => ({ ...source!, latest_checkpoint: schemaTokenCheckpoint }),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(schemaTokenCapPreview).toMatchObject({ status: "blocked" })
+    expect(schemaTokenCapPreview.budget_compatibility.exhausted_dimensions).toContain("tool_schema_allocation_tokens")
+    expect(schemaTokenCapPreview.budget_compatibility.blockers.join("\n")).toContain("tool_schema_allocation_tokens")
+
     const tokenLimitedBudget = { ...source!.latest_checkpoint!.budget, max_context_tokens: 1, budget_hash: "" }
     tokenLimitedBudget.budget_hash = stableHash({ ...tokenLimitedBudget, budget_hash: "" })
     const tokenLimitedCheckpoint = finalizeTestCheckpoint({ ...source!.latest_checkpoint!, budget: tokenLimitedBudget })
