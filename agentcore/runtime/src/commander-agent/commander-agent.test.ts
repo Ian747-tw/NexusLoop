@@ -6603,6 +6603,13 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(stale.recovery_basis_hash).not.toBe(before.recovery_basis_hash)
     expect(stale.recovery_plan_hash).not.toBe(before.recovery_plan_hash)
+    const staleRecord = await journal.get("inv_recovery_approval_checkpoint")
+    expect(staleRecord).toMatchObject({
+      recovery_state: "checkpoint_available_resume_not_implemented",
+      recovery_approval_count: 1,
+      recovery_approval_recorded: false,
+      latest_recovery_approval_id: undefined,
+    })
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string; [key: string]: unknown })
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
     expect(JSON.stringify(events)).not.toContain("https://api.example.test")

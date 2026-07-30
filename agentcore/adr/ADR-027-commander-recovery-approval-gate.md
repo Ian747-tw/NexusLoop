@@ -40,6 +40,9 @@ context, continuity, or human-control change makes an older approval stale.
 Current-approval matching also compares the persisted recovery packet hash to
 the current preview packet hash, so a hash-valid approval cannot authorize a
 different recovery packet under the same plan hash.
+Journal projection keeps historical approval counts, but record-level approval
+state and recovery-state labels are based only on an approval whose basis and
+checkpoint or pending-boundary target still match the current projected state.
 
 ### Decisions And Acknowledgements
 
