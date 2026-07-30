@@ -93,7 +93,12 @@ event. A changed plan can receive a new approval only after fresh revalidation.
 The approval service reruns the recovery preview immediately before asking the
 journal to append; if the basis, plan hash, compatibility, continuity, or human
 control state changed between preview and append, the write is blocked and no
-stale approval event is recorded.
+stale approval event is recorded. The final revalidation runs inside the
+journal's per-investigation approval boundary, and the approval event is
+conditionally appended only when the EventStore tail still matches the boundary
+entry. A concurrent compatibility-changing event therefore orders before the
+approval and blocks it, or orders after the approval and cannot make the
+recorded approval stale at its own append point.
 
 Projection validates approval payload completeness during replay, including the
 decision-specific acknowledgement set and fixed no-replay safety flags. A
@@ -116,6 +121,8 @@ mutate a live investigation while it may still append model-step, checkpoint,
 or terminal events. The journal serializes approval writes by investigation ID,
 then rereads the source inside that critical section, so concurrent distinct
 approval attempts cannot derive duplicate journal or approval sequences.
+Accepted approvals advance the projected record `updated_at` so list and
+operational-memory ordering reflect the newest recovery authority metadata.
 
 ## Consequences
 

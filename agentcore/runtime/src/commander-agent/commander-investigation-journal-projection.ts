@@ -208,6 +208,10 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     ? recoveryBasisForReady(investigationId, identity, startedInputHash, latestCheckpoint, pendingModel, terminal)
     : undefined
   const latestApproval = approvals.at(-1)
+  const updatedAt = [started.started_at, latestCheckpoint?.created_at, pendingModel?.started_at, terminalRecord?.completed_at, latestApproval?.approved_at]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .sort()
+    .at(-1) ?? started.started_at
   const evidenceCards = terminalRecord?.evidence_cards ?? latestCheckpoint?.working_set.evidence_cards ?? []
   const omittedEvidenceCount = terminalRecord?.omitted_evidence_count ?? latestCheckpoint?.working_set.omitted_evidence_count ?? 0
   const uncertain = Boolean(pendingModel && !terminalRecord)
@@ -228,7 +232,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     model_id: started.model_id,
     tool_protocol: started.tool_protocol,
     started_at: started.started_at,
-    updated_at: terminalRecord?.completed_at ?? pendingModel?.started_at ?? latestCheckpoint?.created_at ?? started.started_at,
+    updated_at: updatedAt,
     completed_at: terminalRecord?.completed_at,
     budget_id: started.budget.budget_id,
     budget_hash: started.budget_hash,

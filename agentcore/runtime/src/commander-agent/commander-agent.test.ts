@@ -6462,7 +6462,8 @@ describe("Commander in-memory investigation controller", () => {
       },
       recoverySource: async () => journal.recoverySource("inv_recovery_approval_checkpoint"),
       journalService: {
-        recordRecoveryApproval: async () => {
+        recordRecoveryApprovalAfterRevalidation: async (_investigationId: string, revalidate: () => Promise<unknown>) => {
+          await revalidate()
           staleAppendCalls += 1
           throw new Error("must not append stale approval")
         },
@@ -6478,6 +6479,29 @@ describe("Commander in-memory investigation controller", () => {
     expect(staleBoundaryApproval.blockers.join("\n")).toContain("changed before approval append")
     expect(appendBoundaryPreviewCalls).toBe(2)
     expect(staleAppendCalls).toBe(0)
+    let tailRacePreviewCalls = 0
+    const tailRaceApproval = await new CommanderInvestigationRecoveryApprovalService({
+      recoveryPreview: async () => {
+        tailRacePreviewCalls += 1
+        if (tailRacePreviewCalls === 2) {
+          await server.eventStore.append({ kind: "runtime_test_tail_changed", changed_at: "2026-01-01T00:00:00.500Z" } as Parameters<EventStore["append"]>[0])
+        }
+        return before
+      },
+      recoverySource: async () => journal.recoverySource("inv_recovery_approval_checkpoint"),
+      journalService: journal,
+    }).record(approvalInput)
+    expect(tailRaceApproval).toMatchObject({
+      status: "blocked",
+      events_appended: false,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+    })
+    expect(tailRaceApproval.blockers.join("\n")).toContain("event log changed before append")
+    expect(tailRacePreviewCalls).toBe(2)
+    let approvalEventsBeforeRecord = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string })
+    expect(approvalEventsBeforeRecord.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(0)
     const recorded = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
     expect(recorded).toMatchObject({
       status: "recorded",
@@ -6510,6 +6534,8 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(after.recovery_basis_hash).toBe(before.recovery_basis_hash)
     expect(after.recovery_plan_hash).toBe(before.recovery_plan_hash)
+    const approvalRecord = await journal.get("inv_recovery_approval_checkpoint")
+    expect(approvalRecord?.updated_at).toBe(recorded.approval?.approved_at)
     const duplicate = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
     expect(duplicate).toMatchObject({ status: "already_recorded", events_appended: false })
     const approvedCheckpoint = await journal.latestCheckpoint("inv_recovery_approval_checkpoint")

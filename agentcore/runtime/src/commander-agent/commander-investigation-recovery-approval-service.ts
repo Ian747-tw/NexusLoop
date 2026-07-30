@@ -75,75 +75,25 @@ export class CommanderInvestigationRecoveryApprovalService {
         eventsAppended: false,
       })
     }
-    const appendPreview = await this.preview(input)
-    if (appendPreview.status === "already_recorded" && appendPreview.existing_current_approval) {
-      return result({
-        status: "already_recorded",
-        investigationId: appendPreview.investigation_id,
-        decision: appendPreview.decision,
-        approvalState: "current",
-        recoveryBasisHash: appendPreview.recovery_basis_hash,
-        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
-        checkpointRef: appendPreview.checkpoint_ref,
-        pendingRef: appendPreview.pending_model_step_ref,
-        blockers: [],
-        warnings: appendPreview.warnings,
-        generatedAt,
-        eventsAppended: false,
-      })
-    }
-    if (appendPreview.status !== "ready" || appendPreview.recovery_plan_hash_match !== true || appendPreview.current_recovery_plan_hash !== preview.current_recovery_plan_hash || appendPreview.recovery_basis_hash !== preview.recovery_basis_hash) {
-      return result({
-        status: "blocked",
-        investigationId: appendPreview.investigation_id,
-        decision: appendPreview.decision,
-        approvalState: "none",
-        recoveryBasisHash: appendPreview.recovery_basis_hash,
-        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
-        checkpointRef: appendPreview.checkpoint_ref,
-        pendingRef: appendPreview.pending_model_step_ref,
-        blockers: [...appendPreview.blockers, "Commander recovery approval plan changed before append"].slice(0, 24),
-        warnings: appendPreview.warnings,
-        generatedAt,
-        eventsAppended: false,
-      })
-    }
-    const source = await this.options.recoverySource(appendPreview.investigation_id)
-    if (!source?.recovery_basis) {
-      return result({
-        status: "blocked",
-        investigationId: appendPreview.investigation_id,
-        decision: appendPreview.decision,
-        approvalState: "none",
-        recoveryBasisHash: appendPreview.recovery_basis_hash,
-        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
-        checkpointRef: appendPreview.checkpoint_ref,
-        pendingRef: appendPreview.pending_model_step_ref,
-        blockers: ["Commander recovery basis was not authoritative at approval append"],
-        warnings: appendPreview.warnings,
-        generatedAt,
-        eventsAppended: false,
-      })
-    }
-    if (source.recovery_basis.basis_hash !== appendPreview.recovery_basis_hash) {
-      return result({
-        status: "blocked",
-        investigationId: appendPreview.investigation_id,
-        decision: appendPreview.decision,
-        approvalState: "none",
-        recoveryBasisHash: appendPreview.recovery_basis_hash,
-        recoveryPlanHash: appendPreview.current_recovery_plan_hash,
-        checkpointRef: appendPreview.checkpoint_ref,
-        pendingRef: appendPreview.pending_model_step_ref,
-        blockers: ["Commander recovery basis changed before approval append"],
-        warnings: appendPreview.warnings,
-        generatedAt,
-        eventsAppended: false,
-      })
-    }
-    const approval = buildApprovalRecord(input, appendPreview, generatedAt)
+    let appendPreview: CommanderInvestigationRecoveryApprovalPreview = preview
     try {
-      const appended = await this.options.journalService.recordRecoveryApproval({ expected_basis: source.recovery_basis, approval })
+      const appended = await this.options.journalService.recordRecoveryApprovalAfterRevalidation(preview.investigation_id, async () => {
+        appendPreview = await this.preview(input)
+        if (appendPreview.status === "already_recorded" && appendPreview.existing_current_approval) {
+          throw new CommanderInvestigationJournalConflictError("Commander recovery approval is already recorded")
+        }
+        if (appendPreview.status !== "ready" || appendPreview.recovery_plan_hash_match !== true || appendPreview.current_recovery_plan_hash !== preview.current_recovery_plan_hash || appendPreview.recovery_basis_hash !== preview.recovery_basis_hash) {
+          throw new CommanderInvestigationJournalConflictError([...appendPreview.blockers, "Commander recovery approval plan changed before append"].join("; "))
+        }
+        const source = await this.options.recoverySource(appendPreview.investigation_id)
+        if (!source?.recovery_basis) {
+          throw new CommanderInvestigationJournalConflictError("Commander recovery basis was not authoritative at approval append")
+        }
+        if (source.recovery_basis.basis_hash !== appendPreview.recovery_basis_hash) {
+          throw new CommanderInvestigationJournalConflictError("Commander recovery basis changed before approval append")
+        }
+        return { expected_basis: source.recovery_basis, approval: buildApprovalRecord(input, appendPreview, generatedAt) }
+      })
       return result({
         status: appended.status,
         investigationId: appendPreview.investigation_id,
@@ -161,6 +111,22 @@ export class CommanderInvestigationRecoveryApprovalService {
         eventsAppended: appended.events_appended,
       })
     } catch (error) {
+      if (error instanceof CommanderInvestigationJournalConflictError && error.message === "Commander recovery approval is already recorded" && appendPreview.existing_current_approval) {
+        return result({
+          status: "already_recorded",
+          investigationId: appendPreview.investigation_id,
+          decision: appendPreview.decision,
+          approvalState: "current",
+          recoveryBasisHash: appendPreview.recovery_basis_hash,
+          recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+          checkpointRef: appendPreview.checkpoint_ref,
+          pendingRef: appendPreview.pending_model_step_ref,
+          blockers: [],
+          warnings: appendPreview.warnings,
+          generatedAt,
+          eventsAppended: false,
+        })
+      }
       const failed = error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed"
       return result({
         status: failed,

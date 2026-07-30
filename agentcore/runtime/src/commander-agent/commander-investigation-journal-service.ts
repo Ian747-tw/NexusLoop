@@ -338,14 +338,33 @@ export class CommanderInvestigationJournalService {
   }
 
   async recordRecoveryApproval(input: CommanderInvestigationRecoveryApprovalAppendInput): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
-    const approval = input.approval
-    const lockKey = approval.investigation_id
+    return this.recordRecoveryApprovalAfterRevalidation(input.approval.investigation_id, async () => input)
+  }
+
+  async recordRecoveryApprovalAfterRevalidation(
+    investigationId: string,
+    revalidate: () => Promise<CommanderInvestigationRecoveryApprovalAppendInput>,
+  ): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
+    const lockKey = investigationId
     if (this.activeApprovals.has(lockKey)) throw new CommanderInvestigationJournalConflictError("concurrent recovery approval write for investigation")
     this.activeApprovals.add(lockKey)
     try {
-      if (this.active.has(approval.investigation_id)) {
+      if (this.active.has(investigationId)) {
         throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires inactive durable investigation")
       }
+      const expectedLatestEventId = await this.options.eventStore.latestEventId()
+      const input = await revalidate()
+      return await this.recordRecoveryApprovalUnlocked(input, expectedLatestEventId)
+    } finally {
+      this.activeApprovals.delete(lockKey)
+    }
+  }
+
+  private async recordRecoveryApprovalUnlocked(
+    input: CommanderInvestigationRecoveryApprovalAppendInput,
+    expectedLatestEventId: string | null,
+  ): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
+      const approval = input.approval
       const source = await this.recoverySource(approval.investigation_id)
       if (!source || source.projection_status !== "ready" || !source.record || source.record.status !== "running" || !source.recovery_basis || !source.latest_checkpoint) {
         throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires a ready nonterminal journal with an accepted checkpoint")
@@ -385,11 +404,8 @@ export class CommanderInvestigationJournalService {
         approval: sequencedApproval,
         event_payload_hash: "",
       } satisfies CommanderInvestigationRecoveryApprovedPayload)
-      const eventId = await this.appendCapped("runtime_commander_investigation_recovery_approved", payload, APPROVAL_CAP)
+      const eventId = await this.appendCapped("runtime_commander_investigation_recovery_approved", payload, APPROVAL_CAP, expectedLatestEventId)
       return { status: "recorded", approval: sequencedApproval, event_id: eventId, events_appended: true }
-    } finally {
-      this.activeApprovals.delete(lockKey)
-    }
   }
 
   private async readJournalEvents(): Promise<JsonlEvent[]> {
@@ -648,11 +664,20 @@ export class CommanderInvestigationJournalService {
     return checkpoint
   }
 
-  private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
+  private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number, expectedLatestEventId?: string | null): Promise<string> {
     const redacted = redactValue(payload) as Record<string, unknown>
     if (eventBytes({ kind, ...redacted }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
     await this.assertAppendSafeTail()
-    return this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
+    try {
+      return await (expectedLatestEventId === undefined
+        ? this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
+        : this.options.eventStore.appendIfLatest({ kind, ...redacted } as JsonlEvent, expectedLatestEventId))
+    } catch (error) {
+      if (expectedLatestEventId !== undefined && error instanceof Error && error.message === "event log changed before append") {
+        throw new CommanderInvestigationJournalConflictError("event log changed before append")
+      }
+      throw error
+    }
   }
 
   private async trackedAppendCapped(state: CommanderInvestigationJournalRunState, kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
