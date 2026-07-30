@@ -97,7 +97,9 @@ Projection replays typed event objects in append order and verifies:
 - payload, checkpoint, and terminal hashes
 
 One corrupt investigation record does not make unrelated investigation records
-unreadable.
+unreadable. Malformed Commander-prefixed JSONL lines whose investigation
+ownership cannot be proven are recovery-unsafe even if later events were
+appended after the torn line.
 
 9W3B1 adds a read-only recovery-source projection over the same replay. The
 journal service reads the event log once, projects the record, and returns the

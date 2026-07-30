@@ -5276,7 +5276,10 @@ describe("Commander in-memory investigation controller", () => {
     async function startOnly(id: string, index: number, overrides: Partial<ReturnType<typeof baseInvestigation>> = {}) {
       const input = baseInvestigation({ investigation_id: id, provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native", ...overrides })
       const run = await service.createObserver(input)
-      await run.observer.onStarted(durableStartedSnapshot(input, index, id) as Parameters<typeof run.observer.onStarted>[0])
+      const snapshot = durableStartedSnapshot(input, index, id) as any
+      snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+      snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+      await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
       service.release(run)
       return { input, checkpoint: (await service.latestCheckpoint(id))! }
     }
@@ -5586,6 +5589,14 @@ describe("Commander in-memory investigation controller", () => {
     const missingTopLevelPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_missing_top_level", include_current_continuity: false })
     expect(missingTopLevelPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
 
+    await startOnly("inv_recovery_interior_malformed", 7)
+    await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_malformed","timestamp":"2026-01-01T00:04:00.000Z"}\n', { flag: "a" })
+    const interiorMalformedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_interior_malformed")
+    expect(interiorMalformedSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(interiorMalformedSource?.record?.integrity_errors.join("\n")).toContain("unassignable Commander journal event")
+    const interiorMalformedPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_interior_malformed", include_current_continuity: false })
+    expect(interiorMalformedPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
+
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv', { flag: "a" })
     const blockedByTailSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_checkpoint")
     expect(blockedByTailSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
@@ -5874,9 +5885,24 @@ describe("Commander in-memory investigation controller", () => {
       expect(changed.provider_compatibility.compatibility_hash, label).not.toBe(validPreview.provider_compatibility.compatibility_hash)
     }
 
-    const skippedContinuityPreview = await new CommanderInvestigationRecoveryService(baseOptions()).preview({ investigation_id: "inv_recovery_compat", include_current_continuity: false })
+    let skippedContinuityBootstrapInput: unknown
+    const skippedContinuityPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      currentBootstrap: async (bootstrapInput) => {
+        skippedContinuityBootstrapInput = bootstrapInput
+        return { ...minimalTestBootstrap(), bootstrap_id: source!.latest_checkpoint!.bootstrap_ref.bootstrap_id, bootstrap_hash: source!.latest_checkpoint!.bootstrap_ref.bootstrap_hash, estimated_bytes: 256, estimated_tokens: 64 }
+      },
+    })).preview({ investigation_id: "inv_recovery_compat", include_current_continuity: false })
     expect(skippedContinuityPreview).toMatchObject({ status: "ready_for_approval", continuity_compatibility: { current_bootstrap_ready: false } })
+    expect(skippedContinuityBootstrapInput).toMatchObject({ include_continuity: false })
+    expect(skippedContinuityPreview.context_compatibility.current_bootstrap_bytes).toBe(256)
     expect(skippedContinuityPreview.warnings.join("\n")).toContain("current continuity was not assessed")
+
+    const skippedContinuityOversizedPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      currentBootstrap: async () => ({ ...minimalTestBootstrap(), bootstrap_id: source!.latest_checkpoint!.bootstrap_ref.bootstrap_id, bootstrap_hash: source!.latest_checkpoint!.bootstrap_ref.bootstrap_hash, estimated_bytes: 5000, estimated_tokens: 1250 }),
+    })).preview({ investigation_id: "inv_recovery_compat", include_current_continuity: false })
+    expect(skippedContinuityOversizedPreview).toMatchObject({ status: "blocked", recommended_action: "reconfigure_runtime" })
+    expect(skippedContinuityOversizedPreview.context_compatibility.blockers.join("\n")).toContain("current model context")
+    expect(skippedContinuityOversizedPreview.recovery_packet?.blockers.join("\n")).toContain("current model context")
 
     let capturedBootstrapInput: unknown
     const omittedContinuitySource = { ...source!, normalized_input: { ...source!.normalized_input!, include_continuity: false } }
@@ -6033,6 +6059,7 @@ describe("Commander in-memory investigation controller", () => {
     })).preview({ investigation_id: "inv_recovery_compat" })
     expect(bootstrapSizedPreview).toMatchObject({ status: "blocked", context_compatibility: { within_current_context_budget: false, current_bootstrap_bytes: 4096, current_bootstrap_tokens: 1024 } })
     expect(bootstrapSizedPreview.context_compatibility.blockers.join("\n")).toContain("current model context")
+    expect(bootstrapSizedPreview.recovery_packet?.blockers.join("\n")).toContain("current model context")
     expect(bootstrapSizedPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
 
     const driftedDescriptors = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === "memory.search" ? { ...tool, version: "9.9.9" } : tool)

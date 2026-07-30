@@ -93,25 +93,23 @@ export class CommanderInvestigationRecoveryService {
       ...humanControl.warnings,
       ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
     ].slice(0, 32)
-    const packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings, providerCompatibility)
-    const contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility) : emptyContextCompatibility()
-    let blockers = [
-      ...toolCompatibility.blockers,
-      ...providerCompatibility.blockers,
-      ...budgetCompatibility.blockers,
-      ...contextCompatibility.blockers,
-      ...continuityCompatibility.blockers,
-      ...humanControl.blockers,
-    ].slice(0, 24)
-    const warnings = [
-      ...toolCompatibility.warnings,
-      ...providerCompatibility.warnings,
-      ...budgetCompatibility.warnings,
-      ...contextCompatibility.warnings,
-      ...continuityCompatibility.warnings,
-      ...humanControl.warnings,
-      ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
-    ].slice(0, 32)
+    let packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings, providerCompatibility)
+    let contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility) : emptyContextCompatibility()
+    let blockers: string[] = []
+    let warnings: string[] = []
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      blockers = collectPreviewBlockers(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl)
+      warnings = collectPreviewWarnings(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl, Boolean(source.pending_model_step))
+      const nextPacket = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility)
+      const nextContext = nextPacket ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, nextPacket, continuityCompatibility) : emptyContextCompatibility()
+      const stable = nextPacket?.packet_hash === packet?.packet_hash && nextContext.compatibility_hash === contextCompatibility.compatibility_hash
+      packet = nextPacket
+      contextCompatibility = nextContext
+      if (stable) break
+    }
+    blockers = collectPreviewBlockers(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl)
+    warnings = collectPreviewWarnings(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl, Boolean(source.pending_model_step))
+    packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility)
     if (!packet) blockers = [...blockers, "recovery packet could not fit within the durable preview cap"].slice(0, 24)
     const humanReview = recoveryKind === "uncertain_provider_outcome" || humanControl.action === "human_review_required"
     const continuityReady = continuityCompatibility.current_bootstrap_ready || !includeCurrentContinuity && checkpoint.phase !== "mid_mission_supervision"
@@ -493,6 +491,20 @@ export class CommanderInvestigationRecoveryService {
     if (!include) {
       warnings.push("current continuity was not assessed")
       if (checkpoint.phase === "mid_mission_supervision") blockers.push("mid-mission recovery requires current continuity assessment")
+      if (source.normalized_input) {
+        try {
+          current = await this.options.currentBootstrap({ ...source.normalized_input, include_continuity: false })
+          if (current.continuity_assessment_status === "degraded") {
+            blockers.push("current non-continuity bootstrap is degraded and cannot size recovery")
+          }
+          blockers.push(...current.blockers.slice(0, 8))
+          warnings.push(...current.warnings.slice(0, 8))
+        } catch (error) {
+          blockers.push(`current non-continuity bootstrap failed: ${redactText(error instanceof Error ? error.message : String(error)).slice(0, 180)}`)
+        }
+      } else {
+        blockers.push("validated normalized input is unavailable for current bootstrap sizing")
+      }
     } else if (source.normalized_input) {
       try {
         current = await this.options.currentBootstrap({ ...source.normalized_input, include_continuity: true })
@@ -514,7 +526,7 @@ export class CommanderInvestigationRecoveryService {
       original_bootstrap_hash: checkpoint.bootstrap_ref.bootstrap_hash,
       current_bootstrap_id: current?.bootstrap_id,
       current_bootstrap_hash: current?.bootstrap_hash,
-      current_bootstrap_ready: Boolean(current && (current.continuity_assessment_status ?? "ready") === "ready" && blockers.length === 0),
+      current_bootstrap_ready: include && Boolean(current && (current.continuity_assessment_status ?? "ready") === "ready" && blockers.length === 0),
       continuity_drift_detected: drift,
       current_readiness: current?.readiness,
       current_open_loop_count: current?.open_loops.length ?? 0,
@@ -730,6 +742,44 @@ function terminalAction(_status: string): CommanderInvestigationRecoveryRecommen
 function terminalCheckpointOutcome(checkpoint: CommanderInvestigationCheckpoint): string | undefined {
   const status = checkpoint.turn_summaries.at(-1)?.model_status
   return status && ["cancelled", "failed", "final", "malformed", "refusal"].includes(status) ? status : undefined
+}
+
+function collectPreviewBlockers(
+  toolCompatibility: CommanderInvestigationRecoveryToolCompatibilitySummary,
+  providerCompatibility: CommanderInvestigationRecoveryProviderCompatibility,
+  budgetCompatibility: CommanderInvestigationRecoveryBudgetCompatibility,
+  contextCompatibility: CommanderInvestigationRecoveryContextCompatibility,
+  continuityCompatibility: CommanderInvestigationRecoveryContinuityCompatibility,
+  humanControl: CommanderInvestigationRecoveryHumanControl,
+): string[] {
+  return [
+    ...toolCompatibility.blockers,
+    ...providerCompatibility.blockers,
+    ...budgetCompatibility.blockers,
+    ...contextCompatibility.blockers,
+    ...continuityCompatibility.blockers,
+    ...humanControl.blockers,
+  ].slice(0, 24)
+}
+
+function collectPreviewWarnings(
+  toolCompatibility: CommanderInvestigationRecoveryToolCompatibilitySummary,
+  providerCompatibility: CommanderInvestigationRecoveryProviderCompatibility,
+  budgetCompatibility: CommanderInvestigationRecoveryBudgetCompatibility,
+  contextCompatibility: CommanderInvestigationRecoveryContextCompatibility,
+  continuityCompatibility: CommanderInvestigationRecoveryContinuityCompatibility,
+  humanControl: CommanderInvestigationRecoveryHumanControl,
+  hasPendingModelStep: boolean,
+): string[] {
+  return [
+    ...toolCompatibility.warnings,
+    ...providerCompatibility.warnings,
+    ...budgetCompatibility.warnings,
+    ...contextCompatibility.warnings,
+    ...continuityCompatibility.warnings,
+    ...humanControl.warnings,
+    ...(hasPendingModelStep ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
+  ].slice(0, 32)
 }
 
 function checkpointSummaryFrom(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationRecoveryCheckpointSummary {

@@ -90,6 +90,9 @@ the requested assessment did not complete and blocks recovery readiness. Current
 stop, pause, correction, override, and escalation controls take precedence. A
 human hold never recommends resume approval, and an OpenCode resume request is
 not Commander recovery approval.
+When continuity is explicitly omitted, preview still compiles the fresh
+non-continuity bootstrap so context sizing includes the runtime authority and
+objective kernel required by future recovery.
 
 Recommended actions distinguish journal integrity from current runtime policy.
 `inspect_corrupt_record` is reserved for corrupt or unsupported projections.
@@ -104,7 +107,9 @@ checkpoint references, pending-model uncertainty, loaded-tool refs, evidence
 pointers, execution digests, repeat signatures, remaining budgets, current
 human-control state, blockers, and warnings. It does not contain raw repository
 lines, Git patches, full research records, provider prompts/responses, raw tool
-results, assistant prose, credentials, or hidden reasoning.
+results, assistant prose, credentials, or hidden reasoning. The packet is
+rebuilt after context compatibility is classified so its blockers and hash bind
+the same context-budget failures reported by the preview.
 
 The recovery-plan hash binds the record hash, checkpoint hash, pending boundary,
 tool/provider/budget/continuity/human compatibility hashes, the current provider
