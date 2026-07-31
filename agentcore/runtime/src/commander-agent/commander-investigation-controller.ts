@@ -1180,7 +1180,7 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
   if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || seed.loaded_tools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
   if (seed.elapsed_active_ms_before !== seed.effective_budget.consumed.elapsed_active_ms) return "recovery continuation elapsed active time did not verify"
-  const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_id: "", budget_hash: "" })
+  const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_hash: "" })
   if (seed.effective_budget.effective_budget.budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget hash did not verify"
   if (seed.effective_budget.effective_budget_hash !== effectiveBudgetHash || seed.effective_budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget reference did not verify"
   const continuationBudgetHash = stableHash({ ...seed.effective_budget, effective_budget_hash: effectiveBudgetHash, budget_hash: "" })

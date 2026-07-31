@@ -45,7 +45,8 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const pending = source.pending_model_step
     const uncertainCharge = pending ? 1 : 0
     const unresolvedAttempts = pending ? 1 : 0
-    const modelTurnsConsumed = Math.max(checkpoint.working_set.model_turn_count, pending ? pending.turn_index : checkpoint.working_set.model_turn_count)
+    if (pending && pending.turn_index !== checkpoint.next_turn_index) blockers.push("pending model-step turn does not match checkpoint next turn")
+    const modelTurnsConsumed = checkpoint.working_set.model_turn_count + uncertainCharge
     const nextTurn = pending ? Math.max(checkpoint.next_turn_index, pending.turn_index + 1) : checkpoint.next_turn_index
     if (!pending && checkpoint.next_turn_index !== checkpoint.working_set.model_turn_count + 1) blockers.push("checkpoint next_turn_index does not follow model_turn_count")
     const budget = continuationBudget(checkpoint, modelTurnsConsumed, uncertainCharge, unresolvedAttempts, preview.budget_compatibility)
@@ -266,7 +267,7 @@ function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelT
     tool_schema_allocation_tokens: boundedOptionalCurrentLimit(limits.tool_schema_allocation_tokens, stored.tool_schema_allocation_tokens),
     budget_hash: "",
   }
-  budget.budget_hash = stableHash({ ...budget, budget_id: "", budget_hash: "" })
+  budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
   const consumed = {
     model_turns: modelTurnsConsumed,
     provider_requests: checkpoint.provider_request_count,
@@ -294,9 +295,9 @@ function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelT
     .map(([key]) => key)
   const result = {
     original_budget_id: budget.budget_id,
-    original_budget_hash: budget.budget_hash,
+    original_budget_hash: stored.budget_hash,
     effective_budget: budget,
-    effective_budget_hash: stableHash({ ...budget, budget_id: "", budget_hash: "" }),
+    effective_budget_hash: budget.budget_hash,
     consumed,
     remaining,
     uncertain_model_turn_charge: uncertainCharge,

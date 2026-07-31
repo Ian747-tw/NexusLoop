@@ -6886,6 +6886,9 @@ describe("Commander in-memory investigation controller", () => {
     expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(before.budget_compatibility.current_policy_limits.max_tool_calls)
     expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
     expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
+    expect(built.seed?.effective_budget.original_budget_hash).toBe(source!.latest_checkpoint!.budget.budget_hash)
+    expect(built.seed?.effective_budget.effective_budget_hash).toBe(built.seed?.effective_budget.effective_budget.budget_hash)
+    expect(built.seed?.effective_budget.effective_budget_hash).toBe(stableHash({ ...built.seed!.effective_budget.effective_budget, budget_hash: "" }))
     const stricterContextBuilt = await builder.build({
       source: source!,
       checkpoint: source!.latest_checkpoint!,
@@ -6904,6 +6907,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(stricterContextBuilt.blockers).toEqual([])
     expect(stricterContextBuilt.seed?.effective_budget.effective_budget.max_context_bytes).toBe(source!.latest_checkpoint!.budget.max_context_bytes! - 1)
     expect(stricterContextBuilt.seed?.effective_budget.effective_budget.max_context_tokens).toBe(source!.latest_checkpoint!.budget.max_context_tokens! - 1)
+    expect(stricterContextBuilt.seed?.effective_budget.original_budget_hash).toBe(source!.latest_checkpoint!.budget.budget_hash)
+    expect(stricterContextBuilt.seed?.effective_budget.effective_budget_hash).toBe(stableHash({ ...stricterContextBuilt.seed!.effective_budget.effective_budget, budget_hash: "" }))
     expect(stricterContextBuilt.seed?.execution_preparation_hash).not.toBe(built.seed?.execution_preparation_hash)
     const runtimeCapability = commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))
     const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [runtimeCapability] })
@@ -7901,7 +7906,27 @@ describe("Commander in-memory investigation controller", () => {
 	    })
 	    expect(before.execution_preparation_hash).toBeTruthy()
 	    expect(before.execution_preparation?.first_model_request_preview_hash).toBe(before.recovery_packet?.first_model_request_preview_hash)
-    const approvalInput = {
+	    const uncertainSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_approval_uncertain")
+	    const impossiblePendingBuilder = new CommanderInvestigationRecoveryContinuationBuilder({
+	      descriptors: COMMANDER_TOOL_REGISTRY,
+	      currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
+	      contextService: new CommanderInvestigationContextService(),
+	      modelOutputTokens: () => 1024,
+	    })
+	    const impossiblePending = await impossiblePendingBuilder.build({
+	      source: {
+	        ...uncertainSource!,
+	        pending_model_step: {
+	          ...uncertainSource!.pending_model_step!,
+	          turn_index: checkpoint!.working_set.model_turn_count,
+	        },
+	      },
+	      preview: before,
+	      checkpoint: checkpoint!,
+	    })
+	    expect(impossiblePending.seed).toBeUndefined()
+	    expect(impossiblePending.blockers).toContain("pending model-step turn does not match checkpoint next turn")
+	    const approvalInput = {
       investigation_id: "inv_recovery_approval_uncertain",
       recovery_plan_hash: before.recovery_plan_hash!,
       decision: "approve_continue_after_uncertain_provider_outcome" as const,
