@@ -13,6 +13,15 @@ import type {
 import { CommanderInvestigationJournalConflictError, CommanderInvestigationPersistenceError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoveryPreview } from "./commander-investigation-recovery-types"
 
+type NormalizedRecoveryApprovalInput = Readonly<{
+  investigation_id: string
+  recovery_plan_hash: string
+  decision: CommanderInvestigationRecoveryApprovalInput["decision"]
+  approved_by: string
+  human_note?: string
+  acknowledgements: Readonly<CommanderInvestigationRecoveryApprovalAcknowledgements>
+}>
+
 export class CommanderInvestigationRecoveryApprovalService {
   private readonly now: () => Date
 
@@ -23,26 +32,31 @@ export class CommanderInvestigationRecoveryApprovalService {
   async preview(input: CommanderInvestigationRecoveryApprovalInput): Promise<CommanderInvestigationRecoveryApprovalPreview> {
     const generatedAt = this.now().toISOString()
     const validated = validateApprovalInput(input)
-    if (validated.blockers.length) return this.previewResult(validated.investigation_id, input, undefined, validated.blockers, validated.warnings, generatedAt, false)
-    const recovery = await this.options.recoveryPreview({ investigation_id: validated.investigation_id, include_current_continuity: true })
+    const normalized = validated.input
+    if (validated.blockers.length) return this.previewResult(normalized.investigation_id, normalized, undefined, validated.blockers, validated.warnings, generatedAt, false)
+    const recovery = await this.options.recoveryPreview({ investigation_id: normalized.investigation_id, include_current_continuity: true })
     const blockers = [
       ...validated.blockers,
-      ...approvalPreviewBlockers(validated, recovery),
+      ...approvalPreviewBlockers(normalized, recovery),
     ].slice(0, 24)
     const existing = recovery.current_approval &&
-      recovery.current_approval.recovery_plan_hash === input.recovery_plan_hash &&
-      recovery.current_approval.decision === input.decision &&
-      recovery.current_approval.approved_by === bound(input.approved_by, 200) &&
-      recovery.current_approval.human_note_hash === humanNoteHash(input.human_note)
+      recovery.current_approval.recovery_plan_hash === normalized.recovery_plan_hash &&
+      recovery.current_approval.decision === normalized.decision &&
+      recovery.current_approval.approved_by === normalized.approved_by &&
+      recovery.current_approval.human_note_hash === humanNoteHash(normalized.human_note)
       ? recovery.current_approval
       : undefined
     const ready = blockers.length === 0
-    return this.previewResult(validated.investigation_id, input, recovery, blockers, validated.warnings, generatedAt, ready && !existing, existing)
+    return this.previewResult(normalized.investigation_id, normalized, recovery, blockers, validated.warnings, generatedAt, ready && !existing, existing)
   }
 
   async record(input: CommanderInvestigationRecoveryApprovalInput): Promise<CommanderInvestigationRecoveryApprovalResult> {
     const generatedAt = this.now().toISOString()
-    const preview = await this.preview(input)
+    const validated = validateApprovalInput(input)
+    const normalized = validated.input
+    const preview = validated.blockers.length
+      ? this.previewResult(normalized.investigation_id, normalized, undefined, validated.blockers, validated.warnings, generatedAt, false)
+      : await this.preview(normalized as CommanderInvestigationRecoveryApprovalInput)
     if (preview.status === "already_recorded" && preview.existing_current_approval) {
       return result({
         status: "already_recorded",
@@ -78,7 +92,7 @@ export class CommanderInvestigationRecoveryApprovalService {
     let appendPreview: CommanderInvestigationRecoveryApprovalPreview = preview
     try {
       const appended = await this.options.journalService.recordRecoveryApprovalAfterRevalidation(preview.investigation_id, async () => {
-        appendPreview = await this.preview(input)
+        appendPreview = await this.preview(normalized as CommanderInvestigationRecoveryApprovalInput)
         if (appendPreview.status === "already_recorded" && appendPreview.existing_current_approval) {
           throw new CommanderInvestigationJournalConflictError("Commander recovery approval is already recorded")
         }
@@ -92,7 +106,7 @@ export class CommanderInvestigationRecoveryApprovalService {
         if (source.recovery_basis.basis_hash !== appendPreview.recovery_basis_hash) {
           throw new CommanderInvestigationJournalConflictError("Commander recovery basis changed before approval append")
         }
-        return { expected_basis: source.recovery_basis, approval: buildApprovalRecord(input, appendPreview, generatedAt) }
+        return { expected_basis: source.recovery_basis, approval: buildApprovalRecord(normalized, appendPreview, generatedAt) }
       })
       return result({
         status: appended.status,
@@ -147,7 +161,7 @@ export class CommanderInvestigationRecoveryApprovalService {
 
   private previewResult(
     investigationId: string,
-    input: CommanderInvestigationRecoveryApprovalInput,
+    input: NormalizedRecoveryApprovalInput,
     recovery: CommanderInvestigationRecoveryPreview | undefined,
     blockers: string[],
     warnings: string[],
@@ -207,24 +221,38 @@ export class CommanderInvestigationRecoveryApprovalService {
 
 type ValidatedApprovalInput = CommanderInvestigationRecoveryApprovalInput & { blockers: string[]; warnings: string[] }
 
-function validateApprovalInput(input: CommanderInvestigationRecoveryApprovalInput): ValidatedApprovalInput {
+function validateApprovalInput(input: CommanderInvestigationRecoveryApprovalInput): { input: NormalizedRecoveryApprovalInput; blockers: string[]; warnings: string[] } {
   const blockers: string[] = []
   const warnings: string[] = []
-  const keys = new Set(Object.keys(input))
+  const record: Record<string, unknown> = isRecord(input) ? input : {}
+  const keys = new Set(Object.keys(record))
   for (const key of keys) {
     if (!["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "acknowledgements"].includes(key)) blockers.push(`unknown recovery approval input key ${key}`)
   }
-  if (typeof input.investigation_id !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(input.investigation_id)) blockers.push("investigation_id is required and must use bounded durable ID characters")
-  if (typeof input.recovery_plan_hash !== "string" || input.recovery_plan_hash.length < 8 || input.recovery_plan_hash.length > 160) blockers.push("recovery_plan_hash is required and bounded")
-  if (input.decision !== "approve_resume_from_checkpoint" && input.decision !== "approve_continue_after_uncertain_provider_outcome") blockers.push("unknown recovery approval decision")
-  if (typeof input.approved_by !== "string" || input.approved_by.trim().length === 0 || input.approved_by.length > 200) blockers.push("approved_by is required and bounded")
-  if (input.human_note !== undefined && (typeof input.human_note !== "string" || input.human_note.length > 1000)) blockers.push("human_note must be a bounded string")
-  if (!acknowledgementsComplete(input.acknowledgements, input.decision)) blockers.push("required recovery approval acknowledgements are incomplete")
-  if (containsUrlOrCredential(input)) blockers.push("recovery approval input must not contain URLs or credential-looking values")
-  return { ...input, blockers, warnings }
+  const decision = record.decision === "approve_resume_from_checkpoint" || record.decision === "approve_continue_after_uncertain_provider_outcome"
+    ? record.decision
+    : "approve_resume_from_checkpoint"
+  const acknowledgements = normalizeAcknowledgements(record.acknowledgements)
+  const normalized: NormalizedRecoveryApprovalInput = Object.freeze({
+    investigation_id: typeof record.investigation_id === "string" ? record.investigation_id : "",
+    recovery_plan_hash: typeof record.recovery_plan_hash === "string" ? record.recovery_plan_hash : "",
+    decision,
+    approved_by: typeof record.approved_by === "string" ? bound(record.approved_by, 200) : "",
+    human_note: typeof record.human_note === "string" ? redactText(record.human_note) : undefined,
+    acknowledgements,
+  })
+  if (typeof record.investigation_id !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(record.investigation_id)) blockers.push("investigation_id is required and must use bounded durable ID characters")
+  if (typeof record.recovery_plan_hash !== "string" || record.recovery_plan_hash.length < 8 || record.recovery_plan_hash.length > 160) blockers.push("recovery_plan_hash is required and bounded")
+  if (record.decision !== "approve_resume_from_checkpoint" && record.decision !== "approve_continue_after_uncertain_provider_outcome") blockers.push("unknown recovery approval decision")
+  if (typeof record.approved_by !== "string" || record.approved_by.trim().length === 0 || record.approved_by.length > 200) blockers.push("approved_by is required and bounded")
+  if (typeof record.approved_by === "string" && containsConcreteCredentialPayload(record.approved_by)) blockers.push("approved_by must not contain URLs or credential payloads")
+  if (record.human_note !== undefined && (typeof record.human_note !== "string" || record.human_note.length > 1000)) blockers.push("human_note must be a bounded string")
+  if (typeof record.human_note === "string" && containsConcreteCredentialPayload(record.human_note)) blockers.push("human_note must not contain URLs or credential payloads")
+  if (!acknowledgementsComplete(acknowledgements, decision)) blockers.push("required recovery approval acknowledgements are incomplete")
+  return { input: normalized, blockers, warnings }
 }
 
-function approvalPreviewBlockers(input: ValidatedApprovalInput, recovery: CommanderInvestigationRecoveryPreview): string[] {
+function approvalPreviewBlockers(input: NormalizedRecoveryApprovalInput, recovery: CommanderInvestigationRecoveryPreview): string[] {
   const blockers: string[] = []
   if (!recovery.recovery_plan_hash || recovery.recovery_plan_hash !== input.recovery_plan_hash) blockers.push("supplied recovery_plan_hash does not match the current recovery preview")
   if (recovery.continuity_compatibility.current_bootstrap_ready !== true) blockers.push("current continuity assessment must be ready before approval")
@@ -247,7 +275,7 @@ function approvalPreviewBlockers(input: ValidatedApprovalInput, recovery: Comman
   return blockers.slice(0, 24)
 }
 
-function buildApprovalRecord(input: CommanderInvestigationRecoveryApprovalInput, preview: CommanderInvestigationRecoveryApprovalPreview, approvedAt: string): CommanderInvestigationRecoveryApprovalRecord {
+function buildApprovalRecord(input: NormalizedRecoveryApprovalInput, preview: CommanderInvestigationRecoveryApprovalPreview, approvedAt: string): CommanderInvestigationRecoveryApprovalRecord {
   if (!preview.checkpoint_ref || !preview.recovery_basis_hash || !preview.current_recovery_plan_hash || !preview.recovery_packet_hash || !preview.provider_execution_envelope_hash || !preview.tool_compatibility_hash || !preview.provider_compatibility_hash || !preview.budget_compatibility_hash || !preview.context_compatibility_hash || !preview.continuity_compatibility_hash || !preview.human_control_compatibility_hash) {
     throw new CommanderInvestigationPersistenceError("cannot build recovery approval without bounded plan references")
   }
@@ -266,7 +294,7 @@ function buildApprovalRecord(input: CommanderInvestigationRecoveryApprovalInput,
     approval_source: "human" as const,
     human_note_preview: humanNotePreview(input.human_note),
     human_note_hash: humanNoteHash(input.human_note),
-    acknowledgements: input.acknowledgements,
+    acknowledgements: { ...input.acknowledgements },
     recovery_basis_hash: preview.recovery_basis_hash,
     recovery_plan_hash: preview.current_recovery_plan_hash,
     recovery_packet_hash: preview.recovery_packet_hash,
@@ -290,7 +318,9 @@ function buildApprovalRecord(input: CommanderInvestigationRecoveryApprovalInput,
     approved_at: approvedAt,
     approval_hash: "",
   }
-  return approvalHash(approval)
+  const hashed = approvalHash(approval)
+  assertBuiltApprovalRecord(hashed)
+  return hashed
 }
 
 function checkpointRefFrom(preview: CommanderInvestigationRecoveryPreview): CommanderInvestigationRecoveryCheckpointApprovalRef {
@@ -346,6 +376,18 @@ function acknowledgementsComplete(ack: CommanderInvestigationRecoveryApprovalAck
   return true
 }
 
+function normalizeAcknowledgements(value: unknown): Readonly<CommanderInvestigationRecoveryApprovalAcknowledgements> {
+  const source = isRecord(value) ? value : {}
+  const normalized: Partial<CommanderInvestigationRecoveryApprovalAcknowledgements> = {
+    fresh_context_required: source.fresh_context_required === true ? true : undefined as never,
+    exact_replay_unavailable: source.exact_replay_unavailable === true ? true : undefined as never,
+    provider_request_replay_forbidden: source.provider_request_replay_forbidden === true ? true : undefined as never,
+    tool_execution_replay_forbidden: source.tool_execution_replay_forbidden === true ? true : undefined as never,
+  }
+  if (source.uncertain_provider_outcome === true) normalized.uncertain_provider_outcome = true
+  return Object.freeze(normalized as CommanderInvestigationRecoveryApprovalAcknowledgements)
+}
+
 function result(input: {
   status: CommanderInvestigationRecoveryApprovalResult["status"]
   investigationId: string
@@ -394,11 +436,26 @@ function result(input: {
   return redactValue(out) as CommanderInvestigationRecoveryApprovalResult
 }
 
-function containsUrlOrCredential(value: unknown): boolean {
-  const text = JSON.stringify(value ?? "")
-  return /https?:\/\/|authorization|api[_-]?key|credential|secret|token/i.test(text)
+function containsConcreteCredentialPayload(value: string): boolean {
+  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}|api[_-]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+|authorization\s*[:=]\s*\S+/i.test(value)
 }
 
 function bound(value: unknown, max: number): string {
   return redactText(String(value ?? "").replace(/\s+/g, " ").trim()).slice(0, max)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function assertBuiltApprovalRecord(approval: CommanderInvestigationRecoveryApprovalRecord): void {
+  if (approval.approval_source !== "human" || approval.one_shot !== true || approval.automatic !== false || approval.fresh_context_required !== true || approval.exact_replay_supported !== false || approval.provider_request_replay_allowed !== false || approval.tool_execution_replay_allowed !== false || approval.execution_supported_in_this_branch !== false) {
+    throw new CommanderInvestigationPersistenceError("recovery approval record failed no-replay schema validation")
+  }
+  if (!acknowledgementsComplete(approval.acknowledgements, approval.decision)) {
+    throw new CommanderInvestigationPersistenceError("recovery approval record failed acknowledgement schema validation")
+  }
+  if (approval.approval_hash !== stableHash({ ...approval, approved_at: "", approval_hash: "" })) {
+    throw new CommanderInvestigationPersistenceError("recovery approval record hash is invalid")
+  }
 }

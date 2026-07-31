@@ -366,6 +366,7 @@ export class CommanderInvestigationJournalService {
     expectedLatestEventId: string | null,
   ): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
       const approval = input.approval
+      assertPersistableRecoveryApproval(approval)
       const source = await this.recoverySource(approval.investigation_id)
       if (!source || source.projection_status !== "ready" || !source.record || source.record.status !== "running" || !source.recovery_basis || !source.latest_checkpoint) {
         throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires a ready nonterminal journal with an accepted checkpoint")
@@ -403,6 +404,7 @@ export class CommanderInvestigationJournalService {
       const journalSequence = source.source_event_count
       const approvalSequence = source.recovery_approvals?.length ?? 0
       const sequencedApproval = finalizeApprovalHash({ ...approval, approval_sequence: approvalSequence, approval_id: approval.approval_id || `commander_recovery_approval_${approval.recovery_plan_hash.slice(0, 16)}_${approvalSequence}` })
+      assertPersistableRecoveryApproval(sequencedApproval)
       const payload = withPayloadHash({
         schema_version: 1 as const,
         investigation_id: sequencedApproval.investigation_id,
@@ -1142,6 +1144,31 @@ function finalizeApprovalHash(approval: CommanderInvestigationRecoveryApprovalRe
   const current = { ...approval, approval_hash: "" }
   current.approval_hash = stableHash({ ...current, approved_at: "", approval_hash: "" })
   return current
+}
+
+function assertPersistableRecoveryApproval(approval: CommanderInvestigationRecoveryApprovalRecord): void {
+  if (!approval || typeof approval !== "object") throw new CommanderInvestigationPersistenceError("recovery approval record is malformed")
+  if (approval.approval_source !== "human" || approval.one_shot !== true || approval.automatic !== false || approval.fresh_context_required !== true || approval.exact_replay_supported !== false || approval.provider_request_replay_allowed !== false || approval.tool_execution_replay_allowed !== false || approval.execution_supported_in_this_branch !== false) {
+    throw new CommanderInvestigationPersistenceError("recovery approval record failed no-replay schema validation")
+  }
+  if (!isCanonicalIsoTimestamp(approval.approved_at)) throw new CommanderInvestigationPersistenceError("recovery approval timestamp is not canonical")
+  if (approval.decision !== "approve_resume_from_checkpoint" && approval.decision !== "approve_continue_after_uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval decision is invalid")
+  const acknowledgementKeys = Object.keys(approval.acknowledgements ?? {}).sort()
+  const expectedAcknowledgementKeys = approval.decision === "approve_continue_after_uncertain_provider_outcome"
+    ? ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome"].sort()
+    : ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden"].sort()
+  if (stableHash(acknowledgementKeys) !== stableHash(expectedAcknowledgementKeys)) throw new CommanderInvestigationPersistenceError("recovery approval acknowledgements are invalid")
+  if (approval.acknowledgements.fresh_context_required !== true || approval.acknowledgements.exact_replay_unavailable !== true || approval.acknowledgements.provider_request_replay_forbidden !== true || approval.acknowledgements.tool_execution_replay_forbidden !== true) {
+    throw new CommanderInvestigationPersistenceError("recovery approval acknowledgements are incomplete")
+  }
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.acknowledgements.uncertain_provider_outcome !== true) throw new CommanderInvestigationPersistenceError("uncertain-provider approval acknowledgement is missing")
+  if (approval.approval_hash !== stableHash({ ...approval, approved_at: "", approval_hash: "" })) throw new CommanderInvestigationPersistenceError("recovery approval hash is invalid")
+}
+
+function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false
+  const parsed = new Date(value)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value
 }
 
 function stableCheckpointState(checkpoint: CommanderInvestigationCheckpoint): unknown {

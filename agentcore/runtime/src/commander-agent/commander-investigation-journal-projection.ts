@@ -824,8 +824,14 @@ function boundedJournalString(value: unknown, maxLength: number): value is strin
   return typeof value === "string" && value.length > 0 && value.length <= maxLength
 }
 
-function looksCredentialLike(value: string): boolean {
-  return /https?:\/\/|authorization|api[_-]?key|bearer\s+|credential|secret|token/i.test(value)
+function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false
+  const parsed = new Date(value)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value
+}
+
+function containsConcreteCredentialPayload(value: string): boolean {
+  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}|api[_-]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+|authorization\s*[:=]\s*\S+/i.test(value)
 }
 
 function isNormalizedInput(value: unknown): value is Record<string, unknown> {
@@ -859,7 +865,7 @@ function isRecoveryApprovedPayload(value: unknown): value is CommanderInvestigat
   if (!hasString(value, "investigation_id") || !boundedJournalString(value.investigation_id, 200)) return false
   if (!hasNumber(value, "journal_sequence")) return false
   if (!hasString(value, "requested_by") || !boundedJournalString(value.requested_by, 200)) return false
-  if (!hasString(value, "occurred_at") || !boundedJournalString(value.occurred_at, 80)) return false
+  if (!isCanonicalIsoTimestamp(value.occurred_at)) return false
   if (!hasString(value, "event_payload_hash") || !boundedJournalString(value.event_payload_hash, 240)) return false
   if (!isApprovalRecord(value.approval)) return false
   if (value.investigation_id !== value.approval.investigation_id) return false
@@ -926,14 +932,14 @@ function isApprovalRecord(value: unknown): value is CommanderInvestigationRecove
     "context_compatibility_hash",
     "continuity_compatibility_hash",
     "human_control_compatibility_hash",
-    "approved_at",
     "approval_hash",
   ]) {
     if (!hasString(value, key)) return false
     if (!boundedJournalString(value[key], 240)) return false
   }
+  if (!isCanonicalIsoTimestamp(value.approved_at)) return false
   if (!boundedJournalString(value.approval_id, 120) || !boundedJournalString(value.investigation_id, 200) || !boundedJournalString(value.approved_by, 200)) return false
-  if (value.human_note_preview !== undefined && (!boundedJournalString(value.human_note_preview, 500) || looksCredentialLike(value.human_note_preview))) return false
+  if (value.human_note_preview !== undefined && (!boundedJournalString(value.human_note_preview, 500) || containsConcreteCredentialPayload(value.human_note_preview))) return false
   if (value.human_note_hash !== undefined && !boundedJournalString(value.human_note_hash, 240)) return false
   if (!Number.isInteger(value.approval_sequence) || Number(value.approval_sequence) < 0) return false
   if (decision !== "approve_resume_from_checkpoint" && decision !== "approve_continue_after_uncertain_provider_outcome") return false
