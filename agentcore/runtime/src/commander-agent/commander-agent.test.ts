@@ -6886,6 +6886,25 @@ describe("Commander in-memory investigation controller", () => {
     expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(before.budget_compatibility.current_policy_limits.max_tool_calls)
     expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
     expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
+    const stricterContextBuilt = await builder.build({
+      source: source!,
+      checkpoint: source!.latest_checkpoint!,
+      preview: {
+        ...after,
+        budget_compatibility: {
+          ...after.budget_compatibility,
+          current_policy_limits: {
+            ...after.budget_compatibility.current_policy_limits,
+            max_context_bytes: source!.latest_checkpoint!.budget.max_context_bytes! - 1,
+            max_context_tokens: source!.latest_checkpoint!.budget.max_context_tokens! - 1,
+          },
+        },
+      },
+    })
+    expect(stricterContextBuilt.blockers).toEqual([])
+    expect(stricterContextBuilt.seed?.effective_budget.effective_budget.max_context_bytes).toBe(source!.latest_checkpoint!.budget.max_context_bytes! - 1)
+    expect(stricterContextBuilt.seed?.effective_budget.effective_budget.max_context_tokens).toBe(source!.latest_checkpoint!.budget.max_context_tokens! - 1)
+    expect(stricterContextBuilt.seed?.execution_preparation_hash).not.toBe(built.seed?.execution_preparation_hash)
     const runtimeCapability = commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))
     const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [runtimeCapability] })
     const tamperedBudgetAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered budget should not run" }])
@@ -6958,6 +6977,29 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedWorkingSet).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedWorkingSet.blockers).toContain("recovery continuation working set hash did not verify")
     expect(tamperedWorkingSetAdapter.request_summaries).toHaveLength(0)
+    const tamperedInputSeed = {
+      ...built.seed!,
+      normalized_input: {
+        ...built.seed!.normalized_input,
+        objective: `${built.seed!.normalized_input.objective} tampered`,
+      },
+    }
+    const tamperedInputAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered input should not run" }])
+    const tamperedInputController = new CommanderInvestigationController({
+      modelAdapter: tamperedInputAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedInput = await tamperedInputController.runFromRecoverySeed(tamperedInputSeed)
+    expect(tamperedInput).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedInput.blockers).toContain("recovery continuation normalized input hash did not verify")
+    expect(tamperedInputAdapter.request_summaries).toHaveLength(0)
     const driftedCapabilityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [{ ...runtimeCapability, max_output_tokens: 256 }] })
     const requestDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "request drift should not run" }])
     const requestDriftController = new CommanderInvestigationController({

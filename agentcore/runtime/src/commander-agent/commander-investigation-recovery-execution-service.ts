@@ -260,6 +260,8 @@ function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelT
     max_consecutive_no_progress_turns: boundedCurrentLimit(limits.max_consecutive_no_progress_turns, stored.max_consecutive_no_progress_turns),
     max_evidence_cards: boundedCurrentLimit(limits.max_evidence_cards, stored.max_evidence_cards),
     max_turn_summaries: boundedCurrentLimit(limits.max_turn_summaries, stored.max_turn_summaries),
+    max_context_bytes: boundedOptionalCurrentLimit(limits.max_context_bytes, stored.max_context_bytes),
+    max_context_tokens: boundedOptionalCurrentLimit(limits.max_context_tokens, stored.max_context_tokens),
     tool_schema_allocation_bytes: boundedOptionalCurrentLimit(limits.tool_schema_allocation_bytes, stored.tool_schema_allocation_bytes),
     tool_schema_allocation_tokens: boundedOptionalCurrentLimit(limits.tool_schema_allocation_tokens, stored.tool_schema_allocation_tokens),
     budget_hash: "",

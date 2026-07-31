@@ -1166,6 +1166,7 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
 }
 
 function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
+  if (stableHash(seed.normalized_input) !== seed.normalized_input_hash) return "recovery continuation normalized input hash did not verify"
   const restoredWorkingSet = durableCommanderInvestigationWorkingSet(seed.working_set as CommanderInvestigationWorkingSet)
   if (restoredWorkingSet.working_set_hash !== seed.working_set_hash || seed.working_set.working_set_hash !== seed.working_set_hash) return "recovery continuation working set hash did not verify"
   if (stableHash(seed.consumed) !== stableHash(seed.effective_budget.consumed)) return "recovery continuation consumed budget counters did not verify"

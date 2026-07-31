@@ -362,6 +362,8 @@ export class CommanderInvestigationRecoveryService {
       max_tool_calls: Math.min(stored.max_tool_calls, profile.max_tool_calls_future),
       max_tool_search_calls: Math.min(stored.max_tool_search_calls, profile.max_tool_search_calls_future),
       max_loaded_schemas: Math.min(stored.max_loaded_schemas, profile.max_loaded_schemas),
+      max_context_bytes: minDefined(stored.max_context_bytes, currentContextBudget.input_context_bytes),
+      max_context_tokens: minDefined(stored.max_context_tokens, currentContextBudget.input_context_tokens),
       tool_schema_allocation_bytes: minDefined(stored.tool_schema_allocation_bytes, currentContextBudget.tool_schema_allocation_bytes),
       tool_schema_allocation_tokens: minDefined(stored.tool_schema_allocation_tokens, currentContextBudget.tool_schema_allocation_tokens),
       max_cumulative_tool_result_bytes: Math.min(stored.max_cumulative_tool_result_bytes, profile.max_cumulative_result_bytes_future),
