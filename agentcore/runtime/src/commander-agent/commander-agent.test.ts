@@ -53,6 +53,7 @@ import {
   type CommanderInvestigationCheckpointSnapshot,
   type CommanderInvestigationStartedSnapshot,
 	  type CommanderInvestigationCheckpoint,
+  type CommanderInvestigationRecoveryContinuationSeed,
 	  type CommanderInvestigationLoadedToolRef,
 	  type CommanderInvestigationReplayExchange,
 	  type CommanderInvestigationWorkingSet,
@@ -3829,6 +3830,7 @@ describe("Commander in-memory investigation controller", () => {
     const checkpoint = await service.latestCheckpoint("inv_checkpoint_envelope_cap")
     expect(checkpoint).toMatchObject({ checkpoint_sequence: 1 })
     expect(checkpoint!.working_set.omitted_turn_count + checkpoint!.working_set.omitted_digest_count + checkpoint!.working_set.omitted_evidence_count).toBeGreaterThan(0)
+    expect(checkpoint!.working_set.working_set_hash).toBe(stableHash(stableCommanderInvestigationWorkingSet(checkpoint!.working_set as unknown as CommanderInvestigationWorkingSet)))
     const events = (await eventText(projectDir)).trim().split(/\n+/).filter(Boolean).map((line) => JSON.parse(line) as { kind?: string; investigation_id?: string })
     const checkpointEvent = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === "inv_checkpoint_envelope_cap")
     expect(checkpointEvent).toBeDefined()
@@ -6910,6 +6912,27 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedBudget).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedBudget.blockers).toContain("recovery continuation effective budget hash did not verify")
     expect(tamperedBudgetAdapter.request_summaries).toHaveLength(0)
+    const tamperedElapsedSeed = {
+      ...built.seed!,
+      elapsed_active_ms_before: built.seed!.effective_budget.consumed.elapsed_active_ms + 1,
+    }
+    tamperedElapsedSeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedElapsedSeed)
+    const tamperedElapsedAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered elapsed should not run" }])
+    const tamperedElapsedController = new CommanderInvestigationController({
+      modelAdapter: tamperedElapsedAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedElapsed = await tamperedElapsedController.runFromRecoverySeed(tamperedElapsedSeed)
+    expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedElapsed.blockers).toContain("recovery continuation elapsed active time did not verify")
+    expect(tamperedElapsedAdapter.request_summaries).toHaveLength(0)
     const driftedCapabilityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [{ ...runtimeCapability, max_output_tokens: 256 }] })
     const requestDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "request drift should not run" }])
     const requestDriftController = new CommanderInvestigationController({
@@ -9127,4 +9150,34 @@ async function eventText(projectDir: string): Promise<string> {
 
 function eventKinds(text: string): string[] {
   return text.trim().split(/\n+/).filter(Boolean).map((line) => (JSON.parse(line) as { kind?: string }).kind ?? "")
+}
+
+function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinuationSeed): string {
+  return stableHash({
+    seed_version: 1,
+    investigation_id: seed.investigation_id,
+    recovery_kind: seed.recovery_kind,
+    immutable_identity: seed.immutable_identity,
+    normalized_input_hash: seed.normalized_input_hash,
+    recovery_basis_hash: seed.recovery_basis_hash,
+    checkpoint_ref: seed.checkpoint_ref,
+    pending_model_step_ref: seed.pending_model_step_ref,
+    original_bootstrap_ref: seed.original_bootstrap_ref,
+    current_bootstrap_hash: seed.current_bootstrap_hash,
+    continuity_drift_detected: seed.continuity_drift_detected,
+    tool_protocol: seed.tool_protocol,
+    loaded_tool_refs: seed.loaded_tool_refs,
+    effective_budget_hash: seed.effective_budget_hash,
+    working_set_hash: seed.working_set_hash,
+    turn_summary_hash: stableHash(seed.turn_summaries),
+    replay_exchange_hash: seed.replay_exchange_hash,
+    recovery_notice_hash: seed.recovery_notice_hash,
+    next_turn_index: seed.next_turn_index,
+    elapsed_active_ms_before: seed.elapsed_active_ms_before,
+    provider_request_count_before: seed.provider_request_count_before,
+    external_api_audit_count_before: seed.external_api_audit_count_before,
+    unresolved_provider_attempt_count: seed.unresolved_provider_attempt_count,
+    uncertain_model_turn_charge: seed.uncertain_model_turn_charge,
+    first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
+  })
 }

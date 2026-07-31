@@ -1028,18 +1028,22 @@ function durableToolResult(message: CommanderModelToolResultMessage): CommanderD
 function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: number, measureBytes: (checkpoint: CommanderInvestigationCheckpoint) => number): CommanderInvestigationCheckpoint {
   let current = checkpoint
   while (measureBytes(current) > cap && current.turn_summaries.length > 0) {
-    current = { ...current, turn_summaries: current.turn_summaries.slice(1), working_set: { ...current.working_set, omitted_turn_count: current.working_set.omitted_turn_count + 1 } }
+    current = withWorkingSetHash({ ...current, turn_summaries: current.turn_summaries.slice(1), working_set: { ...current.working_set, omitted_turn_count: current.working_set.omitted_turn_count + 1 } })
   }
   while (measureBytes(current) > cap && current.working_set.recent_execution_digests.length > 0) {
-    current = { ...current, working_set: { ...current.working_set, recent_execution_digests: current.working_set.recent_execution_digests.slice(1), omitted_digest_count: current.working_set.omitted_digest_count + 1 } }
+    current = withWorkingSetHash({ ...current, working_set: { ...current.working_set, recent_execution_digests: current.working_set.recent_execution_digests.slice(1), omitted_digest_count: current.working_set.omitted_digest_count + 1 } })
   }
   while (measureBytes(current) > cap && current.working_set.evidence_cards.length > 0) {
-    current = { ...current, working_set: { ...current.working_set, evidence_cards: current.working_set.evidence_cards.slice(1), omitted_evidence_count: current.working_set.omitted_evidence_count + 1 } }
+    current = withWorkingSetHash({ ...current, working_set: { ...current.working_set, evidence_cards: current.working_set.evidence_cards.slice(1), omitted_evidence_count: current.working_set.omitted_evidence_count + 1 } })
   }
   if (measureBytes(current) > cap && current.replay_exchange) {
     current = { ...current, replay_exchange: compactReplayExchangeForCheckpointBudget(current.replay_exchange) }
   }
   return current
+}
+
+function withWorkingSetHash(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  return { ...checkpoint, working_set: durableCommanderInvestigationWorkingSet(checkpoint.working_set as unknown as CommanderInvestigationWorkingSet) }
 }
 
 function compactReplayExchangeForCheckpointBudget(exchange: NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]>): NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]> {

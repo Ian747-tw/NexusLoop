@@ -145,6 +145,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       replay_exchange_hash: replay.summary.replay_exchange_hash,
       recovery_notice_hash: notice.notice_hash,
       next_turn_index: nextTurn,
+      elapsed_active_ms_before: checkpoint.elapsed_active_ms,
       provider_request_count_before: checkpoint.provider_request_count,
       external_api_audit_count_before: checkpoint.external_api_audit_count,
       unresolved_provider_attempt_count: unresolvedAttempts,

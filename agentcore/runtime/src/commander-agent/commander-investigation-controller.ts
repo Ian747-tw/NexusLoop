@@ -289,6 +289,7 @@ export class CommanderInvestigationController {
       replay_exchange_hash: seed.replay_exchange_hash,
       recovery_notice_hash: seed.recovery_notice_hash,
       next_turn_index: seed.next_turn_index,
+      elapsed_active_ms_before: seed.elapsed_active_ms_before,
       provider_request_count_before: seed.provider_request_count_before,
       external_api_audit_count_before: seed.external_api_audit_count_before,
       unresolved_provider_attempt_count: seed.unresolved_provider_attempt_count,
@@ -1165,6 +1166,7 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
 }
 
 function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
+  if (seed.elapsed_active_ms_before !== seed.effective_budget.consumed.elapsed_active_ms) return "recovery continuation elapsed active time did not verify"
   const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_id: "", budget_hash: "" })
   if (seed.effective_budget.effective_budget.budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget hash did not verify"
   if (seed.effective_budget.effective_budget_hash !== effectiveBudgetHash || seed.effective_budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget reference did not verify"
