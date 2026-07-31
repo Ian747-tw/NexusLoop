@@ -143,6 +143,8 @@ export type CommanderInvestigationRecoveryBoundToolAuthorityRef = {
   descriptor_present: boolean
   descriptor_version?: string
   authority_id?: string
+  runtime_command?: string
+  slash_command?: string
   input_schema_hash?: string
   output_schema_hash?: string
   load_policy?: string

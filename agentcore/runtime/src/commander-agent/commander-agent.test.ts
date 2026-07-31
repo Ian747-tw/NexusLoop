@@ -5887,6 +5887,21 @@ describe("Commander in-memory investigation controller", () => {
     expect(deferredToolDriftPreview.tool_compatibility.tools).toEqual(validPreview.tool_compatibility.tools)
     expect(deferredToolDriftPreview.tool_compatibility.compatibility_hash).not.toBe(validPreview.tool_compatibility.compatibility_hash)
     expect(deferredToolDriftPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
+    const deferredRoutingDriftPreview = await new CommanderInvestigationRecoveryService(baseOptions({
+      descriptors: COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id === unloadedBoundToolId ? { ...tool, runtime_command: "commander.deferred_routing_drift" } : tool),
+    })).preview({ investigation_id: "inv_recovery_compat" })
+    expect(deferredRoutingDriftPreview).toMatchObject({
+      status: "ready_for_approval",
+      tool_compatibility: { compatible: true, binding_count: validPreview.tool_compatibility.binding_count },
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+      events_appended: false,
+      files_written: false,
+    })
+    expect(deferredRoutingDriftPreview.tool_compatibility.tools).toEqual(validPreview.tool_compatibility.tools)
+    expect(deferredRoutingDriftPreview.tool_compatibility.compatibility_hash).not.toBe(validPreview.tool_compatibility.compatibility_hash)
+    expect(deferredRoutingDriftPreview.recovery_plan_hash).not.toBe(validPreview.recovery_plan_hash)
 
     const legacyProjectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b1-legacy-loaded-tool-limits-"))
     const legacyStore = new EventStore(join(legacyProjectDir, ".nxl", "events.jsonl"))

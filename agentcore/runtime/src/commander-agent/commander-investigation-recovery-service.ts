@@ -193,6 +193,8 @@ export class CommanderInvestigationRecoveryService {
         descriptor_present: true,
         descriptor_version: current.version,
         authority_id: current.authority_id ?? "",
+        runtime_command: current.runtime_command ?? "",
+        slash_command: current.slash_command ?? "",
         input_schema_hash: current.schema_metadata.input_schema_hash,
         output_schema_hash: current.schema_metadata.output_schema_hash,
         load_policy: current.load_policy,
