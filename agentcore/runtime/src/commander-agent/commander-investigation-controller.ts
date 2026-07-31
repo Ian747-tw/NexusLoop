@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { redactText, redactValue } from "../security/redaction"
 import { COMMANDER_TOOL_PHASES, COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
@@ -1167,6 +1168,9 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
 
 function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
   if (stableHash(seed.normalized_input) !== seed.normalized_input_hash) return "recovery continuation normalized input hash did not verify"
+  const currentBootstrapHash = sha256JsonHash({ ...seed.current_bootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
+  if (seed.current_bootstrap.bootstrap_hash !== currentBootstrapHash || seed.current_bootstrap_hash !== currentBootstrapHash) return "recovery continuation current bootstrap hash did not verify"
+  if (seed.current_bootstrap.continuity_assessment_status === "degraded") return "recovery continuation current bootstrap is degraded"
   const restoredWorkingSet = durableCommanderInvestigationWorkingSet(seed.working_set as CommanderInvestigationWorkingSet)
   if (restoredWorkingSet.working_set_hash !== seed.working_set_hash || seed.working_set.working_set_hash !== seed.working_set_hash) return "recovery continuation working set hash did not verify"
   if (stableHash(seed.consumed) !== stableHash(seed.effective_budget.consumed)) return "recovery continuation consumed budget counters did not verify"
@@ -1231,6 +1235,10 @@ function recoveryFirstRequestPreview(
   }
   preview.request_preview_hash = stableHash({ ...preview, request_preview_hash: "" })
   return preview
+}
+
+function sha256JsonHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
 function stableResult(value: CommanderInvestigationResult): unknown {

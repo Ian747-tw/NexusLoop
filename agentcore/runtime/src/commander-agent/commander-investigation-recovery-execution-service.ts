@@ -38,7 +38,13 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const replay = reconstructCommanderRecoveryReplayExchange({ checkpoint, loadedTools: loaded, protocol: checkpoint.tool_protocol })
     if (replay.blockers.length) return { blockers: replay.blockers, warnings: replay.warnings }
     warnings.push(...replay.warnings)
-    const currentBootstrap = await this.options.currentBootstrap({ ...(source.normalized_input as Omit<CommanderInvestigationInput, "abort_signal">), include_continuity: true })
+    let currentBootstrap
+    try {
+      currentBootstrap = await this.options.currentBootstrap({ ...(source.normalized_input as Omit<CommanderInvestigationInput, "abort_signal">), include_continuity: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { blockers: [bound(`current bootstrap compilation failed for recovery preparation: ${message}`, 240)], warnings }
+    }
     if (currentBootstrap.blockers.length || currentBootstrap.continuity_assessment_status === "degraded") {
       return { blockers: ["current bootstrap is not ready for recovery preparation", ...currentBootstrap.blockers].slice(0, 12), warnings: currentBootstrap.warnings.slice(0, 12) }
     }

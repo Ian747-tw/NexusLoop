@@ -6911,6 +6911,16 @@ describe("Commander in-memory investigation controller", () => {
     expect(stricterContextBuilt.seed?.effective_budget.original_budget_hash).toBe(source!.latest_checkpoint!.budget.budget_hash)
     expect(stricterContextBuilt.seed?.effective_budget.effective_budget_hash).toBe(stableHash({ ...stricterContextBuilt.seed!.effective_budget.effective_budget, budget_hash: "" }))
     expect(stricterContextBuilt.seed?.execution_preparation_hash).not.toBe(built.seed?.execution_preparation_hash)
+    const throwingBootstrapBuilder = new CommanderInvestigationRecoveryContinuationBuilder({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      currentBootstrap: async () => { throw new Error("bootstrap failed with sk-bootstrapsecret12345") },
+      contextService: new CommanderInvestigationContextService(),
+      modelOutputTokens: () => 1024,
+    })
+    const throwingBootstrap = await throwingBootstrapBuilder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
+    expect(throwingBootstrap.seed).toBeUndefined()
+    expect(throwingBootstrap.blockers[0]).toContain("current bootstrap compilation failed for recovery preparation")
+    expect(throwingBootstrap.blockers[0]).not.toContain("sk-bootstrapsecret12345")
     const runtimeCapability = commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))
     const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [runtimeCapability] })
     const tamperedBudgetAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered budget should not run" }])
@@ -7006,6 +7016,29 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedInput).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedInput.blockers).toContain("recovery continuation normalized input hash did not verify")
     expect(tamperedInputAdapter.request_summaries).toHaveLength(0)
+    const tamperedBootstrapSeed = {
+      ...built.seed!,
+      current_bootstrap: {
+        ...built.seed!.current_bootstrap,
+        continuity_assessment_status: "degraded" as const,
+      },
+    }
+    const tamperedBootstrapAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered bootstrap should not run" }])
+    const tamperedBootstrapController = new CommanderInvestigationController({
+      modelAdapter: tamperedBootstrapAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedBootstrap = await tamperedBootstrapController.runFromRecoverySeed(tamperedBootstrapSeed)
+    expect(tamperedBootstrap).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedBootstrap.blockers).toContain("recovery continuation current bootstrap hash did not verify")
+    expect(tamperedBootstrapAdapter.request_summaries).toHaveLength(0)
     const driftedCapabilityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [{ ...runtimeCapability, max_output_tokens: 256 }] })
     const requestDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "request drift should not run" }])
     const requestDriftController = new CommanderInvestigationController({
