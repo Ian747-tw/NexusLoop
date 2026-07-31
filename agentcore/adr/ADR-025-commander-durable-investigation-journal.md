@@ -22,12 +22,20 @@ investigation records are ordinary runtime events written by RuntimeServer
 under the normal single-writer run lock. There is no SQLite table, checkpoint
 file, SDK session store, snapshot directory, or background persistence process.
 
-Add exactly four lifecycle event kinds:
+9W3A added four lifecycle event kinds:
 
 - `runtime_commander_investigation_started`
 - `runtime_commander_investigation_model_step_started`
 - `runtime_commander_investigation_checkpointed`
 - `runtime_commander_investigation_finished`
+
+9W3B2A adds one approval event kind:
+
+- `runtime_commander_investigation_recovery_approved`
+
+The approval event records human approval for an exact recovery basis and plan.
+It does not clear a pending model-step boundary, create a checkpoint, create a
+terminal record, increment provider/tool counters, or set `resume_supported`.
 
 The in-memory method remains available and event-free. Durable execution is a
 separate internal method, `RuntimeServer.runCommanderInvestigationDurable(...)`.
@@ -108,6 +116,11 @@ pending model-step boundary, and terminal metadata from that single snapshot.
 Corrupt and unsupported records expose diagnostics only; they do not expose an
 authoritative checkpoint or normalized input for recovery.
 
+9W3B2A extends the projection with bounded approval history and latest approval
+metadata. Current/stale approval classification remains a recovery-preview
+concern because it depends on current runtime compatibility. Approval events
+are excluded from the recovery basis so they do not invalidate themselves.
+
 ### Failure And Lifecycle
 
 Persistence failures stop execution. A start or model-step-start append failure
@@ -164,9 +177,9 @@ action in 9W3A.
 
 9W3B1 owns read-only recovery preview, checkpoint compatibility checks,
 uncertain provider outcome classification, current continuity/human-control
-inspection, and recovery-plan hashes. It writes no journal event and leaves
-`resume_supported=false` in stored records. 9W3B2 owns durable recovery
-disposition, plan-hash revalidation, uncertain-provider resolution, fresh
-context reconstruction, and human-reviewed resume. 9W3C owns any
+inspection, and recovery-plan hashes. 9W3B2A owns durable human approval and
+stale-plan detection while still leaving `resume_supported=false` in stored
+records. 9W3B2B owns approval consumption, uncertain-provider resolution,
+fresh context reconstruction, and human-reviewed resume. 9W3C owns any
 public/operator start/list/show/pause/resume/cancel surface decision. 9Y owns
 proposal generation.

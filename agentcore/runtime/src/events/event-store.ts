@@ -35,6 +35,32 @@ export class EventStore {
     return operation
   }
 
+  async appendIfLatest(event: JsonlEvent, expectedLatestEventId: string | null): Promise<string> {
+    const operation = this.appendQueue.then(async () => {
+      await mkdir(dirname(this.eventsPath), { recursive: true })
+      const events = await this.readAll()
+      const latest = events.at(-1)?.event_id ? String(events.at(-1)?.event_id) : null
+      if (latest !== expectedLatestEventId) {
+        throw new Error("event log changed before append")
+      }
+      const safeEvent = redactValue({
+        ...event,
+        event_id: event.event_id ?? makeEventId(),
+        timestamp: event.timestamp ?? new Date().toISOString(),
+      })
+      const handle = await open(this.eventsPath, "a")
+      try {
+        await handle.write(JSON.stringify(safeEvent) + "\n")
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      return String(safeEvent.event_id)
+    })
+    this.appendQueue = operation.catch(() => undefined)
+    return operation
+  }
+
   async readAll(): Promise<JsonlEvent[]> {
     try {
       const text = await readFile(this.eventsPath, "utf8")

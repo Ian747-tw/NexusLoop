@@ -112,6 +112,13 @@ compatible with the current runtime. It does not load new schemas, execute
 tools, call a provider, append events, create approval records, or activate a
 public provider loop.
 
+9W3B2A adds durable human-only recovery approval over that preview. Approval
+binds the exact recovery basis, recovery plan, current provider execution
+envelope, compatibility hashes, and no-replay acknowledgements. It appends one
+approval event under RuntimeServer write authority, but still does not execute
+recovery, consume approval, call providers, execute tools, or expose a public
+provider loop.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.
@@ -126,7 +133,8 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9W2B2: RuntimeServer provider activation and audit gate.
 - 9W3A: durable investigation journal and checkpoints.
 - 9W3B1: recovery readiness and compatibility preview.
-- 9W3B2: human disposition and recovery execution.
+- 9W3B2A: durable human approval and stale-plan gate.
+- 9W3B2B: bounded recovery execution from approved state.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.
 - 9Y: Commander research proposal gate.

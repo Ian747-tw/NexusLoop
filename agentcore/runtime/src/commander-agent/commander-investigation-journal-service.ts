@@ -32,12 +32,20 @@ import type {
   CommanderInvestigationTerminalRecord,
 } from "./commander-investigation-journal-types"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
-import { projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
+import type {
+  CommanderInvestigationRecoveryApprovalAppendInput,
+  CommanderInvestigationRecoveryApprovalRecord,
+  CommanderInvestigationRecoveryApprovalResult,
+  CommanderInvestigationRecoveryApprovalSummary,
+  CommanderInvestigationRecoveryApprovedPayload,
+} from "./commander-investigation-recovery-approval-types"
+import { isCommanderInvestigationRecoveryApprovalRecord, projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
 
 const CHECKPOINT_DEFAULT_CAP = 64_000
 const CHECKPOINT_HARD_CAP = 96_000
 const MODEL_STEP_CAP = 8_000
 const TERMINAL_CAP = 48_000
+const APPROVAL_CAP = 16_000
 const STARTED_HARD_CAP = 112_000
 const MIN_TEST_CAP = 16_000
 const COMMANDER_INVESTIGATION_EVENT_KIND_SET = new Set<string>(COMMANDER_INVESTIGATION_EVENT_KINDS)
@@ -116,6 +124,7 @@ export class CommanderInvestigationJournalService {
   private readonly now: () => Date
   private readonly checkpointPayloadCapBytes: number
   private readonly active = new Set<string>()
+  private readonly activeApprovals = new Map<string, Promise<void>>()
 
   constructor(private readonly options: CommanderInvestigationJournalServiceOptions) {
     this.now = options.now ?? (() => new Date())
@@ -327,6 +336,93 @@ export class CommanderInvestigationJournalService {
     const droppedReasons = journal.dropped_commander_events_by_investigation_id.get(investigationId)
     if (droppedReasons?.length) return recoverySourceBlockedByDroppedCommanderEvent(source, droppedReasons[0] ?? "dropped Commander journal event prevents authoritative recovery")
     return source
+  }
+
+  async recordRecoveryApproval(input: CommanderInvestigationRecoveryApprovalAppendInput): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
+    return this.recordRecoveryApprovalAfterRevalidation(input.approval.investigation_id, async () => input)
+  }
+
+  async recordRecoveryApprovalAfterRevalidation(
+    investigationId: string,
+    revalidate: () => Promise<CommanderInvestigationRecoveryApprovalAppendInput>,
+  ): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
+    const lockKey = investigationId
+    const previous = this.activeApprovals.get(lockKey) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const chain = previous.catch(() => undefined).then(() => current)
+    this.activeApprovals.set(lockKey, chain)
+    await previous.catch(() => undefined)
+    try {
+      if (this.active.has(investigationId)) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires inactive durable investigation")
+      }
+      const expectedLatestEventId = await this.options.eventStore.latestEventId()
+      const input = await revalidate()
+      return await this.recordRecoveryApprovalUnlocked(input, expectedLatestEventId)
+    } finally {
+      release()
+      if (this.activeApprovals.get(lockKey) === chain) this.activeApprovals.delete(lockKey)
+    }
+  }
+
+  private async recordRecoveryApprovalUnlocked(
+    input: CommanderInvestigationRecoveryApprovalAppendInput,
+    expectedLatestEventId: string | null,
+  ): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
+      const approval = input.approval
+      assertPersistableRecoveryApproval(approval)
+      const source = await this.recoverySource(approval.investigation_id)
+      if (!source || source.projection_status !== "ready" || !source.record || source.record.status !== "running" || !source.recovery_basis || !source.latest_checkpoint) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires a ready nonterminal journal with an accepted checkpoint")
+      }
+      if (source.recovery_basis.basis_hash !== input.expected_basis.basis_hash || source.recovery_basis.basis_hash !== approval.recovery_basis_hash) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery basis changed before approval append")
+      }
+      if (source.latest_checkpoint.checkpoint_id !== approval.checkpoint_ref.checkpoint_id || source.latest_checkpoint.checkpoint_sequence !== approval.checkpoint_ref.checkpoint_sequence || source.latest_checkpoint.checkpoint_hash !== approval.checkpoint_ref.checkpoint_hash) {
+        throw new CommanderInvestigationJournalConflictError("Commander recovery checkpoint changed before approval append")
+      }
+      if (approval.decision === "approve_resume_from_checkpoint" && source.pending_model_step) {
+        throw new CommanderInvestigationJournalConflictError("checkpoint recovery approval cannot be appended while a model step is pending")
+      }
+      if (approval.decision === "approve_continue_after_uncertain_provider_outcome") {
+        if (!source.pending_model_step || !approval.pending_model_step_ref) throw new CommanderInvestigationJournalConflictError("uncertain-provider approval requires the current pending model boundary")
+        if (approval.pending_model_step_ref.model_request_id !== source.pending_model_step.model_request_id || approval.pending_model_step_ref.context_hash !== source.pending_model_step.context_hash) {
+          throw new CommanderInvestigationJournalConflictError("pending model boundary changed before approval append")
+        }
+      }
+      const duplicate = source.recovery_approvals?.find((candidate) => isSameRecoveryApprovalAuthority(candidate, approval))
+      if (duplicate) {
+        return {
+          status: "already_recorded",
+          approval: {
+            ...approval,
+            approval_id: duplicate.approval_id,
+            approval_sequence: duplicate.approval_sequence,
+            approved_at: duplicate.approved_at,
+            approval_hash: duplicate.approval_hash,
+          },
+          events_appended: false,
+        }
+      }
+      if ((source.recovery_approvals?.length ?? 0) >= 16) throw new CommanderInvestigationJournalConflictError("Commander recovery approval history cap reached")
+      const journalSequence = source.source_event_count
+      const approvalSequence = source.recovery_approvals?.length ?? 0
+      const sequencedApproval = finalizeApprovalHash({ ...approval, approval_sequence: approvalSequence, approval_id: approval.approval_id || `commander_recovery_approval_${approval.recovery_plan_hash.slice(0, 16)}_${approvalSequence}` })
+      assertPersistableRecoveryApproval(sequencedApproval)
+      const payload = withPayloadHash({
+        schema_version: 1 as const,
+        investigation_id: sequencedApproval.investigation_id,
+        journal_sequence: journalSequence,
+        requested_by: sequencedApproval.approved_by,
+        occurred_at: sequencedApproval.approved_at,
+        approval: sequencedApproval,
+        event_payload_hash: "",
+      } satisfies CommanderInvestigationRecoveryApprovedPayload)
+      const eventId = await this.appendCapped("runtime_commander_investigation_recovery_approved", payload, APPROVAL_CAP, expectedLatestEventId)
+      return { status: "recorded", approval: sequencedApproval, event_id: eventId, events_appended: true }
   }
 
   private async readJournalEvents(): Promise<JsonlEvent[]> {
@@ -585,11 +681,20 @@ export class CommanderInvestigationJournalService {
     return checkpoint
   }
 
-  private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
+  private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number, expectedLatestEventId?: string | null): Promise<string> {
     const redacted = redactValue(payload) as Record<string, unknown>
     if (eventBytes({ kind, ...redacted }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
     await this.assertAppendSafeTail()
-    return this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
+    try {
+      return await (expectedLatestEventId === undefined
+        ? this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
+        : this.options.eventStore.appendIfLatest({ kind, ...redacted } as JsonlEvent, expectedLatestEventId))
+    } catch (error) {
+      if (expectedLatestEventId !== undefined && error instanceof Error && error.message === "event log changed before append") {
+        throw new CommanderInvestigationJournalConflictError("event log changed before append")
+      }
+      throw error
+    }
   }
 
   private async trackedAppendCapped(state: CommanderInvestigationJournalRunState, kind: string, payload: Record<string, unknown>, cap: number): Promise<string> {
@@ -654,6 +759,32 @@ export class CommanderInvestigationJournalService {
     summary.durability_hash = stableHash({ ...summary, started_event_id: "", latest_checkpoint_event_id: "", finished_event_id: "", durability_hash: "" })
     return summary
   }
+}
+
+function isSameRecoveryApprovalAuthority(candidate: CommanderInvestigationRecoveryApprovalSummary, approval: CommanderInvestigationRecoveryApprovalRecord): boolean {
+  return candidate.recovery_basis_hash === approval.recovery_basis_hash &&
+    candidate.recovery_plan_hash === approval.recovery_plan_hash &&
+    candidate.recovery_packet_hash === approval.recovery_packet_hash &&
+    candidate.decision === approval.decision &&
+    candidate.approved_by === approval.approved_by &&
+    candidate.human_note_hash === approval.human_note_hash &&
+    candidate.checkpoint_ref.checkpoint_id === approval.checkpoint_ref.checkpoint_id &&
+    candidate.checkpoint_ref.checkpoint_sequence === approval.checkpoint_ref.checkpoint_sequence &&
+    candidate.checkpoint_ref.checkpoint_hash === approval.checkpoint_ref.checkpoint_hash &&
+    candidate.pending_model_step_ref?.model_request_id === approval.pending_model_step_ref?.model_request_id &&
+    candidate.pending_model_step_ref?.turn_index === approval.pending_model_step_ref?.turn_index &&
+    candidate.pending_model_step_ref?.base_checkpoint_id === approval.pending_model_step_ref?.base_checkpoint_id &&
+    candidate.pending_model_step_ref?.base_checkpoint_sequence === approval.pending_model_step_ref?.base_checkpoint_sequence &&
+    candidate.pending_model_step_ref?.base_checkpoint_hash === approval.pending_model_step_ref?.base_checkpoint_hash &&
+    candidate.pending_model_step_ref?.working_set_hash === approval.pending_model_step_ref?.working_set_hash &&
+    candidate.pending_model_step_ref?.context_hash === approval.pending_model_step_ref?.context_hash &&
+    candidate.provider_execution_envelope_hash === approval.provider_execution_envelope_hash &&
+    candidate.tool_compatibility_hash === approval.tool_compatibility_hash &&
+    candidate.provider_compatibility_hash === approval.provider_compatibility_hash &&
+    candidate.budget_compatibility_hash === approval.budget_compatibility_hash &&
+    candidate.context_compatibility_hash === approval.context_compatibility_hash &&
+    candidate.continuity_compatibility_hash === approval.continuity_compatibility_hash &&
+    candidate.human_control_compatibility_hash === approval.human_control_compatibility_hash
 }
 
 function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigationLoadedToolRef[] {
@@ -845,10 +976,12 @@ function nestedCommanderInvestigationId(event: JsonlEvent): string | undefined {
     initial_checkpoint?: { investigation_id?: unknown }
     checkpoint?: { investigation_id?: unknown }
     terminal?: { investigation_id?: unknown }
+    approval?: { investigation_id?: unknown }
   }).normalized_input?.investigation_id
     ?? (event as { initial_checkpoint?: { investigation_id?: unknown } }).initial_checkpoint?.investigation_id
     ?? (event as { checkpoint?: { investigation_id?: unknown } }).checkpoint?.investigation_id
     ?? (event as { terminal?: { investigation_id?: unknown } }).terminal?.investigation_id
+    ?? (event as { approval?: { investigation_id?: unknown } }).approval?.investigation_id
   return typeof candidate === "string" && candidate ? bound(candidate, 200) : undefined
 }
 
@@ -1014,6 +1147,43 @@ function finalizeTerminalHash(terminal: CommanderInvestigationTerminalRecord): C
   const current = { ...terminal, terminal_hash: "" }
   current.terminal_hash = stableHash({ ...current, terminal_hash: "" })
   return current
+}
+
+function finalizeApprovalHash(approval: CommanderInvestigationRecoveryApprovalRecord): CommanderInvestigationRecoveryApprovalRecord {
+  const current = { ...approval, approval_hash: "" }
+  current.approval_hash = stableHash({ ...current, approved_at: "", approval_hash: "" })
+  return current
+}
+
+function assertPersistableRecoveryApproval(approval: CommanderInvestigationRecoveryApprovalRecord): void {
+  if (!isCommanderInvestigationRecoveryApprovalRecord(approval)) throw new CommanderInvestigationPersistenceError("recovery approval record failed replay schema validation")
+  if (!approval || typeof approval !== "object") throw new CommanderInvestigationPersistenceError("recovery approval record is malformed")
+  if (approval.approval_source !== "human" || approval.one_shot !== true || approval.automatic !== false || approval.fresh_context_required !== true || approval.exact_replay_supported !== false || approval.provider_request_replay_allowed !== false || approval.tool_execution_replay_allowed !== false || approval.execution_supported_in_this_branch !== false) {
+    throw new CommanderInvestigationPersistenceError("recovery approval record failed no-replay schema validation")
+  }
+  if (!isCanonicalIsoTimestamp(approval.approved_at)) throw new CommanderInvestigationPersistenceError("recovery approval timestamp is not canonical")
+  if (approval.decision !== "approve_resume_from_checkpoint" && approval.decision !== "approve_continue_after_uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval decision is invalid")
+  if (approval.recovery_kind !== "checkpoint" && approval.recovery_kind !== "uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval kind is invalid")
+  if (approval.decision === "approve_resume_from_checkpoint" && approval.recovery_kind !== "checkpoint") throw new CommanderInvestigationPersistenceError("recovery approval decision/recovery-kind mismatch")
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.recovery_kind !== "uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval decision/recovery-kind mismatch")
+  const acknowledgementKeys = Object.keys(approval.acknowledgements ?? {}).sort()
+  const expectedAcknowledgementKeys = approval.decision === "approve_continue_after_uncertain_provider_outcome"
+    ? ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome"].sort()
+    : ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden"].sort()
+  if (stableHash(acknowledgementKeys) !== stableHash(expectedAcknowledgementKeys)) throw new CommanderInvestigationPersistenceError("recovery approval acknowledgements are invalid")
+  if (approval.acknowledgements.fresh_context_required !== true || approval.acknowledgements.exact_replay_unavailable !== true || approval.acknowledgements.provider_request_replay_forbidden !== true || approval.acknowledgements.tool_execution_replay_forbidden !== true) {
+    throw new CommanderInvestigationPersistenceError("recovery approval acknowledgements are incomplete")
+  }
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.acknowledgements.uncertain_provider_outcome !== true) throw new CommanderInvestigationPersistenceError("uncertain-provider approval acknowledgement is missing")
+  if (approval.decision === "approve_resume_from_checkpoint" && approval.pending_model_step_ref !== undefined) throw new CommanderInvestigationPersistenceError("checkpoint recovery approval must not include a pending model boundary")
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.pending_model_step_ref === undefined) throw new CommanderInvestigationPersistenceError("uncertain-provider approval requires a pending model boundary")
+  if (approval.approval_hash !== stableHash({ ...approval, approved_at: "", approval_hash: "" })) throw new CommanderInvestigationPersistenceError("recovery approval hash is invalid")
+}
+
+function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false
+  const parsed = new Date(value)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value
 }
 
 function stableCheckpointState(checkpoint: CommanderInvestigationCheckpoint): unknown {

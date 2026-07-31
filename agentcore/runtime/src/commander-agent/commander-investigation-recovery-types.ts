@@ -15,6 +15,10 @@ import type {
   CommanderInvestigationRecoveryState,
 } from "./commander-investigation-journal-types"
 import type { CommanderModelToolProtocol } from "./commander-model-types"
+import type {
+  CommanderInvestigationRecoveryApprovalState,
+  CommanderInvestigationRecoveryApprovalSummary,
+} from "./commander-investigation-recovery-approval-types"
 
 export type CommanderInvestigationRecoveryPreviewInput = {
   investigation_id: string
@@ -27,6 +31,7 @@ export type CommanderInvestigationRecoveryPreviewStatus =
   | "blocked"
   | "human_review_required"
   | "ready_for_approval"
+  | "approved_waiting_for_execution"
 
 export type CommanderInvestigationRecoveryKind = "none" | "checkpoint" | "uncertain_provider_outcome"
 
@@ -36,6 +41,7 @@ export type CommanderInvestigationRecoveryRecommendedAction =
   | "reconfigure_runtime"
   | "review_uncertain_provider_outcome"
   | "approve_resume_from_checkpoint"
+  | "await_recovery_execution"
   | "start_new_investigation"
 
 export type CommanderInvestigationRecoveryCheckpointSummary = {
@@ -349,6 +355,11 @@ export type CommanderInvestigationRecoveryPreview = {
   continuity_compatibility: CommanderInvestigationRecoveryContinuityCompatibility
   human_control: CommanderInvestigationRecoveryHumanControl
   recovery_packet?: CommanderInvestigationRecoveryPacket
+  approval_state: CommanderInvestigationRecoveryApprovalState
+  current_approval?: CommanderInvestigationRecoveryApprovalSummary
+  stale_approval_count: number
+  recovery_approval_required: boolean
+  recovery_approval_consumed: false
   automatic_resume_allowed: false
   human_approval_required: boolean
   exact_replay_supported: false
@@ -358,6 +369,7 @@ export type CommanderInvestigationRecoveryPreview = {
   fresh_context_required: true
   same_journal_resume_candidate: boolean
   terminal_continuation_requires_new_investigation: boolean
+  recovery_basis_hash?: string
   recovery_plan_hash?: string
   blockers: string[]
   warnings: string[]
