@@ -124,7 +124,7 @@ export class CommanderInvestigationJournalService {
   private readonly now: () => Date
   private readonly checkpointPayloadCapBytes: number
   private readonly active = new Set<string>()
-  private readonly activeApprovals = new Set<string>()
+  private readonly activeApprovals = new Map<string, Promise<void>>()
 
   constructor(private readonly options: CommanderInvestigationJournalServiceOptions) {
     this.now = options.now ?? (() => new Date())
@@ -347,8 +347,14 @@ export class CommanderInvestigationJournalService {
     revalidate: () => Promise<CommanderInvestigationRecoveryApprovalAppendInput>,
   ): Promise<{ status: "recorded" | "already_recorded"; approval: CommanderInvestigationRecoveryApprovalRecord; event_id?: string; events_appended: boolean }> {
     const lockKey = investigationId
-    if (this.activeApprovals.has(lockKey)) throw new CommanderInvestigationJournalConflictError("concurrent recovery approval write for investigation")
-    this.activeApprovals.add(lockKey)
+    const previous = this.activeApprovals.get(lockKey) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const chain = previous.catch(() => undefined).then(() => current)
+    this.activeApprovals.set(lockKey, chain)
+    await previous.catch(() => undefined)
     try {
       if (this.active.has(investigationId)) {
         throw new CommanderInvestigationJournalConflictError("Commander recovery approval requires inactive durable investigation")
@@ -357,7 +363,8 @@ export class CommanderInvestigationJournalService {
       const input = await revalidate()
       return await this.recordRecoveryApprovalUnlocked(input, expectedLatestEventId)
     } finally {
-      this.activeApprovals.delete(lockKey)
+      release()
+      if (this.activeApprovals.get(lockKey) === chain) this.activeApprovals.delete(lockKey)
     }
   }
 

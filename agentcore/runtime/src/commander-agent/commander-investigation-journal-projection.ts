@@ -865,6 +865,7 @@ function isRecoveryApprovedPayload(value: unknown): value is CommanderInvestigat
   if (!hasString(value, "investigation_id") || !boundedJournalString(value.investigation_id, 200)) return false
   if (!hasNumber(value, "journal_sequence")) return false
   if (!hasString(value, "requested_by") || !boundedJournalString(value.requested_by, 200)) return false
+  if (containsConcreteCredentialPayload(value.requested_by)) return false
   if (!isCanonicalIsoTimestamp(value.occurred_at)) return false
   if (!hasString(value, "event_payload_hash") || !boundedJournalString(value.event_payload_hash, 240)) return false
   if (!isApprovalRecord(value.approval)) return false
@@ -939,6 +940,7 @@ function isApprovalRecord(value: unknown): value is CommanderInvestigationRecove
   }
   if (!isCanonicalIsoTimestamp(value.approved_at)) return false
   if (!boundedJournalString(value.approval_id, 120) || !boundedJournalString(value.investigation_id, 200) || !boundedJournalString(value.approved_by, 200)) return false
+  if (containsConcreteCredentialPayload(value.approved_by)) return false
   if (value.human_note_preview !== undefined && (!boundedJournalString(value.human_note_preview, 500) || containsConcreteCredentialPayload(value.human_note_preview))) return false
   if (value.human_note_hash !== undefined && !boundedJournalString(value.human_note_hash, 240)) return false
   if (!Number.isInteger(value.approval_sequence) || Number(value.approval_sequence) < 0) return false

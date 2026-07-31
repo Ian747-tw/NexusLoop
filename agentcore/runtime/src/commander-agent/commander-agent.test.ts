@@ -6913,6 +6913,54 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(approvalEvents)).not.toContain("sk-mutatedCredentialPayload123")
   })
 
+  test("recovery approval queues overlapping exact duplicates into idempotent result", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-overlap-duplicate-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_approval_overlap_duplicate",
+      objective: "Approve exact overlapping duplicate once",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const run = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 18, "inv_recovery_approval_overlap_duplicate") as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
+    journal.release(run)
+    await server.start()
+    const preview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_overlap_duplicate" })
+    expect(preview).toMatchObject({ status: "ready_for_approval" })
+    const approvalInput = {
+      investigation_id: "inv_recovery_approval_overlap_duplicate",
+      recovery_plan_hash: preview.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint" as const,
+      approved_by: "human_operator",
+      human_note: "same duplicate approval",
+      acknowledgements: {
+        fresh_context_required: true as const,
+        exact_replay_unavailable: true as const,
+        provider_request_replay_forbidden: true as const,
+        tool_execution_replay_forbidden: true as const,
+      },
+    }
+    const [first, second] = await Promise.all([
+      server.recordCommanderInvestigationRecoveryApproval(approvalInput),
+      server.recordCommanderInvestigationRecoveryApproval(approvalInput),
+    ])
+    const results = [first, second]
+    expect(results.filter((result) => result.status === "recorded")).toHaveLength(1)
+    expect(results.filter((result) => result.status === "already_recorded")).toHaveLength(1)
+    expect(results.filter((result) => result.events_appended)).toHaveLength(1)
+    const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
+  })
+
   test("recovery approval replay rejects hash-valid noncanonical timestamps", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-timestamp-"))
     await writeApprovedSpec(projectDir)
@@ -6977,6 +7025,31 @@ describe("Commander in-memory investigation controller", () => {
     })
     const malformedSource = await malformedJournal.recoverySource("inv_recovery_approval_timestamp")
     expect(malformedSource?.latest_recovery_approval).toBeUndefined()
+
+    const credentialApproverEvent = {
+      ...events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")!,
+      requested_by: "api_key=sk-replayCredentialPayload123",
+      approval: {
+        ...events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")!.approval,
+        approved_by: "api_key=sk-replayCredentialPayload123",
+      },
+      event_payload_hash: "",
+    }
+    credentialApproverEvent.approval.approval_hash = stableHash({ ...credentialApproverEvent.approval, approved_at: "", approval_hash: "" })
+    credentialApproverEvent.event_payload_hash = journalPayloadHash(credentialApproverEvent)
+    const credentialDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-credential-approver-"))
+    const credentialStore = new EventStore(join(credentialDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((candidate) => candidate.kind !== "runtime_commander_investigation_recovery_approved")) {
+      await credentialStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+    await credentialStore.append(credentialApproverEvent as Parameters<EventStore["append"]>[0])
+    const credentialJournal = new CommanderInvestigationJournalService({ eventStore: credentialStore })
+    const credentialRecord = await credentialJournal.get("inv_recovery_approval_timestamp")
+    expect(credentialRecord).toMatchObject({
+      projection_status: "corrupt",
+      recovery_approval_recorded: false,
+      latest_recovery_approval_id: undefined,
+    })
   })
 
   test("recovery approval blocks while the durable investigation is still active", async () => {
