@@ -8109,11 +8109,38 @@ describe("Commander in-memory investigation controller", () => {
 	      },
 	      preview: before,
 	      checkpoint: checkpoint!,
-	    })
-	    expect(impossiblePending.seed).toBeUndefined()
-	    expect(impossiblePending.blockers).toContain("pending model-step turn does not match checkpoint next turn")
-	    const approvalInput = {
-      investigation_id: "inv_recovery_approval_uncertain",
+		    })
+		    expect(impossiblePending.seed).toBeUndefined()
+		    expect(impossiblePending.blockers).toContain("pending model-step turn does not match checkpoint next turn")
+		    const uncertainBuilt = await impossiblePendingBuilder.build({
+		      source: uncertainSource!,
+		      preview: before,
+		      checkpoint: checkpoint!,
+		    })
+		    expect(uncertainBuilt.blockers).toEqual([])
+		    expect(uncertainBuilt.seed?.effective_budget.consumed.model_turns).toBe(1)
+		    expect(uncertainBuilt.seed?.working_set.model_turn_count).toBe(0)
+		    const uncertainRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
+		    const earlyExitController = new CommanderInvestigationController({
+		      toolExecutor: executorFixture().executor,
+		      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: uncertainRegistry }) }),
+		      descriptors: COMMANDER_TOOL_REGISTRY,
+		      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+		      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+		      contextService: new CommanderInvestigationContextService(),
+		      capabilityRegistry: uncertainRegistry,
+		      contextBudgetService: new ContextBudgetService({ registry: uncertainRegistry }),
+		    })
+		    const earlyExit = await earlyExitController.runFromRecoverySeed(uncertainBuilt.seed!)
+		    expect(earlyExit).toMatchObject({
+		      status: "blocked",
+		      stop_reason: "adapter_not_configured",
+		      model_turn_count: 1,
+		      provider_request_count: 0,
+		      events_appended: false,
+		    })
+		    const approvalInput = {
+	      investigation_id: "inv_recovery_approval_uncertain",
       recovery_plan_hash: before.recovery_plan_hash!,
       decision: "approve_continue_after_uncertain_provider_outcome" as const,
       approved_by: "human_operator",

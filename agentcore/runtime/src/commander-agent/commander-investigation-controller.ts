@@ -301,15 +301,19 @@ export class CommanderInvestigationController {
     if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], started)
     const seedIntegrityBlocker = validateRecoverySeedIntegrity(seed, this.options.descriptors)
     if (seedIntegrityBlocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [seedIntegrityBlocker], [], started)
-    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["Commander investigation model adapter is not configured"], [], started)
     const budget = seed.effective_budget.effective_budget
     const loaded = new Map(seed.loaded_tools.map((tool) => [tool.tool_id, tool]))
     const workingSet = redactValue(seed.working_set) as CommanderInvestigationWorkingSet
+    if (workingSet.model_turn_count < seed.effective_budget.consumed.model_turns) {
+      workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
+      workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
+    }
     const turns = seed.turn_summaries.slice()
     let latestAssistant = seed.latest_assistant
     let latestToolResults = seed.latest_tool_results.slice()
     let providerRequests = seed.provider_request_count_before
     const recentResults = new Map(seed.working_set.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
+    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], started)
     if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], started)
     if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], started)
     if (seed.effective_budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], started)
