@@ -285,7 +285,7 @@ function buildApprovalRecord(input: NormalizedRecoveryApprovalInput, preview: Co
   const approval = {
     schema_version: 1 as const,
     approval_version: 1 as const,
-    approval_id: `commander_recovery_approval_${stableHash({ investigation_id: preview.investigation_id, plan: preview.current_recovery_plan_hash, decision: input.decision, approved_by: bound(input.approved_by, 200), note: humanNoteHash(input.human_note) }).slice(0, 20)}`,
+    approval_id: `commander_recovery_approval_${stableHash({ investigation_id: preview.investigation_id, plan: preview.current_recovery_plan_hash, packet: preview.recovery_packet_hash, decision: input.decision, approved_by: bound(input.approved_by, 200), note: humanNoteHash(input.human_note) }).slice(0, 20)}`,
     approval_sequence: 0,
     investigation_id: preview.investigation_id,
     recovery_kind: preview.recovery_kind,

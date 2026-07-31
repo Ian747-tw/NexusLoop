@@ -7356,6 +7356,7 @@ describe("Commander in-memory investigation controller", () => {
       approval: {
         ...approvalEvent!.approval,
         recovery_packet_hash: stableHash({ stale_packet_fixture: true }),
+        approval_id: `commander_recovery_approval_${stableHash({ investigation_id: "inv_recovery_approval_uncertain", plan: before.recovery_plan_hash, decision: approvalInput.decision, approved_by: "human_operator", note: undefined }).slice(0, 20)}`,
         approval_hash: "",
       },
       event_payload_hash: "",
@@ -7387,7 +7388,15 @@ describe("Commander in-memory investigation controller", () => {
       events_appended: true,
     })
     const replacementPacketEvents = (await readFile(stalePacketServer.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>)
-    expect(replacementPacketEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(2)
+    const replacementPacketApprovalEvents = replacementPacketEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")
+    expect(replacementPacketApprovalEvents).toHaveLength(2)
+    expect(new Set(replacementPacketApprovalEvents.map((event) => event.approval.approval_id)).size).toBe(2)
+    const replacementPacketRecord = await stalePacketServer.getCommanderInvestigationRecord("inv_recovery_approval_uncertain")
+    expect(replacementPacketRecord).toMatchObject({
+      projection_status: "ready",
+      recovery_approval_recorded: true,
+      latest_recovery_approval_id: replacementPacketApproval.approval?.approval_id,
+    })
     const malformedApprovalEvent = {
       ...approvalEvent!,
       approval: {
