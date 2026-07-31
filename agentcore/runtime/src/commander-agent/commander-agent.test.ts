@@ -5590,6 +5590,67 @@ describe("Commander in-memory investigation controller", () => {
     const missingTopLevelPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_missing_top_level", include_current_continuity: false })
     expect(missingTopLevelPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
 
+    await startOnly("inv_recovery_malformed_approval_owner", 9)
+    await startOnly("inv_recovery_malformed_approval_unrelated", 10)
+    const missingApprovalTopLevelEvent = {
+      kind: "runtime_commander_investigation_recovery_approved",
+      schema_version: 1,
+      journal_sequence: 1,
+      requested_by: "human_operator",
+      occurred_at: "2026-01-01T00:06:00.000Z",
+      approval: {
+        schema_version: 1,
+        approval_version: 1,
+        approval_id: "approval_missing_top_level_owner",
+        approval_sequence: 0,
+        investigation_id: "inv_recovery_malformed_approval_owner",
+        recovery_kind: "checkpoint",
+        decision: "approve_resume_from_checkpoint",
+        approved_by: "human_operator",
+        approval_source: "human",
+        acknowledgements: {
+          fresh_context_required: true,
+          exact_replay_unavailable: true,
+          provider_request_replay_forbidden: true,
+          tool_execution_replay_forbidden: true,
+        },
+        recovery_basis_hash: "basis_missing_top_level_owner",
+        recovery_plan_hash: "plan_missing_top_level_owner",
+        recovery_packet_hash: "packet_missing_top_level_owner",
+        preview_hash: "preview_missing_top_level_owner",
+        checkpoint_ref: {
+          checkpoint_id: "checkpoint_missing_top_level_owner",
+          checkpoint_sequence: 0,
+          checkpoint_hash: "checkpoint_hash_missing_top_level_owner",
+        },
+        provider_execution_envelope_hash: "provider_envelope_missing_top_level_owner",
+        tool_compatibility_hash: "tool_hash_missing_top_level_owner",
+        provider_compatibility_hash: "provider_hash_missing_top_level_owner",
+        budget_compatibility_hash: "budget_hash_missing_top_level_owner",
+        context_compatibility_hash: "context_hash_missing_top_level_owner",
+        continuity_compatibility_hash: "continuity_hash_missing_top_level_owner",
+        human_control_compatibility_hash: "human_control_hash_missing_top_level_owner",
+        one_shot: true,
+        automatic: false,
+        fresh_context_required: true,
+        exact_replay_supported: false,
+        provider_request_replay_allowed: false,
+        tool_execution_replay_allowed: false,
+        execution_supported_in_this_branch: false,
+        approved_at: "2026-01-01T00:06:00.000Z",
+        approval_hash: "approval_hash_missing_top_level_owner",
+      },
+      event_payload_hash: "",
+    }
+    missingApprovalTopLevelEvent.event_payload_hash = journalPayloadHash(missingApprovalTopLevelEvent)
+    await server.eventStore.append(missingApprovalTopLevelEvent as Parameters<EventStore["append"]>[0])
+    const malformedApprovalOwnerSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_malformed_approval_owner")
+    expect(malformedApprovalOwnerSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(malformedApprovalOwnerSource?.record?.integrity_errors.join("\n")).toContain("without top-level investigation_id")
+    const malformedApprovalUnrelatedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_malformed_approval_unrelated")
+    expect(malformedApprovalUnrelatedSource).toMatchObject({ projection_status: "ready" })
+    expect(malformedApprovalUnrelatedSource?.record?.integrity_errors.join("\n")).not.toContain("unassignable Commander journal event")
+
     await startOnly("inv_recovery_interior_malformed", 7)
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_malformed","timestamp":"2026-01-01T00:04:00.000Z"}\n', { flag: "a" })
     const interiorMalformedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_interior_malformed")
