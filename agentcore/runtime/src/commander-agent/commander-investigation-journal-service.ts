@@ -675,7 +675,7 @@ export class CommanderInvestigationJournalService {
       finalized.checkpoint_hash = stableHash({ ...finalized, checkpoint_hash: "" })
       return finalized
     }
-    checkpoint = redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint
+    checkpoint = withWorkingSetHash(redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint)
     checkpoint = finalize(checkpoint)
     if (measureBytes(checkpoint) > this.checkpointPayloadCapBytes) throw new CommanderInvestigationPersistenceError("Commander investigation checkpoint exceeds durable event byte cap")
     return checkpoint

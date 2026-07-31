@@ -3778,6 +3778,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     const checkpointSnapshot = durableStartedSnapshot(input, 1, "inv_checkpoint_envelope_cap") as unknown as CommanderInvestigationCheckpointSnapshot
     checkpointSnapshot.working_set.model_turn_count = 1
+    checkpointSnapshot.working_set.current_warnings = ["checkpoint compaction redacts api_key=sk-compactedWorkingSetSecret123"]
     checkpointSnapshot.working_set.evidence_cards = Array.from({ length: 4 }, (_, index) => largeEvidenceCard(index))
     checkpointSnapshot.working_set.recent_execution_digests = Array.from({ length: 24 }, (_, index) => ({
       turn_index: index,
@@ -3831,6 +3832,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(checkpoint).toMatchObject({ checkpoint_sequence: 1 })
     expect(checkpoint!.working_set.omitted_turn_count + checkpoint!.working_set.omitted_digest_count + checkpoint!.working_set.omitted_evidence_count).toBeGreaterThan(0)
     expect(checkpoint!.working_set.working_set_hash).toBe(stableHash(stableCommanderInvestigationWorkingSet(checkpoint!.working_set as unknown as CommanderInvestigationWorkingSet)))
+    expect(JSON.stringify(checkpoint!.working_set)).not.toContain("sk-compactedWorkingSetSecret123")
     const events = (await eventText(projectDir)).trim().split(/\n+/).filter(Boolean).map((line) => JSON.parse(line) as { kind?: string; investigation_id?: string })
     const checkpointEvent = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === "inv_checkpoint_envelope_cap")
     expect(checkpointEvent).toBeDefined()
