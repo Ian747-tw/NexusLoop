@@ -299,7 +299,7 @@ export class CommanderInvestigationController {
       first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
     })
     if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], started)
-    const seedIntegrityBlocker = validateRecoverySeedIntegrity(seed)
+    const seedIntegrityBlocker = validateRecoverySeedIntegrity(seed, this.options.descriptors)
     if (seedIntegrityBlocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [seedIntegrityBlocker], [], started)
     if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["Commander investigation model adapter is not configured"], [], started)
     const budget = seed.effective_budget.effective_budget
@@ -1167,7 +1167,7 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
   return undefined
 }
 
-function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
+function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[]): string | undefined {
   if (stableHash(seed.normalized_input) !== seed.normalized_input_hash) return "recovery continuation normalized input hash did not verify"
   const currentBootstrapHash = sha256JsonHash({ ...seed.current_bootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
   if (seed.current_bootstrap.bootstrap_hash !== currentBootstrapHash || seed.current_bootstrap_hash !== currentBootstrapHash) return "recovery continuation current bootstrap hash did not verify"
@@ -1184,7 +1184,7 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.working_set.evidence_cards.length + seed.working_set.omitted_evidence_count !== consumed.evidence_cards) return "recovery continuation working set evidence count did not verify"
   if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
   if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || seed.loaded_tools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
-  const loadedToolIntegrityError = validateRecoveryLoadedTools(seed.loaded_tools, seed.loaded_tool_refs)
+  const loadedToolIntegrityError = validateRecoveryLoadedTools(seed.loaded_tools, seed.loaded_tool_refs, currentDescriptors)
   if (loadedToolIntegrityError) return loadedToolIntegrityError
   if (seed.elapsed_active_ms_before !== seed.effective_budget.consumed.elapsed_active_ms) return "recovery continuation elapsed active time did not verify"
   const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_hash: "" })
@@ -1197,14 +1197,17 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   return undefined
 }
 
-function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], refs: CommanderInvestigationLoadedToolRef[]): string | undefined {
+function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], refs: CommanderInvestigationLoadedToolRef[], currentDescriptors: CommanderToolDescriptor[]): string | undefined {
   const toolsById = new Map(loadedTools.map((tool) => [tool.tool_id, tool]))
+  const currentById = new Map(currentDescriptors.map((tool) => [tool.tool_id, tool]))
   const seen = new Set<string>()
   for (const ref of refs) {
     if (seen.has(ref.tool_id)) return "recovery continuation loaded tool references are not unique"
     seen.add(ref.tool_id)
     const tool = toolsById.get(ref.tool_id)
     if (!tool) return "recovery continuation loaded tool descriptor did not verify"
+    const current = currentById.get(ref.tool_id)
+    if (!current) return "recovery continuation loaded tool descriptor did not verify"
     if (
       ref.namespace !== tool.namespace ||
       ref.descriptor_version !== tool.version ||
@@ -1212,9 +1215,9 @@ function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], ref
       ref.description_hash !== commanderProviderVisibleDescriptionHash(tool) ||
       ref.input_schema_hash !== tool.schema_metadata.input_schema_hash ||
       ref.output_schema_hash !== tool.schema_metadata.output_schema_hash ||
-      ref.input_schema_bytes !== tool.schema_metadata.input_schema_bytes ||
-      ref.output_schema_bytes !== tool.schema_metadata.output_schema_bytes ||
-      ref.estimated_schema_tokens !== tool.schema_metadata.estimated_schema_tokens ||
+      ("input_schema_bytes" in ref && ref.input_schema_bytes !== tool.schema_metadata.input_schema_bytes) ||
+      ("output_schema_bytes" in ref && ref.output_schema_bytes !== tool.schema_metadata.output_schema_bytes) ||
+      ("estimated_schema_tokens" in ref && ref.estimated_schema_tokens !== tool.schema_metadata.estimated_schema_tokens) ||
       ref.load_policy !== tool.load_policy ||
       ref.trust_class !== tool.trust_class ||
       ref.instruction_semantics !== tool.instruction_semantics ||
@@ -1231,6 +1234,33 @@ function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], ref
       ref.requires_credentials !== tool.requires_credentials ||
       ref.requires_approval !== tool.requires_approval ||
       ref.requires_run_lock !== tool.requires_run_lock
+    ) return "recovery continuation loaded tool descriptor did not verify"
+    if (
+      current.namespace !== tool.namespace ||
+      current.version !== tool.version ||
+      (current.authority_id ?? "") !== (tool.authority_id ?? "") ||
+      commanderProviderVisibleDescriptionHash(current) !== commanderProviderVisibleDescriptionHash(tool) ||
+      current.schema_metadata.input_schema_hash !== tool.schema_metadata.input_schema_hash ||
+      current.schema_metadata.output_schema_hash !== tool.schema_metadata.output_schema_hash ||
+      current.schema_metadata.input_schema_bytes !== tool.schema_metadata.input_schema_bytes ||
+      current.schema_metadata.output_schema_bytes !== tool.schema_metadata.output_schema_bytes ||
+      current.schema_metadata.estimated_schema_tokens !== tool.schema_metadata.estimated_schema_tokens ||
+      current.load_policy !== tool.load_policy ||
+      current.trust_class !== tool.trust_class ||
+      current.instruction_semantics !== tool.instruction_semantics ||
+      current.max_output_bytes !== tool.max_output_bytes ||
+      current.timeout_ms !== tool.timeout_ms ||
+      current.risk !== tool.risk ||
+      current.side_effect_class !== tool.side_effect_class ||
+      current.execution_backend !== tool.execution_backend ||
+      current.process_policy !== tool.process_policy ||
+      current.creates_external_process !== tool.creates_external_process ||
+      current.calls_provider !== tool.calls_provider ||
+      current.mutates_events !== tool.mutates_events ||
+      current.requires_network !== tool.requires_network ||
+      current.requires_credentials !== tool.requires_credentials ||
+      current.requires_approval !== tool.requires_approval ||
+      current.requires_run_lock !== tool.requires_run_lock
     ) return "recovery continuation loaded tool descriptor did not verify"
   }
   if (seen.size !== loadedTools.length) return "recovery continuation loaded tool descriptor did not verify"
