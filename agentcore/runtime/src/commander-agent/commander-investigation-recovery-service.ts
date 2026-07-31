@@ -10,6 +10,7 @@ import {
 } from "./commander-investigation-recovery-execution-service"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import type {
+  CommanderInvestigationRecoveryBoundToolAuthorityRef,
   CommanderInvestigationRecoveryBudgetCompatibility,
   CommanderInvestigationRecoveryCheckpointSummary,
   CommanderInvestigationRecoveryContextCompatibility,
@@ -161,12 +162,15 @@ export class CommanderInvestigationRecoveryService {
 
   private toolCompatibility(stored: CommanderInvestigationLoadedToolRef[], phase: CommanderToolPhase): CommanderInvestigationRecoveryToolCompatibilitySummary {
     const tools = stored.map((ref) => this.oneToolCompatibility(ref, phase))
+    const currentBoundToolRefs = this.currentBoundToolRefs(phase)
     const storedSubset = tools.every((tool) => tool.binding_present)
-    const blockers = tools.flatMap((tool) => tool.blockers).slice(0, 24)
+    const boundRefBlockers = currentBoundToolRefs.filter((tool) => !tool.descriptor_present).map((tool) => `current Commander binding ${tool.tool_id} no longer has a descriptor`)
+    const blockers = [...tools.flatMap((tool) => tool.blockers), ...boundRefBlockers].slice(0, 24)
     const warnings = tools.flatMap((tool) => tool.warnings).slice(0, 16)
     const summary = {
       tools,
       binding_count: this.options.boundToolIds.length,
+      current_bound_tool_refs: currentBoundToolRefs,
       stored_subset_of_current_bindings: storedSubset,
       compatible: blockers.length === 0 && tools.every((tool) => tool.compatible),
       blockers,
@@ -175,6 +179,46 @@ export class CommanderInvestigationRecoveryService {
     }
     summary.compatibility_hash = stableHash({ ...summary, compatibility_hash: "" })
     return summary
+  }
+
+  private currentBoundToolRefs(phase: CommanderToolPhase): CommanderInvestigationRecoveryBoundToolAuthorityRef[] {
+    return [...this.options.boundToolIds].sort().map((toolId) => {
+      const current = this.options.descriptors.find((tool) => tool.tool_id === toolId)
+      if (!current) {
+        const missing = { tool_id: toolId, descriptor_present: false, binding_ref_hash: "" }
+        return { ...missing, binding_ref_hash: stableHash(missing) }
+      }
+      const ref = {
+        tool_id: current.tool_id,
+        descriptor_present: true,
+        descriptor_version: current.version,
+        authority_id: current.authority_id ?? "",
+        input_schema_hash: current.schema_metadata.input_schema_hash,
+        output_schema_hash: current.schema_metadata.output_schema_hash,
+        load_policy: current.load_policy,
+        trust_class: current.trust_class,
+        instruction_semantics: current.instruction_semantics,
+        namespace: current.namespace,
+        allowed_in_phase: isToolAllowedInPhase(current, phase),
+        availability: current.availability,
+        risk: current.risk,
+        side_effect_class: current.side_effect_class,
+        execution_backend: current.execution_backend,
+        process_policy: current.process_policy,
+        max_output_bytes: current.max_output_bytes,
+        timeout_ms: current.timeout_ms,
+        creates_external_process: current.creates_external_process,
+        calls_provider: current.calls_provider,
+        mutates_events: current.mutates_events,
+        requires_network: current.requires_network,
+        requires_credentials: current.requires_credentials,
+        requires_approval: current.requires_approval,
+        requires_run_lock: current.requires_run_lock,
+        description_hash: commanderProviderVisibleDescriptionHash(current),
+        binding_ref_hash: "",
+      }
+      return { ...ref, binding_ref_hash: stableHash(ref) }
+    })
   }
 
   private oneToolCompatibility(stored: CommanderInvestigationLoadedToolRef, phase: CommanderToolPhase): CommanderInvestigationRecoveryToolCompatibility {
@@ -1033,7 +1077,7 @@ function compactPacket(packet: CommanderInvestigationRecoveryPacket): CommanderI
 }
 
 function emptyToolCompatibility(): CommanderInvestigationRecoveryToolCompatibilitySummary {
-  const result = { tools: [], binding_count: 0, stored_subset_of_current_bindings: true, compatible: false, blockers: [], warnings: [], compatibility_hash: "" }
+  const result = { tools: [], binding_count: 0, current_bound_tool_refs: [], stored_subset_of_current_bindings: true, compatible: false, blockers: [], warnings: [], compatibility_hash: "" }
   result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })
   return result
 }

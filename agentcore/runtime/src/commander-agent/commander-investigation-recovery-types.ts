@@ -138,9 +138,40 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   compatibility_hash: string
 }
 
+export type CommanderInvestigationRecoveryBoundToolAuthorityRef = {
+  tool_id: string
+  descriptor_present: boolean
+  descriptor_version?: string
+  authority_id?: string
+  input_schema_hash?: string
+  output_schema_hash?: string
+  load_policy?: string
+  trust_class?: string
+  instruction_semantics?: string
+  namespace?: string
+  allowed_in_phase?: boolean
+  availability?: string
+  risk?: string
+  side_effect_class?: string
+  execution_backend?: string
+  process_policy?: string
+  max_output_bytes?: number
+  timeout_ms?: number
+  creates_external_process?: boolean
+  calls_provider?: boolean
+  mutates_events?: boolean
+  requires_network?: boolean
+  requires_credentials?: boolean
+  requires_approval?: boolean
+  requires_run_lock?: boolean
+  description_hash?: string
+  binding_ref_hash: string
+}
+
 export type CommanderInvestigationRecoveryToolCompatibilitySummary = {
   tools: CommanderInvestigationRecoveryToolCompatibility[]
   binding_count: number
+  current_bound_tool_refs: CommanderInvestigationRecoveryBoundToolAuthorityRef[]
   stored_subset_of_current_bindings: boolean
   compatible: boolean
   blockers: string[]
