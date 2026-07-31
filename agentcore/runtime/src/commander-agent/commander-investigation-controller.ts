@@ -1176,6 +1176,9 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (restoredWorkingSet.working_set_hash !== seed.working_set_hash || seed.working_set.working_set_hash !== seed.working_set_hash) return "recovery continuation working set hash did not verify"
   if (stableHash(seed.consumed) !== stableHash(seed.effective_budget.consumed)) return "recovery continuation consumed budget counters did not verify"
   const consumed = seed.effective_budget.consumed
+  if (seed.next_turn_index !== consumed.model_turns + 1) return "recovery continuation next turn index did not verify"
+  if (seed.provider_request_count_before !== consumed.provider_requests) return "recovery continuation provider request count did not verify"
+  if (seed.working_set.provider_audit.provider_request_count !== consumed.provider_requests) return "recovery continuation provider audit count did not verify"
   if (seed.recovery_kind === "checkpoint" && seed.working_set.model_turn_count !== consumed.model_turns) return "recovery continuation working set model-turn count did not verify"
   if (seed.working_set.tool_call_count !== consumed.tool_calls) return "recovery continuation working set tool-call count did not verify"
   if (seed.working_set.tool_search_call_count !== consumed.tool_search_calls) return "recovery continuation working set tool-search count did not verify"

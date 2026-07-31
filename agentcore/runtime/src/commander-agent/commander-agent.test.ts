@@ -7032,6 +7032,48 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedElapsed.blockers).toContain("recovery continuation elapsed active time did not verify")
     expect(tamperedElapsedAdapter.request_summaries).toHaveLength(0)
+    const tamperedNextTurnSeed = {
+      ...built.seed!,
+      next_turn_index: built.seed!.next_turn_index + 1,
+    }
+    tamperedNextTurnSeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedNextTurnSeed)
+    const tamperedNextTurnAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered next turn should not run" }])
+    const tamperedNextTurnController = new CommanderInvestigationController({
+      modelAdapter: tamperedNextTurnAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedNextTurn = await tamperedNextTurnController.runFromRecoverySeed(tamperedNextTurnSeed)
+    expect(tamperedNextTurn).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedNextTurn.blockers).toContain("recovery continuation next turn index did not verify")
+    expect(tamperedNextTurnAdapter.request_summaries).toHaveLength(0)
+    const tamperedProviderCountSeed = {
+      ...built.seed!,
+      provider_request_count_before: built.seed!.provider_request_count_before + 1,
+    }
+    tamperedProviderCountSeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedProviderCountSeed)
+    const tamperedProviderCountAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered provider count should not run" }])
+    const tamperedProviderCountController = new CommanderInvestigationController({
+      modelAdapter: tamperedProviderCountAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedProviderCount = await tamperedProviderCountController.runFromRecoverySeed(tamperedProviderCountSeed)
+    expect(tamperedProviderCount).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
+    expect(tamperedProviderCount.blockers).toContain("recovery continuation provider request count did not verify")
+    expect(tamperedProviderCountAdapter.request_summaries).toHaveLength(0)
     const legacyLoadedToolRefSeed = structuredClone(built.seed!)
     for (const ref of legacyLoadedToolRefSeed.loaded_tool_refs) {
       delete ref.input_schema_bytes
