@@ -289,6 +289,7 @@ export class CommanderInvestigationController {
       working_set_hash: seed.working_set_hash,
       turn_summary_hash: stableHash(seed.turn_summaries),
       replay_exchange_hash: seed.replay_exchange_hash,
+      replay_message_hash: seed.replay_message_hash,
       recovery_notice_hash: seed.recovery_notice_hash,
       next_turn_index: seed.next_turn_index,
       elapsed_active_ms_before: seed.elapsed_active_ms_before,
@@ -1190,6 +1191,13 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.working_set.consecutive_no_progress_turns !== consumed.consecutive_no_progress_turns) return "recovery continuation working set no-progress count did not verify"
   if (seed.working_set.evidence_cards.length + seed.working_set.omitted_evidence_count !== consumed.evidence_cards) return "recovery continuation working set evidence count did not verify"
   if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
+  const replayMessageHash = stableHash({ latest_assistant: seed.latest_assistant, latest_tool_results: seed.latest_tool_results })
+  if (seed.replay_message_hash !== replayMessageHash) return "recovery continuation replay message hash did not verify"
+  const replayToolCallCount = seed.latest_assistant?.content.filter((part) => part.type === "tool_call").length ?? 0
+  if (seed.replay_summary.tool_call_count !== replayToolCallCount || seed.replay_summary.tool_result_count !== seed.latest_tool_results.length) return "recovery continuation replay message counts did not verify"
+  if (!seed.replay_summary.replay_protocol_available && (replayToolCallCount > 0 || seed.latest_tool_results.length > 0)) return "recovery continuation replay messages are unavailable"
+  if (seed.replay_summary.replay_protocol_available && !seed.replay_exchange_hash) return "recovery continuation replay exchange reference is missing"
+  if (seed.replay_summary.replay_protocol_available && seed.replay_exchange_hash !== seed.replay_summary.replay_exchange_hash) return "recovery continuation replay exchange reference did not verify"
   if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || seed.loaded_tools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
   const loadedToolIntegrityError = validateRecoveryLoadedTools(seed.loaded_tools, seed.loaded_tool_refs, currentDescriptors)
   if (loadedToolIntegrityError) return loadedToolIntegrityError

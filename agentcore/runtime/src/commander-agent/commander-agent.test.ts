@@ -6876,6 +6876,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(before.execution_preparation_hash).toBe(before.execution_preparation?.execution_preparation_hash)
     expect(before.recovery_packet?.execution_preparation_hash).toBe(before.execution_preparation_hash)
     expect(before.recovery_packet?.first_model_request_preview_hash).toBe(before.execution_preparation?.first_model_request_preview_hash)
+    expect(before.warnings).toContain("recovery preparation warning: initial checkpoint has no prior assistant/tool replay exchange")
+    expect(before.recovery_packet?.warnings).toContain("recovery preparation warning: initial checkpoint has no prior assistant/tool replay exchange")
     expect(before.recovery_plan_hash).toBeString()
 
     await server.start()
@@ -7208,18 +7210,45 @@ describe("Commander in-memory investigation controller", () => {
     expect(requestDrift).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(requestDrift.blockers).toContain("first recovered model request no longer matches the approved preparation preview")
     expect(requestDriftAdapter.request_summaries).toHaveLength(0)
+    const tamperedReplaySeed = {
+      ...built.seed!,
+      latest_assistant: {
+        role: "assistant" as const,
+        content: [toolCall("fabricated_replay_call", "commander.tool_profile", { phase: "proposal_investigation" })],
+      },
+      latest_tool_results: [],
+      replay_message_hash: "",
+    }
+    tamperedReplaySeed.replay_message_hash = stableHash({ latest_assistant: tamperedReplaySeed.latest_assistant, latest_tool_results: tamperedReplaySeed.latest_tool_results })
+    tamperedReplaySeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedReplaySeed)
+    const tamperedReplayAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered replay should not run" }])
+    const tamperedReplayController = new CommanderInvestigationController({
+      modelAdapter: tamperedReplayAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedReplay = await tamperedReplayController.runFromRecoverySeed(tamperedReplaySeed)
+    expect(tamperedReplay).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedReplay.blockers).toContain("recovery continuation replay message counts did not verify")
+    expect(tamperedReplayAdapter.request_summaries).toHaveLength(0)
     let capturedRequest: CommanderModelStepRequest | undefined
-	    const controller = new CommanderInvestigationController({
-	      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "Recovered scripted final.", assert_request: (request) => { capturedRequest = request } }]),
-	      toolExecutor: executorFixture().executor,
-	      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
-	      descriptors: COMMANDER_TOOL_REGISTRY,
-	      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
-	      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
-	      contextService: new CommanderInvestigationContextService(),
-	      capabilityRegistry: registry,
-	      contextBudgetService: new ContextBudgetService({ registry }),
-	    })
+    const controller = new CommanderInvestigationController({
+      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "Recovered scripted final.", assert_request: (request) => { capturedRequest = request } }]),
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
     const recovered = await controller.runFromRecoverySeed(built.seed!)
     expect(recovered).toMatchObject({
       investigation_id: "inv_recovery_preparation_checkpoint",
@@ -9476,6 +9505,7 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     working_set_hash: seed.working_set_hash,
     turn_summary_hash: stableHash(seed.turn_summaries),
     replay_exchange_hash: seed.replay_exchange_hash,
+    replay_message_hash: seed.replay_message_hash,
     recovery_notice_hash: seed.recovery_notice_hash,
     next_turn_index: seed.next_turn_index,
     elapsed_active_ms_before: seed.elapsed_active_ms_before,

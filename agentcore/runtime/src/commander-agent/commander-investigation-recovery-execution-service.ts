@@ -77,6 +77,10 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     })
     if (context.blocked) blockers.push(...context.blockers)
     warnings.push(...context.warnings)
+    const replayMessageHash = stableHash({
+      latest_assistant: replay.latest_assistant,
+      latest_tool_results: replay.latest_tool_results,
+    })
     const requestPrefix = `${checkpoint.investigation_id}_recovery_${checkpoint.checkpoint_sequence}_${stableHash({
       basis: source.recovery_basis_hash,
       checkpoint: checkpoint.checkpoint_hash,
@@ -150,6 +154,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       working_set_hash: restored.workingSet!.working_set_hash,
       turn_summary_hash: stableHash(checkpoint.turn_summaries),
       replay_exchange_hash: replay.summary.replay_exchange_hash,
+      replay_message_hash: replayMessageHash,
       recovery_notice_hash: notice.notice_hash,
       next_turn_index: nextTurn,
       elapsed_active_ms_before: checkpoint.elapsed_active_ms,
@@ -188,6 +193,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       latest_tool_results: replay.latest_tool_results,
       replay_summary: replay.summary,
       replay_exchange_hash: replay.summary.replay_exchange_hash,
+      replay_message_hash: replayMessageHash,
       recovery_notice: notice,
       recovery_notice_hash: notice.notice_hash,
       next_turn_index: nextTurn,

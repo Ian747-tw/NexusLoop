@@ -670,7 +670,7 @@ export class CommanderInvestigationRecoveryService {
       recovery_packet: { packet_hash: "preparation_probe" },
       budget_compatibility: compat.budgetCompatibility,
     } as CommanderInvestigationRecoveryPreview, checkpoint })
-    warnings.push(...built.warnings)
+    warnings.push(...built.warnings.map((item) => `recovery preparation warning: ${item}`))
     if (!built.seed) {
       blockers.push(...built.blockers.map((item) => `recovery preparation blocked: ${item}`))
       return undefined

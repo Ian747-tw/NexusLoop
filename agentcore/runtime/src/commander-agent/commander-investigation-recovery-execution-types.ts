@@ -154,6 +154,7 @@ export type CommanderInvestigationRecoveryContinuationSeed = {
   latest_tool_results: CommanderModelToolResultMessage[]
   replay_summary: CommanderInvestigationRecoveryReplaySummary
   replay_exchange_hash?: string
+  replay_message_hash: string
   recovery_notice: CommanderInvestigationRecoveryNotice
   recovery_notice_hash: string
   next_turn_index: number
@@ -251,4 +252,3 @@ export type CommanderInvestigationRecoveryContinuationBuilderOptions = {
   contextService: import("./commander-investigation-context-service").CommanderInvestigationContextService
   modelOutputTokens(input: { provider_kind: string; model_id: string }): number | undefined
 }
-
