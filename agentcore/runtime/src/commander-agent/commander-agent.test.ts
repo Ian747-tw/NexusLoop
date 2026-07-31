@@ -6728,10 +6728,20 @@ describe("Commander in-memory investigation controller", () => {
       acknowledgements,
     })
     expect(first.status).toBe("recorded")
-    expect(secondPreview.status).toBe("blocked")
+    expect(secondPreview.status).toBe("ready")
     expect(secondPreview.existing_current_approval).toBeUndefined()
     expect(first.approval?.human_note_preview).toBe(sharedPrefix)
     expect(first.approval?.human_note_hash).not.toBe(stableHash(sharedPrefix))
+    const second = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: "inv_recovery_approval_note_hash",
+      recovery_plan_hash: preview.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      human_note: `${sharedPrefix}B`,
+      acknowledgements,
+    })
+    expect(second).toMatchObject({ status: "recorded", events_appended: true })
+    expect(second.approval?.approval_id).not.toBe(first.approval?.approval_id)
     const duplicateFirst = await server.recordCommanderInvestigationRecoveryApproval({
       investigation_id: "inv_recovery_approval_note_hash",
       recovery_plan_hash: preview.recovery_plan_hash!,
@@ -6742,7 +6752,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(duplicateFirst).toMatchObject({ status: "already_recorded", events_appended: false })
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string })
-    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(2)
     await server.shutdown("approval note hash test")
   })
 
@@ -7221,21 +7231,23 @@ describe("Commander in-memory investigation controller", () => {
       server.recordCommanderInvestigationRecoveryApproval({ ...baseApproval, human_note: "second approval note" }),
     ])
     const results = [first, second]
-    expect(results.filter((result) => result.status === "recorded")).toHaveLength(1)
-    expect(results.filter((result) => result.events_appended)).toHaveLength(1)
-    expect(results.filter((result) => result.status === "blocked" || result.status === "already_recorded")).toHaveLength(1)
+    expect(results.filter((result) => result.status === "recorded")).toHaveLength(2)
+    expect(results.filter((result) => result.events_appended)).toHaveLength(2)
+    expect(new Set(results.map((result) => result.approval?.approval_id)).size).toBe(2)
     const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_concurrent")
     expect(record).toMatchObject({
       projection_status: "ready",
-      recovery_approval_count: 1,
+      recovery_approval_count: 2,
       recovery_approval_recorded: true,
       recovery_approval_consumed: false,
     })
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string; journal_sequence?: number; approval?: { approval_sequence?: number } })
     const approvals = events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")
-    expect(approvals).toHaveLength(1)
+    expect(approvals).toHaveLength(2)
     expect(approvals[0]?.journal_sequence).toBe(1)
     expect(approvals[0]?.approval?.approval_sequence).toBe(0)
+    expect(approvals[1]?.journal_sequence).toBe(2)
+    expect(approvals[1]?.approval?.approval_sequence).toBe(1)
     await server.shutdown("concurrent approval test")
   })
 

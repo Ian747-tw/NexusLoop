@@ -254,6 +254,7 @@ function validateApprovalInput(input: CommanderInvestigationRecoveryApprovalInpu
 
 function approvalPreviewBlockers(input: NormalizedRecoveryApprovalInput, recovery: CommanderInvestigationRecoveryPreview): string[] {
   const blockers: string[] = []
+  const approvedWaitingForExecution = recovery.status === "approved_waiting_for_execution"
   if (!recovery.recovery_plan_hash || recovery.recovery_plan_hash !== input.recovery_plan_hash) blockers.push("supplied recovery_plan_hash does not match the current recovery preview")
   if (recovery.continuity_compatibility.current_bootstrap_ready !== true) blockers.push("current continuity assessment must be ready before approval")
   if (recovery.human_control.action !== "continue") blockers.push("current human controls prevent recovery approval")
@@ -263,13 +264,13 @@ function approvalPreviewBlockers(input: NormalizedRecoveryApprovalInput, recover
     if (recovery.status !== "ready_for_approval" && recovery.status !== "approved_waiting_for_execution") blockers.push("checkpoint approval requires a recovery preview ready for approval")
     if (recovery.recovery_kind !== "checkpoint") blockers.push("checkpoint approval requires checkpoint recovery kind")
     if (recovery.pending_model_step) blockers.push("checkpoint approval cannot target a pending model-step boundary")
-    if (recovery.recommended_action !== "approve_resume_from_checkpoint") blockers.push("checkpoint approval requires approve_resume_from_checkpoint recommendation")
+    if (!approvedWaitingForExecution && recovery.recommended_action !== "approve_resume_from_checkpoint") blockers.push("checkpoint approval requires approve_resume_from_checkpoint recommendation")
   }
   if (input.decision === "approve_continue_after_uncertain_provider_outcome") {
     if (recovery.status !== "human_review_required" && recovery.status !== "approved_waiting_for_execution") blockers.push("uncertain-provider approval requires human-review recovery preview")
     if (recovery.recovery_kind !== "uncertain_provider_outcome") blockers.push("uncertain-provider approval requires pending-provider recovery kind")
     if (!recovery.pending_model_step) blockers.push("uncertain-provider approval requires a pending model-step boundary")
-    if (recovery.recommended_action !== "review_uncertain_provider_outcome") blockers.push("uncertain-provider approval requires uncertainty-review recommendation")
+    if (!approvedWaitingForExecution && recovery.recommended_action !== "review_uncertain_provider_outcome") blockers.push("uncertain-provider approval requires uncertainty-review recommendation")
     if (input.acknowledgements?.uncertain_provider_outcome !== true) blockers.push("uncertain-provider approval requires uncertainty acknowledgement")
   }
   return blockers.slice(0, 24)
