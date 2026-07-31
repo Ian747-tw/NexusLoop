@@ -7355,7 +7355,35 @@ describe("Commander in-memory investigation controller", () => {
       approval_hash: "",
     }
     mismatchedApproval.approval_hash = stableHash({ ...mismatchedApproval, approved_at: "", approval_hash: "" })
-    await expect(journal.recordRecoveryApproval({ expected_basis: source!.recovery_basis!, approval: mismatchedApproval as any })).rejects.toThrow("decision/recovery-kind mismatch")
+    await expect(journal.recordRecoveryApproval({ expected_basis: source!.recovery_basis!, approval: mismatchedApproval as any })).rejects.toThrow("replay schema")
+    const directApproval = {
+      ...approval,
+      recovery_kind: "checkpoint",
+      decision: "approve_resume_from_checkpoint",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+      recovery_basis_hash: source!.recovery_basis!.basis_hash,
+      recovery_plan_hash: source!.recovery_basis!.basis_hash,
+      approval_hash: "",
+    }
+    directApproval.approval_hash = stableHash({ ...directApproval, approved_at: "", approval_hash: "" })
+    const extraPropertyApproval = { ...directApproval, unexpected_authority: "must block", approval_hash: "" }
+    extraPropertyApproval.approval_hash = stableHash({ ...extraPropertyApproval, approved_at: "", approval_hash: "" })
+    await expect(journal.recordRecoveryApproval({ expected_basis: source!.recovery_basis!, approval: extraPropertyApproval as any })).rejects.toThrow("replay schema")
+    const malformedCheckpointApproval = {
+      ...directApproval,
+      checkpoint_ref: {
+        ...directApproval.checkpoint_ref,
+        unexpected_checkpoint_field: "must block",
+      },
+      approval_hash: "",
+    }
+    malformedCheckpointApproval.approval_hash = stableHash({ ...malformedCheckpointApproval, approved_at: "", approval_hash: "" })
+    await expect(journal.recordRecoveryApproval({ expected_basis: source!.recovery_basis!, approval: malformedCheckpointApproval as any })).rejects.toThrow("replay schema")
     const events = (await readFile(eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(0)
     const record = await journal.get("inv_recovery_approval_active")

@@ -868,14 +868,14 @@ function isRecoveryApprovedPayload(value: unknown): value is CommanderInvestigat
   if (containsConcreteCredentialPayload(value.requested_by)) return false
   if (!isCanonicalIsoTimestamp(value.occurred_at)) return false
   if (!hasString(value, "event_payload_hash") || !boundedJournalString(value.event_payload_hash, 240)) return false
-  if (!isApprovalRecord(value.approval)) return false
+  if (!isCommanderInvestigationRecoveryApprovalRecord(value.approval)) return false
   if (value.investigation_id !== value.approval.investigation_id) return false
   if (value.requested_by !== value.approval.approved_by) return false
   if (value.occurred_at !== value.approval.approved_at) return false
   return true
 }
 
-function isApprovalRecord(value: unknown): value is CommanderInvestigationRecoveryApprovalRecord {
+export function isCommanderInvestigationRecoveryApprovalRecord(value: unknown): value is CommanderInvestigationRecoveryApprovalRecord {
   if (!isRecord(value)) return false
   const allowedKeys = new Set([
     "schema_version",

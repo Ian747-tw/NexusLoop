@@ -39,7 +39,7 @@ import type {
   CommanderInvestigationRecoveryApprovalSummary,
   CommanderInvestigationRecoveryApprovedPayload,
 } from "./commander-investigation-recovery-approval-types"
-import { projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
+import { isCommanderInvestigationRecoveryApprovalRecord, projectCommanderInvestigationJournal } from "./commander-investigation-journal-projection"
 
 const CHECKPOINT_DEFAULT_CAP = 64_000
 const CHECKPOINT_HARD_CAP = 96_000
@@ -1156,6 +1156,7 @@ function finalizeApprovalHash(approval: CommanderInvestigationRecoveryApprovalRe
 }
 
 function assertPersistableRecoveryApproval(approval: CommanderInvestigationRecoveryApprovalRecord): void {
+  if (!isCommanderInvestigationRecoveryApprovalRecord(approval)) throw new CommanderInvestigationPersistenceError("recovery approval record failed replay schema validation")
   if (!approval || typeof approval !== "object") throw new CommanderInvestigationPersistenceError("recovery approval record is malformed")
   if (approval.approval_source !== "human" || approval.one_shot !== true || approval.automatic !== false || approval.fresh_context_required !== true || approval.exact_replay_supported !== false || approval.provider_request_replay_allowed !== false || approval.tool_execution_replay_allowed !== false || approval.execution_supported_in_this_branch !== false) {
     throw new CommanderInvestigationPersistenceError("recovery approval record failed no-replay schema validation")
