@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -2286,6 +2287,34 @@ describe("Commander in-memory investigation controller", () => {
     expect(first).toMatchObject({ status: "final", final_summary: "same final" })
     expect(second).toMatchObject({ status: "final", final_summary: "same final" })
     expect(first.result_hash).not.toBe(second.result_hash)
+  })
+
+  test("bootstrap hash is computed from the final redacted representation", async () => {
+    const service = new CommanderInvestigationBootstrapService({
+      continuityService: {
+        proposal: async () => ({
+          packet_id: "packet_redacted_bootstrap",
+          packet_hash: "packet_hash_redacted_bootstrap",
+          readiness: "ready",
+          project_direction_summary: "Investigate continuity value sk-bootstrapredaction12345",
+          recent_execution_summary: "Recent bearer token Bearer bootstrapredaction12345",
+          open_loops: [],
+          source_refs: [],
+          blockers: [],
+          warnings: [],
+        }),
+        midMission: async () => { throw new Error("unused") },
+        summary: async () => ({ total_recent_sessions: 0, active_session_count: 0, open_loop_count: 0, pending_question_count: 0, pending_guidance_delivery_count: 0, human_attention_count: 0 }),
+        openLoops: async () => [],
+      } as any,
+    })
+    const bootstrap = await service.compile(baseInvestigation({ phase: "proposal_investigation", objective: "redacted bootstrap hash" }))
+    const serialized = JSON.stringify(bootstrap)
+    expect(serialized).not.toContain("sk-bootstrapredaction12345")
+    expect(serialized).not.toContain("bootstrapredaction12345")
+    expect(serialized).toContain("[REDACTED]")
+    const expectedHash = createHash("sha256").update(JSON.stringify({ ...bootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })).digest("hex")
+    expect(bootstrap.bootstrap_hash).toBe(expectedHash)
   })
 
   test("injected connector-backed adapters count optional external API audits truthfully", async () => {
