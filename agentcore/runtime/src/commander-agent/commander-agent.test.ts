@@ -3693,10 +3693,10 @@ describe("Commander in-memory investigation controller", () => {
         role: "assistant",
         content: [
           {
-            type: "tool_call",
-            tool_call_id: "call_replay_rehash",
-            tool_id: "memory.search",
-            arguments: { query: "replay rehash" },
+	            type: "tool_call",
+	            tool_call_id: "call_replay_rehash",
+	            tool_id: "memory.search",
+	            arguments: { query: "replay rehash sk-redactiontest12345" },
             arguments_valid: true,
             validation_errors: [],
             call_hash: "call_hash_replay_rehash",
@@ -3745,8 +3745,9 @@ describe("Commander in-memory investigation controller", () => {
     service.release(run)
     const checkpoint = await service.latestCheckpoint("inv_replay_rehash")
     const replay = checkpoint?.replay_exchange
-    expect(replay).toBeDefined()
-    expect(replay!.tool_result_messages[0].content).toContain("omitted_for_checkpoint_budget")
+	    expect(replay).toBeDefined()
+	    expect(JSON.stringify(replay)).not.toContain("sk-redactiontest12345")
+	    expect(replay!.tool_result_messages[0].content).toContain("omitted_for_checkpoint_budget")
     expect(replay!.tool_result_messages[0].content_hash).toBe(stableHash(replay!.tool_result_messages[0].content))
     expect(replay!.exchange_hash).toBe(stableHash({ ...replay!, exchange_hash: "" }))
     expect(Buffer.byteLength(JSON.stringify((await service.get("inv_replay_rehash"))))).toBeGreaterThan(0)

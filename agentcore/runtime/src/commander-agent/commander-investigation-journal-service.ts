@@ -675,7 +675,7 @@ export class CommanderInvestigationJournalService {
       finalized.checkpoint_hash = stableHash({ ...finalized, checkpoint_hash: "" })
       return finalized
     }
-    checkpoint = withWorkingSetHash(redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint)
+    checkpoint = withCheckpointNestedHashes(redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint)
     checkpoint = finalize(checkpoint)
     if (measureBytes(checkpoint) > this.checkpointPayloadCapBytes) throw new CommanderInvestigationPersistenceError("Commander investigation checkpoint exceeds durable event byte cap")
     return checkpoint
@@ -1044,6 +1044,17 @@ function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: nu
 
 function withWorkingSetHash(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
   return { ...checkpoint, working_set: durableCommanderInvestigationWorkingSet(checkpoint.working_set as unknown as CommanderInvestigationWorkingSet) }
+}
+
+function withReplayExchangeHash(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  if (!checkpoint.replay_exchange) return checkpoint
+  const replay_exchange = { ...checkpoint.replay_exchange, exchange_hash: "" }
+  replay_exchange.exchange_hash = stableHash(replay_exchange)
+  return { ...checkpoint, replay_exchange }
+}
+
+function withCheckpointNestedHashes(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  return withWorkingSetHash(withReplayExchangeHash(checkpoint))
 }
 
 function compactReplayExchangeForCheckpointBudget(exchange: NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]>): NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]> {
