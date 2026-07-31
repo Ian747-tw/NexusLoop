@@ -4,7 +4,7 @@ import { COMMANDER_TOOL_PHASES, COMMANDER_TOOL_REGISTRY } from "../commander-too
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
 import type { CommanderEvidenceCard } from "../commander-tools/commander-read-types"
 import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-tools/commander-tool-types"
-import { commanderToolSchemaFromDescriptor, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
+import { commanderProviderVisibleDescriptionHash, commanderToolSchemaFromDescriptor, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelToolCallPart, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
 import type { CommanderConnectorModelTransportMetadata } from "./commander-connector-transport-types"
 import { toCommanderToolResultMessage } from "./commander-tool-executor"
@@ -22,6 +22,7 @@ import {
   type CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
 import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderPreflightSnapshot } from "./commander-investigation-provider-types"
+import type { CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
 import { CommanderInvestigationJournalConflictError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoveryContinuationSeed, CommanderInvestigationRecoveryFirstModelRequestPreview } from "./commander-investigation-recovery-execution-types"
 import { durableCommanderInvestigationWorkingSet, stableCommanderInvestigationProviderAudit, stableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
@@ -1183,6 +1184,8 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.working_set.evidence_cards.length + seed.working_set.omitted_evidence_count !== consumed.evidence_cards) return "recovery continuation working set evidence count did not verify"
   if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
   if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || seed.loaded_tools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
+  const loadedToolIntegrityError = validateRecoveryLoadedTools(seed.loaded_tools, seed.loaded_tool_refs)
+  if (loadedToolIntegrityError) return loadedToolIntegrityError
   if (seed.elapsed_active_ms_before !== seed.effective_budget.consumed.elapsed_active_ms) return "recovery continuation elapsed active time did not verify"
   const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_hash: "" })
   if (seed.effective_budget.effective_budget.budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget hash did not verify"
@@ -1191,6 +1194,46 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.effective_budget.budget_hash !== continuationBudgetHash) return "recovery continuation budget hash did not verify"
   const requestPreviewHash = stableHash({ ...seed.first_model_request_preview, request_preview_hash: "" })
   if (seed.first_model_request_preview.request_preview_hash !== requestPreviewHash) return "recovery first model request preview hash did not verify"
+  return undefined
+}
+
+function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], refs: CommanderInvestigationLoadedToolRef[]): string | undefined {
+  const toolsById = new Map(loadedTools.map((tool) => [tool.tool_id, tool]))
+  const seen = new Set<string>()
+  for (const ref of refs) {
+    if (seen.has(ref.tool_id)) return "recovery continuation loaded tool references are not unique"
+    seen.add(ref.tool_id)
+    const tool = toolsById.get(ref.tool_id)
+    if (!tool) return "recovery continuation loaded tool descriptor did not verify"
+    if (
+      ref.namespace !== tool.namespace ||
+      ref.descriptor_version !== tool.version ||
+      ref.authority_id !== (tool.authority_id ?? "") ||
+      ref.description_hash !== commanderProviderVisibleDescriptionHash(tool) ||
+      ref.input_schema_hash !== tool.schema_metadata.input_schema_hash ||
+      ref.output_schema_hash !== tool.schema_metadata.output_schema_hash ||
+      ref.input_schema_bytes !== tool.schema_metadata.input_schema_bytes ||
+      ref.output_schema_bytes !== tool.schema_metadata.output_schema_bytes ||
+      ref.estimated_schema_tokens !== tool.schema_metadata.estimated_schema_tokens ||
+      ref.load_policy !== tool.load_policy ||
+      ref.trust_class !== tool.trust_class ||
+      ref.instruction_semantics !== tool.instruction_semantics ||
+      ref.max_output_bytes !== tool.max_output_bytes ||
+      ref.timeout_ms !== tool.timeout_ms ||
+      ref.risk !== tool.risk ||
+      ref.side_effect_class !== tool.side_effect_class ||
+      ref.execution_backend !== tool.execution_backend ||
+      ref.process_policy !== tool.process_policy ||
+      ref.creates_external_process !== tool.creates_external_process ||
+      ref.calls_provider !== tool.calls_provider ||
+      ref.mutates_events !== tool.mutates_events ||
+      ref.requires_network !== tool.requires_network ||
+      ref.requires_credentials !== tool.requires_credentials ||
+      ref.requires_approval !== tool.requires_approval ||
+      ref.requires_run_lock !== tool.requires_run_lock
+    ) return "recovery continuation loaded tool descriptor did not verify"
+  }
+  if (seen.size !== loadedTools.length) return "recovery continuation loaded tool descriptor did not verify"
   return undefined
 }
 

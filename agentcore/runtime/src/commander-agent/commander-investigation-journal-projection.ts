@@ -1336,6 +1336,9 @@ function isLoadedToolRef(value: unknown): boolean {
     (!("description_hash" in value) || hasString(value, "description_hash")) &&
     hasString(value, "input_schema_hash") &&
     hasString(value, "output_schema_hash") &&
+    (!("input_schema_bytes" in value) || hasNumber(value, "input_schema_bytes")) &&
+    (!("output_schema_bytes" in value) || hasNumber(value, "output_schema_bytes")) &&
+    (!("estimated_schema_tokens" in value) || hasNumber(value, "estimated_schema_tokens")) &&
     hasString(value, "load_policy") &&
     hasString(value, "trust_class") &&
     (!("max_output_bytes" in value) || hasNumber(value, "max_output_bytes")) &&

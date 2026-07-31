@@ -7032,6 +7032,24 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedElapsed.blockers).toContain("recovery continuation elapsed active time did not verify")
     expect(tamperedElapsedAdapter.request_summaries).toHaveLength(0)
+    const tamperedLoadedToolSeed = structuredClone(built.seed!)
+    tamperedLoadedToolSeed.loaded_tools[0].schema_metadata.input_schema_bytes = Math.max(0, tamperedLoadedToolSeed.loaded_tools[0].schema_metadata.input_schema_bytes - 1)
+    const tamperedLoadedToolAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered loaded tool should not run" }])
+    const tamperedLoadedToolController = new CommanderInvestigationController({
+      modelAdapter: tamperedLoadedToolAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedLoadedTool = await tamperedLoadedToolController.runFromRecoverySeed(tamperedLoadedToolSeed)
+    expect(tamperedLoadedTool).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedLoadedTool.blockers).toContain("recovery continuation loaded tool descriptor did not verify")
+    expect(tamperedLoadedToolAdapter.request_summaries).toHaveLength(0)
     const tamperedWorkingSetSeed = {
       ...built.seed!,
       working_set: {
