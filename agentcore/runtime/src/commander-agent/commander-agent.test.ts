@@ -6767,6 +6767,23 @@ describe("Commander in-memory investigation controller", () => {
 	    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
 	    snapshot.loaded_tools = [toolProfile!]
 	    snapshot.working_set.loaded_tool_ids = ["commander.tool_profile"]
+	    snapshot.working_set.evidence_cards = [{
+	      ...evidenceCard("evidence_recovery_repo_pointer"),
+	      tool_id: "repo.read_lines",
+	      source_kind: "repository_file",
+	      source_id: "src/recovery-raw.ts:1",
+	      title: "Recovery repository evidence",
+	      summary_preview: "const SHOULD_NOT_REAPPEAR_IN_RECOVERY = true;",
+	      source_refs: [{
+	        source_kind: "repository_file",
+	        source_id: "src/recovery-raw.ts",
+	        label: "src/recovery-raw.ts",
+	        summary_preview: "const SHOULD_NOT_REAPPEAR_IN_RECOVERY = true;",
+	        pointer_only: true,
+	      }],
+	      content_included: true,
+	      evidence_hash: "hash_recovery_repo_pointer",
+	    }]
 	    snapshot.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(snapshot.working_set as CommanderInvestigationWorkingSet))
 	    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
     journal.release(run)
@@ -6852,6 +6869,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(preparation)).not.toContain("real-provider-key")
 
     const source = await server.getCommanderInvestigationRecoverySource("inv_recovery_preparation_checkpoint")
+    expect(source?.latest_checkpoint?.working_set.evidence_cards[0]?.summary_preview).not.toContain("SHOULD_NOT_REAPPEAR_IN_RECOVERY")
     const builder = new CommanderInvestigationRecoveryContinuationBuilder({
       descriptors: COMMANDER_TOOL_REGISTRY,
       currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
@@ -6864,9 +6882,52 @@ describe("Commander in-memory investigation controller", () => {
     expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(before.budget_compatibility.current_policy_limits.max_tool_calls)
     expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
     expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
-    let capturedRequest: CommanderModelStepRequest | undefined
     const runtimeCapability = commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))
     const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [runtimeCapability] })
+    const tamperedBudgetAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered budget should not run" }])
+    const tamperedBudgetController = new CommanderInvestigationController({
+      modelAdapter: tamperedBudgetAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedBudgetSeed = {
+      ...built.seed!,
+      effective_budget: {
+        ...built.seed!.effective_budget,
+        effective_budget: {
+          ...built.seed!.effective_budget.effective_budget,
+          max_model_turns: built.seed!.effective_budget.effective_budget.max_model_turns + 1,
+        },
+      },
+    }
+    const tamperedBudget = await tamperedBudgetController.runFromRecoverySeed(tamperedBudgetSeed)
+    expect(tamperedBudget).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedBudget.blockers).toContain("recovery continuation effective budget hash did not verify")
+    expect(tamperedBudgetAdapter.request_summaries).toHaveLength(0)
+    const driftedCapabilityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [{ ...runtimeCapability, max_output_tokens: 256 }] })
+    const requestDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "request drift should not run" }])
+    const requestDriftController = new CommanderInvestigationController({
+      modelAdapter: requestDriftAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: driftedCapabilityRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: driftedCapabilityRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: driftedCapabilityRegistry }),
+    })
+    const requestDrift = await requestDriftController.runFromRecoverySeed(built.seed!)
+    expect(requestDrift).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(requestDrift.blockers).toContain("first recovered model request no longer matches the approved preparation preview")
+    expect(requestDriftAdapter.request_summaries).toHaveLength(0)
+    let capturedRequest: CommanderModelStepRequest | undefined
 	    const controller = new CommanderInvestigationController({
 	      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "Recovered scripted final.", assert_request: (request) => { capturedRequest = request } }]),
 	      toolExecutor: executorFixture().executor,

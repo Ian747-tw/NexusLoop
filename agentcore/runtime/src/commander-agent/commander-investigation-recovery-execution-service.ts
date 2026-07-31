@@ -13,7 +13,7 @@ import type {
 import type { CommanderInvestigationRecoveryPreview } from "./commander-investigation-recovery-types"
 import { buildCommanderInvestigationRecoveryNotice } from "./commander-investigation-recovery-notice"
 import { reconstructCommanderRecoveryReplayExchange } from "./commander-investigation-recovery-replay"
-import { stableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
+import { durableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
 
 export class CommanderInvestigationRecoveryContinuationBuilder {
   constructor(private readonly options: CommanderInvestigationRecoveryContinuationBuilderOptions) {}
@@ -57,7 +57,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       continuity_drift_detected: currentBootstrap.bootstrap_hash !== checkpoint.bootstrap_ref.bootstrap_hash,
       next_turn_index: nextTurn,
     })
-    const budgetForContext = { ...checkpoint.budget, max_model_turns: Math.max(nextTurn, checkpoint.budget.max_model_turns) }
+    const budgetForContext = { ...budget.effective_budget, max_model_turns: Math.max(nextTurn, budget.effective_budget.max_model_turns) }
     const context = this.options.contextService.build({
       bootstrap: currentBootstrap,
       workingSet: restored.workingSet!,
@@ -238,32 +238,10 @@ export class CommanderInvestigationRecoveryExecutionService {
 }
 
 export function restoreCommanderInvestigationWorkingSet(checkpoint: CommanderInvestigationCheckpoint): { workingSet?: CommanderInvestigationWorkingSet; blocker?: string } {
-  const ws = checkpoint.working_set
-  const workingSet: CommanderInvestigationWorkingSet = {
-    objective_preview: bound(ws.objective_preview, 1000),
-    phase: checkpoint.phase,
-    loaded_tool_ids: ws.loaded_tool_ids.map((item) => bound(item, 160)).sort(),
-    evidence_cards: ws.evidence_cards.map((item) => redactValue(item)).slice(0, checkpoint.budget.max_evidence_cards) as CommanderInvestigationWorkingSet["evidence_cards"],
-    recent_execution_digests: ws.recent_execution_digests.map((item) => redactValue(item)).slice(-checkpoint.budget.max_turn_summaries) as CommanderInvestigationWorkingSet["recent_execution_digests"],
-    recent_load_outcomes: ws.recent_load_outcomes.map((item) => bound(item, 240)).slice(-16),
-    current_blockers: ws.current_blockers.map((item) => bound(item, 300)).slice(-16),
-    current_warnings: ws.current_warnings.map((item) => bound(item, 300)).slice(-24),
-    provider_audit: redactValue(ws.provider_audit) as CommanderInvestigationWorkingSet["provider_audit"],
-    omitted_evidence_count: ws.omitted_evidence_count,
-    omitted_digest_count: ws.omitted_digest_count,
-    omitted_turn_count: ws.omitted_turn_count,
-    consecutive_no_progress_turns: ws.consecutive_no_progress_turns,
-    cumulative_tool_result_bytes: ws.cumulative_tool_result_bytes,
-    model_turn_count: ws.model_turn_count,
-    tool_call_count: ws.tool_call_count,
-    tool_search_call_count: ws.tool_search_call_count,
-    recent_result_signatures: ws.recent_result_signatures.slice(-64).map((item) => ({ signature_hash: item.signature_hash, count: item.count, last_turn_index: item.last_turn_index })),
-	    working_set_hash: "",
-	  }
+  const workingSet = durableCommanderInvestigationWorkingSet(checkpoint.working_set as unknown as CommanderInvestigationWorkingSet)
   const checkpointToolIds = checkpoint.loaded_tools.map((tool) => tool.tool_id).sort()
   if (JSON.stringify(workingSet.loaded_tool_ids) !== JSON.stringify(checkpointToolIds)) return { blocker: "checkpoint loaded tool references do not match working-set loaded_tool_ids" }
-	  workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
-	  if (workingSet.working_set_hash !== checkpoint.working_set.working_set_hash) return { blocker: "checkpoint working-set hash could not be revalidated" }
+  if (workingSet.working_set_hash !== checkpoint.working_set.working_set_hash) return { blocker: "checkpoint durable working-set hash could not be revalidated" }
   return { workingSet }
 }
 
