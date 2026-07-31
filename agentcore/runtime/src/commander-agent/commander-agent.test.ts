@@ -6742,6 +6742,16 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(second).toMatchObject({ status: "recorded", events_appended: true })
     expect(second.approval?.approval_id).not.toBe(first.approval?.approval_id)
+    const afterSecond = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_note_hash" })
+    expect(afterSecond).toMatchObject({
+      status: "approved_waiting_for_execution",
+      approval_state: "current",
+      stale_approval_count: 0,
+      current_approval: {
+        approval_id: second.approval?.approval_id,
+        approved_by: "human_operator",
+      },
+    })
     const duplicateFirst = await server.recordCommanderInvestigationRecoveryApproval({
       investigation_id: "inv_recovery_approval_note_hash",
       recovery_plan_hash: preview.recovery_plan_hash!,
@@ -6882,7 +6892,36 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(urlBlocked).toMatchObject({ status: "blocked", events_appended: false })
     expect(urlBlocked.blockers.join("\n")).toContain("approved_by must not contain URLs or credential payloads")
-    for (const human_note of ["api_key=sk-realCredentialPayload123", "Bearer realCredentialPayload123", "secret: realCredentialPayload123"]) {
+    const tokenApproverBlocked = await server.previewCommanderInvestigationRecoveryApproval({
+      investigation_id: "inv_context_token_budget",
+      recovery_plan_hash: tokenBudgetPreview.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "token=realCredentialPayload123",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(tokenApproverBlocked).toMatchObject({ status: "blocked", events_appended: false })
+    expect(tokenApproverBlocked.blockers.join("\n")).toContain("approved_by must not contain URLs or credential payloads")
+    const unknownAcknowledgementBlocked = await server.previewCommanderInvestigationRecoveryApproval({
+      investigation_id: "inv_context_token_budget",
+      recovery_plan_hash: tokenBudgetPreview.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+        provider_request_replay_allowed: true,
+      } as any,
+    })
+    expect(unknownAcknowledgementBlocked).toMatchObject({ status: "blocked", events_appended: false })
+    expect(unknownAcknowledgementBlocked.blockers.join("\n")).toContain("unknown recovery approval acknowledgement key provider_request_replay_allowed")
+    for (const human_note of ["api_key=sk-realCredentialPayload123", "Bearer realCredentialPayload123", "secret: realCredentialPayload123", "access_token=realCredentialPayload123"]) {
       const blocked = await server.previewCommanderInvestigationRecoveryApproval({
         investigation_id: "inv_context_token_budget",
         recovery_plan_hash: tokenBudgetPreview.recovery_plan_hash!,
@@ -7117,6 +7156,31 @@ describe("Commander in-memory investigation controller", () => {
     const credentialJournal = new CommanderInvestigationJournalService({ eventStore: credentialStore })
     const credentialRecord = await credentialJournal.get("inv_recovery_approval_timestamp")
     expect(credentialRecord).toMatchObject({
+      projection_status: "corrupt",
+      recovery_approval_recorded: false,
+      latest_recovery_approval_id: undefined,
+    })
+
+    const tokenAssignmentApproverEvent = {
+      ...events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")!,
+      requested_by: "access_token=replayCredentialPayload123",
+      approval: {
+        ...events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")!.approval,
+        approved_by: "access_token=replayCredentialPayload123",
+      },
+      event_payload_hash: "",
+    }
+    tokenAssignmentApproverEvent.approval.approval_hash = stableHash({ ...tokenAssignmentApproverEvent.approval, approved_at: "", approval_hash: "" })
+    tokenAssignmentApproverEvent.event_payload_hash = journalPayloadHash(tokenAssignmentApproverEvent)
+    const tokenAssignmentDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-token-assignment-"))
+    const tokenAssignmentStore = new EventStore(join(tokenAssignmentDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((candidate) => candidate.kind !== "runtime_commander_investigation_recovery_approved")) {
+      await tokenAssignmentStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+    await tokenAssignmentStore.append(tokenAssignmentApproverEvent as Parameters<EventStore["append"]>[0])
+    const tokenAssignmentJournal = new CommanderInvestigationJournalService({ eventStore: tokenAssignmentStore })
+    const tokenAssignmentRecord = await tokenAssignmentJournal.get("inv_recovery_approval_timestamp")
+    expect(tokenAssignmentRecord).toMatchObject({
       projection_status: "corrupt",
       recovery_approval_recorded: false,
       latest_recovery_approval_id: undefined,

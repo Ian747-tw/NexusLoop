@@ -899,11 +899,13 @@ function currentApprovalFor(
 ): { current?: NonNullable<CommanderInvestigationRecoverySource["latest_recovery_approval"]>; staleCount: number } {
   const approvals = source.recovery_approvals ?? []
   if (!planHash || !packetHash || !source.recovery_basis_hash || recoveryKind === "none" || !checkpoint || !compat) return { staleCount: approvals.length }
-  const current = approvals.find((approval) => {
+  let current: NonNullable<CommanderInvestigationRecoverySource["latest_recovery_approval"]> | undefined
+  let staleCount = 0
+  for (const approval of approvals) {
     const decisionMatches = recoveryKind === "checkpoint"
       ? approval.decision === "approve_resume_from_checkpoint"
       : approval.decision === "approve_continue_after_uncertain_provider_outcome"
-    return decisionMatches &&
+    const matches = decisionMatches &&
       approval.recovery_basis_hash === source.recovery_basis_hash &&
       approval.recovery_plan_hash === planHash &&
       approval.recovery_packet_hash === packetHash &&
@@ -918,8 +920,13 @@ function currentApprovalFor(
       approval.context_compatibility_hash === compat.contextCompatibility.compatibility_hash &&
       approval.continuity_compatibility_hash === compat.continuityCompatibility.compatibility_hash &&
       approval.human_control_compatibility_hash === compat.humanControl.compatibility_hash
-  })
-  return { current, staleCount: approvals.length - (current ? 1 : 0) }
+    if (matches) {
+      current = approval
+    } else {
+      staleCount += 1
+    }
+  }
+  return { current, staleCount }
 }
 
 function finalizeHumanControl(input: Omit<CommanderInvestigationRecoveryHumanControl, "compatibility_hash">): CommanderInvestigationRecoveryHumanControl {

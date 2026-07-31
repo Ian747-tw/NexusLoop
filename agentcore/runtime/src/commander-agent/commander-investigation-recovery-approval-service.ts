@@ -22,6 +22,14 @@ type NormalizedRecoveryApprovalInput = Readonly<{
   acknowledgements: Readonly<CommanderInvestigationRecoveryApprovalAcknowledgements>
 }>
 
+const APPROVAL_ACKNOWLEDGEMENT_KEYS = new Set([
+  "fresh_context_required",
+  "exact_replay_unavailable",
+  "provider_request_replay_forbidden",
+  "tool_execution_replay_forbidden",
+  "uncertain_provider_outcome",
+])
+
 export class CommanderInvestigationRecoveryApprovalService {
   private readonly now: () => Date
 
@@ -232,6 +240,8 @@ function validateApprovalInput(input: CommanderInvestigationRecoveryApprovalInpu
   const decision = record.decision === "approve_resume_from_checkpoint" || record.decision === "approve_continue_after_uncertain_provider_outcome"
     ? record.decision
     : "approve_resume_from_checkpoint"
+  const acknowledgementKeyBlockers = validateAcknowledgementKeys(record.acknowledgements)
+  blockers.push(...acknowledgementKeyBlockers)
   const acknowledgements = normalizeAcknowledgements(record.acknowledgements)
   const normalized: NormalizedRecoveryApprovalInput = Object.freeze({
     investigation_id: typeof record.investigation_id === "string" ? record.investigation_id : "",
@@ -389,6 +399,14 @@ function normalizeAcknowledgements(value: unknown): Readonly<CommanderInvestigat
   return Object.freeze(normalized as CommanderInvestigationRecoveryApprovalAcknowledgements)
 }
 
+function validateAcknowledgementKeys(value: unknown): string[] {
+  if (!isRecord(value)) return []
+  return Object.keys(value)
+    .filter((key) => !APPROVAL_ACKNOWLEDGEMENT_KEYS.has(key))
+    .map((key) => `unknown recovery approval acknowledgement key ${key}`)
+    .slice(0, 8)
+}
+
 function result(input: {
   status: CommanderInvestigationRecoveryApprovalResult["status"]
   investigationId: string
@@ -438,7 +456,7 @@ function result(input: {
 }
 
 function containsConcreteCredentialPayload(value: string): boolean {
-  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}|api[_-]?key\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+|authorization\s*[:=]\s*\S+/i.test(value)
+  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}|api[_-]?key\s*[:=]\s*\S+|(?:access[_-]?)?token\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+|authorization\s*[:=]\s*\S+/i.test(value)
 }
 
 function bound(value: unknown, max: number): string {
