@@ -1207,8 +1207,50 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.effective_budget.effective_budget_hash !== effectiveBudgetHash || seed.effective_budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget reference did not verify"
   const continuationBudgetHash = stableHash({ ...seed.effective_budget, effective_budget_hash: effectiveBudgetHash, budget_hash: "" })
   if (seed.effective_budget.budget_hash !== continuationBudgetHash) return "recovery continuation budget hash did not verify"
+  const recoveryNoticeError = validateRecoveryNotice(seed)
+  if (recoveryNoticeError) return recoveryNoticeError
   const requestPreviewHash = stableHash({ ...seed.first_model_request_preview, request_preview_hash: "" })
   if (seed.first_model_request_preview.request_preview_hash !== requestPreviewHash) return "recovery first model request preview hash did not verify"
+  return undefined
+}
+
+function validateRecoveryNotice(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
+  const notice = seed.recovery_notice
+  const pending = seed.pending_model_step_ref
+  const expectedKind = pending ? "uncertain_provider_continuation" : "checkpoint_continuation"
+  const expectedOutcome = pending ? "uncertain" : "not_pending"
+  const expectedWarning = pending
+    ? "Previous provider outcome is uncertain; do not infer success or failure, do not replay the old request, and continue only from the accepted checkpoint with a fresh request."
+    : "Recovery uses a fresh current context from the accepted checkpoint; exact assistant prose and raw tool results are unavailable."
+  const noticeHash = stableHash({ ...notice, warning: redactText(notice.warning), notice_hash: "" })
+  if (notice.notice_hash !== noticeHash || seed.recovery_notice_hash !== noticeHash) return "recovery continuation notice hash did not verify"
+  if (
+    notice.notice_version !== 1 ||
+    notice.kind !== expectedKind ||
+    notice.investigation_id !== seed.investigation_id ||
+    notice.checkpoint_id !== seed.checkpoint_ref.checkpoint_id ||
+    notice.checkpoint_sequence !== seed.checkpoint_ref.checkpoint_sequence ||
+    notice.checkpoint_hash !== seed.checkpoint_ref.checkpoint_hash ||
+    notice.original_bootstrap_hash !== seed.original_bootstrap_ref.bootstrap_hash ||
+    notice.current_bootstrap_hash !== seed.current_bootstrap_hash ||
+    notice.continuity_drift_detected !== seed.continuity_drift_detected ||
+    notice.previous_provider_outcome !== expectedOutcome ||
+    notice.previous_model_request_id !== pending?.model_request_id ||
+    notice.previous_provider_request_may_have_been_sent !== Boolean(pending) ||
+    notice.previous_provider_response_available !== false ||
+    notice.previous_tool_execution_known !== false ||
+    notice.previous_request_replay_forbidden !== true ||
+    notice.previous_tool_execution_replay_forbidden !== true ||
+    notice.exact_replay_supported !== false ||
+    notice.original_assistant_text_available !== false ||
+    notice.durable_tool_results_are_summary_only !== true ||
+    notice.counters_preserved !== true ||
+    notice.fresh_request_required !== true ||
+    notice.next_turn_index !== seed.next_turn_index ||
+    notice.warning !== expectedWarning
+  ) {
+    return "recovery continuation notice did not verify"
+  }
   return undefined
 }
 
