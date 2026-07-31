@@ -292,8 +292,8 @@ function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelT
     tool_search_calls: budget.max_tool_search_calls - consumed.tool_search_calls,
     cumulative_tool_result_bytes: budget.max_cumulative_tool_result_bytes - consumed.cumulative_tool_result_bytes,
     wall_time_ms: budget.max_wall_time_ms - consumed.elapsed_active_ms,
-    evidence_cards: budget.max_evidence_cards - consumed.evidence_cards,
-    turn_summaries: budget.max_turn_summaries - consumed.turn_summaries,
+    evidence_cards: budget.max_evidence_cards - checkpoint.working_set.evidence_cards.length,
+    turn_summaries: budget.max_turn_summaries - checkpoint.turn_summaries.length,
     loaded_schemas: budget.max_loaded_schemas - consumed.loaded_schemas,
   }
   const exhausted = Object.entries(remaining)

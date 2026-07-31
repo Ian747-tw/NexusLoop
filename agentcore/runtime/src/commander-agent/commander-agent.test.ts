@@ -6834,6 +6834,8 @@ describe("Commander in-memory investigation controller", () => {
 	    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
 	    snapshot.loaded_tools = [toolProfile!]
 	    snapshot.working_set.loaded_tool_ids = ["commander.tool_profile"]
+    snapshot.working_set.omitted_evidence_count = snapshot.budget.max_evidence_cards + 2
+    snapshot.working_set.omitted_turn_count = snapshot.budget.max_turn_summaries + 2
 	    snapshot.working_set.evidence_cards = [{
 	      ...evidenceCard("evidence_recovery_repo_pointer"),
 	      tool_id: "repo.read_lines",
@@ -6949,6 +6951,12 @@ describe("Commander in-memory investigation controller", () => {
     expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(before.budget_compatibility.current_policy_limits.max_tool_calls)
     expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
     expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
+    expect(built.seed?.effective_budget.consumed.evidence_cards).toBeGreaterThan(built.seed!.effective_budget.effective_budget.max_evidence_cards)
+    expect(built.seed?.effective_budget.consumed.turn_summaries).toBeGreaterThan(built.seed!.effective_budget.effective_budget.max_turn_summaries)
+    expect(built.seed?.effective_budget.remaining.evidence_cards).toBe(built.seed!.effective_budget.effective_budget.max_evidence_cards - built.seed!.working_set.evidence_cards.length)
+    expect(built.seed?.effective_budget.remaining.turn_summaries).toBe(built.seed!.effective_budget.effective_budget.max_turn_summaries - built.seed!.turn_summaries.length)
+    expect(built.seed?.effective_budget.exhausted_dimensions).not.toContain("evidence_cards")
+    expect(built.seed?.effective_budget.exhausted_dimensions).not.toContain("turn_summaries")
     expect(built.seed?.effective_budget.original_budget_hash).toBe(source!.latest_checkpoint!.budget.budget_hash)
     expect(built.seed?.effective_budget.effective_budget_hash).toBe(built.seed?.effective_budget.effective_budget.budget_hash)
     expect(built.seed?.effective_budget.effective_budget_hash).toBe(stableHash({ ...built.seed!.effective_budget.effective_budget, budget_hash: "" }))
