@@ -6755,7 +6755,15 @@ describe("Commander in-memory investigation controller", () => {
 	    })
 	    const run = await journal.createObserver(input)
 	    const snapshot = durableStartedSnapshot(input, 24, "inv_recovery_preparation_checkpoint") as any
-	    snapshot.budget = { ...snapshot.budget, max_context_bytes: 16_384, tool_schema_allocation_bytes: 16_384, tool_schema_allocation_tokens: 4_096, budget_hash: "" }
+	    snapshot.budget = {
+	      ...snapshot.budget,
+	      max_tool_calls: 20,
+	      max_loaded_schemas: 1,
+	      max_context_bytes: 16_384,
+	      tool_schema_allocation_bytes: 16_384,
+	      tool_schema_allocation_tokens: 4_096,
+	      budget_hash: "",
+	    }
 	    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
 	    snapshot.loaded_tools = [toolProfile!]
 	    snapshot.working_set.loaded_tool_ids = ["commander.tool_profile"]
@@ -6853,6 +6861,9 @@ describe("Commander in-memory investigation controller", () => {
     const built = await builder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
     expect(built.blockers).toEqual([])
     expect(built.seed?.execution_preparation_hash).toBe(before.execution_preparation_hash)
+    expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(before.budget_compatibility.current_policy_limits.max_tool_calls)
+    expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
+    expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
     let capturedRequest: CommanderModelStepRequest | undefined
     const runtimeCapability = commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))
     const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [runtimeCapability] })

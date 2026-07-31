@@ -620,6 +620,7 @@ export class CommanderInvestigationRecoveryService {
     const built = await builder.build({ source, preview: {
       recovery_kind: recoveryKind,
       recovery_packet: { packet_hash: "preparation_probe" },
+      budget_compatibility: compat.budgetCompatibility,
     } as CommanderInvestigationRecoveryPreview, checkpoint })
     warnings.push(...built.warnings)
     if (!built.seed) {

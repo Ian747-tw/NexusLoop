@@ -48,7 +48,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const modelTurnsConsumed = Math.max(checkpoint.working_set.model_turn_count, pending ? pending.turn_index : checkpoint.working_set.model_turn_count)
     const nextTurn = pending ? Math.max(checkpoint.next_turn_index, pending.turn_index + 1) : checkpoint.next_turn_index
     if (!pending && checkpoint.next_turn_index !== checkpoint.working_set.model_turn_count + 1) blockers.push("checkpoint next_turn_index does not follow model_turn_count")
-    const budget = continuationBudget(checkpoint, modelTurnsConsumed, uncertainCharge, unresolvedAttempts)
+    const budget = continuationBudget(checkpoint, modelTurnsConsumed, uncertainCharge, unresolvedAttempts, preview.budget_compatibility)
     if (budget.exhausted_dimensions.length) blockers.push(...budget.exhausted_dimensions.map((dimension) => `recovery continuation budget exhausted for ${dimension}`))
     const notice = buildCommanderInvestigationRecoveryNotice({
       source,
@@ -267,8 +267,25 @@ export function restoreCommanderInvestigationWorkingSet(checkpoint: CommanderInv
   return { workingSet }
 }
 
-function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelTurnsConsumed: number, uncertainCharge: number, unresolvedAttempts: number) {
-  const budget = checkpoint.budget
+function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelTurnsConsumed: number, uncertainCharge: number, unresolvedAttempts: number, compatibility: CommanderInvestigationRecoveryPreview["budget_compatibility"]) {
+  const stored = checkpoint.budget
+  const limits = compatibility.current_policy_limits ?? {}
+  const budget = {
+    ...stored,
+    max_model_turns: boundedCurrentLimit(limits.max_model_turns, stored.max_model_turns),
+    max_tool_calls: boundedCurrentLimit(limits.max_tool_calls, stored.max_tool_calls),
+    max_tool_search_calls: boundedCurrentLimit(limits.max_tool_search_calls, stored.max_tool_search_calls),
+    max_loaded_schemas: boundedCurrentLimit(limits.max_loaded_schemas, stored.max_loaded_schemas),
+    max_cumulative_tool_result_bytes: boundedCurrentLimit(limits.max_cumulative_tool_result_bytes, stored.max_cumulative_tool_result_bytes),
+    max_wall_time_ms: boundedCurrentLimit(limits.max_wall_time_ms, stored.max_wall_time_ms),
+    max_consecutive_no_progress_turns: boundedCurrentLimit(limits.max_consecutive_no_progress_turns, stored.max_consecutive_no_progress_turns),
+    max_evidence_cards: boundedCurrentLimit(limits.max_evidence_cards, stored.max_evidence_cards),
+    max_turn_summaries: boundedCurrentLimit(limits.max_turn_summaries, stored.max_turn_summaries),
+    tool_schema_allocation_bytes: boundedOptionalCurrentLimit(limits.tool_schema_allocation_bytes, stored.tool_schema_allocation_bytes),
+    tool_schema_allocation_tokens: boundedOptionalCurrentLimit(limits.tool_schema_allocation_tokens, stored.tool_schema_allocation_tokens),
+    budget_hash: "",
+  }
+  budget.budget_hash = stableHash({ ...budget, budget_id: "", budget_hash: "" })
   const consumed = {
     model_turns: modelTurnsConsumed,
     provider_requests: checkpoint.provider_request_count,
@@ -292,7 +309,7 @@ function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelT
     loaded_schemas: budget.max_loaded_schemas - consumed.loaded_schemas,
   }
   const exhausted = Object.entries(remaining)
-    .filter(([key, value]) => key === "model_turns" || key === "wall_time_ms" || key === "loaded_schemas" ? value <= 0 : value < 0)
+    .filter(([key, value]) => key === "model_turns" || key === "wall_time_ms" ? value <= 0 : value < 0)
     .map(([key]) => key)
   const result = {
     original_budget_id: budget.budget_id,
@@ -309,6 +326,15 @@ function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelT
   }
   result.budget_hash = stableHash({ ...result, budget_hash: "" })
   return result
+}
+
+function boundedCurrentLimit(current: number | undefined, stored: number): number {
+  return typeof current === "number" && Number.isFinite(current) ? Math.min(stored, Math.max(0, Math.floor(current))) : stored
+}
+
+function boundedOptionalCurrentLimit(current: number | undefined, stored: number | undefined): number | undefined {
+  if (typeof current !== "number" || !Number.isFinite(current)) return stored
+  return stored === undefined ? Math.max(0, Math.floor(current)) : Math.min(stored, Math.max(0, Math.floor(current)))
 }
 
 export function commanderRecoveryExecutionPreparationSummaryFromSeed(seed: CommanderInvestigationRecoveryContinuationSeed): CommanderInvestigationRecoveryExecutionPreparationSummary {
