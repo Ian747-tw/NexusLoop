@@ -6935,6 +6935,29 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedElapsed.blockers).toContain("recovery continuation elapsed active time did not verify")
     expect(tamperedElapsedAdapter.request_summaries).toHaveLength(0)
+    const tamperedWorkingSetSeed = {
+      ...built.seed!,
+      working_set: {
+        ...built.seed!.working_set,
+        tool_call_count: built.seed!.working_set.tool_call_count + 1,
+      },
+    }
+    const tamperedWorkingSetAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered working set should not run" }])
+    const tamperedWorkingSetController = new CommanderInvestigationController({
+      modelAdapter: tamperedWorkingSetAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const tamperedWorkingSet = await tamperedWorkingSetController.runFromRecoverySeed(tamperedWorkingSetSeed)
+    expect(tamperedWorkingSet).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedWorkingSet.blockers).toContain("recovery continuation working set hash did not verify")
+    expect(tamperedWorkingSetAdapter.request_summaries).toHaveLength(0)
     const driftedCapabilityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [{ ...runtimeCapability, max_output_tokens: 256 }] })
     const requestDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "request drift should not run" }])
     const requestDriftController = new CommanderInvestigationController({

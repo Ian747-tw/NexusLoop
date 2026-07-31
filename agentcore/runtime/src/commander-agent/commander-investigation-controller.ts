@@ -1166,6 +1166,18 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
 }
 
 function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
+  const restoredWorkingSet = durableCommanderInvestigationWorkingSet(seed.working_set as CommanderInvestigationWorkingSet)
+  if (restoredWorkingSet.working_set_hash !== seed.working_set_hash || seed.working_set.working_set_hash !== seed.working_set_hash) return "recovery continuation working set hash did not verify"
+  if (stableHash(seed.consumed) !== stableHash(seed.effective_budget.consumed)) return "recovery continuation consumed budget counters did not verify"
+  const consumed = seed.effective_budget.consumed
+  if (seed.recovery_kind === "checkpoint" && seed.working_set.model_turn_count !== consumed.model_turns) return "recovery continuation working set model-turn count did not verify"
+  if (seed.working_set.tool_call_count !== consumed.tool_calls) return "recovery continuation working set tool-call count did not verify"
+  if (seed.working_set.tool_search_call_count !== consumed.tool_search_calls) return "recovery continuation working set tool-search count did not verify"
+  if (seed.working_set.cumulative_tool_result_bytes !== consumed.cumulative_tool_result_bytes) return "recovery continuation working set result-byte count did not verify"
+  if (seed.working_set.consecutive_no_progress_turns !== consumed.consecutive_no_progress_turns) return "recovery continuation working set no-progress count did not verify"
+  if (seed.working_set.evidence_cards.length + seed.working_set.omitted_evidence_count !== consumed.evidence_cards) return "recovery continuation working set evidence count did not verify"
+  if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
+  if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || seed.loaded_tools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
   if (seed.elapsed_active_ms_before !== seed.effective_budget.consumed.elapsed_active_ms) return "recovery continuation elapsed active time did not verify"
   const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_id: "", budget_hash: "" })
   if (seed.effective_budget.effective_budget.budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget hash did not verify"
