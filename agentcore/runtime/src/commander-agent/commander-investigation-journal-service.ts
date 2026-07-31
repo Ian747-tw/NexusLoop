@@ -1162,6 +1162,9 @@ function assertPersistableRecoveryApproval(approval: CommanderInvestigationRecov
   }
   if (!isCanonicalIsoTimestamp(approval.approved_at)) throw new CommanderInvestigationPersistenceError("recovery approval timestamp is not canonical")
   if (approval.decision !== "approve_resume_from_checkpoint" && approval.decision !== "approve_continue_after_uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval decision is invalid")
+  if (approval.recovery_kind !== "checkpoint" && approval.recovery_kind !== "uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval kind is invalid")
+  if (approval.decision === "approve_resume_from_checkpoint" && approval.recovery_kind !== "checkpoint") throw new CommanderInvestigationPersistenceError("recovery approval decision/recovery-kind mismatch")
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.recovery_kind !== "uncertain_provider_outcome") throw new CommanderInvestigationPersistenceError("recovery approval decision/recovery-kind mismatch")
   const acknowledgementKeys = Object.keys(approval.acknowledgements ?? {}).sort()
   const expectedAcknowledgementKeys = approval.decision === "approve_continue_after_uncertain_provider_outcome"
     ? ["exact_replay_unavailable", "fresh_context_required", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome"].sort()
@@ -1171,6 +1174,8 @@ function assertPersistableRecoveryApproval(approval: CommanderInvestigationRecov
     throw new CommanderInvestigationPersistenceError("recovery approval acknowledgements are incomplete")
   }
   if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.acknowledgements.uncertain_provider_outcome !== true) throw new CommanderInvestigationPersistenceError("uncertain-provider approval acknowledgement is missing")
+  if (approval.decision === "approve_resume_from_checkpoint" && approval.pending_model_step_ref !== undefined) throw new CommanderInvestigationPersistenceError("checkpoint recovery approval must not include a pending model boundary")
+  if (approval.decision === "approve_continue_after_uncertain_provider_outcome" && approval.pending_model_step_ref === undefined) throw new CommanderInvestigationPersistenceError("uncertain-provider approval requires a pending model boundary")
   if (approval.approval_hash !== stableHash({ ...approval, approved_at: "", approval_hash: "" })) throw new CommanderInvestigationPersistenceError("recovery approval hash is invalid")
 }
 

@@ -6561,6 +6561,52 @@ describe("Commander in-memory investigation controller", () => {
     })
     expect(tailRaceApproval.blockers.join("\n")).toContain("event log changed before append")
     expect(tailRacePreviewCalls).toBe(2)
+    let capturedAmbiguousApproval: any
+    const reconciledAmbiguousAppend = await new CommanderInvestigationRecoveryApprovalService({
+      recoveryPreview: async () => before,
+      recoverySource: async () => {
+        const source = await journal.recoverySource("inv_recovery_approval_checkpoint")
+        if (!capturedAmbiguousApproval) return source
+        const summary = {
+          approval_id: capturedAmbiguousApproval.approval_id,
+          approval_sequence: 0,
+          decision: capturedAmbiguousApproval.decision,
+          approved_by: capturedAmbiguousApproval.approved_by,
+          approved_at: capturedAmbiguousApproval.approved_at,
+          human_note_hash: capturedAmbiguousApproval.human_note_hash,
+          recovery_basis_hash: capturedAmbiguousApproval.recovery_basis_hash,
+          recovery_plan_hash: capturedAmbiguousApproval.recovery_plan_hash,
+          recovery_packet_hash: capturedAmbiguousApproval.recovery_packet_hash,
+          checkpoint_ref: capturedAmbiguousApproval.checkpoint_ref,
+          pending_model_step_ref: capturedAmbiguousApproval.pending_model_step_ref,
+          pending_model_request_id: capturedAmbiguousApproval.pending_model_step_ref?.model_request_id,
+          provider_execution_envelope_hash: capturedAmbiguousApproval.provider_execution_envelope_hash,
+          tool_compatibility_hash: capturedAmbiguousApproval.tool_compatibility_hash,
+          provider_compatibility_hash: capturedAmbiguousApproval.provider_compatibility_hash,
+          budget_compatibility_hash: capturedAmbiguousApproval.budget_compatibility_hash,
+          context_compatibility_hash: capturedAmbiguousApproval.context_compatibility_hash,
+          continuity_compatibility_hash: capturedAmbiguousApproval.continuity_compatibility_hash,
+          human_control_compatibility_hash: capturedAmbiguousApproval.human_control_compatibility_hash,
+          approval_hash: capturedAmbiguousApproval.approval_hash,
+        }
+        return { ...source!, recovery_approvals: [summary], latest_recovery_approval: summary }
+      },
+      journalService: {
+        recordRecoveryApprovalAfterRevalidation: async (_investigationId: string, revalidate: () => Promise<any>) => {
+          capturedAmbiguousApproval = (await revalidate()).approval
+          throw new Error("simulated close failure after synced recovery approval")
+        },
+      } as any,
+    }).record(approvalInput)
+    expect(reconciledAmbiguousAppend).toMatchObject({
+      status: "recorded",
+      approval_state: "current",
+      events_appended: true,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+    })
+    expect(reconciledAmbiguousAppend.warnings.join("\n")).toContain("reconciled recovery approval after ambiguous append failure")
     let approvalEventsBeforeRecord = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string })
     expect(approvalEventsBeforeRecord.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(0)
     const recorded = await server.recordCommanderInvestigationRecoveryApproval(approvalInput)
@@ -7292,8 +7338,28 @@ describe("Commander in-memory investigation controller", () => {
     } as any
     await expect(journal.recordRecoveryApproval({ expected_basis: { basis_hash: "basis_active" } as any, approval })).rejects.toThrow("inactive durable investigation")
     journal.release(run)
+    const source = await journal.recoverySource("inv_recovery_approval_active")
+    expect(source?.recovery_basis).toBeDefined()
+    const mismatchedApproval = {
+      ...approval,
+      recovery_kind: "uncertain_provider_outcome",
+      decision: "approve_resume_from_checkpoint",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+      recovery_basis_hash: source!.recovery_basis!.basis_hash,
+      recovery_plan_hash: source!.recovery_basis!.basis_hash,
+      approval_hash: "",
+    }
+    mismatchedApproval.approval_hash = stableHash({ ...mismatchedApproval, approved_at: "", approval_hash: "" })
+    await expect(journal.recordRecoveryApproval({ expected_basis: source!.recovery_basis!, approval: mismatchedApproval as any })).rejects.toThrow("decision/recovery-kind mismatch")
     const events = (await readFile(eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { kind: string })
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(0)
+    const record = await journal.get("inv_recovery_approval_active")
+    expect(record?.projection_status).toBe("ready")
   })
 
   test("recovery approval serializes concurrent writes for the same investigation", async () => {

@@ -98,6 +98,7 @@ export class CommanderInvestigationRecoveryApprovalService {
       })
     }
     let appendPreview: CommanderInvestigationRecoveryApprovalPreview = preview
+    let attemptedApproval: CommanderInvestigationRecoveryApprovalRecord | undefined
     try {
       const appended = await this.options.journalService.recordRecoveryApprovalAfterRevalidation(preview.investigation_id, async () => {
         appendPreview = await this.preview(normalized as CommanderInvestigationRecoveryApprovalInput)
@@ -114,7 +115,8 @@ export class CommanderInvestigationRecoveryApprovalService {
         if (source.recovery_basis.basis_hash !== appendPreview.recovery_basis_hash) {
           throw new CommanderInvestigationJournalConflictError("Commander recovery basis changed before approval append")
         }
-        return { expected_basis: source.recovery_basis, approval: buildApprovalRecord(normalized, appendPreview, generatedAt) }
+        attemptedApproval = buildApprovalRecord(normalized, appendPreview, generatedAt)
+        return { expected_basis: source.recovery_basis, approval: attemptedApproval }
       })
       return result({
         status: appended.status,
@@ -149,6 +151,24 @@ export class CommanderInvestigationRecoveryApprovalService {
           eventsAppended: false,
         })
       }
+      const reconciled = await this.reconcileAppendedApproval(appendPreview.investigation_id, attemptedApproval)
+      if (reconciled) {
+        return result({
+          status: "recorded",
+          investigationId: appendPreview.investigation_id,
+          decision: appendPreview.decision,
+          approval: reconciled,
+          approvalState: "current",
+          recoveryBasisHash: appendPreview.recovery_basis_hash,
+          recoveryPlanHash: appendPreview.current_recovery_plan_hash,
+          checkpointRef: appendPreview.checkpoint_ref,
+          pendingRef: appendPreview.pending_model_step_ref,
+          blockers: [],
+          warnings: [...appendPreview.warnings, "reconciled recovery approval after ambiguous append failure"],
+          generatedAt,
+          eventsAppended: true,
+        })
+      }
       const failed = error instanceof CommanderInvestigationJournalConflictError ? "blocked" : "failed"
       return result({
         status: failed,
@@ -164,6 +184,24 @@ export class CommanderInvestigationRecoveryApprovalService {
         generatedAt,
         eventsAppended: false,
       })
+    }
+  }
+
+  private async reconcileAppendedApproval(investigationId: string, attemptedApproval: CommanderInvestigationRecoveryApprovalRecord | undefined): Promise<CommanderInvestigationRecoveryApprovalRecord | undefined> {
+    if (!attemptedApproval) return undefined
+    try {
+      const source = await this.options.recoverySource(investigationId)
+      const match = source?.recovery_approvals?.find((candidate) => sameApprovalAuthority(candidate, attemptedApproval))
+      if (!match) return undefined
+      return {
+        ...attemptedApproval,
+        approval_id: match.approval_id,
+        approval_sequence: match.approval_sequence,
+        approved_at: match.approved_at,
+        approval_hash: match.approval_hash,
+      }
+    } catch {
+      return undefined
     }
   }
 
@@ -477,4 +515,30 @@ function assertBuiltApprovalRecord(approval: CommanderInvestigationRecoveryAppro
   if (approval.approval_hash !== stableHash({ ...approval, approved_at: "", approval_hash: "" })) {
     throw new CommanderInvestigationPersistenceError("recovery approval record hash is invalid")
   }
+}
+
+function sameApprovalAuthority(candidate: NonNullable<CommanderInvestigationRecoveryPreview["current_approval"]>, approval: CommanderInvestigationRecoveryApprovalRecord): boolean {
+  return candidate.recovery_basis_hash === approval.recovery_basis_hash &&
+    candidate.recovery_plan_hash === approval.recovery_plan_hash &&
+    candidate.recovery_packet_hash === approval.recovery_packet_hash &&
+    candidate.decision === approval.decision &&
+    candidate.approved_by === approval.approved_by &&
+    candidate.human_note_hash === approval.human_note_hash &&
+    candidate.checkpoint_ref.checkpoint_id === approval.checkpoint_ref.checkpoint_id &&
+    candidate.checkpoint_ref.checkpoint_sequence === approval.checkpoint_ref.checkpoint_sequence &&
+    candidate.checkpoint_ref.checkpoint_hash === approval.checkpoint_ref.checkpoint_hash &&
+    candidate.pending_model_step_ref?.model_request_id === approval.pending_model_step_ref?.model_request_id &&
+    candidate.pending_model_step_ref?.turn_index === approval.pending_model_step_ref?.turn_index &&
+    candidate.pending_model_step_ref?.base_checkpoint_id === approval.pending_model_step_ref?.base_checkpoint_id &&
+    candidate.pending_model_step_ref?.base_checkpoint_sequence === approval.pending_model_step_ref?.base_checkpoint_sequence &&
+    candidate.pending_model_step_ref?.base_checkpoint_hash === approval.pending_model_step_ref?.base_checkpoint_hash &&
+    candidate.pending_model_step_ref?.working_set_hash === approval.pending_model_step_ref?.working_set_hash &&
+    candidate.pending_model_step_ref?.context_hash === approval.pending_model_step_ref?.context_hash &&
+    candidate.provider_execution_envelope_hash === approval.provider_execution_envelope_hash &&
+    candidate.tool_compatibility_hash === approval.tool_compatibility_hash &&
+    candidate.provider_compatibility_hash === approval.provider_compatibility_hash &&
+    candidate.budget_compatibility_hash === approval.budget_compatibility_hash &&
+    candidate.context_compatibility_hash === approval.context_compatibility_hash &&
+    candidate.continuity_compatibility_hash === approval.continuity_compatibility_hash &&
+    candidate.human_control_compatibility_hash === approval.human_control_compatibility_hash
 }
