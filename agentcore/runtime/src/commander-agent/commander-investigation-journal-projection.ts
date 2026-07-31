@@ -831,7 +831,7 @@ function isCanonicalIsoTimestamp(value: unknown): value is string {
 }
 
 function containsConcreteCredentialPayload(value: string): boolean {
-  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}|api[_-]?key\s*[:=]\s*\S+|(?:access[_-]?)?token\s*[:=]\s*\S+|password\s*[:=]\s*\S+|secret\s*[:=]\s*\S+|authorization\s*[:=]\s*\S+/i.test(value)
+  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|\b(?:api[_-]?key|token|secret|password|aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|aws[_-]?security[_-]?token|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|client[_-]?key[_-]?data|private[_-]?key|authorization|auth)["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^"',\s}]+)/i.test(value)
 }
 
 function isNormalizedInput(value: unknown): value is Record<string, unknown> {
