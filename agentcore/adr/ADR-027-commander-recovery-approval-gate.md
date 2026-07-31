@@ -37,6 +37,9 @@ therefore changes the journal record/source hash and approval history, but it
 does not invalidate the plan it approves. Any checkpoint, pending-boundary,
 identity, normalized-input, provider-envelope, tool/schema/authority, budget,
 context, continuity, or human-control change makes an older approval stale.
+9W3B2B1 adds an execution-preparation hash and first fresh request preview hash
+to the recovery packet and plan. Approvals recorded before that semantic plan
+input remain historical but become stale rather than corrupt.
 Current-approval matching also compares the persisted recovery packet hash to
 the current preview packet hash, so a hash-valid approval cannot authorize a
 different recovery packet under the same plan hash.
@@ -157,8 +160,11 @@ state, authority record, provider call, tool call, approval consumption,
 recovery execution, proposal generation, OpenCode action, provider failover, or
 exact transcript replay. Public `provider_tool_loop_enabled` remains false.
 
-9W3B2B owns requiring a current unconsumed approval, revalidating the exact
-plan, resolving pending uncertainty by policy rather than inference,
-reconstructing fresh bounded context, issuing a new provider request, never
-replaying the prior provider request, continuing checkpoint/terminal sequencing,
-and consuming approval once. 9W3C owns public/operator controls.
+9W3B2B1 owns deterministic preparation, mandatory recovery notice construction,
+summary-only replay reconstruction, and scripted continuation-kernel tests
+without consuming approval or executing through RuntimeServer. 9W3B2B2 owns
+requiring a current unconsumed approval, revalidating the exact plan and
+preparation, resolving pending uncertainty by policy rather than inference,
+issuing a new provider request, never replaying the prior provider request,
+continuing checkpoint/terminal sequencing, and consuming approval once. 9W3C
+owns public/operator controls.

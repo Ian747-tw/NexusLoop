@@ -119,6 +119,14 @@ approval event under RuntimeServer write authority, but still does not execute
 recovery, consume approval, call providers, execute tools, or expose a public
 provider loop.
 
+9W3B2B1 adds read-only recovery preparation. It reuses the exact current
+capability, phase, authority, and binding envelopes to build a deterministic
+continuation seed, summary-only replay relationship, mandatory recovery notice,
+and first fresh model-request preview. Preparation is bound into the recovery
+packet and plan hash before approval. RuntimeServer still does not execute
+recovery, consume approval, call providers, execute tools, or expose a public
+provider loop.
+
 Implemented descriptors must be `safe_read`, map to exact authority records, require no approval/run lock, create no external process, call no provider, mutate no events, and use `instruction_semantics="none"`.
 
 Repository, GitHub, and external evidence descriptors use untrusted trust classes. Governance descriptors are intent-only and cannot perform GitHub mutations.
@@ -134,7 +142,8 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9W3A: durable investigation journal and checkpoints.
 - 9W3B1: recovery readiness and compatibility preview.
 - 9W3B2A: durable human approval and stale-plan gate.
-- 9W3B2B: bounded recovery execution from approved state.
+- 9W3B2B1: recovery preparation and continuation kernel.
+- 9W3B2B2: bounded recovery execution from approved state.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external read gateway for GitHub and allowlisted research MCP reads.
 - 9Y: Commander research proposal gate.

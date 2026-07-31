@@ -185,6 +185,8 @@ import {
   CommanderInvestigationJournalConflictError,
   CommanderInvestigationPersistenceError,
   CommanderInvestigationRecoveryApprovalService,
+  CommanderInvestigationRecoveryContinuationBuilder,
+  CommanderInvestigationRecoveryExecutionService,
   CommanderInvestigationRecoveryService,
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
@@ -205,6 +207,8 @@ import {
   type CommanderInvestigationRecoveryApprovalInput,
   type CommanderInvestigationRecoveryApprovalPreview,
   type CommanderInvestigationRecoveryApprovalResult,
+  type CommanderInvestigationRecoveryExecutionPreparationInput,
+  type CommanderInvestigationRecoveryExecutionPreparationPreview,
   type CommanderInvestigationRecoveryExecutionEnvelope,
   type CommanderInvestigationRecoverySource,
   type CommanderInvestigationProviderConfig,
@@ -444,6 +448,7 @@ export class RuntimeServer {
   private commanderInvestigationJournalServiceInstance: CommanderInvestigationJournalService | null = null
   private commanderInvestigationRecoveryServiceInstance: CommanderInvestigationRecoveryService | null = null
   private commanderInvestigationRecoveryApprovalServiceInstance: CommanderInvestigationRecoveryApprovalService | null = null
+  private commanderInvestigationRecoveryExecutionServiceInstance: CommanderInvestigationRecoveryExecutionService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -2825,6 +2830,10 @@ export class RuntimeServer {
     return this.commanderInvestigationRecoveryApprovalService().preview(input)
   }
 
+  previewCommanderInvestigationRecoveryExecutionPreparation(input: CommanderInvestigationRecoveryExecutionPreparationInput): Promise<CommanderInvestigationRecoveryExecutionPreparationPreview> {
+    return this.commanderInvestigationRecoveryExecutionService().preview(input)
+  }
+
   async recordCommanderInvestigationRecoveryApproval(input: CommanderInvestigationRecoveryApprovalInput): Promise<CommanderInvestigationRecoveryApprovalResult> {
     if (this.mode !== "active" || !this.started || this.lifecycleState !== "ready" || this.lifecycleShutdownRequested || !this.runLock.isHeld() || !this.commanderInvestigationProviderConfig) {
       const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
@@ -5117,9 +5126,22 @@ export class RuntimeServer {
         before: "model_step",
         turn_index: 0,
       }),
+      continuationBuilder: this.commanderInvestigationRecoveryContinuationBuilderOptions(),
       now: this.researchSynthesisNow,
     })
     return this.commanderInvestigationRecoveryServiceInstance
+  }
+
+  private commanderInvestigationRecoveryContinuationBuilderOptions() {
+    return {
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      currentBootstrap: (input: Omit<CommanderInvestigationInput, "abort_signal">) => this.commanderInvestigationBootstrapService().compile(input),
+      contextService: this.commanderInvestigationContextService(),
+      modelOutputTokens: (input: { provider_kind: string; model_id: string }) => {
+        const capability = this.modelCapabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id, role: "commander" })
+        return Math.min(1024, capability.max_output_tokens ?? 1024)
+      },
+    }
   }
 
   private commanderInvestigationRecoveryApprovalService(): CommanderInvestigationRecoveryApprovalService {
@@ -5130,6 +5152,16 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderInvestigationRecoveryApprovalServiceInstance
+  }
+
+  private commanderInvestigationRecoveryExecutionService(): CommanderInvestigationRecoveryExecutionService {
+    this.commanderInvestigationRecoveryExecutionServiceInstance ??= new CommanderInvestigationRecoveryExecutionService({
+      recoveryPreview: (input) => this.commanderInvestigationRecoveryService().preview(input),
+      recoverySource: (investigationId) => this.commanderInvestigationJournalService().recoverySource(investigationId),
+      continuationBuilder: new CommanderInvestigationRecoveryContinuationBuilder(this.commanderInvestigationRecoveryContinuationBuilderOptions()),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationRecoveryExecutionServiceInstance
   }
 
   private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {

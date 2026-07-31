@@ -97,6 +97,15 @@ replay the original transcript exactly. Recovery must build a fresh bounded
 context from runtime authority, compatible current tool schemas, pointer-only
 evidence, durable working-set state, and current continuity.
 
+9W3B2B1 adds an internal recovery-seed entry point for the controller. The
+normal `run(input)` path remains the new-investigation path and still performs
+bootstrap derivation, initial tool loading, and `onStarted` semantics.
+`runFromRecoverySeed(seed, ...)` validates a deterministic preparation hash,
+skips new-run start semantics, restores the accepted working set, inserts the
+mandatory recovery notice, uses recovery-specific request IDs, and exercises the
+same model/tool sequencing in scripted tests only. RuntimeServer still exposes
+no recovery execution method in 9W3B2B1.
+
 ## Consequences
 
 The internal runtime seam can now compose:
@@ -122,8 +131,10 @@ are durable.
 9W2B2 owns RuntimeServer provider activation, connector preflight, run-lock
 policy, model capability registration, and investigation audit reporting. 9W3A
 adds durable records and checkpoints but does not resume. 9W3B1 owns read-only
-recovery preview and compatibility checks. 9W3B2 owns human-reviewed recovery
-disposition and execution. 9Y owns proposal generation.
+recovery preview and compatibility checks. 9W3B2A owns durable approval.
+9W3B2B1 owns deterministic preparation and the internal scripted continuation
+kernel. 9W3B2B2 owns live human-reviewed recovery execution. 9Y owns proposal
+generation.
 
 Existing one-shot Commander-cycle provider behavior remains a compatibility
 surface.

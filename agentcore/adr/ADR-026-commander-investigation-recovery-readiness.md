@@ -120,10 +120,13 @@ The recovery-plan hash binds an approval-insensitive recovery basis hash,
 checkpoint hash, pending boundary,
 tool/provider/budget/continuity/human compatibility hashes, the current provider
 execution-envelope hash, recovery packet hash, recovery kind, and recommended
-action. It excludes generated timestamps, EventStore event IDs, provider audit
-request IDs, process IDs, runtime start/lock state, credential values, and
-duration measurements. 9W3B2A records durable human approval against that exact
-basis and plan hash. Approval remains distinct from execution.
+action. 9W3B2B1 additionally binds deterministic execution preparation, first
+fresh request preview, and conservative uncertain-attempt accounting into the
+recovery packet and plan. It excludes generated timestamps, EventStore event
+IDs, provider audit request IDs, process IDs, runtime start/lock state,
+credential values, approval IDs, approval notes, and duration measurements.
+9W3B2A records durable human approval against that exact basis and plan hash.
+Approval remains distinct from execution.
 
 ## Consequences
 
@@ -147,6 +150,9 @@ binding, connector streaming, or automatic startup recovery.
 
 9W3B2A owns durable human approval, current/stale approval reporting, and the
 stale-plan gate. It writes one approval event but does not execute recovery.
-9W3B2B owns approval consumption, uncertain provider outcome resolution, fresh
-context reconstruction, and bounded recovery execution. 9W3C owns
-public/operator controls.
+9W3B2B1 owns deterministic continuation preparation, mandatory recovery notice
+construction, summary-only replay reconstruction, and internal scripted
+controller continuation tests. It appends no event and consumes no approval.
+9W3B2B2 owns approval consumption, uncertain provider outcome resolution,
+configured-provider execution, continued checkpoints, and terminal persistence.
+9W3C owns public/operator controls.

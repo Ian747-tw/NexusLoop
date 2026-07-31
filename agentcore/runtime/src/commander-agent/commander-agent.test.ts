@@ -29,29 +29,34 @@ import {
   CommanderInvestigationContextService,
   CommanderInvestigationController,
   CommanderInvestigationJournalService,
-  CommanderInvestigationRecoveryApprovalService,
-  CommanderInvestigationRecoveryService,
-  CommanderToolExecutor,
-  ScriptedCommanderModelStepAdapter,
-  buildProviderToolMap,
-  commanderInvestigationModelCapability,
+  CommanderInvestigationRecoveryContinuationBuilder,
+  CommanderInvestigationRecoveryExecutionService,
+	  CommanderInvestigationRecoveryApprovalService,
+	  CommanderInvestigationRecoveryService,
+	  CommanderToolExecutor,
+	  ScriptedCommanderModelStepAdapter,
+	  buildProviderToolMap,
+	  commanderInvestigationModelCapability,
   commanderToolSchemaFromDescriptor,
-  connectorChatCompletionsUrl,
-  createExternalApiConnectorFetch,
-  createCommanderToolBindingRegistry,
-  parseJsonFallback,
-  providerJsonSchema,
-  providerToolNameFor,
-  stableHash,
+	  connectorChatCompletionsUrl,
+	  createExternalApiConnectorFetch,
+	  createCommanderToolBindingRegistry,
+	  parseJsonFallback,
+	  providerJsonSchema,
+	  providerToolNameFor,
+	  stableCommanderInvestigationWorkingSet,
+	  stableHash,
   toCommanderToolResultMessage,
   validateCommanderInvestigationProviderConfig,
   validateCommanderConnectorModelTransportConfig,
   validateCommanderToolArguments,
   type CommanderInvestigationCheckpointSnapshot,
   type CommanderInvestigationStartedSnapshot,
-  type CommanderInvestigationCheckpoint,
-  type CommanderInvestigationLoadedToolRef,
-  type CommanderInvestigationTerminalRecord,
+	  type CommanderInvestigationCheckpoint,
+	  type CommanderInvestigationLoadedToolRef,
+	  type CommanderInvestigationReplayExchange,
+	  type CommanderInvestigationWorkingSet,
+	  type CommanderInvestigationTerminalRecord,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
   type CommanderModelStepResult,
@@ -6440,10 +6445,10 @@ describe("Commander in-memory investigation controller", () => {
   test("recovery approval records one human checkpoint approval without invalidating the plan", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2a-approval-checkpoint-"))
     await writeApprovedSpec(projectDir)
-    const server = configuredProviderRuntimeServer(projectDir)
-    servers.push({ stop: () => server.shutdown() })
-    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
-    const input = baseInvestigation({
+	    const server = configuredProviderRuntimeServer(projectDir)
+	    servers.push({ stop: () => server.shutdown() })
+	    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+	    const input = baseInvestigation({
       investigation_id: "inv_recovery_approval_checkpoint",
       objective: "Approve safe checkpoint recovery",
       provider_id: "fixture_provider",
@@ -6674,21 +6679,25 @@ describe("Commander in-memory investigation controller", () => {
     }
     driftModelStep.event_payload_hash = journalPayloadHash(driftModelStep)
     await server.eventStore.append(driftModelStep as Parameters<EventStore["append"]>[0])
-    const driftCheckpoint = finalizeTestCheckpoint({
-      ...approvedCheckpoint!,
-      checkpoint_sequence: 1,
-      checkpoint_kind: "turn_complete",
-      turn_index: 1,
-      next_turn_index: 2,
-      previous_checkpoint_id: approvedCheckpoint!.checkpoint_id,
-      previous_checkpoint_hash: approvedCheckpoint!.checkpoint_hash,
-      provider_request_count: 1,
-      working_set: {
-        ...approvedCheckpoint!.working_set,
-        model_turn_count: 1,
-        current_warnings: ["checkpoint changed after approval"],
-      },
-    })
+	    const driftWorkingSet = {
+	      ...approvedCheckpoint!.working_set,
+	      model_turn_count: 1,
+	      current_warnings: ["checkpoint changed after approval"],
+	      working_set_hash: "",
+	    }
+	    driftWorkingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(driftWorkingSet as CommanderInvestigationWorkingSet))
+	    const driftCheckpoint = finalizeTestCheckpoint({
+	      ...approvedCheckpoint!,
+	      checkpoint_sequence: 1,
+	      checkpoint_kind: "turn_complete",
+	      turn_index: 1,
+	      next_turn_index: 2,
+	      previous_checkpoint_id: approvedCheckpoint!.checkpoint_id,
+	      previous_checkpoint_hash: approvedCheckpoint!.checkpoint_hash,
+	      provider_request_count: 1,
+	      working_set: driftWorkingSet,
+	      replay_exchange: summaryOnlyReplayExchangeFixture(1),
+	    })
     const driftCheckpointEvent = {
       kind: "runtime_commander_investigation_checkpointed",
       schema_version: 1,
@@ -6726,6 +6735,216 @@ describe("Commander in-memory investigation controller", () => {
     await server.shutdown("approval checkpoint test")
     const shutdownIndex = events.findIndex((event) => event.kind === "runtime_shutdown")
     expect(shutdownIndex).toBe(-1)
+  })
+
+  test("recovery preparation binds fresh continuation state into plan and scripted kernel", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b1-preparation-"))
+    await writeApprovedSpec(projectDir)
+	    const server = configuredProviderRuntimeServer(projectDir)
+	    servers.push({ stop: () => server.shutdown() })
+	    const journal = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+	    const toolProfile = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_profile")
+	    expect(toolProfile).toBeDefined()
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_preparation_checkpoint",
+      objective: "Prepare checkpoint recovery without execution",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+	    })
+	    const run = await journal.createObserver(input)
+	    const snapshot = durableStartedSnapshot(input, 24, "inv_recovery_preparation_checkpoint") as any
+	    snapshot.budget = { ...snapshot.budget, max_context_bytes: 16_384, tool_schema_allocation_bytes: 16_384, tool_schema_allocation_tokens: 4_096, budget_hash: "" }
+	    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+	    snapshot.loaded_tools = [toolProfile!]
+	    snapshot.working_set.loaded_tool_ids = ["commander.tool_profile"]
+	    snapshot.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(snapshot.working_set as CommanderInvestigationWorkingSet))
+	    await run.observer.onStarted(snapshot as Parameters<typeof run.observer.onStarted>[0])
+    journal.release(run)
+
+    const before = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_preparation_checkpoint" })
+    expect(before).toMatchObject({
+      status: "ready_for_approval",
+      recovery_kind: "checkpoint",
+      execution_preparation: {
+        recovery_kind: "checkpoint",
+        next_turn_index: 1,
+        exact_replay_supported: false,
+        original_assistant_text_available: false,
+        fresh_context_required: true,
+      },
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+      events_appended: false,
+    })
+    expect(before.execution_preparation_hash).toBe(before.execution_preparation?.execution_preparation_hash)
+    expect(before.recovery_packet?.execution_preparation_hash).toBe(before.execution_preparation_hash)
+    expect(before.recovery_packet?.first_model_request_preview_hash).toBe(before.execution_preparation?.first_model_request_preview_hash)
+    expect(before.recovery_plan_hash).toBeString()
+
+    await server.start()
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: "inv_recovery_preparation_checkpoint",
+      recovery_plan_hash: before.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(approval).toMatchObject({ status: "recorded", events_appended: true, provider_called: false, tool_executed: false, network_called: false })
+    const after = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_preparation_checkpoint" })
+    expect(after).toMatchObject({
+      status: "approved_waiting_for_execution",
+      recommended_action: "await_recovery_execution",
+      approval_state: "current",
+      recovery_approval_consumed: false,
+      execution_preparation_hash: before.execution_preparation_hash,
+    })
+    expect(after.recovery_plan_hash).toBe(before.recovery_plan_hash)
+    expect(after.recovery_packet?.packet_hash).toBe(before.recovery_packet?.packet_hash)
+
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: "inv_recovery_preparation_checkpoint",
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: after.recovery_plan_hash!,
+    })
+    expect(preparation).toMatchObject({
+      status: "ready",
+      approval_current: true,
+      approval_consumed: false,
+      execution_supported_in_this_branch: false,
+      provider_called: false,
+      tool_executed: false,
+      network_called: false,
+      events_appended: false,
+      files_written: false,
+      research_db_written: false,
+      first_model_request: {
+        turn_index: 1,
+        old_request_replayed: false,
+        tool_execution_replayed: false,
+        provider_called: false,
+      },
+      continuation_summary: {
+        exact_replay_supported: false,
+        original_assistant_text_available: false,
+        fresh_context_required: true,
+      },
+    })
+    expect(preparation.execution_preparation_hash).toBe(before.execution_preparation_hash)
+    expect(preparation.first_model_request?.request_id).toContain("_recovery_0_")
+    expect(JSON.stringify(preparation)).not.toContain("https://api.example.test")
+    expect(JSON.stringify(preparation)).not.toContain("real-provider-key")
+
+    const source = await server.getCommanderInvestigationRecoverySource("inv_recovery_preparation_checkpoint")
+    const builder = new CommanderInvestigationRecoveryContinuationBuilder({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
+      contextService: new CommanderInvestigationContextService(),
+      modelOutputTokens: () => 1024,
+    })
+    const built = await builder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
+    expect(built.blockers).toEqual([])
+    expect(built.seed?.execution_preparation_hash).toBe(before.execution_preparation_hash)
+    let capturedRequest: CommanderModelStepRequest | undefined
+    const runtimeCapability = commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))
+    const registry = new ModelCapabilityRegistry({ runtimeCapabilities: [runtimeCapability] })
+	    const controller = new CommanderInvestigationController({
+	      modelAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "Recovered scripted final.", assert_request: (request) => { capturedRequest = request } }]),
+	      toolExecutor: executorFixture().executor,
+	      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+	      descriptors: COMMANDER_TOOL_REGISTRY,
+	      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+	      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+	      contextService: new CommanderInvestigationContextService(),
+	      capabilityRegistry: registry,
+	      contextBudgetService: new ContextBudgetService({ registry }),
+	    })
+    const recovered = await controller.runFromRecoverySeed(built.seed!)
+    expect(recovered).toMatchObject({
+      investigation_id: "inv_recovery_preparation_checkpoint",
+      status: "final",
+      stop_reason: "model_final",
+      model_turn_count: 1,
+      provider_request_count: 1,
+      tool_call_count: 0,
+      events_appended: false,
+    })
+	    expect(capturedRequest?.request_id).toBe(preparation.first_model_request?.request_id)
+	    expect(capturedRequest?.messages.some((message) => message.role === "user" && message.content.includes("commander_investigation_recovery_notice"))).toBe(true)
+	    expect(capturedRequest?.tools.map((tool) => tool.tool_id)).toEqual(["commander.tool_profile"])
+
+	    const toolExecutor = executorFixture()
+	    let toolTurnRequest: CommanderModelStepRequest | undefined
+	    let finalAfterToolRequest: CommanderModelStepRequest | undefined
+	    const toolController = new CommanderInvestigationController({
+	      modelAdapter: new ScriptedCommanderModelStepAdapter([
+	        { status: "tool_call", tool_calls: [toolCall("recover_profile", "commander.tool_profile", { phase: "proposal_investigation" })], assert_request: (request) => { toolTurnRequest = request } },
+	        { status: "final", text: "Recovered after scripted tool.", assert_request: (request) => { finalAfterToolRequest = request } },
+	      ]),
+	      toolExecutor: toolExecutor.executor,
+	      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+	      descriptors: COMMANDER_TOOL_REGISTRY,
+	      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+	      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+	      contextService: new CommanderInvestigationContextService(),
+	      capabilityRegistry: registry,
+	      contextBudgetService: new ContextBudgetService({ registry }),
+	    })
+	    const recoveredWithTool = await toolController.runFromRecoverySeed(built.seed!)
+	    expect(recoveredWithTool).toMatchObject({
+	      status: "final",
+	      stop_reason: "model_final",
+	      model_turn_count: 2,
+	      provider_request_count: 2,
+	      tool_call_count: 1,
+	      events_appended: false,
+	    })
+	    expect(toolTurnRequest?.request_id).toBe(preparation.first_model_request?.request_id)
+	    expect(finalAfterToolRequest?.request_id).toContain("_recovery_0_")
+	    expect(finalAfterToolRequest?.request_id).not.toBe(toolTurnRequest?.request_id)
+	    expect(finalAfterToolRequest?.messages.some((message) => message.role === "tool" && message.tool_call_id === "recover_profile")).toBe(true)
+
+    const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>)
+    const approvalEvent = events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")
+    const legacyApprovalEvent = {
+      ...approvalEvent!,
+      approval: {
+        ...approvalEvent!.approval,
+        recovery_plan_hash: stableHash({ legacy_preparation_missing: true }),
+        approval_hash: "",
+      },
+      event_payload_hash: "",
+    }
+    legacyApprovalEvent.approval.approval_hash = stableHash({ ...legacyApprovalEvent.approval, approved_at: "", approval_hash: "" })
+    legacyApprovalEvent.event_payload_hash = journalPayloadHash(legacyApprovalEvent)
+    const legacyDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b1-legacy-approval-"))
+    const legacyStore = new EventStore(join(legacyDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((candidate) => candidate.kind !== "runtime_commander_investigation_recovery_approved")) await legacyStore.append(event as Parameters<EventStore["append"]>[0])
+    await legacyStore.append(legacyApprovalEvent as Parameters<EventStore["append"]>[0])
+    await writeApprovedSpec(legacyDir)
+    const legacyServer = configuredProviderRuntimeServer(legacyDir)
+    servers.push({ stop: () => legacyServer.shutdown() })
+    const legacyPreview = await legacyServer.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_preparation_checkpoint" })
+    expect(legacyPreview).toMatchObject({
+      status: "ready_for_approval",
+      approval_state: "stale",
+      stale_approval_count: 1,
+      current_approval: undefined,
+      recovery_approval_required: true,
+    })
+    expect(legacyPreview.recovery_plan_hash).toBe(before.recovery_plan_hash)
+    expect(legacyPreview.recovery_packet?.execution_preparation_hash).toBe(before.execution_preparation_hash)
+    expect(legacyPreview.warnings.join("\n")).toContain("stale")
+
+    await server.shutdown("recovery preparation checkpoint test")
   })
 
   test("recovery approval hashes the full bounded human note while storing only a preview", async () => {
@@ -7503,12 +7722,23 @@ describe("Commander in-memory investigation controller", () => {
 
     await server.start()
     const before = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_approval_uncertain" })
-    expect(before).toMatchObject({
-      status: "human_review_required",
-      recovery_kind: "uncertain_provider_outcome",
-      recommended_action: "review_uncertain_provider_outcome",
-      pending_model_step: { model_request_id: "model_request_uncertain_approval", outcome: "uncertain" },
-    })
+	    expect(before).toMatchObject({
+	      status: "human_review_required",
+	      recovery_kind: "uncertain_provider_outcome",
+	      recommended_action: "review_uncertain_provider_outcome",
+	      pending_model_step: { model_request_id: "model_request_uncertain_approval", outcome: "uncertain" },
+	      execution_preparation: {
+	        uncertain_model_turn_charge: 1,
+	        unresolved_provider_attempt_count: 1,
+	        next_turn_index: 2,
+	      },
+	      recovery_packet: {
+	        uncertain_model_turn_charge: 1,
+	        unresolved_provider_attempt_count: 1,
+	      },
+	    })
+	    expect(before.execution_preparation_hash).toBeTruthy()
+	    expect(before.execution_preparation?.first_model_request_preview_hash).toBe(before.recovery_packet?.first_model_request_preview_hash)
     const approvalInput = {
       investigation_id: "inv_recovery_approval_uncertain",
       recovery_plan_hash: before.recovery_plan_hash!,
@@ -7548,9 +7778,42 @@ describe("Commander in-memory investigation controller", () => {
       pending_model_step: { model_request_id: "model_request_uncertain_approval" },
       automatic_resume_allowed: false,
     })
-    expect(after.recovery_basis_hash).toBe(before.recovery_basis_hash)
-    expect(after.recovery_plan_hash).toBe(before.recovery_plan_hash)
-    const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_uncertain")
+	    expect(after.recovery_basis_hash).toBe(before.recovery_basis_hash)
+	    expect(after.recovery_plan_hash).toBe(before.recovery_plan_hash)
+	    expect(after.execution_preparation_hash).toBe(before.execution_preparation_hash)
+	    const uncertainPreparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+	      investigation_id: "inv_recovery_approval_uncertain",
+	      approval_id: after.current_approval!.approval_id,
+	      approval_hash: after.current_approval!.approval_hash,
+	      recovery_plan_hash: after.recovery_plan_hash!,
+	    })
+	    expect(uncertainPreparation).toMatchObject({
+	      status: "ready",
+	      recovery_kind: "uncertain_provider_outcome",
+	      approval_current: true,
+	      approval_consumed: false,
+	      pending_model_step_ref: {
+	        model_request_id: "model_request_uncertain_approval",
+	        provider_request_may_have_been_sent: true,
+	        provider_response_available: false,
+	        provider_outcome_remains_unknown: true,
+	        tool_execution_known_to_have_occurred: false,
+	      },
+	      continuation_summary: {
+	        uncertain_model_turn_charge: 1,
+	        unresolved_provider_attempt_count: 1,
+	        next_turn_index: 2,
+	      },
+	      provider_called: false,
+	      tool_executed: false,
+	      network_called: false,
+	      events_appended: false,
+	    })
+	    expect(uncertainPreparation.first_model_request?.old_pending_request_id).toBe("model_request_uncertain_approval")
+	    expect(uncertainPreparation.first_model_request?.request_id).not.toBe("model_request_uncertain_approval")
+	    expect(uncertainPreparation.first_model_request?.old_request_replayed).toBe(false)
+	    expect(uncertainPreparation.first_model_request?.tool_execution_replayed).toBe(false)
+	    const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_uncertain")
     expect(record).toMatchObject({
       status: "running",
       pending_model_request_id: "model_request_uncertain_approval",
@@ -8570,6 +8833,44 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
     budget_hash: "",
   }
   budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
+  const workingSet: CommanderInvestigationWorkingSet = {
+    objective_preview: input.objective,
+    phase: input.phase,
+    loaded_tool_ids: [],
+    evidence_cards: [],
+    recent_execution_digests: [],
+    recent_load_outcomes: [],
+    current_blockers: [],
+    current_warnings: [],
+    provider_audit: {
+      audit_required: false,
+      transport_kind: "none",
+      connector_ids: [],
+      provider_request_count: 0,
+      external_api_audit_event_count: 0,
+      successful_audit_count: 0,
+      failed_audit_count: 0,
+      audit_request_ids: [],
+      audit_event_kinds: [],
+      omitted_request_id_count: 0,
+      all_provider_requests_audited: true,
+      request_body_persisted: false,
+      response_body_persisted: false,
+      credentials_persisted: false,
+      warnings: [],
+    },
+    omitted_evidence_count: 0,
+    omitted_digest_count: 0,
+    omitted_turn_count: 0,
+    consecutive_no_progress_turns: 0,
+    cumulative_tool_result_bytes: 0,
+    model_turn_count: 0,
+    tool_call_count: 0,
+    tool_search_call_count: 0,
+    recent_result_signatures: [],
+    working_set_hash: "",
+  }
+  workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
   return {
     investigation_id: investigationId,
     input,
@@ -8592,43 +8893,7 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
     budget,
     tool_protocol: "native",
     loaded_tools: [],
-    working_set: {
-      objective_preview: input.objective,
-      phase: input.phase,
-      loaded_tool_ids: [],
-      evidence_cards: [],
-      recent_execution_digests: [],
-      recent_load_outcomes: [],
-      current_blockers: [],
-      current_warnings: [],
-      provider_audit: {
-        audit_required: false,
-        transport_kind: "none",
-        connector_ids: [],
-        provider_request_count: 0,
-        external_api_audit_event_count: 0,
-        successful_audit_count: 0,
-        failed_audit_count: 0,
-        audit_request_ids: [],
-        audit_event_kinds: [],
-        omitted_request_id_count: 0,
-        all_provider_requests_audited: true,
-        request_body_persisted: false,
-        response_body_persisted: false,
-        credentials_persisted: false,
-        warnings: [],
-      },
-      omitted_evidence_count: 0,
-      omitted_digest_count: 0,
-      omitted_turn_count: 0,
-      consecutive_no_progress_turns: 0,
-      cumulative_tool_result_bytes: 0,
-      model_turn_count: 0,
-      tool_call_count: 0,
-      tool_search_call_count: 0,
-      recent_result_signatures: [],
-      working_set_hash: `working_set_hash_${index}`,
-    },
+	    working_set: workingSet,
     started_at: occurred,
   }
 }
@@ -8683,6 +8948,29 @@ function finalizeTestCheckpoint(checkpoint: CommanderInvestigationCheckpoint): C
   current.checkpoint_id = `commander_inv_checkpoint_${current.checkpoint_sequence}_${current.semantic_state_hash.slice(0, 16)}`
   current.checkpoint_hash = stableHash({ ...current, checkpoint_hash: "" })
   return current
+}
+
+function summaryOnlyReplayExchangeFixture(turnIndex: number): CommanderInvestigationReplayExchange {
+  const exchange: CommanderInvestigationReplayExchange = {
+    turn_index: turnIndex,
+    assistant_message: {
+      role: "assistant",
+      content: [{
+        type: "text_fingerprint",
+        text_persisted: false,
+        text_hash: stableHash(`summary-only-replay-${turnIndex}`),
+        text_chars: 0,
+      }],
+    },
+    tool_result_messages: [],
+    exchange_hash: "",
+    summary_only: true,
+    assistant_text_persisted: false,
+    exact_replay_supported: false,
+    protocol_relationship_preserved: true,
+    full_tool_results_persisted: false,
+  }
+  return { ...exchange, exchange_hash: stableHash({ ...exchange, exchange_hash: "" }) }
 }
 
 async function investigationServerWithSession(prefix: string): Promise<{ server: RuntimeServer; projectDir: string; sessionId: string; launchId: string }> {

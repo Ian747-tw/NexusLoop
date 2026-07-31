@@ -3,6 +3,11 @@ import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-t
 import { COMMANDER_TOOL_PHASES } from "../commander-tools/commander-tool-registry"
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
 import { stableHash } from "./commander-model-schema"
+import { CommanderInvestigationContextService } from "./commander-investigation-context-service"
+import {
+  CommanderInvestigationRecoveryContinuationBuilder,
+  commanderRecoveryExecutionPreparationSummaryFromSeed,
+} from "./commander-investigation-recovery-execution-service"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import type {
   CommanderInvestigationRecoveryBudgetCompatibility,
@@ -20,6 +25,7 @@ import type {
   CommanderInvestigationRecoveryToolCompatibility,
   CommanderInvestigationRecoveryToolCompatibilitySummary,
 } from "./commander-investigation-recovery-types"
+import type { CommanderInvestigationRecoveryExecutionPreparationSummary } from "./commander-investigation-recovery-execution-types"
 import type {
   CommanderInvestigationCheckpoint,
   CommanderInvestigationLoadedToolRef,
@@ -94,14 +100,15 @@ export class CommanderInvestigationRecoveryService {
       ...humanControl.warnings,
       ...(source.pending_model_step ? ["pending model-step outcome remains uncertain; external API audit counts do not resolve it"] : []),
     ].slice(0, 32)
-    let packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings, providerCompatibility)
+    let executionPreparation: CommanderInvestigationRecoveryExecutionPreparationSummary | undefined
+    let packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, preliminaryBlockers, preliminaryWarnings, providerCompatibility, executionPreparation)
     let contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility, currentContextBudget) : emptyContextCompatibility()
     let blockers: string[] = []
     let warnings: string[] = []
     for (let attempt = 0; attempt < 3; attempt += 1) {
       blockers = collectPreviewBlockers(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl)
       warnings = collectPreviewWarnings(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl, Boolean(source.pending_model_step))
-      const nextPacket = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility)
+      const nextPacket = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility, executionPreparation)
       const nextContext = nextPacket ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, nextPacket, continuityCompatibility, currentContextBudget) : emptyContextCompatibility()
       const stable = nextPacket?.packet_hash === packet?.packet_hash && nextContext.compatibility_hash === contextCompatibility.compatibility_hash
       packet = nextPacket
@@ -110,7 +117,21 @@ export class CommanderInvestigationRecoveryService {
     }
     blockers = collectPreviewBlockers(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl)
     warnings = collectPreviewWarnings(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl, Boolean(source.pending_model_step))
-    packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility)
+    executionPreparation = await this.executionPreparation(source, checkpoint, recoveryKind, {
+      toolCompatibility,
+      providerCompatibility,
+      budgetCompatibility,
+      contextCompatibility,
+      continuityCompatibility,
+      humanControl,
+    }, blockers, warnings)
+    const preparationBlockers = blockers.filter((item) => item.startsWith("recovery preparation blocked:"))
+    const preparationWarnings = warnings.filter((item) => item.startsWith("recovery preparation warning:"))
+    packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility, executionPreparation)
+    contextCompatibility = packet ? this.contextCompatibility(checkpoint, toolCompatibility, budgetCompatibility, packet, continuityCompatibility, currentContextBudget) : emptyContextCompatibility()
+    blockers = [...collectPreviewBlockers(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl), ...preparationBlockers].slice(0, 24)
+    warnings = [...collectPreviewWarnings(toolCompatibility, providerCompatibility, budgetCompatibility, contextCompatibility, continuityCompatibility, humanControl, Boolean(source.pending_model_step)), ...preparationWarnings].slice(0, 32)
+    packet = this.recoveryPacket(source, checkpoint, recoveryKind, budgetCompatibility, humanControl, continuityCompatibility, blockers, warnings, providerCompatibility, executionPreparation)
     if (!packet) blockers = [...blockers, "recovery packet could not fit within the durable preview cap"].slice(0, 24)
     const humanReview = recoveryKind === "uncertain_provider_outcome" || humanControl.action === "human_review_required"
     const continuityReady = continuityCompatibility.current_bootstrap_ready || !includeCurrentContinuity && checkpoint.phase !== "mid_mission_supervision"
@@ -135,7 +156,7 @@ export class CommanderInvestigationRecoveryService {
       contextCompatibility,
       continuityCompatibility,
       humanControl,
-    }, blockers, warnings, generatedAt)
+    }, blockers, warnings, generatedAt, executionPreparation)
   }
 
   private toolCompatibility(stored: CommanderInvestigationLoadedToolRef[], phase: CommanderToolPhase): CommanderInvestigationRecoveryToolCompatibilitySummary {
@@ -574,7 +595,41 @@ export class CommanderInvestigationRecoveryService {
     })
   }
 
-  private recoveryPacket(source: CommanderInvestigationRecoverySource, checkpoint: CommanderInvestigationCheckpoint, recoveryKind: "checkpoint" | "uncertain_provider_outcome", budget: CommanderInvestigationRecoveryBudgetCompatibility, human: CommanderInvestigationRecoveryHumanControl, continuity: CommanderInvestigationRecoveryContinuityCompatibility, blockers: string[], warnings: string[], provider?: CommanderInvestigationRecoveryProviderCompatibility): CommanderInvestigationRecoveryPacket | undefined {
+  private async executionPreparation(
+    source: CommanderInvestigationRecoverySource,
+    checkpoint: CommanderInvestigationCheckpoint,
+    recoveryKind: "checkpoint" | "uncertain_provider_outcome",
+    compat: {
+      toolCompatibility: CommanderInvestigationRecoveryToolCompatibilitySummary
+      providerCompatibility: CommanderInvestigationRecoveryProviderCompatibility
+      budgetCompatibility: CommanderInvestigationRecoveryBudgetCompatibility
+      contextCompatibility: CommanderInvestigationRecoveryContextCompatibility
+      continuityCompatibility: CommanderInvestigationRecoveryContinuityCompatibility
+      humanControl: CommanderInvestigationRecoveryHumanControl
+    },
+    blockers: string[],
+    warnings: string[],
+  ): Promise<CommanderInvestigationRecoveryExecutionPreparationSummary | undefined> {
+    if (!this.options.continuationBuilder) return undefined
+    if (blockers.length > 0) return undefined
+    if (!compat.toolCompatibility.compatible || !compat.providerCompatibility.compatible || !compat.budgetCompatibility.compatible || !compat.contextCompatibility.within_current_context_budget || !compat.continuityCompatibility.current_bootstrap_ready || compat.humanControl.action !== "continue") return undefined
+    const builder = new CommanderInvestigationRecoveryContinuationBuilder({
+      ...this.options.continuationBuilder,
+      contextService: this.options.continuationBuilder.contextService ?? new CommanderInvestigationContextService(),
+    })
+    const built = await builder.build({ source, preview: {
+      recovery_kind: recoveryKind,
+      recovery_packet: { packet_hash: "preparation_probe" },
+    } as CommanderInvestigationRecoveryPreview, checkpoint })
+    warnings.push(...built.warnings)
+    if (!built.seed) {
+      blockers.push(...built.blockers.map((item) => `recovery preparation blocked: ${item}`))
+      return undefined
+    }
+    return commanderRecoveryExecutionPreparationSummaryFromSeed(built.seed)
+  }
+
+  private recoveryPacket(source: CommanderInvestigationRecoverySource, checkpoint: CommanderInvestigationCheckpoint, recoveryKind: "checkpoint" | "uncertain_provider_outcome", budget: CommanderInvestigationRecoveryBudgetCompatibility, human: CommanderInvestigationRecoveryHumanControl, continuity: CommanderInvestigationRecoveryContinuityCompatibility, blockers: string[], warnings: string[], provider?: CommanderInvestigationRecoveryProviderCompatibility, preparation?: CommanderInvestigationRecoveryExecutionPreparationSummary): CommanderInvestigationRecoveryPacket | undefined {
     let packet: CommanderInvestigationRecoveryPacket = {
       packet_id: "",
       packet_version: 1,
@@ -594,6 +649,10 @@ export class CommanderInvestigationRecoveryService {
       no_progress_state: { consecutive_no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns, max_consecutive_no_progress_turns: checkpoint.budget.max_consecutive_no_progress_turns },
       remaining_budget: { effective_remaining: budget.effective_remaining, exhausted_dimensions: budget.exhausted_dimensions },
       provider_execution_envelope_hash: provider?.execution_envelope?.execution_envelope_hash,
+      execution_preparation_hash: preparation?.execution_preparation_hash,
+      first_model_request_preview_hash: preparation?.first_model_request_preview_hash,
+      uncertain_model_turn_charge: preparation?.uncertain_model_turn_charge,
+      unresolved_provider_attempt_count: preparation?.unresolved_provider_attempt_count,
       current_human_control: human,
       warnings: warnings.slice(0, 16),
       blockers: blockers.slice(0, 16),
@@ -631,6 +690,7 @@ export class CommanderInvestigationRecoveryService {
     blockers: string[] = [],
     warnings: string[] = [],
     generatedAt: string = this.now().toISOString(),
+    executionPreparation?: CommanderInvestigationRecoveryExecutionPreparationSummary,
   ): CommanderInvestigationRecoveryPreview {
     const record = source.record
     const planHash = packet ? stableHash({
@@ -644,6 +704,10 @@ export class CommanderInvestigationRecoveryService {
       context: compat?.contextCompatibility.compatibility_hash,
       continuity: compat?.continuityCompatibility.compatibility_hash,
       human: compat?.humanControl.compatibility_hash,
+      execution_preparation_hash: executionPreparation?.execution_preparation_hash,
+      first_model_request_preview_hash: executionPreparation?.first_model_request_preview_hash,
+      uncertain_model_turn_charge: executionPreparation?.uncertain_model_turn_charge,
+      unresolved_provider_attempt_count: executionPreparation?.unresolved_provider_attempt_count,
       packet: packet.packet_hash,
       recoveryKind,
       action,
@@ -682,6 +746,8 @@ export class CommanderInvestigationRecoveryService {
       continuity_compatibility: compat?.continuityCompatibility ?? emptyContinuityCompatibility(),
       human_control: compat?.humanControl ?? finalizeHumanControl({ checked: false, source_kind: "none", action: "continue", blockers: [], warnings: [] }),
       recovery_packet: packet,
+      execution_preparation: executionPreparation,
+      execution_preparation_hash: executionPreparation?.execution_preparation_hash,
       approval_state: approval.current ? "current" as const : approval.staleCount > 0 ? "stale" as const : "none" as const,
       current_approval: approval.current,
       stale_approval_count: approval.staleCount,

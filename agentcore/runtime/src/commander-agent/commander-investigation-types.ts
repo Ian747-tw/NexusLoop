@@ -3,6 +3,7 @@ import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-t
 import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
 import type { CommanderToolExecutionResult } from "./commander-tool-execution-types"
 import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderGate } from "./commander-investigation-provider-types"
+import type { CommanderInvestigationRecoveryNotice } from "./commander-investigation-recovery-execution-types"
 
 export type CommanderInvestigationStatus = "final" | "refused" | "blocked" | "failed" | "cancelled" | "budget_exhausted" | "no_progress" | "needs_human_review"
 
@@ -357,7 +358,7 @@ export type CommanderInvestigationControllerOptions = {
   descriptors: CommanderToolDescriptor[]
   boundToolIds: readonly string[]
   bootstrapService: { compile(input: CommanderInvestigationInput): Promise<CommanderInvestigationBootstrap> }
-  contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; toolProtocol: CommanderModelToolProtocol; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[] }): CommanderInvestigationContext }
+  contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; toolProtocol: CommanderModelToolProtocol; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; recoveryNotice?: CommanderInvestigationRecoveryNotice }): CommanderInvestigationContext }
   controlGate?: CommanderInvestigationControlGate
   providerGate?: CommanderInvestigationProviderGate
   providerAuditPolicy?: CommanderInvestigationProviderAuditPolicy
