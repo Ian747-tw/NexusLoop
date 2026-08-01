@@ -149,33 +149,48 @@ export class CommanderInvestigationController {
     if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const authoritativeCheckpoint = await this.recoverySeedCheckpoint(seed)
     if (authoritativeCheckpoint.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [authoritativeCheckpoint.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const checkpoint = authoritativeCheckpoint.checkpoint!
+    const authoritativeTurns = checkpoint.turn_summaries.map((turn) => redactValue(turn) as CommanderInvestigationTurnSummary)
+    const checkpointWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(checkpoint)
+    const authoritativeWorkingSet = checkpointWorkingSet.workingSet
+      ? (redactValue(checkpointWorkingSet.workingSet) as CommanderInvestigationWorkingSet)
+      : (redactValue(checkpoint.working_set) as CommanderInvestigationWorkingSet)
+    const finishAfterJournalLookup = (blocker: string, bootstrap: CommanderInvestigationBootstrap = seed.current_bootstrap, loadedTools: CommanderToolDescriptor[] = seed.loaded_tools) =>
+      this.finish(input, seed.investigation_id, "blocked", "controller_error", bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, authoritativeTurns, authoritativeWorkingSet, seed.provider_request_count_before, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const identityError = validateRecoveryIdentity(seed)
+    if (identityError) return finishAfterJournalLookup(identityError)
+    const currentBootstrap = await this.options.bootstrapService.compile(input)
+    const currentBootstrapHash = sha256JsonHash({ ...currentBootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
+    if (currentBootstrap.bootstrap_hash !== currentBootstrapHash || currentBootstrapHash !== seed.current_bootstrap_hash || stableHash(currentBootstrap) !== stableHash(seed.current_bootstrap)) {
+      return finishAfterJournalLookup("recovery continuation current bootstrap did not match controller compilation", currentBootstrap)
+    }
+    if (currentBootstrap.continuity_assessment_status === "degraded") return finishAfterJournalLookup("recovery continuation current bootstrap is degraded", currentBootstrap)
     const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, authoritativeCheckpoint.checkpoint)
-    if (prepared.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [prepared.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    const restoredWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(authoritativeCheckpoint.checkpoint!)
-    if (restoredWorkingSet.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [restoredWorkingSet.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (prepared.blocker) return finishAfterJournalLookup(prepared.blocker)
+    if (checkpointWorkingSet.blocker) return finishAfterJournalLookup(checkpointWorkingSet.blocker, currentBootstrap, prepared.loadedTools)
     const budget = seed.effective_budget.effective_budget
     const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
-    const workingSet = redactValue(restoredWorkingSet.workingSet!) as CommanderInvestigationWorkingSet
+    const workingSet = redactValue(checkpointWorkingSet.workingSet!) as CommanderInvestigationWorkingSet
     if (workingSet.model_turn_count < seed.effective_budget.consumed.model_turns) {
       workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
       workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
     }
-    const turns = authoritativeCheckpoint.checkpoint!.turn_summaries.map((turn) => redactValue(turn) as CommanderInvestigationTurnSummary)
+    const turns = authoritativeTurns
     const latestAssistant = prepared.latestAssistant
     const latestToolResults = prepared.latestToolResults!
     const providerRequests = seed.provider_request_count_before
     const recentResults = new Map(workingSet.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
-    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (seed.effective_budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (seed.effective_budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     return this.executePreparedInvestigation({
       mode: "recovery",
       input,
       investigationId: seed.investigation_id,
       started: resultStarted,
       wallStartedMs,
-      bootstrap: seed.current_bootstrap,
+      bootstrap: currentBootstrap,
       budget,
       toolProtocol: seed.tool_protocol,
       loaded,

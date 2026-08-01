@@ -7469,8 +7469,50 @@ describe("Commander in-memory investigation controller", () => {
     })
     const tamperedBootstrap = await tamperedBootstrapController.runFromRecoverySeed(tamperedBootstrapSeed)
     expect(tamperedBootstrap).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(tamperedBootstrap.blockers).toContain("recovery continuation current bootstrap hash did not verify")
+    expect(tamperedBootstrap.blockers).toContain("recovery continuation current bootstrap did not match controller compilation")
     expect(tamperedBootstrapAdapter.request_summaries).toHaveLength(0)
+    const fabricatedBootstrapSeed = structuredClone(built.seed!)
+    fabricatedBootstrapSeed.current_bootstrap.current_project_summary = "fabricated recovered bootstrap summary"
+    fabricatedBootstrapSeed.current_bootstrap.current_execution_summary = "fabricated recovered execution summary"
+    fabricatedBootstrapSeed.current_bootstrap.source_refs = [{ source_kind: "fabricated", source_id: "copied_seed_bootstrap", label: "fabricated", summary_preview: "fabricated_bootstrap_hash", pointer_only: true }]
+    fabricatedBootstrapSeed.current_bootstrap.bootstrap_hash = createHash("sha256").update(JSON.stringify({ ...fabricatedBootstrapSeed.current_bootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })).digest("hex")
+    fabricatedBootstrapSeed.current_bootstrap_hash = fabricatedBootstrapSeed.current_bootstrap.bootstrap_hash
+    fabricatedBootstrapSeed.recovery_notice.current_bootstrap_hash = fabricatedBootstrapSeed.current_bootstrap_hash
+    fabricatedBootstrapSeed.recovery_notice.notice_hash = stableHash({ ...fabricatedBootstrapSeed.recovery_notice, notice_hash: "" })
+    fabricatedBootstrapSeed.request_id_prefix = `${fabricatedBootstrapSeed.investigation_id}_recovery_${fabricatedBootstrapSeed.checkpoint_ref.checkpoint_sequence}_${stableHash({
+      basis: fabricatedBootstrapSeed.recovery_basis_hash,
+      checkpoint: fabricatedBootstrapSeed.checkpoint_ref.checkpoint_hash,
+      pending: fabricatedBootstrapSeed.pending_model_step_ref?.model_request_id,
+      bootstrap: fabricatedBootstrapSeed.current_bootstrap.bootstrap_hash,
+      notice: fabricatedBootstrapSeed.recovery_notice.notice_hash,
+    }).slice(0, 12)}`
+    fabricatedBootstrapSeed.first_model_request_preview.request_id = `${fabricatedBootstrapSeed.request_id_prefix}_turn_${fabricatedBootstrapSeed.next_turn_index}`
+    fabricatedBootstrapSeed.first_model_request_preview.recovery_notice_hash = fabricatedBootstrapSeed.recovery_notice.notice_hash
+    fabricatedBootstrapSeed.first_model_request_preview.context_hash = stableHash({
+      original_context_hash: fabricatedBootstrapSeed.first_model_request_preview.context_hash,
+      fabricated_bootstrap_hash: fabricatedBootstrapSeed.current_bootstrap_hash,
+      recovery_notice_hash: fabricatedBootstrapSeed.recovery_notice.notice_hash,
+    })
+    fabricatedBootstrapSeed.first_model_request_preview.request_preview_hash = stableHash({ ...fabricatedBootstrapSeed.first_model_request_preview, request_preview_hash: "" })
+    fabricatedBootstrapSeed.execution_preparation_hash = recoverySeedPreparationHash(fabricatedBootstrapSeed)
+    const fabricatedBootstrapAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fabricated bootstrap should not run" }])
+    const fabricatedBootstrapController = new CommanderInvestigationController({
+      modelAdapter: fabricatedBootstrapAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const fabricatedBootstrap = await fabricatedBootstrapController.runFromRecoverySeed(fabricatedBootstrapSeed)
+    expect(fabricatedBootstrap).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(fabricatedBootstrap.blockers).toContain("recovery continuation current bootstrap did not match controller compilation")
+    expect(JSON.stringify(fabricatedBootstrap)).not.toContain("fabricated recovered bootstrap summary")
+    expect(fabricatedBootstrapAdapter.request_summaries).toHaveLength(0)
     const driftedCapabilityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [{ ...runtimeCapability, max_output_tokens: 256 }] })
     const requestDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "request drift should not run" }])
     const requestDriftController = new CommanderInvestigationController({
@@ -7758,6 +7800,8 @@ describe("Commander in-memory investigation controller", () => {
     const fabricatedTurnSummary = await fabricatedTurnSummaryController.runFromRecoverySeed(fabricatedTurnSummarySeed)
     expect(fabricatedTurnSummary).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
     expect(fabricatedTurnSummary.blockers).toContain("recovery continuation turn summaries did not match journal checkpoint")
+    expect(JSON.stringify(fabricatedTurnSummary)).toContain("model-visible text omitted from durable journal; text_hash=turn1 text_chars=0")
+    expect(JSON.stringify(fabricatedTurnSummary)).not.toContain("fabricated copied seed turn summary")
     expect(fabricatedTurnSummaryAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,
