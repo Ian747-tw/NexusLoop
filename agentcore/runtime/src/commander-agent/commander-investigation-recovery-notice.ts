@@ -43,4 +43,3 @@ export function buildCommanderInvestigationRecoveryNotice(input: {
   notice.notice_hash = stableHash({ ...notice, warning: redactText(notice.warning), notice_hash: "" })
   return notice
 }
-
