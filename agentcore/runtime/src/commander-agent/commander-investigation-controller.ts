@@ -22,7 +22,7 @@ import {
   type CommanderInvestigationWorkingSet,
 } from "./commander-investigation-types"
 import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderPreflightSnapshot } from "./commander-investigation-provider-types"
-import type { CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
+import type { CommanderInvestigationCheckpoint, CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
 import { CommanderInvestigationJournalConflictError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoveryContinuationSeed, CommanderInvestigationRecoveryFirstModelRequestPreview } from "./commander-investigation-recovery-execution-types"
 import { reconstructCommanderRecoveryReplayExchangeFromDurable } from "./commander-investigation-recovery-replay"
@@ -109,7 +109,7 @@ export class CommanderInvestigationController {
     })
   }
 
-  async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationResult> {
+  async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal; checkpoint?: CommanderInvestigationCheckpoint } = {}): Promise<CommanderInvestigationResult> {
     const continuationStarted = this.now()
     const resultStarted = canonicalDate(seed.original_started_at) ?? continuationStarted
     const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
@@ -147,7 +147,7 @@ export class CommanderInvestigationController {
       first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
     })
     if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors)
+    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, options.checkpoint)
     if (prepared.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [prepared.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const budget = seed.effective_budget.effective_budget
     const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
@@ -1120,19 +1120,19 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
   return undefined
 }
 
-function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[]): { loadedTools?: CommanderToolDescriptor[]; latestAssistant?: CommanderModelAssistantMessage; latestToolResults?: CommanderModelToolResultMessage[]; blocker?: string } {
+function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[], checkpoint?: CommanderInvestigationCheckpoint): { loadedTools?: CommanderToolDescriptor[]; latestAssistant?: CommanderModelAssistantMessage; latestToolResults?: CommanderModelToolResultMessage[]; blocker?: string } {
   const identityError = validateRecoveryIdentity(seed)
   if (identityError) return { blocker: identityError }
   const loaded = reconstructRecoveryLoadedTools(seed.loaded_tool_refs, currentDescriptors, seed.normalized_input.phase)
   if (loaded.blocker) return { blocker: loaded.blocker }
-  const integrity = validateRecoverySeedIntegrity(seed, loaded.loadedTools!, currentDescriptors)
+  const integrity = validateRecoverySeedIntegrity(seed, loaded.loadedTools!, currentDescriptors, checkpoint)
   if (integrity) return { blocker: integrity }
-  const replay = reconstructRecoveryReplayFromSeed(seed, loaded.loadedTools!)
+  const replay = reconstructRecoveryReplayFromSeed(seed, loaded.loadedTools!, checkpoint)
   if (replay.blocker) return { blocker: replay.blocker }
   return { loadedTools: loaded.loadedTools, latestAssistant: replay.latestAssistant, latestToolResults: replay.latestToolResults }
 }
 
-function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[], currentDescriptors: CommanderToolDescriptor[]): string | undefined {
+function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[], currentDescriptors: CommanderToolDescriptor[], checkpoint?: CommanderInvestigationCheckpoint): string | undefined {
   if (stableHash(seed.normalized_input) !== seed.normalized_input_hash) return "recovery continuation normalized input hash did not verify"
   const currentBootstrapHash = sha256JsonHash({ ...seed.current_bootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
   if (seed.current_bootstrap.bootstrap_hash !== currentBootstrapHash || seed.current_bootstrap_hash !== currentBootstrapHash) return "recovery continuation current bootstrap hash did not verify"
@@ -1159,7 +1159,7 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.working_set.consecutive_no_progress_turns !== consumed.consecutive_no_progress_turns) return "recovery continuation working set no-progress count did not verify"
   if (seed.working_set.evidence_cards.length + seed.working_set.omitted_evidence_count !== consumed.evidence_cards) return "recovery continuation working set evidence count did not verify"
   if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
-  const replay = reconstructRecoveryReplayFromSeed(seed, loadedTools)
+  const replay = reconstructRecoveryReplayFromSeed(seed, loadedTools, checkpoint)
   if (replay.blocker) return replay.blocker
   const replayMessageHash = stableHash({ replay_exchange_hash: seed.replay_exchange_hash, latest_assistant: replay.latestAssistant, latest_tool_results: replay.latestToolResults })
   if (seed.replay_message_hash !== replayMessageHash) return "recovery continuation replay message hash did not verify"
@@ -1227,10 +1227,20 @@ function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuati
   return undefined
 }
 
-function reconstructRecoveryReplayFromSeed(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[]): { latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; blocker?: string } {
+function reconstructRecoveryReplayFromSeed(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[], checkpoint?: CommanderInvestigationCheckpoint): { latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; blocker?: string } {
+  if (seed.replay_summary.replay_protocol_available) {
+    if (!checkpoint) return { latestToolResults: [], blocker: "recovery continuation authoritative checkpoint is required for replay exchange" }
+    if (
+      checkpoint.checkpoint_id !== seed.checkpoint_ref.checkpoint_id ||
+      checkpoint.checkpoint_sequence !== seed.checkpoint_ref.checkpoint_sequence ||
+      checkpoint.checkpoint_hash !== seed.checkpoint_ref.checkpoint_hash
+    ) return { latestToolResults: [], blocker: "recovery continuation authoritative checkpoint reference did not verify" }
+    if (!checkpoint.replay_exchange) return { latestToolResults: [], blocker: "recovery continuation authoritative checkpoint replay exchange is missing" }
+    if (stableHash(seed.replay_exchange) !== stableHash(checkpoint.replay_exchange)) return { latestToolResults: [], blocker: "recovery continuation replay exchange does not match journal checkpoint" }
+  }
   const expectedCheckpointTurn = seed.pending_model_step_ref ? seed.pending_model_step_ref.turn_index - 1 : seed.next_turn_index - 1
   const replay = reconstructCommanderRecoveryReplayExchangeFromDurable({
-    exchange: seed.replay_exchange,
+    exchange: seed.replay_summary.replay_protocol_available ? checkpoint!.replay_exchange : seed.replay_exchange,
     checkpointKind: seed.replay_summary.replay_protocol_available ? "turn_complete" : "initial",
     checkpointSequence: seed.replay_summary.replay_protocol_available ? seed.checkpoint_ref.checkpoint_sequence : 0,
     checkpointTurnIndex: expectedCheckpointTurn,

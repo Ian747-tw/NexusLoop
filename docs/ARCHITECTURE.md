@@ -188,8 +188,8 @@ that semantic plan input become stale rather than corrupt. Uncertain pending
 model steps remain uncertain, are conservatively charged as one unresolved
 model attempt, and are never replayed or treated as known success/failure. The
 controller validates that charge before accepting a recovery seed. Summary-only
-assistant/tool replay messages are reconstructed from the durable replay
-exchange instead of treated as seed authority.
+assistant/tool replay messages are reconstructed from the authoritative
+checkpoint's durable replay exchange instead of treated as seed authority.
 Original investigation start time remains lineage metadata, while continuation
 active duration counts prior elapsed active time plus current active work rather
 than downtime.

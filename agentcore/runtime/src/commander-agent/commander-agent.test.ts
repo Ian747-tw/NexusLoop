@@ -7480,6 +7480,37 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedReplay).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedReplay.blockers).toContain("recovery continuation replay message hash did not verify")
     expect(tamperedReplayAdapter.request_summaries).toHaveLength(0)
+    const fabricatedExchangeSeed = structuredClone(built.seed!)
+    const fabricatedExchange = summaryOnlyReplayExchangeFixture(0)
+    fabricatedExchangeSeed.replay_summary = {
+      replay_protocol_available: true,
+      tool_call_count: fabricatedExchange.assistant_message.content.length,
+      tool_result_count: fabricatedExchange.tool_result_messages.length,
+      replay_exchange_hash: fabricatedExchange.exchange_hash,
+      assistant_text_persisted: false,
+      exact_replay_supported: false,
+      full_tool_results_persisted: false,
+    }
+    fabricatedExchangeSeed.replay_exchange = fabricatedExchange
+    fabricatedExchangeSeed.replay_exchange_hash = fabricatedExchange.exchange_hash
+    fabricatedExchangeSeed.replay_message_hash = stableHash({ replay_exchange_hash: fabricatedExchange.exchange_hash, latest_assistant: fabricatedExchangeSeed.latest_assistant, latest_tool_results: fabricatedExchangeSeed.latest_tool_results })
+    fabricatedExchangeSeed.execution_preparation_hash = recoverySeedPreparationHash(fabricatedExchangeSeed)
+    const fabricatedExchangeAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fabricated exchange should not run" }])
+    const fabricatedExchangeController = new CommanderInvestigationController({
+      modelAdapter: fabricatedExchangeAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    const fabricatedExchangeResult = await fabricatedExchangeController.runFromRecoverySeed(fabricatedExchangeSeed, { checkpoint: source!.latest_checkpoint! })
+    expect(fabricatedExchangeResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(fabricatedExchangeResult.blockers).toContain("recovery continuation authoritative checkpoint replay exchange is missing")
+    expect(fabricatedExchangeAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,
       recovery_notice: {
