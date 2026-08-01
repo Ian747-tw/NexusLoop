@@ -6993,6 +6993,72 @@ describe("Commander in-memory investigation controller", () => {
     const omittedContinuityRun = await omittedContinuityController.runFromRecoverySeed(omittedContinuityBuilt.seed!)
     expect(omittedContinuityRun).toMatchObject({ status: "final", provider_request_count: 1 })
     expect(omittedContinuityRun.blockers).not.toContain("recovery continuation current bootstrap did not match controller compilation")
+    const seedHashFailure = structuredClone(built.seed!)
+    seedHashFailure.turn_summaries = [{
+      turn_index: 99,
+      model_request_id: "fabricated_seed_hash_failure_turn",
+      model_result_hash: "fabricated_seed_hash_failure_result",
+      model_status: "final",
+      provider_request_count: 99,
+      assistant_text_preview: "fabricated pre lookup turn summary",
+      tool_call_ids: [],
+      tool_ids: [],
+      tool_execution_ids: [],
+      tool_execution_statuses: [],
+      newly_loaded_tool_ids: [],
+      new_evidence_ids: [],
+      input_estimated_tokens: 1,
+      input_bytes: 1,
+      cumulative_tool_calls: 0,
+      progress_made: false,
+      no_progress_reasons: ["fabricated pre lookup no progress"],
+      warnings: ["fabricated pre lookup warning"],
+      provider_audit_request_ids: [],
+      provider_audit_event_kinds: [],
+      provider_audit_event_count: 0,
+      provider_audit_complete: false,
+      turn_hash: "fabricated_seed_hash_failure_turn_hash",
+    }]
+    seedHashFailure.working_set.evidence_cards = [{ ...evidenceCard("fabricated_pre_lookup_evidence"), summary_preview: "fabricated pre lookup evidence" }]
+    seedHashFailure.provider_request_count_before = 99
+    const seedHashFailureAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "seed hash failure should not run" }])
+    const seedHashFailureController = new CommanderInvestigationController({
+      modelAdapter: seedHashFailureAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: omittedContinuityRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }),
+      recoverySource: async () => source!,
+    })
+    const seedHashFailureResult = await seedHashFailureController.runFromRecoverySeed(seedHashFailure)
+    expect(seedHashFailureResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0, model_turn_count: 0 })
+    expect(seedHashFailureResult.blockers).toContain("recovery continuation seed hash did not verify")
+    expect(JSON.stringify(seedHashFailureResult)).not.toContain("fabricated pre lookup")
+    expect(seedHashFailureAdapter.request_summaries).toHaveLength(0)
+    const missingSourceSeed = structuredClone(seedHashFailure)
+    missingSourceSeed.execution_preparation_hash = recoverySeedPreparationHash(missingSourceSeed)
+    const missingSourceAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "missing source should not run" }])
+    const missingSourceController = new CommanderInvestigationController({
+      modelAdapter: missingSourceAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: omittedContinuityRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }),
+      recoverySource: async () => undefined,
+    })
+    const missingSourceResult = await missingSourceController.runFromRecoverySeed(missingSourceSeed)
+    expect(missingSourceResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0, model_turn_count: 0 })
+    expect(missingSourceResult.blockers).toContain("recovery continuation authoritative journal checkpoint is unavailable")
+    expect(JSON.stringify(missingSourceResult)).not.toContain("fabricated pre lookup")
+    expect(missingSourceAdapter.request_summaries).toHaveLength(0)
     const stricterContextBuilt = await builder.build({
       source: source!,
       checkpoint: source!.latest_checkpoint!,

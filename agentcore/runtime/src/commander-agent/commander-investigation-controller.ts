@@ -114,6 +114,8 @@ export class CommanderInvestigationController {
     const resultStarted = canonicalDate(seed.original_started_at) ?? continuationStarted
     const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
     const input: CommanderInvestigationInput = { ...seed.normalized_input, investigation_id: seed.investigation_id, abort_signal: options.abort_signal }
+    const neutralBlockedRecoveryResult = (blocker: string) =>
+      this.finish(input, seed.investigation_id, "blocked", "controller_error", minimalBootstrap(input), fallbackBudget(input.phase, "recovery_seed_blocked"), "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const expectedHash = stableHash({
       seed_version: 1,
       investigation_id: seed.investigation_id,
@@ -146,9 +148,9 @@ export class CommanderInvestigationController {
       uncertain_model_turn_charge: seed.uncertain_model_turn_charge,
       first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
     })
-    if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (expectedHash !== seed.execution_preparation_hash) return neutralBlockedRecoveryResult("recovery continuation seed hash did not verify")
     const authoritativeCheckpoint = await this.recoverySeedCheckpoint(seed)
-    if (authoritativeCheckpoint.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [authoritativeCheckpoint.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (authoritativeCheckpoint.blocker) return neutralBlockedRecoveryResult(authoritativeCheckpoint.blocker)
     const checkpoint = authoritativeCheckpoint.checkpoint!
     const authoritativeTurns = checkpoint.turn_summaries.map((turn) => redactValue(turn) as CommanderInvestigationTurnSummary)
     const checkpointWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(checkpoint)
