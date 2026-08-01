@@ -20,6 +20,7 @@ import { CommandAuthorityService } from "../authority/command-authority-service"
 import { ContextBudgetService } from "../context/context-budget-service"
 import { ModelCapabilityRegistry } from "../context/model-capability-registry"
 import { ResearchMemoryService } from "../research-memory/research-memory-service"
+import { redactText } from "../security/redaction"
 import { CommanderOperationalMemorySearchService } from "../commander-tools/commander-operational-memory-search-service"
 import { CommanderRepoReadService } from "../commander-tools/commander-repo-read-service"
 import {
@@ -7001,6 +7002,46 @@ describe("Commander in-memory investigation controller", () => {
     expect(built.seed?.effective_budget.original_budget_hash).toBe(source!.latest_checkpoint!.budget.budget_hash)
     expect(built.seed?.effective_budget.effective_budget_hash).toBe(built.seed?.effective_budget.effective_budget.budget_hash)
     expect(built.seed?.effective_budget.effective_budget_hash).toBe(stableHash({ ...built.seed!.effective_budget.effective_budget, budget_hash: "" }))
+    const tamperedContinuityDriftSeed = structuredClone(built.seed!)
+    const authoritativeContinuityDrift = tamperedContinuityDriftSeed.current_bootstrap_hash !== tamperedContinuityDriftSeed.original_bootstrap_ref.bootstrap_hash
+    tamperedContinuityDriftSeed.continuity_drift_detected = !authoritativeContinuityDrift
+    tamperedContinuityDriftSeed.recovery_notice.continuity_drift_detected = !authoritativeContinuityDrift
+    tamperedContinuityDriftSeed.recovery_notice.notice_hash = stableHash({
+      ...tamperedContinuityDriftSeed.recovery_notice,
+      warning: redactText(tamperedContinuityDriftSeed.recovery_notice.warning),
+      notice_hash: "",
+    })
+    tamperedContinuityDriftSeed.recovery_notice_hash = tamperedContinuityDriftSeed.recovery_notice.notice_hash
+    tamperedContinuityDriftSeed.request_id_prefix = `${source!.latest_checkpoint!.investigation_id}_recovery_${source!.latest_checkpoint!.checkpoint_sequence}_${stableHash({
+      basis: tamperedContinuityDriftSeed.recovery_basis_hash,
+      checkpoint: source!.latest_checkpoint!.checkpoint_hash,
+      pending: tamperedContinuityDriftSeed.pending_model_step_ref?.model_request_id,
+      bootstrap: tamperedContinuityDriftSeed.current_bootstrap.bootstrap_hash,
+      notice: tamperedContinuityDriftSeed.recovery_notice.notice_hash,
+    }).slice(0, 12)}`
+    tamperedContinuityDriftSeed.first_model_request_preview.request_id = `${tamperedContinuityDriftSeed.request_id_prefix}_turn_${tamperedContinuityDriftSeed.next_turn_index}`
+    tamperedContinuityDriftSeed.first_model_request_preview.request_preview_hash = stableHash({
+      ...tamperedContinuityDriftSeed.first_model_request_preview,
+      request_preview_hash: "",
+    })
+    tamperedContinuityDriftSeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedContinuityDriftSeed)
+    const tamperedContinuityDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered continuity drift should not run" }])
+    const tamperedContinuityDriftRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
+    const tamperedContinuityDriftResult = await new CommanderInvestigationController({
+      modelAdapter: tamperedContinuityDriftAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: tamperedContinuityDriftRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: tamperedContinuityDriftRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: tamperedContinuityDriftRegistry }),
+      recoverySource: async () => source!,
+    }).runFromRecoverySeed(tamperedContinuityDriftSeed)
+    expect(tamperedContinuityDriftResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(tamperedContinuityDriftResult.blockers).toContain("recovery continuation notice did not verify")
+    expect(tamperedContinuityDriftAdapter.request_summaries).toHaveLength(0)
     const omittedContinuitySource = structuredClone(source!)
     omittedContinuitySource.normalized_input = { ...omittedContinuitySource.normalized_input!, include_continuity: false }
     omittedContinuitySource.recovery_basis = {

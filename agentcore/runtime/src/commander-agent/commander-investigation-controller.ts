@@ -1423,6 +1423,7 @@ function verifyRecoveryCheckpoint(checkpoint: CommanderInvestigationCheckpoint):
 function validateRecoveryNotice(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
   const notice = seed.recovery_notice
   const pending = seed.pending_model_step_ref
+  const expectedContinuityDrift = seed.current_bootstrap_hash !== seed.original_bootstrap_ref.bootstrap_hash
   const expectedKind = pending ? "uncertain_provider_continuation" : "checkpoint_continuation"
   const expectedOutcome = pending ? "uncertain" : "not_pending"
   const expectedWarning = pending
@@ -1439,7 +1440,8 @@ function validateRecoveryNotice(seed: CommanderInvestigationRecoveryContinuation
     notice.checkpoint_hash !== seed.checkpoint_ref.checkpoint_hash ||
     notice.original_bootstrap_hash !== seed.original_bootstrap_ref.bootstrap_hash ||
     notice.current_bootstrap_hash !== seed.current_bootstrap_hash ||
-    notice.continuity_drift_detected !== seed.continuity_drift_detected ||
+    seed.continuity_drift_detected !== expectedContinuityDrift ||
+    notice.continuity_drift_detected !== expectedContinuityDrift ||
     notice.previous_provider_outcome !== expectedOutcome ||
     notice.previous_model_request_id !== pending?.model_request_id ||
     notice.previous_provider_request_may_have_been_sent !== Boolean(pending) ||
