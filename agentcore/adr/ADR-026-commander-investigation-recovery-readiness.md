@@ -121,10 +121,12 @@ checkpoint hash, pending boundary,
 tool/provider/budget/continuity/human compatibility hashes, the current provider
 execution-envelope hash, recovery packet hash, recovery kind, and recommended
 action. 9W3B2B1 additionally binds deterministic execution preparation, first
-fresh request preview, and conservative uncertain-attempt accounting into the
-recovery packet and plan. It excludes generated timestamps, EventStore event
-IDs, provider audit request IDs, process IDs, runtime start/lock state,
-credential values, approval IDs, approval notes, and duration measurements.
+fresh request preview, pre-model gate-warning snapshot, actual loaded-schema
+verification, original-start lineage, and conservative uncertain-attempt
+accounting into the recovery packet and plan. It excludes generated timestamps,
+EventStore event IDs, provider audit request IDs, process IDs, runtime
+start/lock state, credential values, approval IDs, approval notes, and duration
+measurements.
 9W3B2A records durable human approval against that exact basis and plan hash.
 Approval remains distinct from execution.
 

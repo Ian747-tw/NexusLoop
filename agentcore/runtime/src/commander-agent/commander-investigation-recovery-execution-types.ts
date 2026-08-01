@@ -116,6 +116,16 @@ export type CommanderInvestigationRecoveryFirstModelRequestPreview = {
   request_preview_hash: string
 }
 
+export type CommanderInvestigationRecoveryPreModelGateSnapshot = {
+  snapshot_version: 1
+  turn_index: number
+  human_control_action: "continue"
+  human_control_warnings: string[]
+  provider_preflight_ready: true
+  provider_preflight_warnings: string[]
+  gate_snapshot_hash: string
+}
+
 export type CommanderInvestigationRecoveryReplaySummary = {
   replay_protocol_available: boolean
   tool_call_count: number
@@ -157,6 +167,8 @@ export type CommanderInvestigationRecoveryContinuationSeed = {
   replay_message_hash: string
   recovery_notice: CommanderInvestigationRecoveryNotice
   recovery_notice_hash: string
+  pre_model_gate_snapshot: CommanderInvestigationRecoveryPreModelGateSnapshot
+  pre_model_gate_snapshot_hash: string
   next_turn_index: number
   elapsed_active_ms_before: number
   provider_request_count_before: number
@@ -178,6 +190,7 @@ export type CommanderInvestigationRecoveryContinuationSeed = {
 export type CommanderInvestigationRecoveryExecutionPreparationSummary = {
   recovery_kind: Exclude<CommanderInvestigationRecoveryKind, "none">
   next_turn_index: number
+  original_started_at: string
   checkpoint_id: string
   checkpoint_sequence: number
   checkpoint_hash: string
@@ -251,4 +264,6 @@ export type CommanderInvestigationRecoveryContinuationBuilderOptions = {
   currentBootstrap(input: Omit<CommanderInvestigationInput, "abort_signal">): Promise<CommanderInvestigationBootstrap>
   contextService: import("./commander-investigation-context-service").CommanderInvestigationContextService
   modelOutputTokens(input: { provider_kind: string; model_id: string }): number | undefined
+  currentHumanControl?(input: { phase: import("../commander-tools/commander-tool-types").CommanderToolPhase; session_id?: string; launch_id?: string; turn_index: number }): Promise<import("./commander-investigation-types").CommanderInvestigationControlSnapshot>
+  providerPreflight?(input: { phase: import("../commander-tools/commander-tool-types").CommanderToolPhase; provider_id: string; provider_kind: string; model_id: string; turn_index: number }): Promise<import("./commander-investigation-provider-types").CommanderInvestigationProviderPreflightSnapshot | undefined>
 }

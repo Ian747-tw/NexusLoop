@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto"
 import { redactText, redactValue } from "../security/redaction"
 import { commanderToolSchemaFromDescriptor, stableHash } from "./commander-model-schema"
 import type { CommanderInvestigationInput, CommanderInvestigationWorkingSet } from "./commander-investigation-types"
-import type { CommanderInvestigationCheckpoint } from "./commander-investigation-journal-types"
+import type { CommanderInvestigationCheckpoint, CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
 import type {
   CommanderInvestigationRecoveryContinuationBuilderInput,
   CommanderInvestigationRecoveryContinuationBuilderOptions,
@@ -30,11 +31,14 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const restored = restoreCommanderInvestigationWorkingSet(checkpoint)
     if (restored.blocker) return { blockers: [restored.blocker], warnings }
     const loaded = checkpoint.loaded_tools
-      .map((ref) => this.options.descriptors.find((tool) => tool.tool_id === ref.tool_id))
+      .map((ref) => {
+        const tool = this.options.descriptors.find((candidate) => candidate.tool_id === ref.tool_id)
+        return tool && actualSchemaMatchesRef(tool, ref) ? deepFreeze(structuredClone(tool)) : undefined
+      })
       .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool))
       .sort((a, b) => a.tool_id.localeCompare(b.tool_id))
     const missing = checkpoint.loaded_tools.filter((ref) => !loaded.some((tool) => tool.tool_id === ref.tool_id)).map((ref) => ref.tool_id)
-    if (missing.length) return { blockers: missing.map((toolId) => `current descriptor for loaded recovery tool ${toolId} is unavailable`), warnings }
+    if (missing.length) return { blockers: missing.map((toolId) => `current descriptor for loaded recovery tool ${toolId} is unavailable or schema-mismatched`), warnings }
     const replay = reconstructCommanderRecoveryReplayExchange({ checkpoint, loadedTools: loaded, protocol: checkpoint.tool_protocol })
     if (replay.blockers.length) return { blockers: replay.blockers, warnings: replay.warnings }
     warnings.push(...replay.warnings)
@@ -64,10 +68,15 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       continuity_drift_detected: currentBootstrap.bootstrap_hash !== checkpoint.bootstrap_ref.bootstrap_hash,
       next_turn_index: nextTurn,
     })
+    const gate = await this.preModelGateSnapshot(source.normalized_input!, nextTurn)
+    if (gate.blockers.length) blockers.push(...gate.blockers)
     const budgetForContext = { ...budget.effective_budget, max_model_turns: Math.max(nextTurn, budget.effective_budget.max_model_turns) }
+    const contextWorkingSet = gate.snapshot
+      ? { ...restored.workingSet!, current_warnings: [...restored.workingSet!.current_warnings, ...gate.snapshot.human_control_warnings, ...gate.snapshot.provider_preflight_warnings] }
+      : restored.workingSet!
     const context = this.options.contextService.build({
       bootstrap: currentBootstrap,
-      workingSet: restored.workingSet!,
+      workingSet: contextWorkingSet,
       loadedTools: loaded,
       toolProtocol: checkpoint.tool_protocol,
       budget: budgetForContext,
@@ -142,6 +151,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       recovery_kind: pending ? "uncertain_provider_outcome" : "checkpoint",
       immutable_identity: source.immutable_identity!,
       normalized_input_hash: source.recovery_basis!.normalized_input_hash,
+      original_started_at: source.record?.started_at ?? checkpoint.created_at,
       recovery_basis_hash: source.recovery_basis_hash!,
       checkpoint_ref: checkpointRef,
       pending_model_step_ref: pendingRef,
@@ -156,6 +166,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       replay_exchange_hash: replay.summary.replay_exchange_hash,
       replay_message_hash: replayMessageHash,
       recovery_notice_hash: notice.notice_hash,
+      pre_model_gate_snapshot_hash: gate.snapshot?.gate_snapshot_hash,
       next_turn_index: nextTurn,
       elapsed_active_ms_before: checkpoint.elapsed_active_ms,
       provider_request_count_before: checkpoint.provider_request_count,
@@ -196,6 +207,8 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       replay_message_hash: replayMessageHash,
       recovery_notice: notice,
       recovery_notice_hash: notice.notice_hash,
+      pre_model_gate_snapshot: gate.snapshot!,
+      pre_model_gate_snapshot_hash: gate.snapshot!.gate_snapshot_hash,
       next_turn_index: nextTurn,
       elapsed_active_ms_before: checkpoint.elapsed_active_ms,
       provider_request_count_before: checkpoint.provider_request_count,
@@ -214,6 +227,28 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       raw_tool_results_available: false,
     }
     return { seed: blockers.length ? undefined : seed, blockers: blockers.slice(0, 16), warnings: warnings.slice(0, 16) }
+  }
+
+  private async preModelGateSnapshot(input: Omit<CommanderInvestigationInput, "abort_signal">, turnIndex: number) {
+    const blockers: string[] = []
+    const human = this.options.currentHumanControl
+      ? await this.options.currentHumanControl({ phase: input.phase, session_id: input.session_id, launch_id: input.launch_id, turn_index: turnIndex })
+      : { action: "continue" as const, source_kind: "default" as const, checked_at: "1970-01-01T00:00:00.000Z", warnings: [] }
+    if (human.action !== "continue") blockers.push("current human control no longer permits recovery preparation")
+    const provider = this.options.providerPreflight
+      ? await this.options.providerPreflight({ phase: input.phase, provider_id: input.provider_id, provider_kind: input.provider_kind, model_id: input.model_id, turn_index: turnIndex })
+      : undefined
+    const snapshot = {
+      snapshot_version: 1 as const,
+      turn_index: turnIndex,
+      human_control_action: "continue" as const,
+      human_control_warnings: human.warnings.map((item) => bound(item, 240)).slice(0, 12),
+      provider_preflight_ready: true as const,
+      provider_preflight_warnings: (provider?.warnings ?? []).map((item) => bound(item, 240)).slice(0, 12),
+      gate_snapshot_hash: "",
+    }
+    snapshot.gate_snapshot_hash = stableHash({ ...snapshot, gate_snapshot_hash: "" })
+    return { snapshot, blockers: blockers.slice(0, 12) }
   }
 }
 
@@ -335,6 +370,7 @@ export function commanderRecoveryExecutionPreparationSummaryFromSeed(seed: Comma
   return {
     recovery_kind: seed.recovery_kind,
     next_turn_index: seed.next_turn_index,
+    original_started_at: seed.original_started_at,
     checkpoint_id: seed.checkpoint_ref.checkpoint_id,
     checkpoint_sequence: seed.checkpoint_ref.checkpoint_sequence,
     checkpoint_hash: seed.checkpoint_ref.checkpoint_hash,
@@ -428,4 +464,31 @@ function validatePreparationInput(input: CommanderInvestigationRecoveryExecution
 
 function bound(value: string, max: number): string {
   return redactText(value).replace(/\s+/g, " ").trim().slice(0, max)
+}
+
+function actualSchemaMatchesRef(tool: import("../commander-tools/commander-tool-types").CommanderToolDescriptor, ref: CommanderInvestigationLoadedToolRef): boolean {
+  if (!tool.input_schema || !tool.output_schema) return false
+  const inputBytes = Buffer.byteLength(JSON.stringify(tool.input_schema))
+  const outputBytes = Buffer.byteLength(JSON.stringify(tool.output_schema))
+  const inputHash = createHash("sha256").update(JSON.stringify(tool.input_schema)).digest("hex")
+  const outputHash = createHash("sha256").update(JSON.stringify(tool.output_schema)).digest("hex")
+  const tokens = Math.ceil((inputBytes + outputBytes) / 4)
+  return tool.schema_metadata.input_schema_hash === inputHash
+    && tool.schema_metadata.output_schema_hash === outputHash
+    && tool.schema_metadata.input_schema_bytes === inputBytes
+    && tool.schema_metadata.output_schema_bytes === outputBytes
+    && tool.schema_metadata.estimated_schema_tokens === tokens
+    && ref.input_schema_hash === inputHash
+    && ref.output_schema_hash === outputHash
+    && (!("input_schema_bytes" in ref) || ref.input_schema_bytes === inputBytes)
+    && (!("output_schema_bytes" in ref) || ref.output_schema_bytes === outputBytes)
+    && (!("estimated_schema_tokens" in ref) || ref.estimated_schema_tokens === tokens)
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    Object.freeze(value)
+    for (const item of Object.values(value as Record<string, unknown>)) deepFreeze(item)
+  }
+  return value
 }

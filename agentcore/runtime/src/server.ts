@@ -5141,6 +5141,23 @@ export class RuntimeServer {
         const capability = this.modelCapabilityRegistry.get({ provider_kind: input.provider_kind, model_id: input.model_id, role: "commander" })
         return Math.min(1024, capability.max_output_tokens ?? 1024)
       },
+      currentHumanControl: (input: { phase: CommanderToolPhase; session_id?: string; launch_id?: string; turn_index: number }) => this.readDurableCommanderInvestigationControl({
+        phase: input.phase,
+        session_id: input.session_id,
+        launch_id: input.launch_id,
+        before: "model_step",
+        turn_index: input.turn_index,
+      }),
+      providerPreflight: async (input: { phase: CommanderToolPhase; provider_id: string; provider_kind: string; model_id: string; turn_index: number }) => this.commanderInvestigationProviderConfig
+        ? this.defaultCommanderInvestigationProviderGate().check({
+          phase: input.phase,
+          provider_id: input.provider_id,
+          provider_kind: input.provider_kind,
+          model_id: input.model_id,
+          before: "model_step",
+          turn_index: input.turn_index,
+        })
+        : undefined,
     }
   }
 

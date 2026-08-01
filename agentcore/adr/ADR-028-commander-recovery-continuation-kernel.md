@@ -56,10 +56,20 @@ counters, evidence pointers, turn summaries, repeat signatures, no-progress
 state, provider/audit counters, and elapsed active time.
 
 The stable preparation hash uses identity, hashes, descriptor/schema references,
-counter summaries, replay hashes, notice hash, and first-request preview hash.
-It excludes generated timestamps, runtime lifecycle state, run-lock state,
-EventStore event IDs, external API audit request IDs, approval IDs, approval
-timestamps, approver identity, and approval notes.
+counter summaries, replay hashes, notice hash, the pre-model gate snapshot hash,
+original investigation start time, and first-request preview hash. It excludes
+generated timestamps, runtime lifecycle state, run-lock state, EventStore event
+IDs, external API audit request IDs, approval IDs, approval timestamps, approver
+identity, and approval notes.
+
+The seed carries loaded-tool references for deterministic planning, but live
+descriptor objects are not execution authority. The controller reconstructs
+loaded descriptors from its current registry by stored tool ID, recomputes
+input/output schema hashes, byte sizes, and token estimates from the actual
+schema objects, compares those values with both durable refs and descriptor
+metadata, and deep-clones/freeze-bounds the accepted descriptors before building
+provider tool schemas. A mutable seed or aliased descriptor cannot substitute a
+different schema under unchanged metadata.
 
 ### Budgets And Counters
 
@@ -84,6 +94,13 @@ The notice states whether the previous provider outcome is not pending or
 uncertain, forbids provider-request and tool-execution replay, marks exact
 assistant replay unavailable, and requires a fresh request.
 
+Preparation also captures a bounded semantic pre-model gate snapshot: the
+current human-control action and warnings plus provider-preflight warnings. That
+snapshot is included in the preparation hash and approved first context. The
+controller rechecks the same semantics immediately before the first recovered
+request; a changed action or warning blocks as stale preparation instead of
+silently sending a different request.
+
 Only summary-level assistant/tool protocol relationships are reconstructed:
 tool-call IDs, canonical tool IDs, redacted provider-visible arguments,
 validation metadata, call hashes, summary-only tool-result messages, result
@@ -91,6 +108,10 @@ hashes, truncation flags, and evidence references. Assistant prose, raw
 arguments, execution arguments, raw tool output, full memory records, repository
 lines, Git patches, provider prompts/responses, credentials, and chain of
 thought are not reconstructed.
+
+Replay arguments are recursively compacted as structured JSON. Oversized or
+unrecoverable summary arguments return a structured blocker; recovery preview
+does not truncate serialized JSON and then parse the broken result.
 
 ### First Request Preview
 
@@ -109,10 +130,22 @@ approval IDs and cannot equal a historical or pending model request ID.
 `CommanderInvestigationController.run(input)` remains the normal new-run entry
 point and still performs input validation, bootstrap derivation, initial tool
 loading, and `onStarted` observation. The internal
-`runFromRecoverySeed(seed, ...)` entry point validates the seed hash, skips
-new-run bootstrap/start semantics, restores the loaded tools and working set,
-uses the recovery request prefix and mandatory notice, preserves prior counters,
-and then uses the same model/tool sequencing semantics with scripted tests.
+`runFromRecoverySeed(seed, ...)` entry point validates the seed hash and
+canonical recovery identity, skips new-run bootstrap/start semantics, restores
+the loaded tools and working set, uses the recovery request prefix and mandatory
+notice, preserves prior counters, and feeds the same prepared-loop state type
+used by new investigations into one shared model/tool loop.
+
+The verified identity object is the single authority for both provider-gate
+checks and provider request construction. Recovery cannot present one
+provider/model identity to the gate and send a different provider/model identity
+to the adapter.
+
+Recovery keeps two timing concepts separate. `original_started_at` remains the
+investigation lineage timestamp and is bound into the preparation hash.
+Continuation active duration is measured from the current process plus the
+checkpoint's prior elapsed active time; downtime does not become active budget
+consumption.
 
 B2B1 does not wire this continuation path to RuntimeServer execution. The only
 RuntimeServer addition is a read-only preparation preview method that requires

@@ -37,9 +37,11 @@ therefore changes the journal record/source hash and approval history, but it
 does not invalidate the plan it approves. Any checkpoint, pending-boundary,
 identity, normalized-input, provider-envelope, tool/schema/authority, budget,
 context, continuity, or human-control change makes an older approval stale.
-9W3B2B1 adds an execution-preparation hash and first fresh request preview hash
-to the recovery packet and plan. Approvals recorded before that semantic plan
-input remain historical but become stale rather than corrupt.
+9W3B2B1 adds an execution-preparation hash, first fresh request preview hash,
+pre-model gate-warning snapshot hash, actual loaded-schema verification, and
+original-start lineage to the recovery packet and plan. Approvals recorded
+before that semantic plan input remain historical but become stale rather than
+corrupt.
 Current-approval matching also compares the persisted recovery packet hash to
 the current preview packet hash, so a hash-valid approval cannot authorize a
 different recovery packet under the same plan hash.

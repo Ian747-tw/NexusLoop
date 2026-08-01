@@ -39,6 +39,8 @@ export function reconstructCommanderRecoveryReplayExchange(input: {
     callIds.add(call.tool_call_id)
     if (!loaded.has(call.tool_id)) blockers.push(`replay exchange references unloaded tool ${call.tool_id}`)
     if ("execution_arguments" in call) blockers.push("replay exchange contains execution_arguments")
+    const compactedArguments = safeRecord(call.arguments)
+    if (compactedArguments.blocker) blockers.push(compactedArguments.blocker)
   }
   for (const result of exchange.tool_result_messages) {
     if (!result.tool_call_id || resultIds.has(result.tool_call_id)) blockers.push("replay exchange has duplicate or empty tool result id")
@@ -59,7 +61,7 @@ export function reconstructCommanderRecoveryReplayExchange(input: {
       type: "tool_call",
       tool_call_id: call.tool_call_id,
       tool_id: call.tool_id,
-      arguments: safeRecord(call.arguments),
+      arguments: safeRecord(call.arguments).value,
       raw_arguments: call.raw_arguments ? redactText(call.raw_arguments).slice(0, 1000) : undefined,
       arguments_valid: call.arguments_valid,
       validation_errors: call.validation_errors.slice(0, 6).map((item) => redactText(item).slice(0, 240)),
@@ -104,8 +106,31 @@ function emptySummary(available: boolean, hash?: string): CommanderInvestigation
   }
 }
 
-function safeRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return JSON.parse(redactText(JSON.stringify(value)).slice(0, 4000)) as Record<string, unknown>
+function safeRecord(value: unknown): { value: Record<string, unknown>; blocker?: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { value: {} }
+  const compacted = compactJsonValue(value, 0)
+  if (!compacted || typeof compacted !== "object" || Array.isArray(compacted)) return { value: {}, blocker: "replay tool arguments could not be compacted into a summary-only object" }
+  if (Buffer.byteLength(JSON.stringify(compacted)) > 4000) return { value: {}, blocker: "replay tool arguments exceed the summary-only recovery bound" }
+  return { value: compacted as Record<string, unknown> }
 }
 
+function compactJsonValue(value: unknown, depth: number): unknown {
+  if (depth > 6) return "[omitted:depth]"
+  if (typeof value === "string") return redactText(value).slice(0, 300)
+  if (typeof value === "number") return Number.isFinite(value) ? value : "[omitted:number]"
+  if (typeof value === "boolean" || value === null) return value
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 16).map((item) => compactJsonValue(item, depth + 1))
+    if (value.length > 16) items.push(`[omitted:${value.length - 16}:items]`)
+    return items
+  }
+  if (typeof value === "object" && value) {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, 24)
+      .map(([key, item]) => [redactText(key).slice(0, 120), compactJsonValue(item, depth + 1)])
+    if (Object.keys(value as Record<string, unknown>).length > 24) entries.push(["__omitted_keys", Object.keys(value as Record<string, unknown>).length - 24])
+    return Object.fromEntries(entries)
+  }
+  return "[omitted:unsupported]"
+}

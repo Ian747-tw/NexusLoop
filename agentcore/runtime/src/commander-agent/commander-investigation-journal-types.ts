@@ -58,6 +58,10 @@ export type CommanderInvestigationJournalIdentity = {
   investigation_id: string
   phase: CommanderToolPhase
   objective_hash: string
+  requested_by: string
+  mission_id?: string
+  session_id?: string
+  launch_id?: string
   provider_id: string
   provider_kind: string
   model_id: string

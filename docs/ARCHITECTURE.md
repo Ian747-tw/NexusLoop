@@ -76,8 +76,9 @@ recovery basis and plan hash. It records approval and stale-plan state only;
 recovery execution remains future work. Branch 9W3B2B1 adds deterministic
 recovery preparation and an internal scripted continuation kernel: it derives a
 continuation seed, mandatory recovery notice, summary-only replay relationship,
-and first fresh model-request preview, then binds that preparation into the
-recovery packet and plan hash without consuming approval or executing recovery.
+pre-model gate-warning snapshot, and first fresh model-request preview, then
+binds that preparation into the recovery packet and plan hash without consuming
+approval or executing recovery.
 
 ```text
 NexusLoop domain control plane
@@ -146,6 +147,7 @@ durable checkpoint
 -> deterministic continuation seed
 -> fresh current bootstrap
 -> mandatory recovery notice
+-> pre-model human/provider gate-warning snapshot
 -> summary-only protocol reconstruction
 -> first fresh request preview
 -> execution-preparation hash
@@ -173,11 +175,19 @@ basis so an approval does not stale itself. Current/stale approval reporting is
 read-only; 9W3B2A does not consume approval, reopen terminal journals, clear
 pending uncertainty, or run recovery.
 9W3B2B1 extends the recovery packet and plan with the deterministic
-execution-preparation hash and first request preview hash. Existing approvals
-that predate that semantic plan input become stale rather than corrupt.
-Uncertain pending model steps remain uncertain, are conservatively charged as
-one unresolved model attempt, and are never replayed or treated as known
-success/failure.
+execution-preparation hash and first request preview hash. It reconstructs
+loaded descriptors from the current controller registry, recomputes actual
+input/output schema metadata from schema objects, and deep-clones accepted
+descriptors before any scripted continuation can build provider tool schemas.
+The controller now feeds new investigations and recovery seeds into one shared
+model/tool loop; the verified recovery identity is used for both provider gates
+and provider request construction. Existing approvals that predate that
+semantic plan input become stale rather than corrupt. Uncertain pending model
+steps remain uncertain, are conservatively charged as one unresolved model
+attempt, and are never replayed or treated as known success/failure. Original
+investigation start time remains lineage metadata, while continuation active
+duration counts prior elapsed active time plus current active work rather than
+downtime.
 
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In

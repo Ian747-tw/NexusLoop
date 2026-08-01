@@ -3,7 +3,7 @@ import { redactText, redactValue } from "../security/redaction"
 import { COMMANDER_TOOL_PHASES, COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
 import type { CommanderEvidenceCard } from "../commander-tools/commander-read-types"
-import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-tools/commander-tool-types"
+import type { CommanderToolDescriptor, CommanderToolPhase, CommanderToolSchemaMetadata } from "../commander-tools/commander-tool-types"
 import { commanderProviderVisibleDescriptionHash, commanderToolSchemaFromDescriptor, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelToolCallPart, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
 import type { CommanderConnectorModelTransportMetadata } from "./commander-connector-transport-types"
@@ -85,27 +85,166 @@ export class CommanderInvestigationController {
     const startedObserved = await this.observeStarted(input, investigationId, bootstrap, budget, toolProtocol, Array.from(loaded.values()), workingSet, started.toISOString())
     if (startedObserved.blocker) return this.finish(input, investigationId, startedObserved.status!, startedObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [startedObserved.blocker], [], started)
 
-    for (let turn = 1; turn <= budget.max_model_turns; turn += 1) {
+    return this.executePreparedInvestigation({
+      mode: "new",
+      input,
+      investigationId,
+      started,
+      wallStartedMs,
+      bootstrap,
+      budget,
+      toolProtocol,
+      loaded,
+      workingSet,
+      turns,
+      latestAssistant,
+      latestToolResults,
+      providerRequests,
+      recentResults,
+      nextTurnIndex: 1,
+      requestIdForTurn: (turn) => `${investigationId}_turn_${turn}`,
+      abortSignal: input.abort_signal,
+      persistCheckpoints: true,
+    })
+  }
+
+  async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationResult> {
+    const continuationStarted = this.now()
+    const resultStarted = canonicalDate(seed.original_started_at) ?? continuationStarted
+    const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
+    const input: CommanderInvestigationInput = { ...seed.normalized_input, investigation_id: seed.investigation_id, abort_signal: options.abort_signal }
+    const expectedHash = stableHash({
+      seed_version: 1,
+      investigation_id: seed.investigation_id,
+      recovery_kind: seed.recovery_kind,
+      immutable_identity: seed.immutable_identity,
+      normalized_input_hash: seed.normalized_input_hash,
+      original_started_at: seed.original_started_at,
+      recovery_basis_hash: seed.recovery_basis_hash,
+      checkpoint_ref: seed.checkpoint_ref,
+      pending_model_step_ref: seed.pending_model_step_ref,
+      original_bootstrap_ref: seed.original_bootstrap_ref,
+      current_bootstrap_hash: seed.current_bootstrap_hash,
+      continuity_drift_detected: seed.continuity_drift_detected,
+      tool_protocol: seed.tool_protocol,
+      loaded_tool_refs: seed.loaded_tool_refs,
+      effective_budget_hash: seed.effective_budget_hash,
+      working_set_hash: seed.working_set_hash,
+      turn_summary_hash: stableHash(seed.turn_summaries),
+      replay_exchange_hash: seed.replay_exchange_hash,
+      replay_message_hash: seed.replay_message_hash,
+      recovery_notice_hash: seed.recovery_notice_hash,
+      pre_model_gate_snapshot_hash: seed.pre_model_gate_snapshot.gate_snapshot_hash,
+      next_turn_index: seed.next_turn_index,
+      elapsed_active_ms_before: seed.elapsed_active_ms_before,
+      provider_request_count_before: seed.provider_request_count_before,
+      external_api_audit_count_before: seed.external_api_audit_count_before,
+      unresolved_provider_attempt_count: seed.unresolved_provider_attempt_count,
+      uncertain_model_turn_charge: seed.uncertain_model_turn_charge,
+      first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
+    })
+    if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors)
+    if (prepared.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [prepared.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const budget = seed.effective_budget.effective_budget
+    const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
+    const workingSet = redactValue(seed.working_set) as CommanderInvestigationWorkingSet
+    if (workingSet.model_turn_count < seed.effective_budget.consumed.model_turns) {
+      workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
+      workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
+    }
+    const turns = seed.turn_summaries.slice()
+    const latestAssistant = seed.latest_assistant
+    const latestToolResults = seed.latest_tool_results.slice()
+    const providerRequests = seed.provider_request_count_before
+    const recentResults = new Map(seed.working_set.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
+    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (seed.effective_budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    return this.executePreparedInvestigation({
+      mode: "recovery",
+      input,
+      investigationId: seed.investigation_id,
+      started: resultStarted,
+      wallStartedMs,
+      bootstrap: seed.current_bootstrap,
+      budget,
+      toolProtocol: seed.tool_protocol,
+      loaded,
+      workingSet,
+      turns,
+      latestAssistant,
+      latestToolResults,
+      providerRequests,
+      recentResults,
+      nextTurnIndex: seed.next_turn_index,
+      requestIdForTurn: (turn) => `${seed.request_id_prefix}_turn_${turn}`,
+      abortSignal: options.abort_signal,
+      recoveryNotice: seed.recovery_notice,
+      firstRequestPreview: seed.first_model_request_preview,
+      preModelGateSnapshot: seed.pre_model_gate_snapshot,
+      persistCheckpoints: false,
+      durationMs: () => elapsedWallMs(wallStartedMs),
+    })
+	  }
+
+  private async executePreparedInvestigation(state: CommanderInvestigationPreparedLoopState): Promise<CommanderInvestigationResult> {
+    const {
+      input,
+      investigationId,
+      started,
+      wallStartedMs,
+      bootstrap,
+      budget,
+      toolProtocol,
+      loaded,
+      workingSet,
+      turns,
+      requestIdForTurn,
+      abortSignal,
+      recoveryNotice,
+      firstRequestPreview,
+      preModelGateSnapshot,
+      persistCheckpoints,
+    } = state
+    let latestAssistant = state.latestAssistant
+    let latestToolResults = state.latestToolResults
+    let providerRequests = state.providerRequests
+    const recentResults = state.recentResults
+    const finish = (
+      status: CommanderInvestigationResult["status"],
+      reason: CommanderInvestigationStopReason,
+      blockers: string[],
+      warnings: string[] = [],
+      finalSummary?: string,
+    ) => this.finish(input, investigationId, status, reason, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), blockers, warnings, started, finalSummary, state.durationMs?.())
+
+    for (let turn = state.nextTurnIndex; turn <= budget.max_model_turns; turn += 1) {
       const preModelWarnings: string[] = []
-      if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation"], [], started)
+      if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", [state.mode === "recovery" ? "caller aborted recovered investigation" : "caller aborted investigation"])
       const humanBeforeModel = await this.checkControl(input, "model_step", turn)
       const humanStop = stopReasonForControl(humanBeforeModel)
-      if (humanStop) return this.finish(input, investigationId, "needs_human_review", humanStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
+      if (humanStop) return finish("needs_human_review", humanStop, [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings)
       if (humanBeforeModel.warnings.length) preModelWarnings.push(...humanBeforeModel.warnings)
       const providerBeforeModel = await this.checkProvider(input, "model_step", turn)
-      if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, investigationId, "blocked", "provider_preflight_blocked", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, [...preModelWarnings, ...providerBeforeModel.warnings], started)
+      if (providerBeforeModel && !providerBeforeModel.ready) return finish("blocked", "provider_preflight_blocked", providerBeforeModel.blockers, [...preModelWarnings, ...providerBeforeModel.warnings])
       if (providerBeforeModel?.warnings.length) preModelWarnings.push(...providerBeforeModel.warnings)
-      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], preModelWarnings, started)
+      if (turn === state.nextTurnIndex && preModelGateSnapshot) {
+        const gateBlocker = preModelGateSnapshotBlocker(preModelGateSnapshot, turn, humanBeforeModel, providerBeforeModel)
+        if (gateBlocker) return finish("blocked", "controller_error", [gateBlocker], preModelWarnings)
+      }
+      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted"], preModelWarnings)
 
       const contextWorkingSet = workingSetWithAdditionalWarnings(workingSet, preModelWarnings)
-      const context = this.options.contextService.build({ bootstrap, workingSet: contextWorkingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults })
+      const context = this.options.contextService.build({ bootstrap, workingSet: contextWorkingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults, recoveryNotice })
       const deferredPreModelWarnings = [...preModelWarnings]
-      if (context.blocked) return this.finish(input, investigationId, "budget_exhausted", "context_budget_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, [...preModelWarnings, ...context.warnings], started)
+      if (context.blocked) return finish("budget_exhausted", "context_budget_exhausted", context.blockers, [...preModelWarnings, ...context.warnings])
       if (context.warnings.length) deferredPreModelWarnings.push(...context.warnings)
-      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], [...preModelWarnings, ...context.warnings], started)
-      const deadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
+      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted before model request"], [...preModelWarnings, ...context.warnings])
+      const deadline = deadlineSignal(abortSignal, budget, wallStartedMs)
       const request: CommanderModelStepRequest = {
-        request_id: `${investigationId}_turn_${turn}`,
+        request_id: requestIdForTurn(turn),
         provider_id: input.provider_id,
         provider_kind: input.provider_kind,
         model_id: input.model_id,
@@ -118,46 +257,58 @@ export class CommanderInvestigationController {
         requested_at: this.now().toISOString(),
         metadata: { investigation_id: investigationId, phase: input.phase, requested_by: input.requested_by },
       }
-      const observedModelStep = await this.observeModelStepStarted(input, investigationId, turn, request.request_id, toolProtocol, context, workingSet, Array.from(loaded.values()), providerRequests)
-      if (observedModelStep.blocker) return this.finish(input, investigationId, observedModelStep.status!, observedModelStep.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [observedModelStep.blocker], [], started)
-      const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
+      if (turn === state.nextTurnIndex && firstRequestPreview) {
+        const firstRequestBlocker = recoveryFirstRequestPreviewBlocker(firstRequestPreview, request, context, Array.from(loaded.values()), recoveryNotice?.notice_hash)
+        if (firstRequestBlocker) {
+          deadline.cancel()
+          return finish("blocked", "controller_error", [firstRequestBlocker], [...preModelWarnings, ...context.warnings])
+        }
+      }
+      if (persistCheckpoints) {
+        const observedModelStep = await this.observeModelStepStarted(input, investigationId, turn, request.request_id, toolProtocol, context, workingSet, Array.from(loaded.values()), providerRequests)
+        if (observedModelStep.blocker) {
+          deadline.cancel()
+          return this.finish(input, investigationId, observedModelStep.status!, observedModelStep.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [observedModelStep.blocker], [], started, undefined, state.durationMs?.())
+        }
+      }
+      const modelResult = await this.options.modelAdapter!.executeOneStep(request).finally(deadline.cancel)
       if (deferredPreModelWarnings.length) {
         workingSet.current_warnings.push(...deferredPreModelWarnings)
-	        workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
+        workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
       }
       const requestCountBlocker = modelRequestCountBlocker(modelResult)
-      if (!Number.isInteger(modelResult.request_count) || modelResult.request_count < 0) {
-        return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker ?? "model adapter returned an invalid request_count"], modelResult.warnings, started)
-      }
+      if (!Number.isInteger(modelResult.request_count) || modelResult.request_count < 0) return finish("failed", "controller_error", [requestCountBlocker ?? "model adapter returned an invalid request_count"], modelResult.warnings)
       providerRequests += modelResult.request_count
       workingSet.model_turn_count = turn
       const transportInterrupted = modelResult.status === "cancelled" || modelResult.status === "failed"
       const audit = observeProviderAudit(workingSet.provider_audit, this.options.providerAuditPolicy, modelResult)
-      if (requestCountBlocker) return this.finish(input, investigationId, "failed", "controller_error", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker], [...modelResult.warnings, ...audit.warnings], started)
-      if (input.abort_signal?.aborted && transportInterrupted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], [...modelResult.warnings, ...audit.warnings], started)
-      if (deadline.expired() && transportInterrupted) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], [...modelResult.warnings, ...audit.warnings], started)
-      if (audit.blocker) return this.finish(input, investigationId, "failed", "provider_audit_incomplete", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [audit.blocker], [...modelResult.warnings, ...audit.warnings], started)
-      if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
-      if (deadline.expired()) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
+      if (requestCountBlocker) return finish("failed", "controller_error", [requestCountBlocker], [...modelResult.warnings, ...audit.warnings])
+      if (abortSignal?.aborted && transportInterrupted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during model request"], [...modelResult.warnings, ...audit.warnings])
+      if (deadline.expired() && transportInterrupted) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during model request"], [...modelResult.warnings, ...audit.warnings])
+      if (audit.blocker) return finish("failed", "provider_audit_incomplete", [audit.blocker], [...modelResult.warnings, ...audit.warnings])
+      if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during model request"], modelResult.warnings)
+      if (deadline.expired()) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings)
       if (modelResult.status !== "tool_call") {
         latestAssistant = modelResult.assistant_message
         latestToolResults = []
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
-        const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
-        if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started)
-        if (modelResult.status === "final") return this.finish(input, investigationId, "final", "model_final", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], [...modelResult.warnings, ...(modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [])], started, modelResult.text)
-        if (modelResult.status === "refusal") return this.finish(input, investigationId, "refused", "model_refusal", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], modelResult.warnings, started)
-        if (modelResult.status === "cancelled") return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "model request cancelled"], modelResult.warnings, started)
-        if (modelResult.status === "malformed") return this.finish(input, investigationId, "failed", "model_malformed", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "model output malformed"], modelResult.warnings, started)
-        return this.finish(input, investigationId, "failed", "provider_failed", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "provider request failed"], modelResult.warnings, started)
+        if (persistCheckpoints) {
+          const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
+          if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.())
+        }
+        if (modelResult.status === "final") return finish("final", "model_final", [], [...modelResult.warnings, ...(modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [])], modelResult.text)
+        if (modelResult.status === "refusal") return finish("refused", "model_refusal", [], modelResult.warnings)
+        if (modelResult.status === "cancelled") return finish("cancelled", "caller_cancelled", [modelResult.error ?? "model request cancelled"], modelResult.warnings)
+        if (modelResult.status === "malformed") return finish("failed", "model_malformed", [modelResult.error ?? "model output malformed"], modelResult.warnings)
+        return finish("failed", "provider_failed", [modelResult.error ?? "provider request failed"], modelResult.warnings)
       }
 
       const validation = validateToolCalls(modelResult.tool_calls, loaded, budget, workingSet)
       if (validation.blocker) {
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, false, [validation.blocker], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
-        return this.finish(input, investigationId, validation.reason === "max_tool_calls_per_turn" || validation.reason === "max_tool_calls" ? "budget_exhausted" : "blocked", validation.reason, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [validation.blocker], modelResult.warnings, started)
+        return finish(validation.reason === "max_tool_calls_per_turn" || validation.reason === "max_tool_calls" ? "budget_exhausted" : "blocked", validation.reason, [validation.blocker], modelResult.warnings)
       }
 
       latestAssistant = modelResult.assistant_message
@@ -171,22 +322,22 @@ export class CommanderInvestigationController {
       for (const call of modelResult.tool_calls) {
         const humanBeforeTool = await this.checkControl(input, "tool_execution", turn, call.tool_id)
         const humanToolStop = stopReasonForControl(humanBeforeTool)
-        if (humanToolStop) return this.finish(input, investigationId, "needs_human_review", humanToolStop, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeTool.summary_preview ?? humanToolStop], humanBeforeTool.warnings, started)
+        if (humanToolStop) return finish("needs_human_review", humanToolStop, [humanBeforeTool.summary_preview ?? humanToolStop], humanBeforeTool.warnings)
         if (humanBeforeTool.warnings.length) workingSet.current_warnings.push(...humanBeforeTool.warnings)
-        if (workingSet.tool_call_count >= budget.max_tool_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool calls exhausted"], [], started)
+        if (workingSet.tool_call_count >= budget.max_tool_calls) return finish("budget_exhausted", "max_tool_calls", ["max tool calls exhausted"])
         const args = normalizedControllerArgs(call, input.phase)
-        if (call.tool_id === TOOL_SEARCH_ID && workingSet.tool_search_call_count + 1 > budget.max_tool_search_calls) return this.finish(input, investigationId, "budget_exhausted", "max_tool_search_calls", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool search calls exhausted"], [], started)
+        if (call.tool_id === TOOL_SEARCH_ID && workingSet.tool_search_call_count + 1 > budget.max_tool_search_calls) return finish("budget_exhausted", "max_tool_search_calls", ["max tool search calls exhausted"])
         const callIndex = executions.length + 1
         const executionId = `${investigationId}_exec_${turn}_${callIndex}`
         const callId = controllerCallId(investigationId, turn, callIndex, call.tool_call_id)
         const controllerBlocker = this.controllerPreflightBlocker(call, args, input.phase, loaded, budget)
-        if (!controllerBlocker && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before tool execution"], [], started)
+        if (!controllerBlocker && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted before tool execution"])
         let toolDeadlineExpired = false
         let execution: CommanderToolExecutionResult
         if (controllerBlocker) {
           execution = controllerBlockedExecution(executionId, callId, call, input.phase, controllerBlocker, this.now())
         } else {
-          const toolDeadline = deadlineSignal(input.abort_signal, budget, wallStartedMs)
+          const toolDeadline = deadlineSignal(abortSignal, budget, wallStartedMs)
           execution = await this.options.toolExecutor.execute({
             execution_id: executionId,
             call_id: callId,
@@ -201,8 +352,8 @@ export class CommanderInvestigationController {
           }).finally(toolDeadline.cancel)
           toolDeadlineExpired = toolDeadline.expired()
         }
-        if (input.abort_signal?.aborted) return this.finish(input, investigationId, "cancelled", "caller_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during tool execution"], execution.warnings, started)
-        if (toolDeadlineExpired) return this.finish(input, investigationId, "budget_exhausted", "wall_time_exhausted", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings, started)
+        if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during tool execution"], execution.warnings)
+        if (toolDeadlineExpired) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings)
         executions.push(execution)
         workingSet.tool_call_count += 1
         if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
@@ -212,7 +363,7 @@ export class CommanderInvestigationController {
         const toolMessageBytes = Buffer.byteLength(toolMessage.content)
         currentTurnToolResultBytes += toolMessageBytes
         workingSet.cumulative_tool_result_bytes += toolMessageBytes
-        if (workingSet.cumulative_tool_result_bytes > budget.max_cumulative_tool_result_bytes) return this.finish(input, investigationId, "budget_exhausted", "max_cumulative_tool_result_bytes", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["cumulative tool-result byte budget exhausted"], [], started)
+        if (workingSet.cumulative_tool_result_bytes > budget.max_cumulative_tool_result_bytes) return finish("budget_exhausted", "max_cumulative_tool_result_bytes", ["cumulative tool-result byte budget exhausted"])
         const loadedTool = this.maybeLoadTool(call, args, execution, loaded, budget)
         if (loadedTool.loaded) {
           loaded.set(loadedTool.tool.tool_id, loadedTool.tool)
@@ -232,8 +383,8 @@ export class CommanderInvestigationController {
         const repeatCount = repeat.count
         recentResults.set(resultSignature, { count: repeatCount + 1, last_turn_index: turn })
         updateRecentResultSignatures(workingSet, recentResults)
-        if (repeatCount >= 2) return this.finish(input, investigationId, "no_progress", "repeated_identical_call", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["repeated identical tool call/result detected"], [], started)
-        if (execution.status === "cancelled") return this.finish(input, investigationId, "cancelled", "tool_execution_cancelled", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["tool execution cancelled"], execution.warnings, started)
+        if (repeatCount >= 2) return finish("no_progress", "repeated_identical_call", ["repeated identical tool call/result detected"])
+        if (execution.status === "cancelled") return finish("cancelled", "tool_execution_cancelled", ["tool execution cancelled"], execution.warnings)
         if (execution.result_hash && repeatCount === 0) progressMade = progressMade || execution.status === "ready" || execution.status === "blocked" || execution.status === "failed"
         workingSet.recent_execution_digests.push({
           turn_index: turn,
@@ -257,255 +408,17 @@ export class CommanderInvestigationController {
       } else {
         workingSet.consecutive_no_progress_turns = 0
       }
-	      workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
+      workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
       const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings, audit.metadata)
       appendTurnSummary(turns, summary, workingSet, budget)
-      const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
-      if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started)
-      if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return this.finish(input, investigationId, "no_progress", "consecutive_no_progress", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["consecutive no-progress turn limit reached"], [], started)
-    }
-    return this.finish(input, investigationId, "budget_exhausted", "max_model_turns", bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max model turns exhausted"], [], started)
-  }
-
-  async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationResult> {
-    const started = this.now()
-    const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
-    const input: CommanderInvestigationInput = { ...seed.normalized_input, investigation_id: seed.investigation_id, abort_signal: options.abort_signal }
-    const expectedHash = stableHash({
-      seed_version: 1,
-      investigation_id: seed.investigation_id,
-      recovery_kind: seed.recovery_kind,
-      immutable_identity: seed.immutable_identity,
-      normalized_input_hash: seed.normalized_input_hash,
-      recovery_basis_hash: seed.recovery_basis_hash,
-      checkpoint_ref: seed.checkpoint_ref,
-      pending_model_step_ref: seed.pending_model_step_ref,
-      original_bootstrap_ref: seed.original_bootstrap_ref,
-      current_bootstrap_hash: seed.current_bootstrap_hash,
-      continuity_drift_detected: seed.continuity_drift_detected,
-      tool_protocol: seed.tool_protocol,
-      loaded_tool_refs: seed.loaded_tool_refs,
-      effective_budget_hash: seed.effective_budget_hash,
-      working_set_hash: seed.working_set_hash,
-      turn_summary_hash: stableHash(seed.turn_summaries),
-      replay_exchange_hash: seed.replay_exchange_hash,
-      replay_message_hash: seed.replay_message_hash,
-      recovery_notice_hash: seed.recovery_notice_hash,
-      next_turn_index: seed.next_turn_index,
-      elapsed_active_ms_before: seed.elapsed_active_ms_before,
-      provider_request_count_before: seed.provider_request_count_before,
-      external_api_audit_count_before: seed.external_api_audit_count_before,
-      unresolved_provider_attempt_count: seed.unresolved_provider_attempt_count,
-      uncertain_model_turn_charge: seed.uncertain_model_turn_charge,
-      first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
-    })
-    if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], started)
-    const seedIntegrityBlocker = validateRecoverySeedIntegrity(seed, this.options.descriptors)
-    if (seedIntegrityBlocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [seedIntegrityBlocker], [], started)
-    const budget = seed.effective_budget.effective_budget
-    const loaded = new Map(seed.loaded_tools.map((tool) => [tool.tool_id, tool]))
-    const workingSet = redactValue(seed.working_set) as CommanderInvestigationWorkingSet
-    if (workingSet.model_turn_count < seed.effective_budget.consumed.model_turns) {
-      workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
-      workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
-    }
-    const turns = seed.turn_summaries.slice()
-    let latestAssistant = seed.latest_assistant
-    let latestToolResults = seed.latest_tool_results.slice()
-    let providerRequests = seed.provider_request_count_before
-    const recentResults = new Map(seed.working_set.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
-    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], started)
-    if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], started)
-    if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], started)
-    if (seed.effective_budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], started)
-    for (let turn = seed.next_turn_index; turn <= budget.max_model_turns; turn += 1) {
-	      const preModelWarnings: string[] = []
-	      if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], started)
-	      const humanBeforeModel = await this.checkControl(input, "model_step", turn)
-	      const humanStop = stopReasonForControl(humanBeforeModel)
-	      if (humanStop) return this.finish(input, seed.investigation_id, "needs_human_review", humanStop, seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeModel.summary_preview ?? humanStop], humanBeforeModel.warnings, started)
-	      if (humanBeforeModel.warnings.length) preModelWarnings.push(...humanBeforeModel.warnings)
-	      const providerBeforeModel = await this.checkProvider(input, "model_step", turn)
-	      if (providerBeforeModel && !providerBeforeModel.ready) return this.finish(input, seed.investigation_id, "blocked", "provider_preflight_blocked", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), providerBeforeModel.blockers, [...preModelWarnings, ...providerBeforeModel.warnings], started)
-	      if (providerBeforeModel?.warnings.length) preModelWarnings.push(...providerBeforeModel.warnings)
-	      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted"], preModelWarnings, started)
-	      const contextWorkingSet = workingSetWithAdditionalWarnings(workingSet, preModelWarnings)
-	      const context = this.options.contextService.build({
-	        bootstrap: seed.current_bootstrap,
-	        workingSet: contextWorkingSet,
-	        loadedTools: Array.from(loaded.values()),
-	        toolProtocol: seed.tool_protocol,
-	        budget,
-	        latestAssistant,
-	        latestToolResults,
-	        recoveryNotice: seed.recovery_notice,
-	      })
-	      const deferredPreModelWarnings = [...preModelWarnings]
-	      if (context.blocked) return this.finish(input, seed.investigation_id, "budget_exhausted", "context_budget_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), context.blockers, [...preModelWarnings, ...context.warnings], started)
-	      if (context.warnings.length) deferredPreModelWarnings.push(...context.warnings)
-	      if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before model request"], [...preModelWarnings, ...context.warnings], started)
-	      const deadline = deadlineSignal(options.abort_signal, budget, wallStartedMs)
-	      const request: CommanderModelStepRequest = {
-	        request_id: `${seed.request_id_prefix}_turn_${turn}`,
-	        provider_id: seed.immutable_identity.provider_id,
-	        provider_kind: seed.immutable_identity.provider_kind,
-	        model_id: seed.immutable_identity.model_id,
-	        messages: context.messages,
-	        tools: Array.from(loaded.values()).map(commanderToolSchemaFromDescriptor),
-	        tool_protocol: seed.tool_protocol,
-	        tool_choice: "auto",
-	        max_output_tokens: this.modelOutputTokens(input),
-	        abort_signal: deadline.signal,
-		        requested_at: this.now().toISOString(),
-		        metadata: { investigation_id: seed.investigation_id, phase: input.phase, requested_by: input.requested_by },
-		      }
-      if (turn === seed.next_turn_index) {
-        const firstRequestBlocker = recoveryFirstRequestPreviewBlocker(seed, request, context, Array.from(loaded.values()))
-        if (firstRequestBlocker) {
-          deadline.cancel()
-          return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [firstRequestBlocker], [...preModelWarnings, ...context.warnings], started)
-        }
+      if (persistCheckpoints) {
+        const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
+        if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.())
       }
-		      const modelResult = await this.options.modelAdapter.executeOneStep(request).finally(deadline.cancel)
-	      if (deferredPreModelWarnings.length) {
-	        workingSet.current_warnings.push(...deferredPreModelWarnings)
-	        workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
-	      }
-	      const requestCountBlocker = modelRequestCountBlocker(modelResult)
-	      if (!Number.isInteger(modelResult.request_count) || modelResult.request_count < 0) {
-	        return this.finish(input, seed.investigation_id, "failed", "controller_error", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker ?? "model adapter returned an invalid request_count"], modelResult.warnings, started)
-	      }
-	      providerRequests += modelResult.request_count
-	      workingSet.model_turn_count = turn
-	      const transportInterrupted = modelResult.status === "cancelled" || modelResult.status === "failed"
-	      const audit = observeProviderAudit(workingSet.provider_audit, this.options.providerAuditPolicy, modelResult)
-	      if (requestCountBlocker) return this.finish(input, seed.investigation_id, "failed", "controller_error", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [requestCountBlocker], [...modelResult.warnings, ...audit.warnings], started)
-	      if (options.abort_signal?.aborted && transportInterrupted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], [...modelResult.warnings, ...audit.warnings], started)
-	      if (deadline.expired() && transportInterrupted) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], [...modelResult.warnings, ...audit.warnings], started)
-	      if (audit.blocker) return this.finish(input, seed.investigation_id, "failed", "provider_audit_incomplete", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [audit.blocker], [...modelResult.warnings, ...audit.warnings], started)
-	      if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during model request"], modelResult.warnings, started)
-	      if (deadline.expired()) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during model request"], modelResult.warnings, started)
-	      if (modelResult.status !== "tool_call") {
-	        latestAssistant = modelResult.assistant_message
-	        latestToolResults = []
-	        const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings, audit.metadata)
-	        appendTurnSummary(turns, summary, workingSet, budget)
-	        if (modelResult.status === "final") return this.finish(input, seed.investigation_id, "final", "model_final", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], [...modelResult.warnings, ...(modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [])], started, modelResult.text)
-	        if (modelResult.status === "refusal") return this.finish(input, seed.investigation_id, "refused", "model_refusal", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [], modelResult.warnings, started)
-	        if (modelResult.status === "cancelled") return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "model request cancelled"], modelResult.warnings, started)
-	        if (modelResult.status === "malformed") return this.finish(input, seed.investigation_id, "failed", "model_malformed", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "model output malformed"], modelResult.warnings, started)
-	        return this.finish(input, seed.investigation_id, "failed", "provider_failed", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [modelResult.error ?? "provider request failed"], modelResult.warnings, started)
-	      }
-	      const validation = validateToolCalls(modelResult.tool_calls, loaded, budget, workingSet)
-	      if (validation.blocker) {
-	        const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, false, [validation.blocker], modelResult.warnings, audit.metadata)
-	        appendTurnSummary(turns, summary, workingSet, budget)
-	        return this.finish(input, seed.investigation_id, validation.reason === "max_tool_calls_per_turn" || validation.reason === "max_tool_calls" ? "budget_exhausted" : "blocked", validation.reason, seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [validation.blocker], modelResult.warnings, started)
-	      }
-	      latestAssistant = modelResult.assistant_message
-	      latestToolResults = []
-	      const executions: CommanderToolExecutionResult[] = []
-	      const newlyLoaded: string[] = []
-	      const newEvidence: string[] = []
-	      const noProgressReasons: string[] = []
-	      let progressMade = false
-	      let currentTurnToolResultBytes = 0
-	      for (const call of modelResult.tool_calls) {
-	        const humanBeforeTool = await this.checkControl(input, "tool_execution", turn, call.tool_id)
-	        const humanToolStop = stopReasonForControl(humanBeforeTool)
-	        if (humanToolStop) return this.finish(input, seed.investigation_id, "needs_human_review", humanToolStop, seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [humanBeforeTool.summary_preview ?? humanToolStop], humanBeforeTool.warnings, started)
-	        if (humanBeforeTool.warnings.length) workingSet.current_warnings.push(...humanBeforeTool.warnings)
-	        if (workingSet.tool_call_count >= budget.max_tool_calls) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_tool_calls", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool calls exhausted"], [], started)
-	        const args = normalizedControllerArgs(call, input.phase)
-	        if (call.tool_id === TOOL_SEARCH_ID && workingSet.tool_search_call_count + 1 > budget.max_tool_search_calls) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_tool_search_calls", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max tool search calls exhausted"], [], started)
-	        const callIndex = executions.length + 1
-	        const executionId = `${seed.investigation_id}_exec_${turn}_${callIndex}`
-	        const callId = controllerCallId(seed.investigation_id, turn, callIndex, call.tool_call_id)
-	        const controllerBlocker = this.controllerPreflightBlocker(call, args, input.phase, loaded, budget)
-	        if (!controllerBlocker && elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted before tool execution"], [], started)
-	        let toolDeadlineExpired = false
-	        let execution: CommanderToolExecutionResult
-	        if (controllerBlocker) {
-	          execution = controllerBlockedExecution(executionId, callId, call, input.phase, controllerBlocker, this.now())
-	        } else {
-	          const toolDeadline = deadlineSignal(options.abort_signal, budget, wallStartedMs)
-	          execution = await this.options.toolExecutor.execute({
-	            execution_id: executionId,
-	            call_id: callId,
-	            tool_call_id: call.tool_call_id,
-	            tool_id: call.tool_id,
-	            phase: input.phase,
-	            arguments: args,
-	            requested_by: input.requested_by,
-	            abort_signal: toolDeadline.signal,
-	            source_model_request_id: request.request_id,
-	            source_model_result_hash: modelResult.result_hash,
-	          }).finally(toolDeadline.cancel)
-	          toolDeadlineExpired = toolDeadline.expired()
-	        }
-	        if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted investigation during tool execution"], execution.warnings, started)
-	        if (toolDeadlineExpired) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings, started)
-	        executions.push(execution)
-	        workingSet.tool_call_count += 1
-	        if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
-	        const resultBytesCap = perToolResultCap(execution.max_output_bytes, context.input_bytes + currentTurnToolResultBytes, budget, modelResult.tool_calls.length - executions.length + 1)
-	        const toolMessage = toCommanderToolResultMessage(execution, resultBytesCap)
-	        latestToolResults.push(toolMessage)
-	        const toolMessageBytes = Buffer.byteLength(toolMessage.content)
-	        currentTurnToolResultBytes += toolMessageBytes
-	        workingSet.cumulative_tool_result_bytes += toolMessageBytes
-	        if (workingSet.cumulative_tool_result_bytes > budget.max_cumulative_tool_result_bytes) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_cumulative_tool_result_bytes", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["cumulative tool-result byte budget exhausted"], [], started)
-	        const loadedTool = this.maybeLoadTool(call, args, execution, loaded, budget)
-	        if (loadedTool.loaded) {
-	          loaded.set(loadedTool.tool.tool_id, loadedTool.tool)
-	          newlyLoaded.push(loadedTool.tool.tool_id)
-	          workingSet.loaded_tool_ids = Array.from(loaded.keys())
-	          progressMade = true
-	        }
-	        if (loadedTool.warning) workingSet.recent_load_outcomes.push(loadedTool.warning)
-	        const beforeEvidenceKeys = new Set(workingSet.evidence_cards.map(evidenceKey))
-	        addEvidence(workingSet, execution.evidence, budget.max_evidence_cards)
-	        const afterEvidence = workingSet.evidence_cards.filter((item) => !beforeEvidenceKeys.has(evidenceKey(item))).map((item) => item.evidence_id)
-	        newEvidence.push(...afterEvidence)
-	        if (afterEvidence.length > 0) progressMade = true
-	        const callSignature = stableHash({ tool_id: call.tool_id, arguments: args })
-	        const resultSignature = repeatResultSignature(callSignature, execution)
-	        const repeat = recentResults.get(resultSignature) ?? { count: 0, last_turn_index: turn }
-	        const repeatCount = repeat.count
-	        recentResults.set(resultSignature, { count: repeatCount + 1, last_turn_index: turn })
-	        updateRecentResultSignatures(workingSet, recentResults)
-	        if (repeatCount >= 2) return this.finish(input, seed.investigation_id, "no_progress", "repeated_identical_call", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["repeated identical tool call/result detected"], [], started)
-	        if (execution.status === "cancelled") return this.finish(input, seed.investigation_id, "cancelled", "tool_execution_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["tool execution cancelled"], execution.warnings, started)
-	        if (execution.result_hash && repeatCount === 0) progressMade = progressMade || execution.status === "ready" || execution.status === "blocked" || execution.status === "failed"
-	        workingSet.recent_execution_digests.push({
-	          turn_index: turn,
-	          tool_id: call.tool_id,
-	          call_signature_hash: callSignature,
-	          execution_status: execution.status,
-	          result_hash: execution.result_hash,
-	          evidence_ids: execution.evidence.map((item) => item.evidence_id).slice(0, 8),
-	          loaded_tool_outcome: loadedTool.loaded ? `loaded ${loadedTool.tool.tool_id}` : loadedTool.warning,
-	          blocker_warning_summary: [...execution.blockers, ...execution.warnings].join("; ").slice(0, 320),
-	          order: workingSet.tool_call_count,
-	        })
-	        if (workingSet.recent_execution_digests.length > budget.max_turn_summaries) {
-	          workingSet.recent_execution_digests.shift()
-	          workingSet.omitted_digest_count += 1
-	        }
-	      }
-	      if (!progressMade) {
-	        workingSet.consecutive_no_progress_turns += 1
-	        noProgressReasons.push("no new evidence, schema, source, or result state")
-	      } else {
-	        workingSet.consecutive_no_progress_turns = 0
-	      }
-	      workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
-	      const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings, audit.metadata)
-	      appendTurnSummary(turns, summary, workingSet, budget)
-	      if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return this.finish(input, seed.investigation_id, "no_progress", "consecutive_no_progress", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["consecutive no-progress turn limit reached"], [], started)
-	    }
-	    return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["max model turns exhausted"], [], started)
-	  }
+      if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return finish("no_progress", "consecutive_no_progress", ["consecutive no-progress turn limit reached"])
+    }
+    return finish("budget_exhausted", "max_model_turns", ["max model turns exhausted"])
+  }
 
   private async deriveBudget(input: CommanderInvestigationInput): Promise<{ budget: CommanderInvestigationBudget; blockers: string[] }> {
     const profile = this.options.toolService.profile({ phase: input.phase })
@@ -702,7 +615,7 @@ export class CommanderInvestigationController {
     }
   }
 
-  private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string): CommanderInvestigationResult {
+  private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string, activeDurationMs?: number): CommanderInvestigationResult {
     const completed = this.now()
     const result: CommanderInvestigationResult = {
       investigation_id: investigationId,
@@ -736,7 +649,7 @@ export class CommanderInvestigationController {
       warnings: [...workingSet.current_warnings, ...warnings].map((item) => preview(item, 300)).slice(0, 24),
       started_at: started.toISOString(),
       completed_at: completed.toISOString(),
-      duration_ms: Math.max(0, completed.getTime() - started.getTime()),
+      duration_ms: Math.max(0, Math.floor(activeDurationMs ?? completed.getTime() - started.getTime())),
       durability: {
         mode: "none",
         started_persisted: false,
@@ -774,6 +687,32 @@ export class CommanderInvestigationController {
 }
 
 type ObserverOutcome = { blocker?: string; status?: "blocked" | "failed"; reason?: CommanderInvestigationStopReason }
+
+type CommanderInvestigationPreparedLoopState = {
+  mode: "new" | "recovery"
+  input: CommanderInvestigationInput
+  investigationId: string
+  started: Date
+  wallStartedMs: number
+  bootstrap: CommanderInvestigationBootstrap
+  budget: CommanderInvestigationBudget
+  toolProtocol: CommanderModelToolProtocol
+  loaded: Map<string, CommanderToolDescriptor>
+  workingSet: CommanderInvestigationWorkingSet
+  turns: CommanderInvestigationTurnSummary[]
+  latestAssistant?: CommanderModelAssistantMessage
+  latestToolResults: CommanderModelToolResultMessage[]
+  providerRequests: number
+  recentResults: Map<string, { count: number; last_turn_index: number }>
+  nextTurnIndex: number
+  requestIdForTurn(turn: number): string
+  abortSignal?: AbortSignal
+  recoveryNotice?: CommanderInvestigationRecoveryContinuationSeed["recovery_notice"]
+  firstRequestPreview?: CommanderInvestigationRecoveryFirstModelRequestPreview
+  preModelGateSnapshot?: CommanderInvestigationRecoveryContinuationSeed["pre_model_gate_snapshot"]
+  persistCheckpoints: boolean
+  durationMs?: () => number
+}
 
 function observerOutcome(error: unknown): ObserverOutcome {
   const message = error instanceof Error ? error.message : String(error)
@@ -1121,6 +1060,11 @@ function integerOrZero(value: unknown): number {
   return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0
 }
 
+function canonicalDate(value: string): Date | undefined {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value ? undefined : parsed
+}
+
 function addUniqueCapped(items: string[], value: string, cap: number): void {
   if (items.includes(value)) return
   if (items.length < cap) items.push(value)
@@ -1172,7 +1116,17 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
   return undefined
 }
 
-function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[]): string | undefined {
+function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[]): { loadedTools?: CommanderToolDescriptor[]; blocker?: string } {
+  const identityError = validateRecoveryIdentity(seed)
+  if (identityError) return { blocker: identityError }
+  const loaded = reconstructRecoveryLoadedTools(seed.loaded_tool_refs, currentDescriptors, seed.normalized_input.phase)
+  if (loaded.blocker) return { blocker: loaded.blocker }
+  const integrity = validateRecoverySeedIntegrity(seed, loaded.loadedTools!, currentDescriptors)
+  if (integrity) return { blocker: integrity }
+  return { loadedTools: loaded.loadedTools }
+}
+
+function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[], currentDescriptors: CommanderToolDescriptor[]): string | undefined {
   if (stableHash(seed.normalized_input) !== seed.normalized_input_hash) return "recovery continuation normalized input hash did not verify"
   const currentBootstrapHash = sha256JsonHash({ ...seed.current_bootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
   if (seed.current_bootstrap.bootstrap_hash !== currentBootstrapHash || seed.current_bootstrap_hash !== currentBootstrapHash) return "recovery continuation current bootstrap hash did not verify"
@@ -1198,9 +1152,11 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (!seed.replay_summary.replay_protocol_available && (replayToolCallCount > 0 || seed.latest_tool_results.length > 0)) return "recovery continuation replay messages are unavailable"
   if (seed.replay_summary.replay_protocol_available && !seed.replay_exchange_hash) return "recovery continuation replay exchange reference is missing"
   if (seed.replay_summary.replay_protocol_available && seed.replay_exchange_hash !== seed.replay_summary.replay_exchange_hash) return "recovery continuation replay exchange reference did not verify"
-  if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || seed.loaded_tools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
-  const loadedToolIntegrityError = validateRecoveryLoadedTools(seed.loaded_tools, seed.loaded_tool_refs, currentDescriptors)
+  if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || loadedTools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
+  const loadedToolIntegrityError = validateRecoveryLoadedTools(loadedTools, seed.loaded_tool_refs, currentDescriptors)
   if (loadedToolIntegrityError) return loadedToolIntegrityError
+  const seedLoadedToolIntegrityError = validateRecoveryLoadedTools(seed.loaded_tools, seed.loaded_tool_refs, currentDescriptors)
+  if (seedLoadedToolIntegrityError) return seedLoadedToolIntegrityError
   if (seed.elapsed_active_ms_before !== seed.effective_budget.consumed.elapsed_active_ms) return "recovery continuation elapsed active time did not verify"
   const effectiveBudgetHash = stableHash({ ...seed.effective_budget.effective_budget, budget_hash: "" })
   if (seed.effective_budget.effective_budget.budget_hash !== effectiveBudgetHash) return "recovery continuation effective budget hash did not verify"
@@ -1211,6 +1167,44 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (recoveryNoticeError) return recoveryNoticeError
   const requestPreviewHash = stableHash({ ...seed.first_model_request_preview, request_preview_hash: "" })
   if (seed.first_model_request_preview.request_preview_hash !== requestPreviewHash) return "recovery first model request preview hash did not verify"
+  return undefined
+}
+
+function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
+  const input = seed.normalized_input
+  const identity = seed.immutable_identity
+  if (identity.investigation_id !== seed.investigation_id) return "recovery continuation identity investigation_id did not verify"
+  if (input.investigation_id !== undefined && input.investigation_id !== seed.investigation_id) return "recovery continuation normalized input investigation_id did not verify"
+  if (input.phase !== identity.phase) return "recovery continuation identity phase did not verify"
+  if (stableHash(input.objective) !== identity.objective_hash) return "recovery continuation identity objective hash did not verify"
+  if (input.requested_by !== identity.requested_by) return "recovery continuation identity requested_by did not verify"
+  if (input.mission_id !== identity.mission_id) return "recovery continuation identity mission_id did not verify"
+  if (input.session_id !== identity.session_id) return "recovery continuation identity session_id did not verify"
+  if (input.launch_id !== identity.launch_id) return "recovery continuation identity launch_id did not verify"
+  if (input.provider_id !== identity.provider_id) return "recovery continuation identity provider_id did not verify"
+  if (input.provider_kind !== identity.provider_kind) return "recovery continuation identity provider_kind did not verify"
+  if (input.model_id !== identity.model_id) return "recovery continuation identity model_id did not verify"
+  if ((input.tool_protocol ?? "auto") !== identity.tool_protocol && input.tool_protocol !== undefined) return "recovery continuation identity tool protocol did not verify"
+  if (seed.tool_protocol !== identity.tool_protocol) return "recovery continuation tool protocol did not verify"
+  if (seed.original_bootstrap_ref.bootstrap_id !== identity.bootstrap_id || seed.original_bootstrap_ref.bootstrap_hash !== identity.bootstrap_hash) return "recovery continuation identity bootstrap reference did not verify"
+  if (seed.effective_budget.original_budget_id !== identity.budget_id || seed.effective_budget.original_budget_hash !== identity.budget_hash) return "recovery continuation identity budget reference did not verify"
+  const basis = {
+    basis_version: 1 as const,
+    investigation_id: seed.investigation_id,
+    projection_status: "ready" as const,
+    immutable_identity: identity,
+    normalized_input_hash: seed.normalized_input_hash,
+    latest_checkpoint_id: seed.checkpoint_ref.checkpoint_id,
+    latest_checkpoint_sequence: seed.checkpoint_ref.checkpoint_sequence,
+    latest_checkpoint_hash: seed.checkpoint_ref.checkpoint_hash,
+    pending_model_request_id: seed.pending_model_step_ref?.model_request_id,
+    pending_model_boundary_hash: seed.pending_model_step_ref ? seed.recovery_basis_hash ? undefined : undefined : undefined,
+    terminal_hash: undefined,
+    recovery_kind: seed.recovery_kind,
+    basis_hash: "",
+  }
+  const basisHash = stableHash({ ...basis, pending_model_boundary_hash: seed.pending_model_step_ref ? undefined : undefined, terminal_hash: undefined, basis_hash: "" })
+  if (!seed.recovery_basis_hash || (seed.recovery_kind === "checkpoint" && basisHash !== seed.recovery_basis_hash)) return "recovery continuation basis hash did not verify"
   return undefined
 }
 
@@ -1254,6 +1248,27 @@ function validateRecoveryNotice(seed: CommanderInvestigationRecoveryContinuation
   return undefined
 }
 
+function preModelGateSnapshotBlocker(
+  snapshot: CommanderInvestigationRecoveryContinuationSeed["pre_model_gate_snapshot"],
+  turn: number,
+  human: CommanderInvestigationControlSnapshot,
+  provider: CommanderInvestigationProviderPreflightSnapshot | undefined,
+): string | undefined {
+  const actual = {
+    snapshot_version: 1 as const,
+    turn_index: turn,
+    human_control_action: human.action === "continue" ? "continue" as const : "continue" as const,
+    human_control_warnings: human.warnings.map((item) => preview(item, 240)).slice(0, 12),
+    provider_preflight_ready: provider?.ready !== false ? true as const : true as const,
+    provider_preflight_warnings: (provider?.warnings ?? []).map((item) => preview(item, 240)).slice(0, 12),
+    gate_snapshot_hash: "",
+  }
+  actual.gate_snapshot_hash = stableHash({ ...actual, gate_snapshot_hash: "" })
+  if (snapshot.gate_snapshot_hash !== stableHash({ ...snapshot, gate_snapshot_hash: "" })) return "recovery pre-model gate snapshot hash did not verify"
+  if (snapshot.gate_snapshot_hash !== actual.gate_snapshot_hash) return "recovery pre-model gate snapshot changed since approval"
+  return undefined
+}
+
 function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], refs: CommanderInvestigationLoadedToolRef[], currentDescriptors: CommanderToolDescriptor[]): string | undefined {
   const toolsById = new Map(loadedTools.map((tool) => [tool.tool_id, tool]))
   const currentById = new Map(currentDescriptors.map((tool) => [tool.tool_id, tool]))
@@ -1263,8 +1278,23 @@ function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], ref
     seen.add(ref.tool_id)
     const tool = toolsById.get(ref.tool_id)
     if (!tool) return "recovery continuation loaded tool descriptor did not verify"
-    const current = currentById.get(ref.tool_id)
+	    const current = currentById.get(ref.tool_id)
     if (!current) return "recovery continuation loaded tool descriptor did not verify"
+    const actual = recomputeToolSchemaMetadata(tool)
+    const currentActual = recomputeToolSchemaMetadata(current)
+    if (!actual || !currentActual) return "recovery continuation loaded tool actual schema did not verify"
+    if (
+      actual.input_schema_hash !== tool.schema_metadata.input_schema_hash ||
+      actual.output_schema_hash !== tool.schema_metadata.output_schema_hash ||
+      actual.input_schema_bytes !== tool.schema_metadata.input_schema_bytes ||
+      actual.output_schema_bytes !== tool.schema_metadata.output_schema_bytes ||
+      actual.estimated_schema_tokens !== tool.schema_metadata.estimated_schema_tokens ||
+      currentActual.input_schema_hash !== current.schema_metadata.input_schema_hash ||
+      currentActual.output_schema_hash !== current.schema_metadata.output_schema_hash ||
+      currentActual.input_schema_bytes !== current.schema_metadata.input_schema_bytes ||
+      currentActual.output_schema_bytes !== current.schema_metadata.output_schema_bytes ||
+      currentActual.estimated_schema_tokens !== current.schema_metadata.estimated_schema_tokens
+    ) return "recovery continuation loaded tool actual schema did not verify"
     if (
       ref.namespace !== tool.namespace ||
       ref.descriptor_version !== tool.version ||
@@ -1321,21 +1351,81 @@ function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], ref
     ) return "recovery continuation loaded tool descriptor did not verify"
   }
   if (seen.size !== loadedTools.length) return "recovery continuation loaded tool descriptor did not verify"
-  return undefined
+	  return undefined
+	}
+
+function reconstructRecoveryLoadedTools(refs: CommanderInvestigationLoadedToolRef[], currentDescriptors: CommanderToolDescriptor[], phase: CommanderToolPhase): { loadedTools?: CommanderToolDescriptor[]; blocker?: string } {
+  const currentById = new Map(currentDescriptors.map((tool) => [tool.tool_id, tool]))
+  const loaded: CommanderToolDescriptor[] = []
+  const seen = new Set<string>()
+  for (const ref of refs.slice().sort((a, b) => a.tool_id.localeCompare(b.tool_id))) {
+    if (seen.has(ref.tool_id)) return { blocker: "recovery continuation loaded tool references are not unique" }
+    seen.add(ref.tool_id)
+    const current = currentById.get(ref.tool_id)
+    if (!current) return { blocker: "recovery continuation loaded tool descriptor did not verify" }
+    if (!isToolAllowedInPhase(current, phase)) return { blocker: "recovery continuation loaded tool phase eligibility did not verify" }
+    const schema = recomputeToolSchemaMetadata(current)
+    if (!schema) return { blocker: "recovery continuation loaded tool schema did not verify" }
+    if (
+      schema.input_schema_hash !== current.schema_metadata.input_schema_hash ||
+      schema.output_schema_hash !== current.schema_metadata.output_schema_hash ||
+      schema.input_schema_bytes !== current.schema_metadata.input_schema_bytes ||
+      schema.output_schema_bytes !== current.schema_metadata.output_schema_bytes ||
+      schema.estimated_schema_tokens !== current.schema_metadata.estimated_schema_tokens
+    ) return { blocker: "recovery continuation loaded tool actual schema did not verify" }
+    if (
+      ref.input_schema_hash !== schema.input_schema_hash ||
+      ref.output_schema_hash !== schema.output_schema_hash ||
+      ("input_schema_bytes" in ref && ref.input_schema_bytes !== schema.input_schema_bytes) ||
+      ("output_schema_bytes" in ref && ref.output_schema_bytes !== schema.output_schema_bytes) ||
+      ("estimated_schema_tokens" in ref && ref.estimated_schema_tokens !== schema.estimated_schema_tokens)
+    ) return { blocker: "recovery continuation loaded tool actual schema did not verify" }
+    loaded.push(deepFreeze(structuredClone(current)) as CommanderToolDescriptor)
+  }
+  return { loadedTools: loaded }
+}
+
+function recomputeToolSchemaMetadata(tool: CommanderToolDescriptor): CommanderToolSchemaMetadata | undefined {
+  if (!tool.input_schema || !tool.output_schema) return undefined
+  const inputBytes = jsonBytes(tool.input_schema)
+  const outputBytes = jsonBytes(tool.output_schema)
+  return {
+    input_schema_hash: sha256JsonHash(tool.input_schema),
+    output_schema_hash: sha256JsonHash(tool.output_schema),
+    input_schema_bytes: inputBytes,
+    output_schema_bytes: outputBytes,
+    estimated_schema_tokens: Math.ceil((inputBytes + outputBytes) / 4),
+    schema_loaded: true,
+  }
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value))
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    Object.freeze(value)
+    for (const item of Object.values(value as Record<string, unknown>)) deepFreeze(item)
+  }
+  return value
 }
 
 function recoveryFirstRequestPreviewBlocker(
-  seed: CommanderInvestigationRecoveryContinuationSeed,
+  approvedPreview: CommanderInvestigationRecoveryFirstModelRequestPreview,
   request: CommanderModelStepRequest,
   context: CommanderInvestigationContext,
   loadedTools: CommanderToolDescriptor[],
+  recoveryNoticeHash?: string,
 ): string | undefined {
-  const actual = recoveryFirstRequestPreview(seed, request, context, loadedTools)
-  return actual.request_preview_hash === seed.first_model_request_preview.request_preview_hash ? undefined : "first recovered model request no longer matches the approved preparation preview"
+  const actual = recoveryFirstRequestPreview(approvedPreview.turn_index, approvedPreview.old_pending_request_id, recoveryNoticeHash, request, context, loadedTools)
+  return actual.request_preview_hash === approvedPreview.request_preview_hash ? undefined : "first recovered model request no longer matches the approved preparation preview"
 }
 
 function recoveryFirstRequestPreview(
-  seed: CommanderInvestigationRecoveryContinuationSeed,
+  turnIndex: number,
+  oldPendingRequestId: string | undefined,
+  recoveryNoticeHash: string | undefined,
   request: CommanderModelStepRequest,
   context: CommanderInvestigationContext,
   loadedTools: CommanderToolDescriptor[],
@@ -1345,7 +1435,7 @@ function recoveryFirstRequestPreview(
     provider_id: request.provider_id,
     provider_kind: request.provider_kind,
     model_id: request.model_id,
-    turn_index: seed.next_turn_index,
+    turn_index: turnIndex,
     tool_protocol: request.tool_protocol,
     tool_choice: "auto",
     max_output_tokens: request.max_output_tokens,
@@ -1356,8 +1446,8 @@ function recoveryFirstRequestPreview(
     loaded_tool_ids: loadedTools.map((tool) => tool.tool_id),
     loaded_tool_schema_hash: stableHash(loadedTools.map(commanderToolSchemaFromDescriptor)),
     context_hash: stableHash({ messages: context.messages, input_bytes: context.input_bytes, estimated_tokens: context.estimated_tokens }),
-    recovery_notice_hash: seed.recovery_notice_hash,
-    old_pending_request_id: seed.pending_model_step_ref?.model_request_id,
+    recovery_notice_hash: recoveryNoticeHash ?? "",
+    old_pending_request_id: oldPendingRequestId,
     old_request_replayed: false,
     tool_execution_replayed: false,
     provider_called: false,

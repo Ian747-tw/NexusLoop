@@ -32,6 +32,7 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
+  reconstructCommanderRecoveryReplayExchange,
 	  CommanderInvestigationRecoveryApprovalService,
 	  CommanderInvestigationRecoveryService,
 	  CommanderToolExecutor,
@@ -7122,8 +7123,170 @@ describe("Commander in-memory investigation controller", () => {
     })
     const tamperedLoadedTool = await tamperedLoadedToolController.runFromRecoverySeed(tamperedLoadedToolSeed)
     expect(tamperedLoadedTool).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(tamperedLoadedTool.blockers).toContain("recovery continuation loaded tool descriptor did not verify")
+    expect(tamperedLoadedTool.blockers).toContain("recovery continuation loaded tool actual schema did not verify")
     expect(tamperedLoadedToolAdapter.request_summaries).toHaveLength(0)
+    const controllerForDescriptors = (descriptors: typeof COMMANDER_TOOL_REGISTRY, adapter: ScriptedCommanderModelStepAdapter) => new CommanderInvestigationController({
+      modelAdapter: adapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+    })
+    for (const [label, mutate] of [
+      ["input schema", (descriptors: typeof COMMANDER_TOOL_REGISTRY) => {
+        descriptors.find((tool) => tool.tool_id === "commander.tool_profile")!.input_schema!.properties.phase.description = "mutated recovery input schema"
+      }],
+      ["output schema", (descriptors: typeof COMMANDER_TOOL_REGISTRY) => {
+        descriptors.find((tool) => tool.tool_id === "commander.tool_profile")!.output_schema!.properties.status.description = "mutated recovery output schema"
+      }],
+      ["nested schema", (descriptors: typeof COMMANDER_TOOL_REGISTRY) => {
+        descriptors.find((tool) => tool.tool_id === "commander.tool_profile")!.input_schema!.properties.phase.maxLength = 79
+      }],
+    ] as const) {
+      const descriptors = structuredClone(COMMANDER_TOOL_REGISTRY)
+      mutate(descriptors)
+      const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: `${label} drift should not run` }])
+      const result = await controllerForDescriptors(descriptors, adapter).runFromRecoverySeed(built.seed!)
+      expect(result).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+      expect(result.blockers).toContain("recovery continuation loaded tool actual schema did not verify")
+      expect(adapter.request_summaries).toHaveLength(0)
+    }
+    const seedDescriptorSchemaDrift = structuredClone(built.seed!)
+    seedDescriptorSchemaDrift.loaded_tools[0].input_schema!.properties.phase.description = "mutated seed schema after preparation"
+    seedDescriptorSchemaDrift.loaded_tools[0].schema_metadata.input_schema_hash = built.seed!.loaded_tools[0].schema_metadata.input_schema_hash
+    seedDescriptorSchemaDrift.execution_preparation_hash = recoverySeedPreparationHash(seedDescriptorSchemaDrift)
+    const seedDescriptorSchemaDriftAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "seed descriptor drift should not run" }])
+    const seedDescriptorSchemaDriftResult = await controllerForDescriptors(COMMANDER_TOOL_REGISTRY, seedDescriptorSchemaDriftAdapter).runFromRecoverySeed(seedDescriptorSchemaDrift)
+    expect(seedDescriptorSchemaDriftResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(seedDescriptorSchemaDriftResult.blockers).toContain("recovery continuation loaded tool actual schema did not verify")
+    expect(seedDescriptorSchemaDriftAdapter.request_summaries).toHaveLength(0)
+    const sharedDescriptors = structuredClone(COMMANDER_TOOL_REGISTRY)
+    const sharedBuilder = new CommanderInvestigationRecoveryContinuationBuilder({
+      descriptors: sharedDescriptors,
+      currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
+      contextService: new CommanderInvestigationContextService(),
+      modelOutputTokens: () => 1024,
+    })
+    const sharedBuilt = await sharedBuilder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
+    expect(sharedBuilt.seed).toBeDefined()
+    sharedDescriptors.find((tool) => tool.tool_id === "commander.tool_profile")!.input_schema!.properties.phase.description = "mutated shared descriptor after build"
+    expect(sharedBuilt.seed!.loaded_tools[0].input_schema!.properties.phase.description).not.toBe("mutated shared descriptor after build")
+    const warnedBuilder = new CommanderInvestigationRecoveryContinuationBuilder({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
+      contextService: new CommanderInvestigationContextService(),
+      modelOutputTokens: () => 1024,
+      providerPreflight: async () => ({
+        ready: true,
+        source_kind: "configured_connector",
+        checks: [],
+        checked_at: "2026-01-01T00:00:00.000Z",
+        blockers: [],
+        warnings: ["resume requested; continue with operator warning"],
+        snapshot_hash: "provider_warning_hash",
+      }),
+    })
+    const warnedBuilt = await warnedBuilder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
+    expect(warnedBuilt.seed).toBeDefined()
+    expect(warnedBuilt.seed!.pre_model_gate_snapshot.provider_preflight_warnings).toContain("resume requested; continue with operator warning")
+    expect(warnedBuilt.seed!.execution_preparation_hash).not.toBe(built.seed!.execution_preparation_hash)
+    const sameWarningAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "same warning proceeds" }])
+    const sameWarningController = new CommanderInvestigationController({
+      modelAdapter: sameWarningAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      providerGate: { check: async () => ({
+        ready: true,
+        source_kind: "configured_connector",
+        checks: [],
+        checked_at: "2026-01-01T00:00:01.000Z",
+        blockers: [],
+        warnings: ["resume requested; continue with operator warning"],
+        snapshot_hash: "provider_same_warning_hash",
+      }) },
+    })
+    const sameWarning = await sameWarningController.runFromRecoverySeed(warnedBuilt.seed!)
+    expect(sameWarning).toMatchObject({ status: "final", provider_request_count: 1 })
+    expect(sameWarningAdapter.request_summaries).toHaveLength(1)
+    const changedWarningAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "changed warning should not run" }])
+    const changedWarningController = new CommanderInvestigationController({
+      modelAdapter: changedWarningAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      providerGate: { check: async () => ({
+        ready: true,
+        source_kind: "configured_connector",
+        checks: [],
+        checked_at: "2026-01-01T00:00:02.000Z",
+        blockers: [],
+        warnings: ["different current warning"],
+        snapshot_hash: "provider_changed_warning_hash",
+      }) },
+    })
+    const changedWarning = await changedWarningController.runFromRecoverySeed(warnedBuilt.seed!)
+    expect(changedWarning).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(changedWarning.blockers).toContain("recovery pre-model gate snapshot changed since approval")
+    expect(changedWarningAdapter.request_summaries).toHaveLength(0)
+    for (const protocol of ["native", "json_fallback"] as const) {
+      const replayCheckpoint = structuredClone(source!.latest_checkpoint!)
+      replayCheckpoint.checkpoint_kind = "turn_complete"
+      replayCheckpoint.checkpoint_sequence = 1
+      replayCheckpoint.turn_index = 1
+      replayCheckpoint.next_turn_index = 2
+      replayCheckpoint.tool_protocol = protocol
+      const exchange: CommanderInvestigationReplayExchange = {
+        turn_index: 1,
+        assistant_message: {
+          role: "assistant",
+          content: [{
+            ...toolCall("large_replay_arguments", "commander.tool_profile", {
+              phase: "proposal_investigation",
+              oversized: "x".repeat(5000),
+              nested: { a: { b: { c: ["secret sk-replayargumentsecret12345", ...Array.from({ length: 40 }, (_, index) => ({ index, value: "v".repeat(200) }))] } } },
+            }),
+            raw_arguments: undefined,
+          }],
+        },
+        tool_result_messages: [{
+          role: "tool",
+          tool_call_id: "large_replay_arguments",
+          tool_id: "commander.tool_profile",
+          content: "summary only profile result",
+          content_hash: stableHash("summary only profile result"),
+          truncated: false,
+          durable_summary_only: true,
+        }],
+        exchange_hash: "",
+        summary_only: true,
+        assistant_text_persisted: false,
+        exact_replay_supported: false,
+        protocol_relationship_preserved: true,
+        full_tool_results_persisted: false,
+      }
+      exchange.exchange_hash = stableHash({ ...exchange, exchange_hash: "" })
+      replayCheckpoint.replay_exchange = exchange
+      const replay = reconstructCommanderRecoveryReplayExchange({ checkpoint: replayCheckpoint, loadedTools: [COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_profile")!], protocol })
+      expect(replay.blockers).toEqual([])
+      expect(replay.latest_assistant?.content[0].type).toBe("tool_call")
+      expect(JSON.stringify(replay.latest_assistant)).not.toContain("sk-replayargumentsecret12345")
+      expect(JSON.stringify(replay.latest_assistant)).toContain("omitted")
+    }
     const tamperedWorkingSetSeed = {
       ...built.seed!,
       working_set: {
@@ -7168,8 +7331,26 @@ describe("Commander in-memory investigation controller", () => {
     })
     const tamperedInput = await tamperedInputController.runFromRecoverySeed(tamperedInputSeed)
     expect(tamperedInput).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(tamperedInput.blockers).toContain("recovery continuation normalized input hash did not verify")
+    expect(tamperedInput.blockers).toContain("recovery continuation identity objective hash did not verify")
     expect(tamperedInputAdapter.request_summaries).toHaveLength(0)
+    for (const [label, mutate, expectedBlocker] of [
+      ["provider id", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.normalized_input.provider_id = "provider_gate_a"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity provider_id did not verify"],
+      ["provider kind", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.normalized_input.provider_kind = "provider_kind_a"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity provider_kind did not verify"],
+      ["model id", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.normalized_input.model_id = "model_gate_a"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity model_id did not verify"],
+      ["phase", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.normalized_input.phase = "general_read"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity phase did not verify"],
+      ["session", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.normalized_input.session_id = "session_gate_a"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity session_id did not verify"],
+      ["launch", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.normalized_input.launch_id = "launch_gate_a"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity launch_id did not verify"],
+      ["tool protocol", (seed: CommanderInvestigationRecoveryContinuationSeed) => { seed.tool_protocol = "json_fallback"; seed.normalized_input.tool_protocol = "json_fallback"; seed.normalized_input_hash = stableHash(seed.normalized_input) }, "recovery continuation identity tool protocol did not verify"],
+    ] as const) {
+      const seed = structuredClone(built.seed!)
+      mutate(seed)
+      seed.execution_preparation_hash = recoverySeedPreparationHash(seed)
+      const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: `${label} identity drift should not run` }])
+      const result = await controllerForDescriptors(COMMANDER_TOOL_REGISTRY, adapter).runFromRecoverySeed(seed)
+      expect(result).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+      expect(result.blockers).toContain(expectedBlocker)
+      expect(adapter.request_summaries).toHaveLength(0)
+    }
     const tamperedBootstrapSeed = {
       ...built.seed!,
       current_bootstrap: {
@@ -7278,9 +7459,11 @@ describe("Commander in-memory investigation controller", () => {
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
     })
+    expect(preparation.continuation_summary?.original_started_at).toBe(built.seed!.original_started_at)
     const recovered = await controller.runFromRecoverySeed(built.seed!)
     expect(recovered).toMatchObject({
       investigation_id: "inv_recovery_preparation_checkpoint",
+      started_at: built.seed!.original_started_at,
       status: "final",
       stop_reason: "model_final",
       model_turn_count: 1,
@@ -7288,6 +7471,7 @@ describe("Commander in-memory investigation controller", () => {
       tool_call_count: 0,
       events_appended: false,
     })
+    expect(recovered.duration_ms).toBeGreaterThanOrEqual(built.seed!.elapsed_active_ms_before)
 	    expect(capturedRequest?.request_id).toBe(preparation.first_model_request?.request_id)
 	    expect(capturedRequest?.messages.some((message) => message.role === "user" && message.content.includes("commander_investigation_recovery_notice"))).toBe(true)
 	    expect(capturedRequest?.tools.map((tool) => tool.tool_id)).toEqual(["commander.tool_profile"])
@@ -9522,6 +9706,7 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     recovery_kind: seed.recovery_kind,
     immutable_identity: seed.immutable_identity,
     normalized_input_hash: seed.normalized_input_hash,
+    original_started_at: seed.original_started_at,
     recovery_basis_hash: seed.recovery_basis_hash,
     checkpoint_ref: seed.checkpoint_ref,
     pending_model_step_ref: seed.pending_model_step_ref,
@@ -9536,6 +9721,7 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     replay_exchange_hash: seed.replay_exchange_hash,
     replay_message_hash: seed.replay_message_hash,
     recovery_notice_hash: seed.recovery_notice_hash,
+    pre_model_gate_snapshot_hash: seed.pre_model_gate_snapshot.gate_snapshot_hash,
     next_turn_index: seed.next_turn_index,
     elapsed_active_ms_before: seed.elapsed_active_ms_before,
     provider_request_count_before: seed.provider_request_count_before,
