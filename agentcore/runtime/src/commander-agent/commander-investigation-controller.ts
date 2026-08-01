@@ -1230,6 +1230,7 @@ function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuati
 function reconstructRecoveryReplayFromSeed(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[], checkpoint?: CommanderInvestigationCheckpoint): { latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; blocker?: string } {
   if (seed.replay_summary.replay_protocol_available) {
     if (!checkpoint) return { latestToolResults: [], blocker: "recovery continuation authoritative checkpoint is required for replay exchange" }
+    if (!verifyRecoveryCheckpoint(checkpoint)) return { latestToolResults: [], blocker: "recovery continuation authoritative checkpoint hash did not verify" }
     if (
       checkpoint.checkpoint_id !== seed.checkpoint_ref.checkpoint_id ||
       checkpoint.checkpoint_sequence !== seed.checkpoint_ref.checkpoint_sequence ||
@@ -1252,6 +1253,29 @@ function reconstructRecoveryReplayFromSeed(seed: CommanderInvestigationRecoveryC
   if (!seed.replay_summary.replay_protocol_available && seed.replay_exchange) return { latestToolResults: [], blocker: "recovery continuation durable replay exchange is unexpected" }
   if (seed.replay_summary.replay_exchange_hash !== replay.summary.replay_exchange_hash) return { latestToolResults: [], blocker: "recovery continuation replay exchange reference did not verify" }
   return { latestAssistant: replay.latest_assistant, latestToolResults: replay.latest_tool_results }
+}
+
+function verifyRecoveryCheckpoint(checkpoint: CommanderInvestigationCheckpoint): boolean {
+  const semanticStateHash = stableHash({
+    ...checkpoint,
+    checkpoint_id: "",
+    checkpoint_hash: "",
+    semantic_state_hash: "",
+    created_at: "",
+    elapsed_active_ms: 0,
+    provider_audit: undefined,
+    working_set: {
+      ...checkpoint.working_set,
+      provider_audit: { ...checkpoint.working_set.provider_audit, audit_request_ids: [] },
+      evidence_cards: checkpoint.working_set.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
+    },
+    turn_summaries: checkpoint.turn_summaries.map((item) => ({ ...item, provider_audit_request_ids: [], turn_hash: "" })),
+  })
+  return (
+    checkpoint.semantic_state_hash === semanticStateHash &&
+    checkpoint.checkpoint_id === `commander_inv_checkpoint_${checkpoint.checkpoint_sequence}_${semanticStateHash.slice(0, 16)}` &&
+    checkpoint.checkpoint_hash === stableHash({ ...checkpoint, checkpoint_hash: "" })
+  )
 }
 
 function validateRecoveryNotice(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
