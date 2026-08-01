@@ -13,6 +13,7 @@ import type {
 } from "./commander-investigation-recovery-execution-types"
 import type { CommanderInvestigationRecoveryPreview } from "./commander-investigation-recovery-types"
 import { buildCommanderInvestigationRecoveryNotice } from "./commander-investigation-recovery-notice"
+import { deriveCommanderInvestigationRecoveryContinuationBudget } from "./commander-investigation-recovery-budget"
 import { reconstructCommanderRecoveryReplayExchange } from "./commander-investigation-recovery-replay"
 import { durableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
 
@@ -56,10 +57,13 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const uncertainCharge = pending ? 1 : 0
     const unresolvedAttempts = pending ? 1 : 0
     if (pending && pending.turn_index !== checkpoint.next_turn_index) blockers.push("pending model-step turn does not match checkpoint next turn")
-    const modelTurnsConsumed = checkpoint.working_set.model_turn_count + uncertainCharge
     const nextTurn = pending ? Math.max(checkpoint.next_turn_index, pending.turn_index + 1) : checkpoint.next_turn_index
     if (!pending && checkpoint.next_turn_index !== checkpoint.working_set.model_turn_count + 1) blockers.push("checkpoint next_turn_index does not follow model_turn_count")
-    const budget = continuationBudget(checkpoint, modelTurnsConsumed, uncertainCharge, unresolvedAttempts, preview.budget_compatibility)
+    const budget = deriveCommanderInvestigationRecoveryContinuationBudget({
+      checkpoint,
+      current_policy_limits: preview.budget_compatibility.current_policy_limits,
+      pending_model_step: pending,
+    })
     if (budget.exhausted_dimensions.length) blockers.push(...budget.exhausted_dimensions.map((dimension) => `recovery continuation budget exhausted for ${dimension}`))
     const notice = buildCommanderInvestigationRecoveryNotice({
       source,
@@ -298,78 +302,6 @@ export function restoreCommanderInvestigationWorkingSet(checkpoint: CommanderInv
   if (JSON.stringify(workingSet.loaded_tool_ids) !== JSON.stringify(checkpointToolIds)) return { blocker: "checkpoint loaded tool references do not match working-set loaded_tool_ids" }
   if (workingSet.working_set_hash !== checkpoint.working_set.working_set_hash) return { blocker: "checkpoint durable working-set hash could not be revalidated" }
   return { workingSet }
-}
-
-function continuationBudget(checkpoint: CommanderInvestigationCheckpoint, modelTurnsConsumed: number, uncertainCharge: number, unresolvedAttempts: number, compatibility: CommanderInvestigationRecoveryPreview["budget_compatibility"]) {
-  const stored = checkpoint.budget
-  const limits = compatibility.current_policy_limits ?? {}
-  const budget = {
-    ...stored,
-    max_model_turns: boundedCurrentLimit(limits.max_model_turns, stored.max_model_turns),
-    max_tool_calls: boundedCurrentLimit(limits.max_tool_calls, stored.max_tool_calls),
-    max_tool_search_calls: boundedCurrentLimit(limits.max_tool_search_calls, stored.max_tool_search_calls),
-    max_loaded_schemas: boundedCurrentLimit(limits.max_loaded_schemas, stored.max_loaded_schemas),
-    max_cumulative_tool_result_bytes: boundedCurrentLimit(limits.max_cumulative_tool_result_bytes, stored.max_cumulative_tool_result_bytes),
-    max_wall_time_ms: boundedCurrentLimit(limits.max_wall_time_ms, stored.max_wall_time_ms),
-    max_consecutive_no_progress_turns: boundedCurrentLimit(limits.max_consecutive_no_progress_turns, stored.max_consecutive_no_progress_turns),
-    max_evidence_cards: boundedCurrentLimit(limits.max_evidence_cards, stored.max_evidence_cards),
-    max_turn_summaries: boundedCurrentLimit(limits.max_turn_summaries, stored.max_turn_summaries),
-    max_context_bytes: boundedOptionalCurrentLimit(limits.max_context_bytes, stored.max_context_bytes),
-    max_context_tokens: boundedOptionalCurrentLimit(limits.max_context_tokens, stored.max_context_tokens),
-    tool_schema_allocation_bytes: boundedOptionalCurrentLimit(limits.tool_schema_allocation_bytes, stored.tool_schema_allocation_bytes),
-    tool_schema_allocation_tokens: boundedOptionalCurrentLimit(limits.tool_schema_allocation_tokens, stored.tool_schema_allocation_tokens),
-    budget_hash: "",
-  }
-  budget.budget_hash = stableHash({ ...budget, budget_hash: "" })
-  const consumed = {
-    model_turns: modelTurnsConsumed,
-    provider_requests: checkpoint.provider_request_count,
-    tool_calls: checkpoint.working_set.tool_call_count,
-    tool_search_calls: checkpoint.working_set.tool_search_call_count,
-    cumulative_tool_result_bytes: checkpoint.working_set.cumulative_tool_result_bytes,
-    elapsed_active_ms: checkpoint.elapsed_active_ms,
-    evidence_cards: checkpoint.working_set.evidence_cards.length + checkpoint.working_set.omitted_evidence_count,
-    turn_summaries: checkpoint.turn_summaries.length + checkpoint.working_set.omitted_turn_count,
-    consecutive_no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns,
-    loaded_schemas: checkpoint.loaded_tools.length,
-  }
-  const remaining = {
-    model_turns: budget.max_model_turns - consumed.model_turns,
-    tool_calls: budget.max_tool_calls - consumed.tool_calls,
-    tool_search_calls: budget.max_tool_search_calls - consumed.tool_search_calls,
-    cumulative_tool_result_bytes: budget.max_cumulative_tool_result_bytes - consumed.cumulative_tool_result_bytes,
-    wall_time_ms: budget.max_wall_time_ms - consumed.elapsed_active_ms,
-    evidence_cards: budget.max_evidence_cards - checkpoint.working_set.evidence_cards.length,
-    turn_summaries: budget.max_turn_summaries - checkpoint.turn_summaries.length,
-    loaded_schemas: budget.max_loaded_schemas - consumed.loaded_schemas,
-  }
-  const exhausted = Object.entries(remaining)
-    .filter(([key, value]) => key === "model_turns" || key === "wall_time_ms" ? value <= 0 : value < 0)
-    .map(([key]) => key)
-  const result = {
-    original_budget_id: budget.budget_id,
-    original_budget_hash: stored.budget_hash,
-    effective_budget: budget,
-    effective_budget_hash: budget.budget_hash,
-    consumed,
-    remaining,
-    uncertain_model_turn_charge: uncertainCharge,
-    unresolved_provider_attempt_count: unresolvedAttempts,
-    stricter_current_policy_dimensions: [],
-    exhausted_dimensions: exhausted,
-    budget_hash: "",
-  }
-  result.budget_hash = stableHash({ ...result, budget_hash: "" })
-  return result
-}
-
-function boundedCurrentLimit(current: number | undefined, stored: number): number {
-  return typeof current === "number" && Number.isFinite(current) ? Math.min(stored, Math.max(0, Math.floor(current))) : stored
-}
-
-function boundedOptionalCurrentLimit(current: number | undefined, stored: number | undefined): number | undefined {
-  if (typeof current !== "number" || !Number.isFinite(current)) return stored
-  return stored === undefined ? Math.max(0, Math.floor(current)) : Math.min(stored, Math.max(0, Math.floor(current)))
 }
 
 export function commanderRecoveryExecutionPreparationSummaryFromSeed(seed: CommanderInvestigationRecoveryContinuationSeed): CommanderInvestigationRecoveryExecutionPreparationSummary {

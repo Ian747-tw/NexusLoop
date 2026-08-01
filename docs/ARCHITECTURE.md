@@ -192,6 +192,13 @@ assistant/tool replay messages are reconstructed from the authoritative
 journal checkpoint's hash-verified durable replay exchange instead of treated as
 seed or caller-supplied checkpoint authority. Replay availability is derived
 from that journal checkpoint, not from copied seed flags.
+At the continuation-kernel boundary, effective ceilings are re-derived with the
+same canonical budget function used during preparation from the accepted
+checkpoint plus current phase/model/context policy. Loaded-tool identity is
+likewise selected only from accepted checkpoint references, then revalidated
+against current bindings, eligibility, safe-read authority, and actual schema
+objects. Seed budget fields and seed tool references can prove equality with an
+approved preparation, but they cannot broaden or substitute execution authority.
 Original investigation start time remains lineage metadata, while continuation
 active duration counts prior elapsed active time plus current active work rather
 than downtime.

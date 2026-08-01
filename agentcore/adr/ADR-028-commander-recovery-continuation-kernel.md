@@ -63,14 +63,19 @@ lifecycle state, run-lock state, EventStore event IDs, external API audit
 request IDs, approval IDs, approval timestamps, approver identity, and approval
 notes.
 
-The seed carries loaded-tool references for deterministic planning, but live
-descriptor objects are not execution authority. The controller reconstructs
-loaded descriptors from its current registry by stored tool ID, recomputes
+The seed carries loaded-tool references for deterministic planning, but neither
+those references nor live descriptor objects are execution authority. At the
+kernel boundary the controller requires the seed references to equal the
+accepted checkpoint references, requires the checkpoint working-set IDs to
+equal those references, and reconstructs loaded descriptors exclusively from
+the checkpoint IDs and its current registry. It revalidates current binding,
+implemented availability, load policy, canonical phase/namespace eligibility,
+safe-read authority, side effects, and fixed-process restrictions; recomputes
 input/output schema hashes, byte sizes, and token estimates from the actual
 schema objects, compares those values with both durable refs and descriptor
 metadata, and deep-clones/freeze-bounds the accepted descriptors before building
 provider tool schemas. A mutable seed or aliased descriptor cannot substitute a
-different schema under unchanged metadata.
+different schema or tool set under unchanged metadata.
 
 For uncertain-provider recovery, the seed also carries the journal recovery
 basis's pending-boundary hash. Controller validation recomputes the recovery
@@ -87,6 +92,15 @@ original budget bounded by current phase/model/context policy and existing hard
 caps. Consumed model turns, provider requests, tool calls, tool-search calls,
 result bytes, elapsed active time, evidence counts, loaded schema counts,
 no-progress counts, omitted counters, and repeat signatures are preserved.
+Preparation and controller execution use one canonical continuation-budget
+derivation. After loading the accepted checkpoint, the controller reruns the
+current phase profile and model/context budget calculation, derives the
+authoritative effective budget from checkpoint state, and requires exact
+equality with the approved seed budget and hashes. The loop enforces only that
+re-derived budget; a copied seed cannot broaden model, tool, search, result-byte,
+wall-time, schema, or context ceilings, and a current-policy reduction makes the
+old preparation stale before any adapter or tool call. Zero remaining schema
+slots remains valid when the accepted loaded set already fills the cap.
 
 For an uncertain pending model-step boundary, preparation conservatively charges
 one unresolved model attempt, advances the next turn beyond the pending turn,

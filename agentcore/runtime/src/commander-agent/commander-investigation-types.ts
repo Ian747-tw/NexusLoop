@@ -365,7 +365,7 @@ export type CommanderInvestigationControllerOptions = {
   providerAuditPolicy?: CommanderInvestigationProviderAuditPolicy
   persistenceObserver?: CommanderInvestigationPersistenceObserver
   capabilityRegistry: { get(input: { provider_kind?: string; model_id?: string; role?: string }): { supports_tools: boolean | "unknown"; warnings: string[]; max_output_tokens?: number } }
-  contextBudgetService: { preview(input: Record<string, unknown>): Promise<{ budget: { budget_id: string; max_context_tokens?: number; max_context_bytes?: number; allocations: Array<{ section: string; max_tokens?: number; max_bytes?: number }> }; warnings: string[]; blockers: string[] }> }
+  contextBudgetService: { preview(input: Record<string, unknown>): Promise<{ budget: { budget_id: string; max_context_tokens?: number; max_context_bytes?: number; max_output_tokens?: number; safety_margin_tokens?: number; safety_margin_bytes?: number; allocations: Array<{ section: string; max_tokens?: number; max_bytes?: number }> }; warnings: string[]; blockers: string[] }> }
   recoverySource?: (investigationId: string) => Promise<CommanderInvestigationRecoverySource | undefined> | CommanderInvestigationRecoverySource | undefined
   now?: () => Date
 }

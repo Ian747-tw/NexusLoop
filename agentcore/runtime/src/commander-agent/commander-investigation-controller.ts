@@ -25,22 +25,16 @@ import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationP
 import type { CommanderInvestigationCheckpoint, CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
 import { CommanderInvestigationJournalConflictError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoveryContinuationSeed, CommanderInvestigationRecoveryFirstModelRequestPreview } from "./commander-investigation-recovery-execution-types"
+import {
+  COMMANDER_INVESTIGATION_HARD_CAPS,
+  commanderInvestigationRecoveryCurrentPolicyLimits,
+  deriveCommanderInvestigationRecoveryContinuationBudget,
+} from "./commander-investigation-recovery-budget"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import { reconstructCommanderRecoveryReplayExchangeFromDurable } from "./commander-investigation-recovery-replay"
 import { durableCommanderInvestigationWorkingSet, stableCommanderInvestigationProviderAudit, stableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
 
-const HARD_CAPS = {
-  max_model_turns: 24,
-  max_tool_calls: 32,
-  max_tool_search_calls: 8,
-  max_loaded_schemas: 12,
-  max_tool_calls_per_turn: 4,
-  max_cumulative_tool_result_bytes: 96_000,
-  max_wall_time_ms: 120_000,
-  max_consecutive_no_progress_turns: 3,
-  max_evidence_cards: 24,
-  max_turn_summaries: 12,
-}
+const HARD_CAPS = COMMANDER_INVESTIGATION_HARD_CAPS
 
 const TOOL_SEARCH_ID = "commander.tool_search"
 const TOOL_GET_ID = "commander.tool_get"
@@ -178,14 +172,19 @@ export class CommanderInvestigationController {
       return finishAfterJournalLookup("recovery continuation current bootstrap did not match controller compilation", currentBootstrap)
     }
     if (currentBootstrap.continuity_assessment_status === "degraded") return finishAfterJournalLookup("recovery continuation current bootstrap is degraded", currentBootstrap)
-    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, authoritativeCheckpoint.checkpoint)
+    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, this.options.boundToolIds, checkpoint)
     if (prepared.blocker) return finishAfterJournalLookup(prepared.blocker, currentBootstrap)
     if (checkpointWorkingSet.blocker) return finishAfterJournalLookup(checkpointWorkingSet.blocker, currentBootstrap, prepared.loadedTools)
-    const budget = seed.effective_budget.effective_budget
+    const authoritativeBudget = await this.deriveRecoveryContinuationBudget(input, checkpoint, authoritativeSource.pending_model_step)
+    if (authoritativeBudget.blockers.length > 0) return finishAfterJournalLookup(authoritativeBudget.blockers[0], currentBootstrap, prepared.loadedTools)
+    if (stableHash(authoritativeBudget.budget) !== stableHash(seed.effective_budget)) {
+      return finishAfterJournalLookup("recovery continuation budget no longer matches current authority", currentBootstrap, prepared.loadedTools)
+    }
+    const budget = authoritativeBudget.budget.effective_budget
     const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
     const workingSet = redactValue(checkpointWorkingSet.workingSet!) as CommanderInvestigationWorkingSet
-    if (workingSet.model_turn_count < seed.effective_budget.consumed.model_turns) {
-      workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
+    if (workingSet.model_turn_count < authoritativeBudget.budget.consumed.model_turns) {
+      workingSet.model_turn_count = authoritativeBudget.budget.consumed.model_turns
       workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
     }
     const turns = authoritativeTurns
@@ -195,8 +194,8 @@ export class CommanderInvestigationController {
     const recentResults = new Map(workingSet.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
     if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (seed.effective_budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (authoritativeBudget.budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (authoritativeBudget.budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     return this.executePreparedInvestigation({
       mode: "recovery",
       input,
@@ -223,6 +222,40 @@ export class CommanderInvestigationController {
       durationMs: () => elapsedWallMs(wallStartedMs),
     })
 	  }
+
+  private async deriveRecoveryContinuationBudget(input: CommanderInvestigationInput, checkpoint: CommanderInvestigationCheckpoint, pendingModelStep?: import("./commander-investigation-journal-types").CommanderInvestigationModelStepStartedPayload) {
+    const profile = this.options.toolService.profile({ phase: input.phase })
+    const context = await this.options.contextBudgetService.preview({
+      purpose: "commander_research_decision",
+      role: "commander",
+      provider_kind: input.provider_kind,
+      model_id: input.model_id,
+      max_context_tokens: checkpoint.budget.max_context_tokens,
+      max_context_bytes: checkpoint.budget.max_context_bytes,
+    })
+    const allocation = context.budget.allocations.find((item) => item.section === "tool_or_mcp_schema")
+    const currentContext = {
+      context_budget_id: context.budget.budget_id,
+      input_context_bytes: context.budget.max_context_bytes === undefined
+        ? undefined
+        : Math.max(0, context.budget.max_context_bytes - (context.budget.safety_margin_bytes ?? 0)),
+      input_context_tokens: context.budget.max_context_tokens === undefined
+        ? undefined
+        : Math.max(0, context.budget.max_context_tokens - (context.budget.max_output_tokens ?? 0) - (context.budget.safety_margin_tokens ?? 0)),
+      tool_schema_allocation_bytes: allocation?.max_bytes,
+      tool_schema_allocation_tokens: allocation?.max_tokens,
+      blockers: context.blockers,
+      warnings: context.warnings,
+    }
+    return {
+      budget: deriveCommanderInvestigationRecoveryContinuationBudget({
+        checkpoint,
+        current_policy_limits: commanderInvestigationRecoveryCurrentPolicyLimits({ profile, context: currentContext }),
+        pending_model_step: pendingModelStep,
+      }),
+      blockers: context.blockers.map((item) => preview(item, 300)).slice(0, 8),
+    }
+  }
 
   private async recoverySeedCheckpoint(seed: CommanderInvestigationRecoveryContinuationSeed): Promise<{ source?: CommanderInvestigationRecoverySource; checkpoint?: CommanderInvestigationCheckpoint; blocker?: string }> {
     if (!this.options.recoverySource) return { blocker: "recovery continuation authoritative journal source is required" }
@@ -1197,10 +1230,11 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
   return undefined
 }
 
-function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[], checkpoint?: CommanderInvestigationCheckpoint): { loadedTools?: CommanderToolDescriptor[]; latestAssistant?: CommanderModelAssistantMessage; latestToolResults?: CommanderModelToolResultMessage[]; blocker?: string } {
+function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[], boundToolIds: readonly string[], checkpoint: CommanderInvestigationCheckpoint): { loadedTools?: CommanderToolDescriptor[]; latestAssistant?: CommanderModelAssistantMessage; latestToolResults?: CommanderModelToolResultMessage[]; blocker?: string } {
   const identityError = validateRecoveryIdentity(seed)
   if (identityError) return { blocker: identityError }
-  const loaded = reconstructRecoveryLoadedTools(seed.loaded_tool_refs, currentDescriptors, seed.normalized_input.phase)
+  if (stableHash(seed.loaded_tool_refs) !== stableHash(checkpoint.loaded_tools)) return { blocker: "recovery continuation loaded tool references did not match journal checkpoint" }
+  const loaded = reconstructRecoveryLoadedTools(checkpoint.loaded_tools, currentDescriptors, boundToolIds, seed.normalized_input.phase)
   if (loaded.blocker) return { blocker: loaded.blocker }
   const integrity = validateRecoverySeedIntegrity(seed, loaded.loadedTools!, currentDescriptors, checkpoint)
   if (integrity) return { blocker: integrity }
@@ -1532,7 +1566,7 @@ function validateRecoveryLoadedTools(loadedTools: CommanderToolDescriptor[], ref
 	  return undefined
 	}
 
-function reconstructRecoveryLoadedTools(refs: CommanderInvestigationLoadedToolRef[], currentDescriptors: CommanderToolDescriptor[], phase: CommanderToolPhase): { loadedTools?: CommanderToolDescriptor[]; blocker?: string } {
+function reconstructRecoveryLoadedTools(refs: CommanderInvestigationLoadedToolRef[], currentDescriptors: CommanderToolDescriptor[], boundToolIds: readonly string[], phase: CommanderToolPhase): { loadedTools?: CommanderToolDescriptor[]; blocker?: string } {
   const currentById = new Map(currentDescriptors.map((tool) => [tool.tool_id, tool]))
   const loaded: CommanderToolDescriptor[] = []
   const seen = new Set<string>()
@@ -1541,7 +1575,11 @@ function reconstructRecoveryLoadedTools(refs: CommanderInvestigationLoadedToolRe
     seen.add(ref.tool_id)
     const current = currentById.get(ref.tool_id)
     if (!current) return { blocker: "recovery continuation loaded tool descriptor did not verify" }
+    if (!boundToolIds.includes(current.tool_id)) return { blocker: "recovery continuation loaded tool binding did not verify" }
+    if (current.availability !== "implemented_read_surface") return { blocker: "recovery continuation loaded tool availability did not verify" }
+    if (current.load_policy === "never_exposed") return { blocker: "recovery continuation loaded tool load policy did not verify" }
     if (!isToolAllowedInPhase(current, phase)) return { blocker: "recovery continuation loaded tool phase eligibility did not verify" }
+    if (!isSafeRecoveryTool(current)) return { blocker: "recovery continuation loaded tool authority did not verify" }
     const schema = recomputeToolSchemaMetadata(current)
     if (!schema) return { blocker: "recovery continuation loaded tool schema did not verify" }
     if (
@@ -1561,6 +1599,21 @@ function reconstructRecoveryLoadedTools(refs: CommanderInvestigationLoadedToolRe
     loaded.push(deepFreeze(structuredClone(current)) as CommanderToolDescriptor)
   }
   return { loadedTools: loaded }
+}
+
+function isSafeRecoveryTool(tool: CommanderToolDescriptor): boolean {
+  const fixedGitRead = (tool.tool_id === "repo.git_status" || tool.tool_id === "repo.git_diff")
+    && tool.execution_backend === "restricted_git_read"
+    && tool.process_policy === "fixed_git_read_only"
+  return tool.risk === "safe_read"
+    && (tool.side_effect_class === "none" || tool.side_effect_class === "internal_read")
+    && !tool.calls_provider
+    && !tool.mutates_events
+    && !tool.requires_network
+    && !tool.requires_credentials
+    && !tool.requires_approval
+    && !tool.requires_run_lock
+    && (!tool.creates_external_process || fixedGitRead)
 }
 
 function recomputeToolSchemaMetadata(tool: CommanderToolDescriptor): CommanderToolSchemaMetadata | undefined {

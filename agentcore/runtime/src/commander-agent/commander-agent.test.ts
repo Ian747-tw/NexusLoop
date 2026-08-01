@@ -15,6 +15,7 @@ import { FakeOpenCodeAdapter } from "../opencode/fake-adapter"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
 import { CommanderToolService } from "../commander-tools/commander-tool-service"
+import type { CommanderToolDescriptor } from "../commander-tools/commander-tool-types"
 import { CommandAuthorityService } from "../authority/command-authority-service"
 import { ContextBudgetService } from "../context/context-budget-service"
 import { ModelCapabilityRegistry } from "../context/model-capability-registry"
@@ -39,7 +40,8 @@ import {
 	  CommanderToolExecutor,
 	  ScriptedCommanderModelStepAdapter,
 	  buildProviderToolMap,
-	  commanderInvestigationModelCapability,
+  commanderInvestigationModelCapability,
+  commanderProviderVisibleDescriptionHash,
   commanderToolSchemaFromDescriptor,
 	  connectorChatCompletionsUrl,
 	  createExternalApiConnectorFetch,
@@ -61,7 +63,7 @@ import {
 	  type CommanderInvestigationLoadedToolRef,
 	  type CommanderInvestigationReplayExchange,
 	  type CommanderInvestigationWorkingSet,
-	  type CommanderInvestigationTerminalRecord,
+  type CommanderInvestigationTerminalRecord,
   type CommanderModelStepAdapter,
   type CommanderModelStepRequest,
   type CommanderModelStepResult,
@@ -6841,7 +6843,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(shutdownIndex).toBe(-1)
   })
 
-  test("recovery preparation binds fresh continuation state into plan and scripted kernel", async () => {
+  test("recovery preparation binds fresh continuation state into plan and continuation kernel budget and tool authority", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b1-preparation-"))
     await writeApprovedSpec(projectDir)
 	    const server = configuredProviderRuntimeServer(projectDir)
@@ -6987,7 +6989,7 @@ describe("Commander in-memory investigation controller", () => {
     const built = await builder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
     expect(built.blockers).toEqual([])
     expect(built.seed?.execution_preparation_hash).toBe(before.execution_preparation_hash)
-    expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(before.budget_compatibility.current_policy_limits.max_tool_calls)
+    expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(Math.min(source!.latest_checkpoint!.budget.max_tool_calls, before.budget_compatibility.current_policy_limits.max_tool_calls!))
     expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
     expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
     expect(built.seed?.effective_budget.consumed.evidence_cards).toBeGreaterThan(built.seed!.effective_budget.effective_budget.max_evidence_cards)
@@ -7028,6 +7030,7 @@ describe("Commander in-memory investigation controller", () => {
     const omittedContinuityRun = await omittedContinuityController.runFromRecoverySeed(omittedContinuityBuilt.seed!)
     expect(omittedContinuityRun).toMatchObject({ status: "final", provider_request_count: 1 })
     expect(omittedContinuityRun.blockers).not.toContain("recovery continuation current bootstrap did not match controller compilation")
+    expect(omittedContinuityAdapter.request_summaries[0]?.tool_ids).toEqual(source!.latest_checkpoint!.loaded_tools.map((tool) => tool.tool_id).sort())
     const seedHashFailure = structuredClone(built.seed!)
     seedHashFailure.normalized_input = {
       ...seedHashFailure.normalized_input,
@@ -7207,20 +7210,79 @@ describe("Commander in-memory investigation controller", () => {
       contextBudgetService: new ContextBudgetService({ registry }),
       recoverySource: async () => source!,
     })
-    const tamperedBudgetSeed = {
-      ...built.seed!,
-      effective_budget: {
-        ...built.seed!.effective_budget,
-        effective_budget: {
-          ...built.seed!.effective_budget.effective_budget,
-          max_model_turns: built.seed!.effective_budget.effective_budget.max_model_turns + 1,
+    for (const [ceiling, remaining] of [
+      ["max_model_turns", "model_turns"],
+      ["max_tool_calls", "tool_calls"],
+      ["max_tool_search_calls", "tool_search_calls"],
+      ["max_cumulative_tool_result_bytes", "cumulative_tool_result_bytes"],
+      ["max_wall_time_ms", "wall_time_ms"],
+      ["max_loaded_schemas", "loaded_schemas"],
+      ["max_context_bytes", undefined],
+      ["max_context_tokens", undefined],
+    ] as const) {
+      const tamperedBudgetSeed = structuredClone(built.seed!)
+      const current = tamperedBudgetSeed.effective_budget.effective_budget[ceiling]
+      expect(current).toBeNumber()
+      ;(tamperedBudgetSeed.effective_budget.effective_budget[ceiling] as number) = (current as number) + 1
+      if (remaining) tamperedBudgetSeed.effective_budget.remaining[remaining] += 1
+      rehashRecoveryBudgetSeed(tamperedBudgetSeed)
+      const tamperedBudget = await tamperedBudgetController.runFromRecoverySeed(tamperedBudgetSeed)
+      expect(tamperedBudget).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+      expect(tamperedBudget.blockers).toContain("recovery continuation budget no longer matches current authority")
+    }
+    expect(tamperedBudgetAdapter.request_summaries).toHaveLength(0)
+    const currentToolService = new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) })
+    const stricterPhaseAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "stricter phase policy should not run" }])
+    const stricterPhaseController = new CommanderInvestigationController({
+      modelAdapter: stricterPhaseAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: {
+        profile: (profileInput) => ({ ...currentToolService.profile(profileInput), max_tool_calls_future: built.seed!.effective_budget.effective_budget.max_tool_calls - 1 }),
+        bootstrap: (bootstrapInput) => currentToolService.bootstrap(bootstrapInput),
+        get: (getInput) => currentToolService.get(getInput),
+      },
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const stricterPhaseResult = await stricterPhaseController.runFromRecoverySeed(built.seed!)
+    expect(stricterPhaseResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(stricterPhaseResult.blockers).toContain("recovery continuation budget no longer matches current authority")
+    expect(stricterPhaseAdapter.request_summaries).toHaveLength(0)
+    const baseContextBudgetService = new ContextBudgetService({ registry })
+    const stricterContextAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "stricter context policy should not run" }])
+    const stricterContextController = new CommanderInvestigationController({
+      modelAdapter: stricterContextAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: baseContextBudgetService }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: {
+        preview: async (contextInput) => {
+          const contextPreview = await baseContextBudgetService.preview(contextInput)
+          return {
+            ...contextPreview,
+            budget: {
+              ...contextPreview.budget,
+              max_context_bytes: built.seed!.effective_budget.effective_budget.max_context_bytes! - 1,
+              max_context_tokens: built.seed!.effective_budget.effective_budget.max_context_tokens! - 1,
+            },
+          }
         },
       },
-    }
-    const tamperedBudget = await tamperedBudgetController.runFromRecoverySeed(tamperedBudgetSeed)
-    expect(tamperedBudget).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(tamperedBudget.blockers).toContain("recovery continuation effective budget hash did not verify")
-    expect(tamperedBudgetAdapter.request_summaries).toHaveLength(0)
+      recoverySource: async () => source!,
+    })
+    const stricterContextResult = await stricterContextController.runFromRecoverySeed(built.seed!)
+    expect(stricterContextResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(stricterContextResult.blockers).toContain("recovery continuation budget no longer matches current authority")
+    expect(stricterContextAdapter.request_summaries).toHaveLength(0)
     const tamperedElapsedSeed = structuredClone(built.seed!)
     const forgedElapsed = source!.latest_checkpoint!.elapsed_active_ms > 0 ? source!.latest_checkpoint!.elapsed_active_ms - 1 : source!.latest_checkpoint!.elapsed_active_ms + 1
     tamperedElapsedSeed.elapsed_active_ms_before = forgedElapsed
@@ -7321,8 +7383,72 @@ describe("Commander in-memory investigation controller", () => {
       recoverySource: async () => source!,
     })
     const legacyLoadedToolRef = await legacyLoadedToolRefController.runFromRecoverySeed(legacyLoadedToolRefSeed)
-    expect(legacyLoadedToolRef).toMatchObject({ status: "final", stop_reason: "model_final", provider_request_count: built.seed!.provider_request_count_before + 1 })
-    expect(legacyLoadedToolRefAdapter.request_summaries).toHaveLength(1)
+    expect(legacyLoadedToolRef).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(legacyLoadedToolRef.blockers).toContain("recovery continuation loaded tool references did not match journal checkpoint")
+    expect(legacyLoadedToolRefAdapter.request_summaries).toHaveLength(0)
+    const substitutedTool = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_search")!
+    const substitutedLoadedToolSeed = structuredClone(built.seed!)
+    substitutedLoadedToolSeed.loaded_tool_refs = [recoveryLoadedToolRef(substitutedTool)]
+    substitutedLoadedToolSeed.loaded_tools = [structuredClone(substitutedTool)]
+    substitutedLoadedToolSeed.execution_preparation_hash = recoverySeedPreparationHash(substitutedLoadedToolSeed)
+    const substitutedLoadedToolAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "substituted loaded tool should not run" }])
+    const substitutedLoadedToolController = new CommanderInvestigationController({
+      modelAdapter: substitutedLoadedToolAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const substitutedLoadedToolResult = await substitutedLoadedToolController.runFromRecoverySeed(substitutedLoadedToolSeed)
+    expect(substitutedLoadedToolResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(substitutedLoadedToolResult.blockers).toContain("recovery continuation loaded tool references did not match journal checkpoint")
+    expect(substitutedLoadedToolAdapter.request_summaries).toHaveLength(0)
+    const unboundLoadedToolAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "unbound loaded tool should not run" }])
+    const unboundLoadedToolController = new CommanderInvestigationController({
+      modelAdapter: unboundLoadedToolAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS.filter((toolId) => toolId !== "commander.tool_profile"),
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const unboundLoadedTool = await unboundLoadedToolController.runFromRecoverySeed(built.seed!)
+    expect(unboundLoadedTool).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(unboundLoadedTool.blockers).toContain("recovery continuation loaded tool binding did not verify")
+    expect(unboundLoadedToolAdapter.request_summaries).toHaveLength(0)
+    for (const [label, mutate, blocker] of [
+      ["never exposed", (tool: CommanderToolDescriptor) => { tool.load_policy = "never_exposed" }, "recovery continuation loaded tool load policy did not verify"],
+      ["unimplemented", (tool: CommanderToolDescriptor) => { tool.availability = "future_internal_read" }, "recovery continuation loaded tool availability did not verify"],
+      ["namespace envelope", (tool: CommanderToolDescriptor) => { tool.namespace = "governance" }, "recovery continuation loaded tool phase eligibility did not verify"],
+    ] as const) {
+      const descriptors = structuredClone(COMMANDER_TOOL_REGISTRY)
+      mutate(descriptors.find((tool) => tool.tool_id === "commander.tool_profile")!)
+      const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: `${label} tool should not run` }])
+      const result = await new CommanderInvestigationController({
+        modelAdapter: adapter,
+        toolExecutor: executorFixture().executor,
+        toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+        descriptors,
+        boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+        bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+        contextService: new CommanderInvestigationContextService(),
+        capabilityRegistry: registry,
+        contextBudgetService: new ContextBudgetService({ registry }),
+        recoverySource: async () => source!,
+      }).runFromRecoverySeed(built.seed!)
+      expect(result).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+      expect(result.blockers).toContain(blocker)
+      expect(adapter.request_summaries).toHaveLength(0)
+    }
     const tamperedLoadedToolSeed = structuredClone(built.seed!)
     tamperedLoadedToolSeed.loaded_tools[0].schema_metadata.input_schema_bytes = Math.max(0, tamperedLoadedToolSeed.loaded_tools[0].schema_metadata.input_schema_bytes - 1)
     const tamperedLoadedToolAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered loaded tool should not run" }])
@@ -7739,7 +7865,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     const requestDrift = await requestDriftController.runFromRecoverySeed(built.seed!)
     expect(requestDrift).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(requestDrift.blockers).toContain("first recovered model request no longer matches the approved preparation preview")
+    expect(requestDrift.blockers).toContain("recovery continuation budget no longer matches current authority")
     expect(requestDriftAdapter.request_summaries).toHaveLength(0)
     const forgedRequestSeed = structuredClone(built.seed!)
     forgedRequestSeed.request_id_prefix = `${forgedRequestSeed.investigation_id}_turn`
@@ -10411,4 +10537,44 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     uncertain_model_turn_charge: seed.uncertain_model_turn_charge,
     first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
   })
+}
+
+function rehashRecoveryBudgetSeed(seed: CommanderInvestigationRecoveryContinuationSeed): void {
+  seed.effective_budget.effective_budget.budget_hash = stableHash({ ...seed.effective_budget.effective_budget, budget_hash: "" })
+  seed.effective_budget.effective_budget_hash = seed.effective_budget.effective_budget.budget_hash
+  seed.effective_budget_hash = seed.effective_budget.effective_budget_hash
+  seed.effective_budget.budget_hash = stableHash({ ...seed.effective_budget, budget_hash: "" })
+  seed.consumed = structuredClone(seed.effective_budget.consumed)
+  seed.execution_preparation_hash = recoverySeedPreparationHash(seed)
+}
+
+function recoveryLoadedToolRef(tool: CommanderToolDescriptor): CommanderInvestigationLoadedToolRef {
+  return {
+    tool_id: tool.tool_id,
+    namespace: tool.namespace,
+    descriptor_version: tool.version,
+    authority_id: tool.authority_id ?? "",
+    description_hash: commanderProviderVisibleDescriptionHash(tool),
+    input_schema_hash: tool.schema_metadata.input_schema_hash,
+    output_schema_hash: tool.schema_metadata.output_schema_hash,
+    input_schema_bytes: tool.schema_metadata.input_schema_bytes,
+    output_schema_bytes: tool.schema_metadata.output_schema_bytes,
+    estimated_schema_tokens: tool.schema_metadata.estimated_schema_tokens,
+    load_policy: tool.load_policy,
+    trust_class: tool.trust_class,
+    instruction_semantics: tool.instruction_semantics,
+    max_output_bytes: tool.max_output_bytes,
+    timeout_ms: tool.timeout_ms,
+    risk: tool.risk,
+    side_effect_class: tool.side_effect_class,
+    execution_backend: tool.execution_backend,
+    process_policy: tool.process_policy,
+    creates_external_process: tool.creates_external_process,
+    calls_provider: tool.calls_provider,
+    mutates_events: tool.mutates_events,
+    requires_network: tool.requires_network,
+    requires_credentials: tool.requires_credentials,
+    requires_approval: tool.requires_approval,
+    requires_run_lock: tool.requires_run_lock,
+  }
 }

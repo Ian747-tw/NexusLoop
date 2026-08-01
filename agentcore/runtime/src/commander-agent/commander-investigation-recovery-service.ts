@@ -8,6 +8,7 @@ import {
   CommanderInvestigationRecoveryContinuationBuilder,
   commanderRecoveryExecutionPreparationSummaryFromSeed,
 } from "./commander-investigation-recovery-execution-service"
+import { commanderInvestigationRecoveryCurrentPolicyLimits } from "./commander-investigation-recovery-budget"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import type {
   CommanderInvestigationRecoveryBoundToolAuthorityRef,
@@ -403,21 +404,7 @@ export class CommanderInvestigationRecoveryService {
       loaded_schema_tokens: loadedSchemaUsage.tokens,
       no_progress_turns: checkpoint.working_set.consecutive_no_progress_turns,
     }
-    const currentLimits = {
-      max_model_turns: Math.min(stored.max_model_turns, Math.max(4, Math.ceil(profile.max_tool_calls_future / 2) + profile.max_tool_search_calls_future + 2)),
-      max_tool_calls: Math.min(stored.max_tool_calls, profile.max_tool_calls_future),
-      max_tool_search_calls: Math.min(stored.max_tool_search_calls, profile.max_tool_search_calls_future),
-      max_loaded_schemas: Math.min(stored.max_loaded_schemas, profile.max_loaded_schemas),
-      max_context_bytes: minDefined(stored.max_context_bytes, currentContextBudget.input_context_bytes),
-      max_context_tokens: minDefined(stored.max_context_tokens, currentContextBudget.input_context_tokens),
-      tool_schema_allocation_bytes: minDefined(stored.tool_schema_allocation_bytes, currentContextBudget.tool_schema_allocation_bytes),
-      tool_schema_allocation_tokens: minDefined(stored.tool_schema_allocation_tokens, currentContextBudget.tool_schema_allocation_tokens),
-      max_cumulative_tool_result_bytes: Math.min(stored.max_cumulative_tool_result_bytes, profile.max_cumulative_result_bytes_future),
-      max_wall_time_ms: Math.min(stored.max_wall_time_ms, profile.max_wall_time_ms_future),
-      max_consecutive_no_progress_turns: stored.max_consecutive_no_progress_turns,
-      max_evidence_cards: stored.max_evidence_cards,
-      max_turn_summaries: stored.max_turn_summaries,
-    }
+    const currentLimits = commanderInvestigationRecoveryCurrentPolicyLimits({ profile, context: currentContextBudget })
     const storedRemaining = {
       model_turns: stored.max_model_turns - consumed.model_turns,
       tool_calls: stored.max_tool_calls - consumed.tool_calls,
@@ -448,8 +435,10 @@ export class CommanderInvestigationRecoveryService {
       return value <= 0
     }).map(([key]) => key)
     if (effective.loaded_schemas < 0) exhausted.push("loaded_schemas")
-    if (currentLimits.tool_schema_allocation_bytes !== undefined && consumed.loaded_schema_bytes > currentLimits.tool_schema_allocation_bytes) exhausted.push("tool_schema_allocation_bytes")
-    if (currentLimits.tool_schema_allocation_tokens !== undefined && consumed.loaded_schema_tokens > currentLimits.tool_schema_allocation_tokens) exhausted.push("tool_schema_allocation_tokens")
+    const effectiveSchemaAllocationBytes = minDefined(stored.tool_schema_allocation_bytes, currentLimits.tool_schema_allocation_bytes)
+    const effectiveSchemaAllocationTokens = minDefined(stored.tool_schema_allocation_tokens, currentLimits.tool_schema_allocation_tokens)
+    if (effectiveSchemaAllocationBytes !== undefined && consumed.loaded_schema_bytes > effectiveSchemaAllocationBytes) exhausted.push("tool_schema_allocation_bytes")
+    if (effectiveSchemaAllocationTokens !== undefined && consumed.loaded_schema_tokens > effectiveSchemaAllocationTokens) exhausted.push("tool_schema_allocation_tokens")
     const stricter = Object.entries(currentLimits).filter(([key, value]) => {
       const storedValue = (stored as unknown as Record<string, number>)[key]
       return typeof storedValue === "number" && typeof value === "number" && value < storedValue
