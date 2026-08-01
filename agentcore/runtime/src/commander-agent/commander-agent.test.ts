@@ -7083,6 +7083,49 @@ describe("Commander in-memory investigation controller", () => {
     expect(missingSourceResult.blockers).toContain("recovery continuation authoritative journal checkpoint is unavailable")
     expect(JSON.stringify(missingSourceResult)).not.toContain("fabricated pre lookup")
     expect(missingSourceAdapter.request_summaries).toHaveLength(0)
+    const postLookupIdentitySeed = structuredClone(built.seed!)
+    postLookupIdentitySeed.normalized_input = {
+      ...postLookupIdentitySeed.normalized_input,
+      objective: "fabricated post lookup objective",
+      provider_id: "fabricated_post_lookup_provider",
+      provider_kind: "fabricated_post_lookup_kind",
+      model_id: "fabricated_post_lookup_model",
+      session_id: "fabricated_post_lookup_session",
+      launch_id: "fabricated_post_lookup_launch",
+    }
+    postLookupIdentitySeed.original_started_at = "2099-02-01T00:00:00.000Z"
+    postLookupIdentitySeed.execution_preparation_hash = recoverySeedPreparationHash(postLookupIdentitySeed)
+    const postLookupIdentityAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "post lookup identity should not run" }])
+    const postLookupIdentityController = new CommanderInvestigationController({
+      modelAdapter: postLookupIdentityAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: omittedContinuityRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }),
+      recoverySource: async () => source!,
+    })
+    const postLookupIdentityResult = await postLookupIdentityController.runFromRecoverySeed(postLookupIdentitySeed)
+    expect(postLookupIdentityResult).toMatchObject({
+      status: "blocked",
+      stop_reason: "controller_error",
+      investigation_id: source!.investigation_id,
+      phase: source!.record!.phase,
+      objective_preview: source!.record!.objective_preview,
+      provider_id: source!.record!.provider_id,
+      provider_kind: source!.record!.provider_kind,
+      model_id: source!.record!.model_id,
+      provider_request_count: source!.latest_checkpoint!.provider_request_count,
+    })
+    expect(postLookupIdentityResult.blockers).toContain("recovery continuation identity objective hash did not verify")
+    expect(JSON.stringify(postLookupIdentityResult)).not.toContain("fabricated post lookup")
+    expect(postLookupIdentityResult.started_at).toBe(source!.record!.started_at)
+    expect(postLookupIdentityResult.started_at).not.toBe("2099-02-01T00:00:00.000Z")
+    expect(postLookupIdentityResult.duration_ms).toBeGreaterThanOrEqual(source!.latest_checkpoint!.elapsed_active_ms)
+    expect(postLookupIdentityAdapter.request_summaries).toHaveLength(0)
     const stricterContextBuilt = await builder.build({
       source: source!,
       checkpoint: source!.latest_checkpoint!,
@@ -7143,10 +7186,16 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedBudget).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedBudget.blockers).toContain("recovery continuation effective budget hash did not verify")
     expect(tamperedBudgetAdapter.request_summaries).toHaveLength(0)
-    const tamperedElapsedSeed = {
-      ...built.seed!,
-      elapsed_active_ms_before: built.seed!.effective_budget.consumed.elapsed_active_ms + 1,
-    }
+    const tamperedElapsedSeed = structuredClone(built.seed!)
+    const forgedElapsed = source!.latest_checkpoint!.elapsed_active_ms > 0 ? source!.latest_checkpoint!.elapsed_active_ms - 1 : source!.latest_checkpoint!.elapsed_active_ms + 1
+    tamperedElapsedSeed.elapsed_active_ms_before = forgedElapsed
+    tamperedElapsedSeed.effective_budget.consumed.elapsed_active_ms = forgedElapsed
+    tamperedElapsedSeed.consumed.elapsed_active_ms = forgedElapsed
+    tamperedElapsedSeed.effective_budget.remaining.wall_time_ms = Math.max(0, tamperedElapsedSeed.effective_budget.effective_budget.max_wall_time_ms - forgedElapsed)
+    tamperedElapsedSeed.effective_budget.effective_budget.budget_hash = stableHash({ ...tamperedElapsedSeed.effective_budget.effective_budget, budget_hash: "" })
+    tamperedElapsedSeed.effective_budget.effective_budget_hash = tamperedElapsedSeed.effective_budget.effective_budget.budget_hash
+    tamperedElapsedSeed.effective_budget_hash = tamperedElapsedSeed.effective_budget.effective_budget_hash
+    tamperedElapsedSeed.effective_budget.budget_hash = stableHash({ ...tamperedElapsedSeed.effective_budget, effective_budget_hash: tamperedElapsedSeed.effective_budget.effective_budget_hash, budget_hash: "" })
     tamperedElapsedSeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedElapsedSeed)
     const tamperedElapsedAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered elapsed should not run" }])
     const tamperedElapsedController = new CommanderInvestigationController({
@@ -7163,7 +7212,8 @@ describe("Commander in-memory investigation controller", () => {
     })
     const tamperedElapsed = await tamperedElapsedController.runFromRecoverySeed(tamperedElapsedSeed)
     expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(tamperedElapsed.blockers).toContain("recovery continuation elapsed active time did not verify")
+    expect(tamperedElapsed.blockers).toContain("recovery continuation checkpoint elapsed active time did not verify")
+    expect(tamperedElapsed.duration_ms).toBeGreaterThanOrEqual(source!.latest_checkpoint!.elapsed_active_ms)
     expect(tamperedElapsedAdapter.request_summaries).toHaveLength(0)
     const tamperedNextTurnSeed = {
       ...built.seed!,

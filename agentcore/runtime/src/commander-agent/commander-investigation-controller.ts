@@ -25,6 +25,7 @@ import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationP
 import type { CommanderInvestigationCheckpoint, CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
 import { CommanderInvestigationJournalConflictError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoveryContinuationSeed, CommanderInvestigationRecoveryFirstModelRequestPreview } from "./commander-investigation-recovery-execution-types"
+import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 import { reconstructCommanderRecoveryReplayExchangeFromDurable } from "./commander-investigation-recovery-replay"
 import { durableCommanderInvestigationWorkingSet, stableCommanderInvestigationProviderAudit, stableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
 
@@ -111,9 +112,6 @@ export class CommanderInvestigationController {
 
   async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationResult> {
     const continuationStarted = this.now()
-    const resultStarted = canonicalDate(seed.original_started_at) ?? continuationStarted
-    const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
-    const input: CommanderInvestigationInput = { ...seed.normalized_input, investigation_id: seed.investigation_id, abort_signal: options.abort_signal }
     const neutralInput = neutralRecoveryBlockedInput()
     const neutralStarted = continuationStarted
     const neutralWallStartedMs = performance.now()
@@ -155,14 +153,23 @@ export class CommanderInvestigationController {
     const authoritativeCheckpoint = await this.recoverySeedCheckpoint(seed)
     if (authoritativeCheckpoint.blocker) return neutralBlockedRecoveryResult(authoritativeCheckpoint.blocker)
     const checkpoint = authoritativeCheckpoint.checkpoint!
+    const authoritativeSource = authoritativeCheckpoint.source!
+    if (!authoritativeSource.record || !authoritativeSource.normalized_input) return neutralBlockedRecoveryResult("recovery continuation authoritative journal input is unavailable")
+    const input: CommanderInvestigationInput = { ...authoritativeSource.normalized_input, investigation_id: seed.investigation_id, abort_signal: options.abort_signal }
+    const resultStarted = canonicalDate(authoritativeSource.record.started_at) ?? continuationStarted
+    const authoritativeElapsedBefore = Math.max(0, checkpoint.elapsed_active_ms)
+    const wallStartedMs = performance.now() - authoritativeElapsedBefore
     const authoritativeTurns = checkpoint.turn_summaries.map((turn) => redactValue(turn) as CommanderInvestigationTurnSummary)
     const checkpointWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(checkpoint)
     const authoritativeWorkingSet = checkpointWorkingSet.workingSet
       ? (redactValue(checkpointWorkingSet.workingSet) as CommanderInvestigationWorkingSet)
       : (redactValue(checkpoint.working_set) as CommanderInvestigationWorkingSet)
     const authoritativeProviderRequests = checkpoint.provider_request_count
-    const finishAfterJournalLookup = (blocker: string, bootstrap: CommanderInvestigationBootstrap = seed.current_bootstrap, loadedTools: CommanderToolDescriptor[] = seed.loaded_tools) =>
+    const finishAfterJournalLookup = (blocker: string, bootstrap: { bootstrap_id: string; bootstrap_hash: string } = minimalBootstrap(input), loadedTools: CommanderToolDescriptor[] = seed.loaded_tools) =>
       this.finish(input, seed.investigation_id, "blocked", "controller_error", bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, authoritativeTurns, authoritativeWorkingSet, authoritativeProviderRequests, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (seed.elapsed_active_ms_before !== authoritativeElapsedBefore || seed.effective_budget.consumed.elapsed_active_ms !== authoritativeElapsedBefore) {
+      return finishAfterJournalLookup("recovery continuation checkpoint elapsed active time did not verify")
+    }
     const identityError = validateRecoveryIdentity(seed)
     if (identityError) return finishAfterJournalLookup(identityError)
     const currentBootstrap = await this.options.bootstrapService.compile({ ...input, include_continuity: true })
@@ -172,7 +179,7 @@ export class CommanderInvestigationController {
     }
     if (currentBootstrap.continuity_assessment_status === "degraded") return finishAfterJournalLookup("recovery continuation current bootstrap is degraded", currentBootstrap)
     const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, authoritativeCheckpoint.checkpoint)
-    if (prepared.blocker) return finishAfterJournalLookup(prepared.blocker)
+    if (prepared.blocker) return finishAfterJournalLookup(prepared.blocker, currentBootstrap)
     if (checkpointWorkingSet.blocker) return finishAfterJournalLookup(checkpointWorkingSet.blocker, currentBootstrap, prepared.loadedTools)
     const budget = seed.effective_budget.effective_budget
     const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
@@ -217,7 +224,7 @@ export class CommanderInvestigationController {
     })
 	  }
 
-  private async recoverySeedCheckpoint(seed: CommanderInvestigationRecoveryContinuationSeed): Promise<{ checkpoint?: CommanderInvestigationCheckpoint; blocker?: string }> {
+  private async recoverySeedCheckpoint(seed: CommanderInvestigationRecoveryContinuationSeed): Promise<{ source?: CommanderInvestigationRecoverySource; checkpoint?: CommanderInvestigationCheckpoint; blocker?: string }> {
     if (!this.options.recoverySource) return { blocker: "recovery continuation authoritative journal source is required" }
     const source = await this.options.recoverySource(seed.investigation_id)
     if (!source || source.projection_status !== "ready" || !source.latest_checkpoint) return { blocker: "recovery continuation authoritative journal checkpoint is unavailable" }
@@ -246,7 +253,7 @@ export class CommanderInvestigationController {
     const checkpointHasReplay = Boolean(checkpoint.replay_exchange)
     if (checkpoint.checkpoint_sequence > 0 && !checkpointHasReplay) return { blocker: "recovery continuation authoritative checkpoint replay exchange is missing" }
     if (checkpointHasReplay !== seed.replay_summary.replay_protocol_available) return { blocker: "recovery continuation replay availability did not match journal checkpoint" }
-    return { checkpoint }
+    return { source, checkpoint }
   }
 
   private async executePreparedInvestigation(state: CommanderInvestigationPreparedLoopState): Promise<CommanderInvestigationResult> {

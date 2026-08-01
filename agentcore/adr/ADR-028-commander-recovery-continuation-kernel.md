@@ -130,6 +130,9 @@ If the seed hash fails or no authoritative checkpoint can be accepted, the
 controller returns a neutral blocked result with no seed-derived history,
 identity, provider/model fields, start time, duration, evidence, loaded
 descriptors, protocol state, or provider counters.
+After a checkpoint is accepted, elapsed active time is derived from the
+checkpoint, not from the caller-supplied seed budget fields, before wall-time
+checks or duration reporting.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That
