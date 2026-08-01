@@ -6990,6 +6990,22 @@ describe("Commander in-memory investigation controller", () => {
     const built = await builder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
     expect(built.blockers).toEqual([])
     expect(built.seed?.execution_preparation_hash).toBe(before.execution_preparation_hash)
+    const approvedWarnings = Array.from({ length: 31 }, (_, index) => `approved recovery warning ${index + 1}`)
+    approvedWarnings.push("pending model-step outcome remains uncertain; external API audit counts do not resolve it")
+    const warningPreservationPreview = await new CommanderInvestigationRecoveryExecutionService({
+      recoveryPreview: async () => ({ ...after, warnings: approvedWarnings }),
+      recoverySource: async () => source!,
+      continuationBuilder: builder,
+      now: () => new Date("2026-01-01T00:00:30.000Z"),
+    }).preview({
+      investigation_id: "inv_recovery_preparation_checkpoint",
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: after.recovery_plan_hash!,
+    })
+    expect(warningPreservationPreview.status).toBe("ready")
+    expect(warningPreservationPreview.warnings).toHaveLength(32)
+    expect(warningPreservationPreview.warnings.at(-1)).toBe("pending model-step outcome remains uncertain; external API audit counts do not resolve it")
     expect(built.seed?.effective_budget.effective_budget.max_tool_calls).toBe(Math.min(source!.latest_checkpoint!.budget.max_tool_calls, before.budget_compatibility.current_policy_limits.max_tool_calls!))
     expect(built.seed?.effective_budget.effective_budget.max_loaded_schemas).toBe(1)
     expect(built.seed?.effective_budget.remaining.loaded_schemas).toBe(0)
