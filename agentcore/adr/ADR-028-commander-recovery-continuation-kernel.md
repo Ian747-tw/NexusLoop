@@ -103,15 +103,15 @@ The notice states whether the previous provider outcome is not pending or
 uncertain, forbids provider-request and tool-execution replay, marks exact
 assistant replay unavailable, and requires a fresh request.
 
-Replay messages are not accepted as caller authority. Replay-bearing seeds
-require the controller to resolve the accepted checkpoint from the authoritative
-journal recovery source. The controller verifies that checkpoint's semantic-state
-hash, checkpoint ID, and checkpoint hash, derives replay availability from that
-journal checkpoint, compares the seed replay exchange with the checkpoint when
-replay is required, reconstructs the transient assistant/tool messages from the
-checkpoint's verified durable summary-only replay exchange, and compares the
-seed's replay message hash to that canonical reconstruction before any adapter
-call.
+Replay messages are not accepted as caller authority. Every recovery seed
+requires the controller to resolve the accepted checkpoint from the authoritative
+journal recovery source, including seeds that claim checkpoint sequence zero.
+The controller verifies that checkpoint's semantic-state hash, checkpoint ID,
+and checkpoint hash, derives replay availability from that journal checkpoint,
+compares the seed replay exchange with the checkpoint when replay is required,
+reconstructs the transient assistant/tool messages from the checkpoint's
+verified durable summary-only replay exchange, and compares the seed's replay
+message hash to that canonical reconstruction before any adapter call.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

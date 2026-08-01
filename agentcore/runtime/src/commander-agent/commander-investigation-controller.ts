@@ -195,8 +195,7 @@ export class CommanderInvestigationController {
 	  }
 
   private async recoverySeedCheckpoint(seed: CommanderInvestigationRecoveryContinuationSeed): Promise<{ checkpoint?: CommanderInvestigationCheckpoint; blocker?: string }> {
-    if (seed.checkpoint_ref.checkpoint_sequence === 0 && !seed.replay_summary.replay_protocol_available) return {}
-    if (!this.options.recoverySource) return { blocker: "recovery continuation authoritative journal source is required for replay exchange" }
+    if (!this.options.recoverySource) return { blocker: "recovery continuation authoritative journal source is required" }
     const source = await this.options.recoverySource(seed.investigation_id)
     if (!source || source.projection_status !== "ready" || !source.latest_checkpoint) return { blocker: "recovery continuation authoritative journal checkpoint is unavailable" }
     if (source.recovery_basis_hash !== seed.recovery_basis_hash) return { blocker: "recovery continuation authoritative journal basis did not verify" }

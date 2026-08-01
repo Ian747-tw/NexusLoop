@@ -7008,6 +7008,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedBudgetSeed = {
       ...built.seed!,
@@ -7039,6 +7040,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedElapsed = await tamperedElapsedController.runFromRecoverySeed(tamperedElapsedSeed)
     expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7060,6 +7062,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedNextTurn = await tamperedNextTurnController.runFromRecoverySeed(tamperedNextTurnSeed)
     expect(tamperedNextTurn).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7081,6 +7084,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedProviderCount = await tamperedProviderCountController.runFromRecoverySeed(tamperedProviderCountSeed)
     expect(tamperedProviderCount).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
@@ -7104,6 +7108,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const legacyLoadedToolRef = await legacyLoadedToolRefController.runFromRecoverySeed(legacyLoadedToolRefSeed)
     expect(legacyLoadedToolRef).toMatchObject({ status: "final", stop_reason: "model_final", provider_request_count: built.seed!.provider_request_count_before + 1 })
@@ -7121,6 +7126,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedLoadedTool = await tamperedLoadedToolController.runFromRecoverySeed(tamperedLoadedToolSeed)
     expect(tamperedLoadedTool).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7136,6 +7142,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     for (const [label, mutate] of [
       ["input schema", (descriptors: typeof COMMANDER_TOOL_REGISTRY) => {
@@ -7243,6 +7250,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
       providerGate: { check: async () => ({
         ready: true,
         source_kind: "configured_connector",
@@ -7267,6 +7275,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
       providerGate: { check: async () => ({
         ready: true,
         source_kind: "configured_connector",
@@ -7291,6 +7300,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
       providerGate: { check: async () => ({
         ready: true,
         source_kind: "configured_connector",
@@ -7367,6 +7377,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedWorkingSet = await tamperedWorkingSetController.runFromRecoverySeed(tamperedWorkingSetSeed)
     expect(tamperedWorkingSet).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7390,6 +7401,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedInput = await tamperedInputController.runFromRecoverySeed(tamperedInputSeed)
     expect(tamperedInput).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7431,6 +7443,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedBootstrap = await tamperedBootstrapController.runFromRecoverySeed(tamperedBootstrapSeed)
     expect(tamperedBootstrap).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7448,6 +7461,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: driftedCapabilityRegistry,
       contextBudgetService: new ContextBudgetService({ registry: driftedCapabilityRegistry }),
+      recoverySource: async () => source!,
     })
     const requestDrift = await requestDriftController.runFromRecoverySeed(built.seed!)
     expect(requestDrift).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7475,6 +7489,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedReplay = await tamperedReplayController.runFromRecoverySeed(tamperedReplaySeed)
     expect(tamperedReplay).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7603,6 +7618,34 @@ describe("Commander in-memory investigation controller", () => {
     expect(replayOmitted).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
     expect(replayOmitted.blockers).toContain("recovery continuation replay availability did not match journal checkpoint")
     expect(replayOmittedAdapter.request_summaries).toHaveLength(0)
+    const replaySequenceZeroSeed = structuredClone(replayOmittedSeed)
+    replaySequenceZeroSeed.checkpoint_ref = {
+      ...replaySequenceZeroSeed.checkpoint_ref,
+      checkpoint_sequence: 0,
+    }
+    replaySequenceZeroSeed.execution_preparation_hash = recoverySeedPreparationHash(replaySequenceZeroSeed)
+    const replaySequenceZeroAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "sequence-zero replay omission should not run" }])
+    const replaySequenceZeroController = new CommanderInvestigationController({
+      modelAdapter: replaySequenceZeroAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => ({
+        ...source!,
+        latest_checkpoint: replayAvailableCheckpoint,
+        recovery_basis: replayAvailableBasis,
+        recovery_basis_hash: replayAvailableBasis.basis_hash,
+      }),
+    })
+    const replaySequenceZero = await replaySequenceZeroController.runFromRecoverySeed(replaySequenceZeroSeed)
+    expect(replaySequenceZero).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
+    expect(replaySequenceZero.blockers).toContain("recovery continuation authoritative journal checkpoint reference did not verify")
+    expect(replaySequenceZeroAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,
       recovery_notice: {
@@ -7627,6 +7670,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     const tamperedNotice = await tamperedNoticeController.runFromRecoverySeed(tamperedNoticeSeed)
     expect(tamperedNotice).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -7643,6 +7687,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
     expect(preparation.continuation_summary?.original_started_at).toBe(built.seed!.original_started_at)
     const recovered = await controller.runFromRecoverySeed(built.seed!)
@@ -7677,6 +7722,7 @@ describe("Commander in-memory investigation controller", () => {
 	      contextService: new CommanderInvestigationContextService(),
 	      capabilityRegistry: registry,
 	      contextBudgetService: new ContextBudgetService({ registry }),
+	      recoverySource: async () => source!,
 	    })
 	    const recoveredWithTool = await toolController.runFromRecoverySeed(built.seed!)
 	    expect(recoveredWithTool).toMatchObject({
@@ -8571,10 +8617,11 @@ describe("Commander in-memory investigation controller", () => {
 			      contextService: new CommanderInvestigationContextService(),
 			      capabilityRegistry: erasedRegistry,
 			      contextBudgetService: new ContextBudgetService({ registry: erasedRegistry }),
+			      recoverySource: async () => uncertainSource!,
 			    })
 			    const erasedPending = await erasedPendingController.runFromRecoverySeed(erasedPendingSeed)
 			    expect(erasedPending).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(erasedPending.blockers).toContain("recovery continuation basis hash did not verify")
+    expect(erasedPending.blockers).toContain("recovery continuation authoritative journal pending boundary did not verify")
     const zeroChargeSeed = structuredClone(uncertainBuilt.seed!)
     zeroChargeSeed.uncertain_model_turn_charge = 0
     zeroChargeSeed.unresolved_provider_attempt_count = 0
@@ -8594,6 +8641,7 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: erasedRegistry,
       contextBudgetService: new ContextBudgetService({ registry: erasedRegistry }),
+      recoverySource: async () => uncertainSource!,
     })
     const zeroCharge = await zeroChargeController.runFromRecoverySeed(zeroChargeSeed)
     expect(zeroCharge).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
@@ -8609,6 +8657,7 @@ describe("Commander in-memory investigation controller", () => {
 		      contextService: new CommanderInvestigationContextService(),
 		      capabilityRegistry: uncertainRegistry,
 		      contextBudgetService: new ContextBudgetService({ registry: uncertainRegistry }),
+		      recoverySource: async () => uncertainSource!,
 		    })
 		    const earlyExit = await earlyExitController.runFromRecoverySeed(uncertainBuilt.seed!)
 		    expect(earlyExit).toMatchObject({
