@@ -1,7 +1,7 @@
 import type { CommanderInvestigationProviderAuditSummary } from "./commander-investigation-provider-types"
 import type { CommanderInvestigationWorkingSet } from "./commander-investigation-types"
 import type { CommanderEvidenceCard, CommanderReadSourceRef } from "../commander-tools/commander-read-types"
-import { redactValue } from "../security/redaction"
+import { redactText, redactValue } from "../security/redaction"
 import { stableHash } from "./commander-model-schema"
 
 export function stableCommanderInvestigationWorkingSet(value: CommanderInvestigationWorkingSet): unknown {
@@ -92,5 +92,5 @@ function sanitizedProviderAudit<T extends { audit_request_ids: string[] }>(audit
 }
 
 function bound(value: unknown, max: number): string {
-  return String(value ?? "").slice(0, max)
+  return redactText(String(value ?? "").replace(/\s+/g, " ").trim()).slice(0, max)
 }

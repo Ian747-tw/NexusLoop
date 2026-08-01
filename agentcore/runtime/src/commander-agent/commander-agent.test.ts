@@ -47,6 +47,7 @@ import {
 	  parseJsonFallback,
 	  providerJsonSchema,
 	  providerToolNameFor,
+	  durableCommanderInvestigationWorkingSet,
 	  stableCommanderInvestigationWorkingSet,
 	  stableHash,
   toCommanderToolResultMessage,
@@ -2610,6 +2611,40 @@ describe("Commander in-memory investigation controller", () => {
       evidence_cards: startedWorkingSet!.evidence_cards.map((item) => ({ ...item, observed_at: "" })),
       provider_audit: { ...startedWorkingSet!.provider_audit, audit_request_ids: [] },
     }))
+  })
+
+  test("durable working-set hashes use redacted bounded strings", () => {
+    const input = durableStartedSnapshot(baseInvestigation({
+      investigation_id: "inv_working_hash_redaction",
+      objective: "working set redaction hash",
+    }), 0, "inv_working_hash_redaction").working_set as CommanderInvestigationWorkingSet
+    input.objective_preview = "Investigate Bearer workingSetObjectiveSecret123"
+    input.current_warnings = ["warning contains Bearer workingSetWarningSecret123"]
+    input.current_blockers = ["blocker contains api_key=sk-workingSetBlockerSecret123"]
+    input.recent_load_outcomes = ["loaded with password: workingSetLoadSecret123"]
+    input.recent_execution_digests = [{
+      turn_index: 1,
+      tool_id: "memory.search",
+      call_signature_hash: "call_signature_hash_redaction",
+      execution_status: "ready",
+      result_hash: "result_hash_redaction",
+      evidence_ids: [],
+      loaded_tool_outcome: "outcome Bearer workingSetDigestSecret123",
+      blocker_warning_summary: "summary access_token=workingSetDigestToken123",
+      order: 0,
+    }]
+
+    const durable = durableCommanderInvestigationWorkingSet(input)
+    const serialized = JSON.stringify(durable)
+    expect(serialized).not.toContain("workingSetObjectiveSecret")
+    expect(serialized).not.toContain("workingSetWarningSecret")
+    expect(serialized).not.toContain("workingSetBlockerSecret")
+    expect(serialized).not.toContain("workingSetLoadSecret")
+    expect(serialized).not.toContain("workingSetDigestSecret")
+    expect(serialized).not.toContain("workingSetDigestToken")
+    expect(durable.current_warnings.join(" ")).toContain("[REDACTED]")
+    expect(durable.working_set_hash).toBe(stableHash(stableCommanderInvestigationWorkingSet(durable)))
+    expect(durableCommanderInvestigationWorkingSet(durable).working_set_hash).toBe(durable.working_set_hash)
   })
 
   test("durable journal stores content-bearing evidence as pointer summaries only", async () => {
