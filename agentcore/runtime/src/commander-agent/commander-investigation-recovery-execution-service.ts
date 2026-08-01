@@ -365,7 +365,7 @@ function preparationPreview(input: {
     first_model_request: input.seed?.first_model_request_preview,
     execution_preparation_hash: input.seed?.execution_preparation_hash,
     blockers: (input.blockers ?? []).map((item) => bound(item, 240)).slice(0, 24),
-    warnings: (input.warnings ?? input.recovery?.warnings ?? []).map((item) => bound(item, 240)).slice(0, 24),
+    warnings: Array.from(new Set([...(input.recovery?.warnings ?? []), ...(input.warnings ?? [])].map((item) => bound(item, 240)))).slice(0, 24),
     generated_at: input.generatedAt,
     execution_supported_in_this_branch: false as const,
     provider_called: false as const,

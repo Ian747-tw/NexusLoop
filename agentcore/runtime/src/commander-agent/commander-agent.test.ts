@@ -9301,6 +9301,8 @@ describe("Commander in-memory investigation controller", () => {
 	    expect(uncertainPreparation.first_model_request?.request_id).not.toBe("model_request_uncertain_approval")
 	    expect(uncertainPreparation.first_model_request?.old_request_replayed).toBe(false)
 	    expect(uncertainPreparation.first_model_request?.tool_execution_replayed).toBe(false)
+	    expect(uncertainPreparation.warnings).toContain("pending model-step outcome remains uncertain; external API audit counts do not resolve it")
+	    expect(uncertainPreparation.warnings).toContain("initial checkpoint has no prior assistant/tool replay exchange")
 	    const record = await server.getCommanderInvestigationRecord("inv_recovery_approval_uncertain")
     expect(record).toMatchObject({
       status: "running",
