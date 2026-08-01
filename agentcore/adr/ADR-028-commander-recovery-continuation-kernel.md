@@ -132,7 +132,9 @@ identity, provider/model fields, start time, duration, evidence, loaded
 descriptors, protocol state, or provider counters.
 After a checkpoint is accepted, elapsed active time is derived from the
 checkpoint, not from the caller-supplied seed budget fields, before wall-time
-checks or duration reporting.
+checks or duration reporting. Post-lookup validation failures report
+checkpoint-owned budget/protocol metadata and never dereference unvalidated seed
+descriptors.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

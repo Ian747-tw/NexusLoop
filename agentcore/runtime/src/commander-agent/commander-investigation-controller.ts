@@ -165,8 +165,8 @@ export class CommanderInvestigationController {
       ? (redactValue(checkpointWorkingSet.workingSet) as CommanderInvestigationWorkingSet)
       : (redactValue(checkpoint.working_set) as CommanderInvestigationWorkingSet)
     const authoritativeProviderRequests = checkpoint.provider_request_count
-    const finishAfterJournalLookup = (blocker: string, bootstrap: { bootstrap_id: string; bootstrap_hash: string } = minimalBootstrap(input), loadedTools: CommanderToolDescriptor[] = seed.loaded_tools) =>
-      this.finish(input, seed.investigation_id, "blocked", "controller_error", bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, authoritativeTurns, authoritativeWorkingSet, authoritativeProviderRequests, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const finishAfterJournalLookup = (blocker: string, bootstrap: { bootstrap_id: string; bootstrap_hash: string } = minimalBootstrap(input), loadedTools: CommanderToolDescriptor[] = []) =>
+      this.finish(input, authoritativeSource.investigation_id, "blocked", "controller_error", bootstrap, checkpoint.budget, checkpoint.tool_protocol, authoritativeTurns, authoritativeWorkingSet, authoritativeProviderRequests, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     if (seed.elapsed_active_ms_before !== authoritativeElapsedBefore || seed.effective_budget.consumed.elapsed_active_ms !== authoritativeElapsedBefore) {
       return finishAfterJournalLookup("recovery continuation checkpoint elapsed active time did not verify")
     }

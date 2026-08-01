@@ -7196,6 +7196,8 @@ describe("Commander in-memory investigation controller", () => {
     tamperedElapsedSeed.effective_budget.effective_budget_hash = tamperedElapsedSeed.effective_budget.effective_budget.budget_hash
     tamperedElapsedSeed.effective_budget_hash = tamperedElapsedSeed.effective_budget.effective_budget_hash
     tamperedElapsedSeed.effective_budget.budget_hash = stableHash({ ...tamperedElapsedSeed.effective_budget, effective_budget_hash: tamperedElapsedSeed.effective_budget.effective_budget_hash, budget_hash: "" })
+    tamperedElapsedSeed.effective_budget.effective_budget.budget_id = "fabricated_elapsed_budget"
+    tamperedElapsedSeed.loaded_tools = [{ tool_id: "fabricated_elapsed_descriptor" } as any]
     tamperedElapsedSeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedElapsedSeed)
     const tamperedElapsedAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered elapsed should not run" }])
     const tamperedElapsedController = new CommanderInvestigationController({
@@ -7214,6 +7216,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedElapsed).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedElapsed.blockers).toContain("recovery continuation checkpoint elapsed active time did not verify")
     expect(tamperedElapsed.duration_ms).toBeGreaterThanOrEqual(source!.latest_checkpoint!.elapsed_active_ms)
+    expect(tamperedElapsed.context_budget_id).toBe(source!.latest_checkpoint!.budget.source_context_budget_id)
+    expect(tamperedElapsed.budget.budget_id).toBe(source!.latest_checkpoint!.budget.budget_id)
+    expect(tamperedElapsed.loaded_tool_ids).toEqual([])
+    expect(JSON.stringify(tamperedElapsed)).not.toContain("fabricated_elapsed")
     expect(tamperedElapsedAdapter.request_summaries).toHaveLength(0)
     const tamperedNextTurnSeed = {
       ...built.seed!,
