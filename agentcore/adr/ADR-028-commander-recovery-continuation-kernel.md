@@ -56,11 +56,12 @@ counters, evidence pointers, turn summaries, repeat signatures, no-progress
 state, provider/audit counters, and elapsed active time.
 
 The stable preparation hash uses identity, hashes, descriptor/schema references,
-counter summaries, replay hashes, notice hash, the pre-model gate snapshot hash,
-original investigation start time, and first-request preview hash. It excludes
-generated timestamps, runtime lifecycle state, run-lock state, EventStore event
-IDs, external API audit request IDs, approval IDs, approval timestamps, approver
-identity, and approval notes.
+counter summaries, the durable summary-only replay exchange and replay hashes,
+notice hash, the pre-model gate snapshot hash, original investigation start
+time, and first-request preview hash. It excludes generated timestamps, runtime
+lifecycle state, run-lock state, EventStore event IDs, external API audit
+request IDs, approval IDs, approval timestamps, approver identity, and approval
+notes.
 
 The seed carries loaded-tool references for deterministic planning, but live
 descriptor objects are not execution authority. The controller reconstructs
@@ -75,7 +76,9 @@ For uncertain-provider recovery, the seed also carries the journal recovery
 basis's pending-boundary hash. Controller validation recomputes the recovery
 basis with that pending hash before accepting the seed, so a copied seed cannot
 erase the pending model-step reference, swap in a non-pending notice, and still
-look preparation-valid.
+look preparation-valid. It also requires the uncertain model-turn charge and
+unresolved-provider-attempt count to remain exactly one and verifies that
+consumed model turns and the next turn have advanced past the pending boundary.
 
 ### Budgets And Counters
 
@@ -99,6 +102,11 @@ mandatory recovery notice is inserted before the restored working-set message.
 The notice states whether the previous provider outcome is not pending or
 uncertain, forbids provider-request and tool-execution replay, marks exact
 assistant replay unavailable, and requires a fresh request.
+
+Replay messages are not accepted as caller authority. The controller
+reconstructs the transient assistant/tool messages from the verified durable
+summary-only replay exchange and compares the seed's replay message hash to that
+canonical reconstruction before any adapter call.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

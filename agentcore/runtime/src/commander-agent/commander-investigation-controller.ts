@@ -25,6 +25,7 @@ import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationP
 import type { CommanderInvestigationLoadedToolRef } from "./commander-investigation-journal-types"
 import { CommanderInvestigationJournalConflictError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoveryContinuationSeed, CommanderInvestigationRecoveryFirstModelRequestPreview } from "./commander-investigation-recovery-execution-types"
+import { reconstructCommanderRecoveryReplayExchangeFromDurable } from "./commander-investigation-recovery-replay"
 import { durableCommanderInvestigationWorkingSet, stableCommanderInvestigationProviderAudit, stableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
 
 const HARD_CAPS = {
@@ -132,6 +133,7 @@ export class CommanderInvestigationController {
       effective_budget_hash: seed.effective_budget_hash,
       working_set_hash: seed.working_set_hash,
       turn_summary_hash: stableHash(seed.turn_summaries),
+      replay_exchange: seed.replay_exchange,
       replay_exchange_hash: seed.replay_exchange_hash,
       replay_message_hash: seed.replay_message_hash,
       recovery_notice_hash: seed.recovery_notice_hash,
@@ -155,8 +157,8 @@ export class CommanderInvestigationController {
       workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
     }
     const turns = seed.turn_summaries.slice()
-    const latestAssistant = seed.latest_assistant
-    const latestToolResults = seed.latest_tool_results.slice()
+    const latestAssistant = prepared.latestAssistant
+    const latestToolResults = prepared.latestToolResults!
     const providerRequests = seed.provider_request_count_before
     const recentResults = new Map(seed.working_set.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
     if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
@@ -1118,14 +1120,16 @@ function stopReasonForControl(snapshot: CommanderInvestigationControlSnapshot): 
   return undefined
 }
 
-function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[]): { loadedTools?: CommanderToolDescriptor[]; blocker?: string } {
+function validateAndPrepareRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, currentDescriptors: CommanderToolDescriptor[]): { loadedTools?: CommanderToolDescriptor[]; latestAssistant?: CommanderModelAssistantMessage; latestToolResults?: CommanderModelToolResultMessage[]; blocker?: string } {
   const identityError = validateRecoveryIdentity(seed)
   if (identityError) return { blocker: identityError }
   const loaded = reconstructRecoveryLoadedTools(seed.loaded_tool_refs, currentDescriptors, seed.normalized_input.phase)
   if (loaded.blocker) return { blocker: loaded.blocker }
   const integrity = validateRecoverySeedIntegrity(seed, loaded.loadedTools!, currentDescriptors)
   if (integrity) return { blocker: integrity }
-  return { loadedTools: loaded.loadedTools }
+  const replay = reconstructRecoveryReplayFromSeed(seed, loaded.loadedTools!)
+  if (replay.blocker) return { blocker: replay.blocker }
+  return { loadedTools: loaded.loadedTools, latestAssistant: replay.latestAssistant, latestToolResults: replay.latestToolResults }
 }
 
 function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[], currentDescriptors: CommanderToolDescriptor[]): string | undefined {
@@ -1141,17 +1145,28 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.provider_request_count_before !== consumed.provider_requests) return "recovery continuation provider request count did not verify"
   if (seed.working_set.provider_audit.provider_request_count !== consumed.provider_requests) return "recovery continuation provider audit count did not verify"
   if (seed.recovery_kind === "checkpoint" && seed.working_set.model_turn_count !== consumed.model_turns) return "recovery continuation working set model-turn count did not verify"
+  if (seed.recovery_kind === "checkpoint" && (seed.uncertain_model_turn_charge !== 0 || seed.unresolved_provider_attempt_count !== 0)) return "recovery continuation uncertain attempt accounting did not verify"
+  if (seed.recovery_kind === "uncertain_provider_outcome") {
+    if (!seed.pending_model_step_ref) return "recovery continuation pending boundary did not verify"
+    if (seed.uncertain_model_turn_charge !== 1 || seed.unresolved_provider_attempt_count !== 1) return "recovery continuation uncertain attempt accounting did not verify"
+    if (consumed.model_turns !== seed.working_set.model_turn_count + 1) return "recovery continuation uncertain model-turn charge did not verify"
+    if (consumed.model_turns < seed.pending_model_step_ref.turn_index) return "recovery continuation uncertain model-turn charge did not verify"
+    if (seed.next_turn_index <= seed.pending_model_step_ref.turn_index) return "recovery continuation uncertain next turn did not verify"
+  }
   if (seed.working_set.tool_call_count !== consumed.tool_calls) return "recovery continuation working set tool-call count did not verify"
   if (seed.working_set.tool_search_call_count !== consumed.tool_search_calls) return "recovery continuation working set tool-search count did not verify"
   if (seed.working_set.cumulative_tool_result_bytes !== consumed.cumulative_tool_result_bytes) return "recovery continuation working set result-byte count did not verify"
   if (seed.working_set.consecutive_no_progress_turns !== consumed.consecutive_no_progress_turns) return "recovery continuation working set no-progress count did not verify"
   if (seed.working_set.evidence_cards.length + seed.working_set.omitted_evidence_count !== consumed.evidence_cards) return "recovery continuation working set evidence count did not verify"
   if (seed.turn_summaries.length + seed.working_set.omitted_turn_count !== consumed.turn_summaries) return "recovery continuation turn-summary count did not verify"
-  const replayMessageHash = stableHash({ latest_assistant: seed.latest_assistant, latest_tool_results: seed.latest_tool_results })
+  const replay = reconstructRecoveryReplayFromSeed(seed, loadedTools)
+  if (replay.blocker) return replay.blocker
+  const replayMessageHash = stableHash({ replay_exchange_hash: seed.replay_exchange_hash, latest_assistant: replay.latestAssistant, latest_tool_results: replay.latestToolResults })
   if (seed.replay_message_hash !== replayMessageHash) return "recovery continuation replay message hash did not verify"
-  const replayToolCallCount = seed.latest_assistant?.content.filter((part) => part.type === "tool_call").length ?? 0
-  if (seed.replay_summary.tool_call_count !== replayToolCallCount || seed.replay_summary.tool_result_count !== seed.latest_tool_results.length) return "recovery continuation replay message counts did not verify"
-  if (!seed.replay_summary.replay_protocol_available && (replayToolCallCount > 0 || seed.latest_tool_results.length > 0)) return "recovery continuation replay messages are unavailable"
+  if (stableHash({ latest_assistant: seed.latest_assistant, latest_tool_results: seed.latest_tool_results }) !== stableHash({ latest_assistant: replay.latestAssistant, latest_tool_results: replay.latestToolResults })) return "recovery continuation replay messages do not match durable exchange"
+  const replayToolCallCount = replay.latestAssistant?.content.filter((part) => part.type === "tool_call").length ?? 0
+  if (seed.replay_summary.tool_call_count !== replayToolCallCount || seed.replay_summary.tool_result_count !== replay.latestToolResults.length) return "recovery continuation replay message counts did not verify"
+  if (!seed.replay_summary.replay_protocol_available && (replayToolCallCount > 0 || replay.latestToolResults.length > 0)) return "recovery continuation replay messages are unavailable"
   if (seed.replay_summary.replay_protocol_available && !seed.replay_exchange_hash) return "recovery continuation replay exchange reference is missing"
   if (seed.replay_summary.replay_protocol_available && seed.replay_exchange_hash !== seed.replay_summary.replay_exchange_hash) return "recovery continuation replay exchange reference did not verify"
   if (seed.loaded_tool_refs.length !== consumed.loaded_schemas || loadedTools.length !== consumed.loaded_schemas) return "recovery continuation loaded schema count did not verify"
@@ -1210,6 +1225,23 @@ function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuati
   if (seed.recovery_kind === "uncertain_provider_outcome" && (!seed.pending_model_step_ref || !seed.pending_model_boundary_hash)) return "recovery continuation pending boundary did not verify"
   if (seed.recovery_kind === "checkpoint" && (seed.pending_model_step_ref || seed.pending_model_boundary_hash)) return "recovery continuation pending boundary did not verify"
   return undefined
+}
+
+function reconstructRecoveryReplayFromSeed(seed: CommanderInvestigationRecoveryContinuationSeed, loadedTools: CommanderToolDescriptor[]): { latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; blocker?: string } {
+  const expectedCheckpointTurn = seed.pending_model_step_ref ? seed.pending_model_step_ref.turn_index - 1 : seed.next_turn_index - 1
+  const replay = reconstructCommanderRecoveryReplayExchangeFromDurable({
+    exchange: seed.replay_exchange,
+    checkpointKind: seed.replay_summary.replay_protocol_available ? "turn_complete" : "initial",
+    checkpointSequence: seed.replay_summary.replay_protocol_available ? seed.checkpoint_ref.checkpoint_sequence : 0,
+    checkpointTurnIndex: expectedCheckpointTurn,
+    loadedTools,
+    protocol: seed.tool_protocol,
+  })
+  if (replay.blockers.length) return { latestToolResults: [], blocker: replay.blockers[0] }
+  if (seed.replay_summary.replay_protocol_available && !seed.replay_exchange) return { latestToolResults: [], blocker: "recovery continuation durable replay exchange is missing" }
+  if (!seed.replay_summary.replay_protocol_available && seed.replay_exchange) return { latestToolResults: [], blocker: "recovery continuation durable replay exchange is unexpected" }
+  if (seed.replay_summary.replay_exchange_hash !== replay.summary.replay_exchange_hash) return { latestToolResults: [], blocker: "recovery continuation replay exchange reference did not verify" }
+  return { latestAssistant: replay.latest_assistant, latestToolResults: replay.latest_tool_results }
 }
 
 function validateRecoveryNotice(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {

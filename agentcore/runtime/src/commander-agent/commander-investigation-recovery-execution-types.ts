@@ -10,6 +10,7 @@ import type {
   CommanderInvestigationCheckpoint,
   CommanderInvestigationJournalIdentity,
   CommanderInvestigationLoadedToolRef,
+  CommanderInvestigationReplayExchange,
 } from "./commander-investigation-journal-types"
 import type {
   CommanderInvestigationRecoveryApprovalSummary,
@@ -164,6 +165,7 @@ export type CommanderInvestigationRecoveryContinuationSeed = {
   latest_assistant?: CommanderModelAssistantMessage
   latest_tool_results: CommanderModelToolResultMessage[]
   replay_summary: CommanderInvestigationRecoveryReplaySummary
+  replay_exchange?: CommanderInvestigationReplayExchange
   replay_exchange_hash?: string
   replay_message_hash: string
   recovery_notice: CommanderInvestigationRecoveryNotice

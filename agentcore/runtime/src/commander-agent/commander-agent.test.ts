@@ -7462,7 +7462,7 @@ describe("Commander in-memory investigation controller", () => {
       latest_tool_results: [],
       replay_message_hash: "",
     }
-    tamperedReplaySeed.replay_message_hash = stableHash({ latest_assistant: tamperedReplaySeed.latest_assistant, latest_tool_results: tamperedReplaySeed.latest_tool_results })
+    tamperedReplaySeed.replay_message_hash = stableHash({ replay_exchange_hash: tamperedReplaySeed.replay_exchange_hash, latest_assistant: tamperedReplaySeed.latest_assistant, latest_tool_results: tamperedReplaySeed.latest_tool_results })
     tamperedReplaySeed.execution_preparation_hash = recoverySeedPreparationHash(tamperedReplaySeed)
     const tamperedReplayAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered replay should not run" }])
     const tamperedReplayController = new CommanderInvestigationController({
@@ -7478,7 +7478,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     const tamperedReplay = await tamperedReplayController.runFromRecoverySeed(tamperedReplaySeed)
     expect(tamperedReplay).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(tamperedReplay.blockers).toContain("recovery continuation replay message counts did not verify")
+    expect(tamperedReplay.blockers).toContain("recovery continuation replay message hash did not verify")
     expect(tamperedReplayAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,
@@ -8451,8 +8451,32 @@ describe("Commander in-memory investigation controller", () => {
 			    })
 			    const erasedPending = await erasedPendingController.runFromRecoverySeed(erasedPendingSeed)
 			    expect(erasedPending).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-			    expect(erasedPending.blockers).toContain("recovery continuation basis hash did not verify")
-			    const uncertainRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
+    expect(erasedPending.blockers).toContain("recovery continuation basis hash did not verify")
+    const zeroChargeSeed = structuredClone(uncertainBuilt.seed!)
+    zeroChargeSeed.uncertain_model_turn_charge = 0
+    zeroChargeSeed.unresolved_provider_attempt_count = 0
+    zeroChargeSeed.effective_budget.consumed.model_turns = checkpoint!.working_set.model_turn_count
+    zeroChargeSeed.consumed = zeroChargeSeed.effective_budget.consumed
+    zeroChargeSeed.next_turn_index = zeroChargeSeed.pending_model_step_ref!.turn_index
+    zeroChargeSeed.effective_budget.budget_hash = stableHash({ ...zeroChargeSeed.effective_budget, budget_hash: "", effective_budget_hash: zeroChargeSeed.effective_budget.effective_budget_hash })
+    zeroChargeSeed.execution_preparation_hash = recoverySeedPreparationHash(zeroChargeSeed)
+    const zeroChargeAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "zero charge should not run" }])
+    const zeroChargeController = new CommanderInvestigationController({
+      modelAdapter: zeroChargeAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: erasedRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: erasedRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: erasedRegistry }),
+    })
+    const zeroCharge = await zeroChargeController.runFromRecoverySeed(zeroChargeSeed)
+    expect(zeroCharge).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(zeroCharge.blockers).toContain("recovery continuation uncertain attempt accounting did not verify")
+    expect(zeroChargeAdapter.request_summaries).toHaveLength(0)
+    const uncertainRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
 		    const earlyExitController = new CommanderInvestigationController({
 		      toolExecutor: executorFixture().executor,
 		      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: uncertainRegistry }) }),
@@ -9809,6 +9833,7 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     effective_budget_hash: seed.effective_budget_hash,
     working_set_hash: seed.working_set_hash,
     turn_summary_hash: stableHash(seed.turn_summaries),
+    replay_exchange: seed.replay_exchange,
     replay_exchange_hash: seed.replay_exchange_hash,
     replay_message_hash: seed.replay_message_hash,
     recovery_notice_hash: seed.recovery_notice_hash,

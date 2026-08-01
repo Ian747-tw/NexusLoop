@@ -3,6 +3,8 @@ import { stableHash } from "./commander-model-schema"
 import type {
   CommanderDurableAssistantToolCallPart,
   CommanderInvestigationCheckpoint,
+  CommanderInvestigationCheckpointKind,
+  CommanderInvestigationReplayExchange,
 } from "./commander-investigation-journal-types"
 import type { CommanderModelAssistantMessage, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
 import type { CommanderToolDescriptor } from "../commander-tools/commander-tool-types"
@@ -16,6 +18,7 @@ export function reconstructCommanderRecoveryReplayExchange(input: {
   latest_assistant?: CommanderModelAssistantMessage
   latest_tool_results: CommanderModelToolResultMessage[]
   summary: CommanderInvestigationRecoveryReplaySummary
+  replay_exchange?: CommanderInvestigationReplayExchange
   blockers: string[]
   warnings: string[]
 } {
@@ -25,9 +28,39 @@ export function reconstructCommanderRecoveryReplayExchange(input: {
   }
   const exchange = checkpoint.replay_exchange
   if (!exchange) return { latest_tool_results: [], summary: emptySummary(false), blockers: ["completed recovery checkpoint is missing summary-only replay exchange"], warnings: [] }
+  return reconstructCommanderRecoveryReplayExchangeFromDurable({
+    exchange,
+    checkpointKind: checkpoint.checkpoint_kind,
+    checkpointSequence: checkpoint.checkpoint_sequence,
+    checkpointTurnIndex: checkpoint.turn_index,
+    loadedTools: input.loadedTools,
+    protocol: input.protocol,
+  })
+}
+
+export function reconstructCommanderRecoveryReplayExchangeFromDurable(input: {
+  exchange?: CommanderInvestigationReplayExchange
+  checkpointKind: CommanderInvestigationCheckpointKind
+  checkpointSequence: number
+  checkpointTurnIndex: number
+  loadedTools: CommanderToolDescriptor[]
+  protocol: CommanderModelToolProtocol
+}): {
+  latest_assistant?: CommanderModelAssistantMessage
+  latest_tool_results: CommanderModelToolResultMessage[]
+  summary: CommanderInvestigationRecoveryReplaySummary
+  replay_exchange?: CommanderInvestigationReplayExchange
+  blockers: string[]
+  warnings: string[]
+} {
+  if (input.checkpointKind === "initial" || input.checkpointSequence === 0) {
+    return { latest_tool_results: [], summary: emptySummary(false), blockers: [], warnings: ["initial checkpoint has no prior assistant/tool replay exchange"] }
+  }
+  const exchange = input.exchange
+  if (!exchange) return { latest_tool_results: [], summary: emptySummary(false), blockers: ["completed recovery checkpoint is missing summary-only replay exchange"], warnings: [] }
   const blockers: string[] = []
   if (exchange.exchange_hash !== stableHash({ ...exchange, exchange_hash: "" })) blockers.push("replay exchange hash mismatch")
-  if (exchange.turn_index !== checkpoint.turn_index) blockers.push("replay exchange turn index does not match checkpoint")
+  if (exchange.turn_index !== input.checkpointTurnIndex) blockers.push("replay exchange turn index does not match checkpoint")
   if (!exchange.protocol_relationship_preserved) blockers.push("replay exchange did not preserve protocol relationship")
   if (exchange.assistant_text_persisted !== false || exchange.exact_replay_supported !== false || exchange.full_tool_results_persisted !== false || exchange.summary_only !== true) blockers.push("replay exchange claims unsupported exact/full persistence")
   const loaded = new Set(input.loadedTools.map((tool) => tool.tool_id))
@@ -54,7 +87,7 @@ export function reconstructCommanderRecoveryReplayExchange(input: {
   for (const call of calls) {
     if (!resultIds.has(call.tool_call_id)) blockers.push(`replay tool call ${call.tool_call_id} is missing a summary result`)
   }
-  if (blockers.length) return { latest_tool_results: [], summary: emptySummary(false, exchange.exchange_hash), blockers: blockers.slice(0, 12), warnings: [] }
+  if (blockers.length) return { latest_tool_results: [], summary: emptySummary(false, exchange.exchange_hash), replay_exchange: exchange, blockers: blockers.slice(0, 12), warnings: [] }
   const assistant: CommanderModelAssistantMessage = {
     role: "assistant",
     content: calls.map((call) => ({
@@ -89,6 +122,7 @@ export function reconstructCommanderRecoveryReplayExchange(input: {
       exact_replay_supported: false,
       full_tool_results_persisted: false,
     },
+    replay_exchange: structuredClone(exchange),
     blockers: [],
     warnings: input.protocol === "json_fallback" ? ["summary-only replay exchange will be rendered as bounded json_fallback text"] : [],
   }

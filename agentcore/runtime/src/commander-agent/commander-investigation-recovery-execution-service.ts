@@ -87,6 +87,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     if (context.blocked) blockers.push(...context.blockers)
     warnings.push(...context.warnings)
     const replayMessageHash = stableHash({
+      replay_exchange_hash: replay.summary.replay_exchange_hash,
       latest_assistant: replay.latest_assistant,
       latest_tool_results: replay.latest_tool_results,
     })
@@ -164,6 +165,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       effective_budget_hash: budget.effective_budget_hash,
       working_set_hash: restored.workingSet!.working_set_hash,
       turn_summary_hash: stableHash(checkpoint.turn_summaries),
+      replay_exchange: replay.replay_exchange,
       replay_exchange_hash: replay.summary.replay_exchange_hash,
       replay_message_hash: replayMessageHash,
       recovery_notice_hash: notice.notice_hash,
@@ -205,6 +207,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       latest_assistant: replay.latest_assistant,
       latest_tool_results: replay.latest_tool_results,
       replay_summary: replay.summary,
+      replay_exchange: replay.replay_exchange,
       replay_exchange_hash: replay.summary.replay_exchange_hash,
       replay_message_hash: replayMessageHash,
       recovery_notice: notice,
