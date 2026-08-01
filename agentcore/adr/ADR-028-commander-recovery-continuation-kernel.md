@@ -128,7 +128,8 @@ rejected copied seed cannot leak fabricated history or counters through a
 blocked result.
 If the seed hash fails or no authoritative checkpoint can be accepted, the
 controller returns a neutral blocked result with no seed-derived history,
-evidence, loaded descriptors, protocol state, or provider counters.
+identity, provider/model fields, start time, duration, evidence, loaded
+descriptors, protocol state, or provider counters.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

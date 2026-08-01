@@ -114,8 +114,11 @@ export class CommanderInvestigationController {
     const resultStarted = canonicalDate(seed.original_started_at) ?? continuationStarted
     const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
     const input: CommanderInvestigationInput = { ...seed.normalized_input, investigation_id: seed.investigation_id, abort_signal: options.abort_signal }
+    const neutralInput = neutralRecoveryBlockedInput()
+    const neutralStarted = continuationStarted
+    const neutralWallStartedMs = performance.now()
     const neutralBlockedRecoveryResult = (blocker: string) =>
-      this.finish(input, seed.investigation_id, "blocked", "controller_error", minimalBootstrap(input), fallbackBudget(input.phase, "recovery_seed_blocked"), "native", [], emptyWorkingSet(input, [], this.options.providerAuditPolicy), 0, [], [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+      this.finish(neutralInput, "recovery_seed_rejected", "blocked", "controller_error", minimalBootstrap(neutralInput), fallbackBudget(neutralInput.phase, "recovery_seed_blocked"), "native", [], emptyWorkingSet(neutralInput, [], this.options.providerAuditPolicy), 0, [], [blocker], [], neutralStarted, undefined, elapsedWallMs(neutralWallStartedMs))
     const expectedHash = stableHash({
       seed_version: 1,
       investigation_id: seed.investigation_id,
@@ -1130,6 +1133,19 @@ function addUniqueCapped(items: string[], value: string, cap: number): void {
 
 function minimalBootstrap(input: CommanderInvestigationInput) {
   return { bootstrap_id: `commander_investigation_bootstrap_${stableHash(input).slice(0, 16)}`, bootstrap_hash: stableHash({ objective: input.objective, phase: input.phase }) }
+}
+
+function neutralRecoveryBlockedInput(): CommanderInvestigationInput {
+  return {
+    investigation_id: "recovery_seed_rejected",
+    phase: "general_read",
+    objective: "Recovery continuation seed was rejected before authoritative journal lookup.",
+    requested_by: "runtime",
+    provider_id: "unverified_recovery_seed",
+    provider_kind: "unverified_recovery_seed",
+    model_id: "unverified_recovery_seed",
+    tool_protocol: "native",
+  }
 }
 
 function fallbackBudget(phase: CommanderToolPhase, reason: string): CommanderInvestigationBudget {

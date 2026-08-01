@@ -6994,6 +6994,20 @@ describe("Commander in-memory investigation controller", () => {
     expect(omittedContinuityRun).toMatchObject({ status: "final", provider_request_count: 1 })
     expect(omittedContinuityRun.blockers).not.toContain("recovery continuation current bootstrap did not match controller compilation")
     const seedHashFailure = structuredClone(built.seed!)
+    seedHashFailure.normalized_input = {
+      ...seedHashFailure.normalized_input,
+      phase: "governance_review",
+      objective: "fabricated pre lookup objective",
+      requested_by: "fabricated pre lookup operator",
+      session_id: "fabricated_pre_lookup_session",
+      launch_id: "fabricated_pre_lookup_launch",
+      provider_id: "fabricated_pre_lookup_provider",
+      provider_kind: "fabricated_pre_lookup_kind",
+      model_id: "fabricated_pre_lookup_model",
+    }
+    seedHashFailure.investigation_id = "fabricated_pre_lookup_investigation"
+    seedHashFailure.original_started_at = "2099-01-01T00:00:00.000Z"
+    seedHashFailure.elapsed_active_ms_before = 99_000
     seedHashFailure.turn_summaries = [{
       turn_index: 99,
       model_request_id: "fabricated_seed_hash_failure_turn",
@@ -7037,7 +7051,17 @@ describe("Commander in-memory investigation controller", () => {
     const seedHashFailureResult = await seedHashFailureController.runFromRecoverySeed(seedHashFailure)
     expect(seedHashFailureResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0, model_turn_count: 0 })
     expect(seedHashFailureResult.blockers).toContain("recovery continuation seed hash did not verify")
+    expect(seedHashFailureResult).toMatchObject({
+      investigation_id: "recovery_seed_rejected",
+      phase: "general_read",
+      objective_preview: "Recovery continuation seed was rejected before authoritative journal lookup.",
+      provider_id: "unverified_recovery_seed",
+      provider_kind: "unverified_recovery_seed",
+      model_id: "unverified_recovery_seed",
+    })
     expect(JSON.stringify(seedHashFailureResult)).not.toContain("fabricated pre lookup")
+    expect(seedHashFailureResult.started_at).not.toBe("2099-01-01T00:00:00.000Z")
+    expect(seedHashFailureResult.duration_ms).toBeLessThan(99_000)
     expect(seedHashFailureAdapter.request_summaries).toHaveLength(0)
     const missingSourceSeed = structuredClone(seedHashFailure)
     missingSourceSeed.execution_preparation_hash = recoverySeedPreparationHash(missingSourceSeed)
