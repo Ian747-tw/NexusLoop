@@ -189,8 +189,8 @@ model steps remain uncertain, are conservatively charged as one unresolved
 model attempt, and are never replayed or treated as known success/failure. The
 controller validates that charge before accepting a recovery seed. Summary-only
 assistant/tool replay messages are reconstructed from the authoritative
-checkpoint's hash-verified durable replay exchange instead of treated as seed
-authority.
+journal checkpoint's hash-verified durable replay exchange instead of treated as
+seed or caller-supplied checkpoint authority.
 Original investigation start time remains lineage metadata, while continuation
 active duration counts prior elapsed active time plus current active work rather
 than downtime.

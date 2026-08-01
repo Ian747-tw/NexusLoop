@@ -4,6 +4,7 @@ import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderMo
 import type { CommanderToolExecutionResult } from "./commander-tool-execution-types"
 import type { CommanderInvestigationProviderAuditPolicy, CommanderInvestigationProviderAuditSummary, CommanderInvestigationProviderGate } from "./commander-investigation-provider-types"
 import type { CommanderInvestigationRecoveryNotice } from "./commander-investigation-recovery-execution-types"
+import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
 
 export type CommanderInvestigationStatus = "final" | "refused" | "blocked" | "failed" | "cancelled" | "budget_exhausted" | "no_progress" | "needs_human_review"
 
@@ -365,5 +366,6 @@ export type CommanderInvestigationControllerOptions = {
   persistenceObserver?: CommanderInvestigationPersistenceObserver
   capabilityRegistry: { get(input: { provider_kind?: string; model_id?: string; role?: string }): { supports_tools: boolean | "unknown"; warnings: string[]; max_output_tokens?: number } }
   contextBudgetService: { preview(input: Record<string, unknown>): Promise<{ budget: { budget_id: string; max_context_tokens?: number; max_context_bytes?: number; allocations: Array<{ section: string; max_tokens?: number; max_bytes?: number }> }; warnings: string[]; blockers: string[] }> }
+  recoverySource?: (investigationId: string) => Promise<CommanderInvestigationRecoverySource | undefined> | CommanderInvestigationRecoverySource | undefined
   now?: () => Date
 }

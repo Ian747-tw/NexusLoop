@@ -109,7 +109,7 @@ export class CommanderInvestigationController {
     })
   }
 
-  async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal; checkpoint?: CommanderInvestigationCheckpoint } = {}): Promise<CommanderInvestigationResult> {
+  async runFromRecoverySeed(seed: CommanderInvestigationRecoveryContinuationSeed, options: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationResult> {
     const continuationStarted = this.now()
     const resultStarted = canonicalDate(seed.original_started_at) ?? continuationStarted
     const wallStartedMs = performance.now() - Math.max(0, seed.elapsed_active_ms_before)
@@ -147,7 +147,9 @@ export class CommanderInvestigationController {
       first_model_request_preview_hash: seed.first_model_request_preview.request_preview_hash,
     })
     if (expectedHash !== seed.execution_preparation_hash) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, ["recovery continuation seed hash did not verify"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, options.checkpoint)
+    const authoritativeCheckpoint = await this.recoverySeedCheckpoint(seed)
+    if (authoritativeCheckpoint.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [authoritativeCheckpoint.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, authoritativeCheckpoint.checkpoint)
     if (prepared.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [prepared.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const budget = seed.effective_budget.effective_budget
     const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
@@ -191,6 +193,36 @@ export class CommanderInvestigationController {
       durationMs: () => elapsedWallMs(wallStartedMs),
     })
 	  }
+
+  private async recoverySeedCheckpoint(seed: CommanderInvestigationRecoveryContinuationSeed): Promise<{ checkpoint?: CommanderInvestigationCheckpoint; blocker?: string }> {
+    if (!seed.replay_summary.replay_protocol_available) return {}
+    if (!this.options.recoverySource) return { blocker: "recovery continuation authoritative journal source is required for replay exchange" }
+    const source = await this.options.recoverySource(seed.investigation_id)
+    if (!source || source.projection_status !== "ready" || !source.latest_checkpoint) return { blocker: "recovery continuation authoritative journal checkpoint is unavailable" }
+    if (source.recovery_basis_hash !== seed.recovery_basis_hash) return { blocker: "recovery continuation authoritative journal basis did not verify" }
+    const checkpoint = source.latest_checkpoint
+    if (
+      checkpoint.checkpoint_id !== seed.checkpoint_ref.checkpoint_id ||
+      checkpoint.checkpoint_sequence !== seed.checkpoint_ref.checkpoint_sequence ||
+      checkpoint.checkpoint_hash !== seed.checkpoint_ref.checkpoint_hash
+    ) return { blocker: "recovery continuation authoritative journal checkpoint reference did not verify" }
+    if (seed.pending_model_step_ref) {
+      const pending = source.pending_model_step
+      if (
+        !pending ||
+        pending.model_request_id !== seed.pending_model_step_ref.model_request_id ||
+        pending.turn_index !== seed.pending_model_step_ref.turn_index ||
+        pending.base_checkpoint_id !== seed.pending_model_step_ref.base_checkpoint_id ||
+        pending.base_checkpoint_sequence !== seed.pending_model_step_ref.base_checkpoint_sequence ||
+        pending.base_checkpoint_hash !== seed.pending_model_step_ref.base_checkpoint_hash ||
+        pending.working_set_hash !== seed.pending_model_step_ref.working_set_hash ||
+        pending.context_hash !== seed.pending_model_step_ref.context_hash
+      ) return { blocker: "recovery continuation authoritative journal pending boundary did not verify" }
+    } else if (source.pending_model_step) {
+      return { blocker: "recovery continuation authoritative journal pending boundary did not verify" }
+    }
+    return { checkpoint }
+  }
 
   private async executePreparedInvestigation(state: CommanderInvestigationPreparedLoopState): Promise<CommanderInvestigationResult> {
     const {

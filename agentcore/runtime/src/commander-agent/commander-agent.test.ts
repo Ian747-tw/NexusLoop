@@ -7506,13 +7506,12 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
-    const fabricatedExchangeResult = await fabricatedExchangeController.runFromRecoverySeed(fabricatedExchangeSeed, { checkpoint: source!.latest_checkpoint! })
+    const fabricatedExchangeResult = await fabricatedExchangeController.runFromRecoverySeed(fabricatedExchangeSeed)
     expect(fabricatedExchangeResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(fabricatedExchangeResult.blockers).toContain("recovery continuation authoritative checkpoint replay exchange is missing")
     expect(fabricatedExchangeAdapter.request_summaries).toHaveLength(0)
-    const forgedReplayCheckpoint = structuredClone(source!.latest_checkpoint!)
-    forgedReplayCheckpoint.replay_exchange = fabricatedExchange
     const forgedReplayAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "forged checkpoint replay should not run" }])
     const forgedReplayController = new CommanderInvestigationController({
       modelAdapter: forgedReplayAdapter,
@@ -7524,10 +7523,11 @@ describe("Commander in-memory investigation controller", () => {
       contextService: new CommanderInvestigationContextService(),
       capabilityRegistry: registry,
       contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
     })
-    const forgedReplay = await forgedReplayController.runFromRecoverySeed(fabricatedExchangeSeed, { checkpoint: forgedReplayCheckpoint })
+    const forgedReplay = await forgedReplayController.runFromRecoverySeed(fabricatedExchangeSeed)
     expect(forgedReplay).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(forgedReplay.blockers).toContain("recovery continuation authoritative checkpoint hash did not verify")
+    expect(forgedReplay.blockers).toContain("recovery continuation authoritative checkpoint replay exchange is missing")
     expect(forgedReplayAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,

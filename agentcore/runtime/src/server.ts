@@ -5071,6 +5071,7 @@ export class RuntimeServer {
       providerAuditPolicy: this.commanderInvestigationProviderConfig ? { required: true, transport_kind: "external_api_connector", connector_id: this.commanderInvestigationProviderConfig.connector_id } : { required: false, transport_kind: "none" },
       capabilityRegistry: this.modelCapabilityRegistry,
       contextBudgetService: this.contextBudgetService(),
+      recoverySource: (investigationId) => this.commanderInvestigationJournalService().recoverySource(investigationId),
       now: this.researchSynthesisNow,
     }
   }
