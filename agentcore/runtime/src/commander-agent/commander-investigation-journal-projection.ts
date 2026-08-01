@@ -185,7 +185,12 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (checkpoint) approvalErrors.push(...approvalReferenceErrors(event.approval, checkpoint, pendingModel))
       if (identity && startedInputHash && checkpoint) {
         const basis = recoveryBasis(investigationId, projectionStatus, identity, startedInputHash, checkpoint, pendingModel, terminal)
-        if (event.approval.recovery_basis_hash !== basis?.basis_hash) approvalErrors.push("recovery approval basis hash mismatch")
+        const legacyBasisHash = basis
+          ? legacyRecoveryBasisHashForReady(investigationId, identity, startedInputHash, checkpoint, pendingModel, terminal)
+          : undefined
+        if (event.approval.recovery_basis_hash !== basis?.basis_hash && event.approval.recovery_basis_hash !== legacyBasisHash) {
+          approvalErrors.push("recovery approval basis hash mismatch")
+        }
       }
       if (!verifyApproval(event.approval)) approvalErrors.push("recovery approval hash mismatch")
       integrity.push(...approvalErrors)
@@ -447,6 +452,25 @@ function recoveryBasisForReady(
   }
   basis.basis_hash = stableHash({ ...basis, basis_hash: "" })
   return basis
+}
+
+function legacyRecoveryBasisHashForReady(
+  investigationId: string,
+  identity: CommanderInvestigationJournalIdentity,
+  normalizedInputHash: string,
+  checkpoint: CommanderInvestigationCheckpoint,
+  pendingModel?: CommanderInvestigationModelStepStartedPayload,
+  terminal?: CommanderInvestigationFinishedPayload,
+): string {
+  const basis = recoveryBasisForReady(investigationId, identity, normalizedInputHash, checkpoint, pendingModel, terminal)
+  const {
+    requested_by: _requestedBy,
+    mission_id: _missionId,
+    session_id: _sessionId,
+    launch_id: _launchId,
+    ...legacyIdentity
+  } = identity
+  return stableHash({ ...basis, immutable_identity: legacyIdentity, basis_hash: "" })
 }
 
 function recoveryBasis(

@@ -8316,10 +8316,25 @@ describe("Commander in-memory investigation controller", () => {
 
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>)
     const approvalEvent = events.find((event) => event.kind === "runtime_commander_investigation_recovery_approved")
+    const currentSource = await journal.recoverySource("inv_recovery_preparation_checkpoint")
+    expect(currentSource?.recovery_basis).toBeDefined()
+    const {
+      requested_by: _requestedBy,
+      mission_id: _missionId,
+      session_id: _sessionId,
+      launch_id: _launchId,
+      ...legacyIdentity
+    } = currentSource!.recovery_basis!.immutable_identity
+    const legacyBasisHash = stableHash({
+      ...currentSource!.recovery_basis!,
+      immutable_identity: legacyIdentity,
+      basis_hash: "",
+    })
     const legacyApprovalEvent = {
       ...approvalEvent!,
       approval: {
         ...approvalEvent!.approval,
+        recovery_basis_hash: legacyBasisHash,
         recovery_plan_hash: stableHash({ legacy_preparation_missing: true }),
         approval_hash: "",
       },
@@ -8337,6 +8352,7 @@ describe("Commander in-memory investigation controller", () => {
     const legacyPreview = await legacyServer.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_preparation_checkpoint" })
     expect(legacyPreview).toMatchObject({
       status: "ready_for_approval",
+      projection_status: "ready",
       approval_state: "stale",
       stale_approval_count: 1,
       current_approval: undefined,
@@ -8345,6 +8361,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(legacyPreview.recovery_plan_hash).toBe(before.recovery_plan_hash)
     expect(legacyPreview.recovery_packet?.execution_preparation_hash).toBe(before.execution_preparation_hash)
     expect(legacyPreview.warnings.join("\n")).toContain("stale")
+    const legacyRecord = await new CommanderInvestigationJournalService({ eventStore: legacyStore }).get("inv_recovery_preparation_checkpoint")
+    expect(legacyRecord).toMatchObject({ projection_status: "ready", recovery_approval_count: 1, recovery_approval_recorded: false })
 
     await server.shutdown("recovery preparation checkpoint test")
   })
