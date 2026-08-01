@@ -7383,6 +7383,28 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedWorkingSet).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedWorkingSet.blockers).toContain("recovery continuation working set hash did not verify")
     expect(tamperedWorkingSetAdapter.request_summaries).toHaveLength(0)
+    const fabricatedWorkingSetSeed = structuredClone(built.seed!)
+    fabricatedWorkingSetSeed.working_set.current_warnings = [...fabricatedWorkingSetSeed.working_set.current_warnings, "fabricated recovery warning from copied seed"]
+    fabricatedWorkingSetSeed.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(fabricatedWorkingSetSeed.working_set))
+    fabricatedWorkingSetSeed.working_set_hash = fabricatedWorkingSetSeed.working_set.working_set_hash
+    fabricatedWorkingSetSeed.execution_preparation_hash = recoverySeedPreparationHash(fabricatedWorkingSetSeed)
+    const fabricatedWorkingSetAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fabricated working set should not run" }])
+    const fabricatedWorkingSetController = new CommanderInvestigationController({
+      modelAdapter: fabricatedWorkingSetAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const fabricatedWorkingSet = await fabricatedWorkingSetController.runFromRecoverySeed(fabricatedWorkingSetSeed)
+    expect(fabricatedWorkingSet).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(fabricatedWorkingSet.blockers).toContain("recovery continuation working set did not match journal checkpoint")
+    expect(fabricatedWorkingSetAdapter.request_summaries).toHaveLength(0)
     const tamperedInputSeed = {
       ...built.seed!,
       normalized_input: {

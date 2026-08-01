@@ -112,6 +112,9 @@ compares the seed replay exchange with the checkpoint when replay is required,
 reconstructs the transient assistant/tool messages from the checkpoint's
 verified durable summary-only replay exchange, and compares the seed's replay
 message hash to that canonical reconstruction before any adapter call.
+Recovered loop state also restores the durable working set from that accepted
+checkpoint and rejects copied seeds whose self-hashed evidence, blockers,
+warnings, digests, or repeat state no longer match the journal checkpoint.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

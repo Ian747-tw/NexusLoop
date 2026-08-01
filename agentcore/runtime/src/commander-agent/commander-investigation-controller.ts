@@ -151,9 +151,11 @@ export class CommanderInvestigationController {
     if (authoritativeCheckpoint.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [authoritativeCheckpoint.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, authoritativeCheckpoint.checkpoint)
     if (prepared.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [prepared.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    const restoredWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(authoritativeCheckpoint.checkpoint!)
+    if (restoredWorkingSet.blocker) return this.finish(input, seed.investigation_id, "blocked", "controller_error", seed.current_bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, seed.turn_summaries, seed.working_set, seed.provider_request_count_before, seed.loaded_tools, [restoredWorkingSet.blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const budget = seed.effective_budget.effective_budget
     const loaded = new Map(prepared.loadedTools!.map((tool) => [tool.tool_id, tool]))
-    const workingSet = redactValue(seed.working_set) as CommanderInvestigationWorkingSet
+    const workingSet = redactValue(restoredWorkingSet.workingSet!) as CommanderInvestigationWorkingSet
     if (workingSet.model_turn_count < seed.effective_budget.consumed.model_turns) {
       workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
       workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
@@ -162,7 +164,7 @@ export class CommanderInvestigationController {
     const latestAssistant = prepared.latestAssistant
     const latestToolResults = prepared.latestToolResults!
     const providerRequests = seed.provider_request_count_before
-    const recentResults = new Map(seed.working_set.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
+    const recentResults = new Map(workingSet.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
     if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     if (seed.effective_budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", seed.current_bootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
@@ -1173,6 +1175,11 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.current_bootstrap.continuity_assessment_status === "degraded") return "recovery continuation current bootstrap is degraded"
   const restoredWorkingSet = durableCommanderInvestigationWorkingSet(seed.working_set as CommanderInvestigationWorkingSet)
   if (restoredWorkingSet.working_set_hash !== seed.working_set_hash || seed.working_set.working_set_hash !== seed.working_set_hash) return "recovery continuation working set hash did not verify"
+  if (checkpoint) {
+    const checkpointWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(checkpoint)
+    if (checkpointWorkingSet.blocker) return checkpointWorkingSet.blocker
+    if (restoredWorkingSet.working_set_hash !== checkpointWorkingSet.workingSet!.working_set_hash) return "recovery continuation working set did not match journal checkpoint"
+  }
   if (stableHash(seed.consumed) !== stableHash(seed.effective_budget.consumed)) return "recovery continuation consumed budget counters did not verify"
   const consumed = seed.effective_budget.consumed
   if (seed.next_turn_index !== consumed.model_turns + 1) return "recovery continuation next turn index did not verify"
@@ -1219,6 +1226,14 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   const requestPreviewHash = stableHash({ ...seed.first_model_request_preview, request_preview_hash: "" })
   if (seed.first_model_request_preview.request_preview_hash !== requestPreviewHash) return "recovery first model request preview hash did not verify"
   return undefined
+}
+
+function restoreRecoveryWorkingSetFromCheckpoint(checkpoint: CommanderInvestigationCheckpoint): { workingSet?: CommanderInvestigationWorkingSet; blocker?: string } {
+  const workingSet = durableCommanderInvestigationWorkingSet(checkpoint.working_set as unknown as CommanderInvestigationWorkingSet)
+  const checkpointToolIds = checkpoint.loaded_tools.map((tool) => tool.tool_id).sort()
+  if (JSON.stringify(workingSet.loaded_tool_ids) !== JSON.stringify(checkpointToolIds)) return { blocker: "checkpoint loaded tool references do not match working-set loaded_tool_ids" }
+  if (workingSet.working_set_hash !== checkpoint.working_set.working_set_hash) return { blocker: "checkpoint durable working-set hash could not be revalidated" }
+  return { workingSet }
 }
 
 function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {
