@@ -115,6 +115,11 @@ message hash to that canonical reconstruction before any adapter call.
 Recovered loop state also restores the durable working set from that accepted
 checkpoint and rejects copied seeds whose self-hashed evidence, blockers,
 warnings, digests, or repeat state no longer match the journal checkpoint.
+Historical turn summaries are restored from the same accepted checkpoint instead
+of copied seed state. The controller also recomputes the recovery request-ID
+prefix from the accepted basis, checkpoint, pending boundary, current bootstrap,
+and recovery notice before dispatch, so copied seeds cannot reuse pending or
+historical request IDs by changing both prefix and preview.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

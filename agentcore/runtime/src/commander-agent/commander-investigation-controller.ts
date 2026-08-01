@@ -160,7 +160,7 @@ export class CommanderInvestigationController {
       workingSet.model_turn_count = seed.effective_budget.consumed.model_turns
       workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
     }
-    const turns = seed.turn_summaries.slice()
+    const turns = authoritativeCheckpoint.checkpoint!.turn_summaries.map((turn) => redactValue(turn) as CommanderInvestigationTurnSummary)
     const latestAssistant = prepared.latestAssistant
     const latestToolResults = prepared.latestToolResults!
     const providerRequests = seed.provider_request_count_before
@@ -186,7 +186,7 @@ export class CommanderInvestigationController {
       providerRequests,
       recentResults,
       nextTurnIndex: seed.next_turn_index,
-      requestIdForTurn: (turn) => `${seed.request_id_prefix}_turn_${turn}`,
+      requestIdForTurn: (turn) => `${expectedRecoveryRequestPrefix(seed, authoritativeCheckpoint.checkpoint!)}_turn_${turn}`,
       abortSignal: options.abort_signal,
       recoveryNotice: seed.recovery_notice,
       firstRequestPreview: seed.first_model_request_preview,
@@ -1179,6 +1179,7 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
     const checkpointWorkingSet = restoreRecoveryWorkingSetFromCheckpoint(checkpoint)
     if (checkpointWorkingSet.blocker) return checkpointWorkingSet.blocker
     if (restoredWorkingSet.working_set_hash !== checkpointWorkingSet.workingSet!.working_set_hash) return "recovery continuation working set did not match journal checkpoint"
+    if (stableHash(seed.turn_summaries) !== stableHash(checkpoint.turn_summaries)) return "recovery continuation turn summaries did not match journal checkpoint"
   }
   if (stableHash(seed.consumed) !== stableHash(seed.effective_budget.consumed)) return "recovery continuation consumed budget counters did not verify"
   const consumed = seed.effective_budget.consumed
@@ -1223,6 +1224,13 @@ function validateRecoverySeedIntegrity(seed: CommanderInvestigationRecoveryConti
   if (seed.effective_budget.budget_hash !== continuationBudgetHash) return "recovery continuation budget hash did not verify"
   const recoveryNoticeError = validateRecoveryNotice(seed)
   if (recoveryNoticeError) return recoveryNoticeError
+  if (checkpoint) {
+    const expectedPrefix = expectedRecoveryRequestPrefix(seed, checkpoint)
+    if (seed.request_id_prefix !== expectedPrefix) return "recovery continuation request id prefix did not verify"
+    const expectedRequestId = `${expectedPrefix}_turn_${seed.next_turn_index}`
+    if (seed.first_model_request_preview.request_id !== expectedRequestId) return "recovery first model request id did not verify"
+    if (seed.pending_model_step_ref?.model_request_id === expectedRequestId || checkpoint.turn_summaries.some((turn) => turn.model_request_id === expectedRequestId)) return "recovery request id collides with historical model request id"
+  }
   const requestPreviewHash = stableHash({ ...seed.first_model_request_preview, request_preview_hash: "" })
   if (seed.first_model_request_preview.request_preview_hash !== requestPreviewHash) return "recovery first model request preview hash did not verify"
   return undefined
@@ -1234,6 +1242,16 @@ function restoreRecoveryWorkingSetFromCheckpoint(checkpoint: CommanderInvestigat
   if (JSON.stringify(workingSet.loaded_tool_ids) !== JSON.stringify(checkpointToolIds)) return { blocker: "checkpoint loaded tool references do not match working-set loaded_tool_ids" }
   if (workingSet.working_set_hash !== checkpoint.working_set.working_set_hash) return { blocker: "checkpoint durable working-set hash could not be revalidated" }
   return { workingSet }
+}
+
+function expectedRecoveryRequestPrefix(seed: CommanderInvestigationRecoveryContinuationSeed, checkpoint: CommanderInvestigationCheckpoint): string {
+  return `${checkpoint.investigation_id}_recovery_${checkpoint.checkpoint_sequence}_${stableHash({
+    basis: seed.recovery_basis_hash,
+    checkpoint: checkpoint.checkpoint_hash,
+    pending: seed.pending_model_step_ref?.model_request_id,
+    bootstrap: seed.current_bootstrap.bootstrap_hash,
+    notice: seed.recovery_notice.notice_hash,
+  }).slice(0, 12)}`
 }
 
 function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuationSeed): string | undefined {

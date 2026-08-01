@@ -7489,6 +7489,28 @@ describe("Commander in-memory investigation controller", () => {
     expect(requestDrift).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(requestDrift.blockers).toContain("first recovered model request no longer matches the approved preparation preview")
     expect(requestDriftAdapter.request_summaries).toHaveLength(0)
+    const forgedRequestSeed = structuredClone(built.seed!)
+    forgedRequestSeed.request_id_prefix = `${forgedRequestSeed.investigation_id}_turn`
+    forgedRequestSeed.first_model_request_preview.request_id = `${forgedRequestSeed.request_id_prefix}_turn_${forgedRequestSeed.next_turn_index}`
+    forgedRequestSeed.first_model_request_preview.request_preview_hash = stableHash({ ...forgedRequestSeed.first_model_request_preview, request_preview_hash: "" })
+    forgedRequestSeed.execution_preparation_hash = recoverySeedPreparationHash(forgedRequestSeed)
+    const forgedRequestAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "forged request id should not run" }])
+    const forgedRequestController = new CommanderInvestigationController({
+      modelAdapter: forgedRequestAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const forgedRequest = await forgedRequestController.runFromRecoverySeed(forgedRequestSeed)
+    expect(forgedRequest).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+    expect(forgedRequest.blockers).toContain("recovery continuation request id prefix did not verify")
+    expect(forgedRequestAdapter.request_summaries).toHaveLength(0)
     const tamperedReplaySeed = {
       ...built.seed!,
       latest_assistant: {
@@ -7572,6 +7594,31 @@ describe("Commander in-memory investigation controller", () => {
       working_set_hash: "",
     }
     replayAvailableWorkingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(replayAvailableWorkingSet as CommanderInvestigationWorkingSet))
+    const replayAvailableTurnSummary = {
+      turn_index: 1,
+      model_request_id: "model_request_replay_available_turn_1",
+      model_result_hash: "model_result_replay_available_turn_1",
+      model_status: "tool_call" as const,
+      provider_request_count: 1,
+      assistant_text_preview: "model-visible text omitted from durable journal; text_hash=turn1 text_chars=0",
+      tool_call_ids: [],
+      tool_ids: [],
+      tool_execution_ids: [],
+      tool_execution_statuses: [],
+      newly_loaded_tool_ids: [],
+      new_evidence_ids: [],
+      input_estimated_tokens: 32,
+      input_bytes: 128,
+      cumulative_tool_calls: 0,
+      progress_made: true,
+      no_progress_reasons: [],
+      warnings: [],
+      provider_audit_request_ids: [],
+      provider_audit_event_kinds: [],
+      provider_audit_event_count: 0,
+      provider_audit_complete: true,
+      turn_hash: "turn_hash_replay_available_turn_1",
+    }
     const replayAvailableCheckpoint = finalizeTestCheckpoint({
       ...source!.latest_checkpoint!,
       checkpoint_sequence: 1,
@@ -7582,6 +7629,7 @@ describe("Commander in-memory investigation controller", () => {
       previous_checkpoint_hash: source!.latest_checkpoint!.checkpoint_hash,
       provider_request_count: 1,
       working_set: replayAvailableWorkingSet as CommanderInvestigationWorkingSet,
+      turn_summaries: [replayAvailableTurnSummary],
       replay_exchange: summaryOnlyReplayExchangeFixture(1),
     })
     const replayAvailableBasis = {
@@ -7668,6 +7716,49 @@ describe("Commander in-memory investigation controller", () => {
     expect(replaySequenceZero).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
     expect(replaySequenceZero.blockers).toContain("recovery continuation authoritative journal checkpoint reference did not verify")
     expect(replaySequenceZeroAdapter.request_summaries).toHaveLength(0)
+    const fabricatedTurnSummarySeed = structuredClone(replayOmittedSeed)
+    fabricatedTurnSummarySeed.replay_summary = {
+      replay_protocol_available: true,
+      tool_call_count: replayAvailableCheckpoint.replay_exchange!.assistant_message.content.filter((part) => part.type === "tool_call").length,
+      tool_result_count: replayAvailableCheckpoint.replay_exchange!.tool_result_messages.length,
+      replay_exchange_hash: replayAvailableCheckpoint.replay_exchange!.exchange_hash,
+      assistant_text_persisted: false,
+      exact_replay_supported: false,
+      full_tool_results_persisted: false,
+    }
+    fabricatedTurnSummarySeed.replay_exchange = replayAvailableCheckpoint.replay_exchange
+    fabricatedTurnSummarySeed.replay_exchange_hash = replayAvailableCheckpoint.replay_exchange!.exchange_hash
+    fabricatedTurnSummarySeed.latest_assistant = undefined
+    fabricatedTurnSummarySeed.latest_tool_results = []
+    fabricatedTurnSummarySeed.replay_message_hash = stableHash({ replay_exchange_hash: fabricatedTurnSummarySeed.replay_exchange_hash, latest_assistant: undefined, latest_tool_results: [] })
+    fabricatedTurnSummarySeed.turn_summaries = [{
+      ...replayAvailableTurnSummary,
+      assistant_text_preview: "fabricated copied seed turn summary",
+      turn_hash: "fabricated_turn_hash",
+    }]
+    fabricatedTurnSummarySeed.execution_preparation_hash = recoverySeedPreparationHash(fabricatedTurnSummarySeed)
+    const fabricatedTurnSummaryAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fabricated turn summary should not run" }])
+    const fabricatedTurnSummaryController = new CommanderInvestigationController({
+      modelAdapter: fabricatedTurnSummaryAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => ({
+        ...source!,
+        latest_checkpoint: replayAvailableCheckpoint,
+        recovery_basis: replayAvailableBasis,
+        recovery_basis_hash: replayAvailableBasis.basis_hash,
+      }),
+    })
+    const fabricatedTurnSummary = await fabricatedTurnSummaryController.runFromRecoverySeed(fabricatedTurnSummarySeed)
+    expect(fabricatedTurnSummary).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
+    expect(fabricatedTurnSummary.blockers).toContain("recovery continuation turn summaries did not match journal checkpoint")
+    expect(fabricatedTurnSummaryAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,
       recovery_notice: {
