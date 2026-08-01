@@ -153,6 +153,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       normalized_input_hash: source.recovery_basis!.normalized_input_hash,
       original_started_at: source.record?.started_at ?? checkpoint.created_at,
       recovery_basis_hash: source.recovery_basis_hash!,
+      pending_model_boundary_hash: source.recovery_basis!.pending_model_boundary_hash,
       checkpoint_ref: checkpointRef,
       pending_model_step_ref: pendingRef,
       original_bootstrap_ref: checkpoint.bootstrap_ref,
@@ -185,6 +186,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       normalized_input_hash: source.recovery_basis!.normalized_input_hash,
       original_started_at: source.record?.started_at ?? checkpoint.created_at,
       recovery_basis_hash: source.recovery_basis_hash!,
+      pending_model_boundary_hash: source.recovery_basis!.pending_model_boundary_hash,
       checkpoint_ref: checkpointRef,
       pending_model_step_ref: pendingRef,
       original_bootstrap_ref: checkpoint.bootstrap_ref,
@@ -238,12 +240,13 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const provider = this.options.providerPreflight
       ? await this.options.providerPreflight({ phase: input.phase, provider_id: input.provider_id, provider_kind: input.provider_kind, model_id: input.model_id, turn_index: turnIndex })
       : undefined
+    if (provider && !provider.ready) blockers.push(...(provider.blockers.length ? provider.blockers : ["current provider preflight no longer permits recovery preparation"]))
     const snapshot = {
       snapshot_version: 1 as const,
       turn_index: turnIndex,
       human_control_action: "continue" as const,
       human_control_warnings: human.warnings.map((item) => bound(item, 240)).slice(0, 12),
-      provider_preflight_ready: true as const,
+      provider_preflight_ready: provider?.ready ?? true,
       provider_preflight_warnings: (provider?.warnings ?? []).map((item) => bound(item, 240)).slice(0, 12),
       gate_snapshot_hash: "",
     }

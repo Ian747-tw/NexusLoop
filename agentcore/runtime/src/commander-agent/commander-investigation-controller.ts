@@ -121,6 +121,7 @@ export class CommanderInvestigationController {
       normalized_input_hash: seed.normalized_input_hash,
       original_started_at: seed.original_started_at,
       recovery_basis_hash: seed.recovery_basis_hash,
+      pending_model_boundary_hash: seed.pending_model_boundary_hash,
       checkpoint_ref: seed.checkpoint_ref,
       pending_model_step_ref: seed.pending_model_step_ref,
       original_bootstrap_ref: seed.original_bootstrap_ref,
@@ -233,6 +234,7 @@ export class CommanderInvestigationController {
       if (turn === state.nextTurnIndex && preModelGateSnapshot) {
         const gateBlocker = preModelGateSnapshotBlocker(preModelGateSnapshot, turn, humanBeforeModel, providerBeforeModel)
         if (gateBlocker) return finish("blocked", "controller_error", [gateBlocker], preModelWarnings)
+        preModelWarnings.splice(0, preModelWarnings.length, ...preModelGateSnapshot.human_control_warnings, ...preModelGateSnapshot.provider_preflight_warnings)
       }
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted"], preModelWarnings)
 
@@ -1198,13 +1200,15 @@ function validateRecoveryIdentity(seed: CommanderInvestigationRecoveryContinuati
     latest_checkpoint_sequence: seed.checkpoint_ref.checkpoint_sequence,
     latest_checkpoint_hash: seed.checkpoint_ref.checkpoint_hash,
     pending_model_request_id: seed.pending_model_step_ref?.model_request_id,
-    pending_model_boundary_hash: seed.pending_model_step_ref ? seed.recovery_basis_hash ? undefined : undefined : undefined,
+    pending_model_boundary_hash: seed.pending_model_step_ref ? seed.pending_model_boundary_hash : undefined,
     terminal_hash: undefined,
     recovery_kind: seed.recovery_kind,
     basis_hash: "",
   }
-  const basisHash = stableHash({ ...basis, pending_model_boundary_hash: seed.pending_model_step_ref ? undefined : undefined, terminal_hash: undefined, basis_hash: "" })
-  if (!seed.recovery_basis_hash || (seed.recovery_kind === "checkpoint" && basisHash !== seed.recovery_basis_hash)) return "recovery continuation basis hash did not verify"
+  const basisHash = stableHash({ ...basis, basis_hash: "" })
+  if (!seed.recovery_basis_hash || basisHash !== seed.recovery_basis_hash) return "recovery continuation basis hash did not verify"
+  if (seed.recovery_kind === "uncertain_provider_outcome" && (!seed.pending_model_step_ref || !seed.pending_model_boundary_hash)) return "recovery continuation pending boundary did not verify"
+  if (seed.recovery_kind === "checkpoint" && (seed.pending_model_step_ref || seed.pending_model_boundary_hash)) return "recovery continuation pending boundary did not verify"
   return undefined
 }
 
@@ -1259,7 +1263,7 @@ function preModelGateSnapshotBlocker(
     turn_index: turn,
     human_control_action: human.action === "continue" ? "continue" as const : "continue" as const,
     human_control_warnings: human.warnings.map((item) => preview(item, 240)).slice(0, 12),
-    provider_preflight_ready: provider?.ready !== false ? true as const : true as const,
+    provider_preflight_ready: provider?.ready ?? true,
     provider_preflight_warnings: (provider?.warnings ?? []).map((item) => preview(item, 240)).slice(0, 12),
     gate_snapshot_hash: "",
   }

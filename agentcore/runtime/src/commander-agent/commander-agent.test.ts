@@ -32,6 +32,7 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
+  buildCommanderInvestigationRecoveryNotice,
   reconstructCommanderRecoveryReplayExchange,
 	  CommanderInvestigationRecoveryApprovalService,
 	  CommanderInvestigationRecoveryService,
@@ -7194,6 +7195,67 @@ describe("Commander in-memory investigation controller", () => {
     expect(warnedBuilt.seed).toBeDefined()
     expect(warnedBuilt.seed!.pre_model_gate_snapshot.provider_preflight_warnings).toContain("resume requested; continue with operator warning")
     expect(warnedBuilt.seed!.execution_preparation_hash).not.toBe(built.seed!.execution_preparation_hash)
+    const blockedProviderBuilder = new CommanderInvestigationRecoveryContinuationBuilder({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
+      contextService: new CommanderInvestigationContextService(),
+      modelOutputTokens: () => 1024,
+      providerPreflight: async () => ({
+        ready: false,
+        source_kind: "configured_connector",
+        checks: [],
+        checked_at: "2026-01-01T00:00:00.000Z",
+        blockers: ["configured provider gate denied recovery preparation"],
+        warnings: ["provider gate warning before denial"],
+        snapshot_hash: "provider_blocked_warning_hash",
+      }),
+    })
+    const blockedProviderBuilt = await blockedProviderBuilder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
+    expect(blockedProviderBuilt.seed).toBeUndefined()
+    expect(blockedProviderBuilt.blockers).toContain("configured provider gate denied recovery preparation")
+    const longGateWarning = `resume requested\n${"with repeated whitespace ".repeat(30)}and a bounded warning tail`
+    const longWarningBuilder = new CommanderInvestigationRecoveryContinuationBuilder({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      currentBootstrap: (bootstrapInput) => (server as any).commanderInvestigationBootstrapService().compile(bootstrapInput),
+      contextService: new CommanderInvestigationContextService(),
+      modelOutputTokens: () => 1024,
+      providerPreflight: async () => ({
+        ready: true,
+        source_kind: "configured_connector",
+        checks: [],
+        checked_at: "2026-01-01T00:00:00.000Z",
+        blockers: [],
+        warnings: [longGateWarning],
+        snapshot_hash: "provider_long_warning_hash",
+      }),
+    })
+    const longWarningBuilt = await longWarningBuilder.build({ source: source!, preview: after, checkpoint: source!.latest_checkpoint! })
+    expect(longWarningBuilt.seed).toBeDefined()
+    expect(longWarningBuilt.seed!.pre_model_gate_snapshot.provider_preflight_warnings[0].length).toBeLessThanOrEqual(240)
+    const longWarningAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "canonical warning proceeds" }])
+    const longWarningController = new CommanderInvestigationController({
+      modelAdapter: longWarningAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      providerGate: { check: async () => ({
+        ready: true,
+        source_kind: "configured_connector",
+        checks: [],
+        checked_at: "2026-01-01T00:00:01.000Z",
+        blockers: [],
+        warnings: [longGateWarning],
+        snapshot_hash: "provider_long_warning_hash_runtime",
+      }) },
+    })
+    const longWarning = await longWarningController.runFromRecoverySeed(longWarningBuilt.seed!)
+    expect(longWarning).toMatchObject({ status: "final", provider_request_count: 1 })
+    expect(longWarningAdapter.request_summaries).toHaveLength(1)
     const sameWarningAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "same warning proceeds" }])
     const sameWarningController = new CommanderInvestigationController({
       modelAdapter: sameWarningAdapter,
@@ -8359,10 +8421,38 @@ describe("Commander in-memory investigation controller", () => {
 		      preview: before,
 		      checkpoint: checkpoint!,
 		    })
-		    expect(uncertainBuilt.blockers).toEqual([])
-		    expect(uncertainBuilt.seed?.effective_budget.consumed.model_turns).toBe(1)
-		    expect(uncertainBuilt.seed?.working_set.model_turn_count).toBe(0)
-		    const uncertainRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
+			    expect(uncertainBuilt.blockers).toEqual([])
+			    expect(uncertainBuilt.seed?.effective_budget.consumed.model_turns).toBe(1)
+			    expect(uncertainBuilt.seed?.working_set.model_turn_count).toBe(0)
+			    expect(uncertainBuilt.seed?.pending_model_boundary_hash).toBe(uncertainSource!.recovery_basis!.pending_model_boundary_hash)
+			    const erasedPendingSeed = structuredClone(uncertainBuilt.seed!)
+			    erasedPendingSeed.recovery_kind = "checkpoint"
+			    erasedPendingSeed.pending_model_step_ref = undefined
+			    erasedPendingSeed.pending_model_boundary_hash = undefined
+			    erasedPendingSeed.recovery_notice = buildCommanderInvestigationRecoveryNotice({
+			      source: { ...uncertainSource!, pending_model_step: undefined },
+			      checkpoint: checkpoint!,
+			      current_bootstrap_hash: erasedPendingSeed.current_bootstrap_hash,
+			      continuity_drift_detected: erasedPendingSeed.continuity_drift_detected,
+			      next_turn_index: erasedPendingSeed.next_turn_index,
+			    })
+			    erasedPendingSeed.recovery_notice_hash = erasedPendingSeed.recovery_notice.notice_hash
+			    erasedPendingSeed.execution_preparation_hash = recoverySeedPreparationHash(erasedPendingSeed)
+			    const erasedRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
+			    const erasedPendingController = new CommanderInvestigationController({
+			      toolExecutor: executorFixture().executor,
+			      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: erasedRegistry }) }),
+			      descriptors: COMMANDER_TOOL_REGISTRY,
+			      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+			      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+			      contextService: new CommanderInvestigationContextService(),
+			      capabilityRegistry: erasedRegistry,
+			      contextBudgetService: new ContextBudgetService({ registry: erasedRegistry }),
+			    })
+			    const erasedPending = await erasedPendingController.runFromRecoverySeed(erasedPendingSeed)
+			    expect(erasedPending).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
+			    expect(erasedPending.blockers).toContain("recovery continuation basis hash did not verify")
+			    const uncertainRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
 		    const earlyExitController = new CommanderInvestigationController({
 		      toolExecutor: executorFixture().executor,
 		      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: uncertainRegistry }) }),
@@ -9708,6 +9798,7 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     normalized_input_hash: seed.normalized_input_hash,
     original_started_at: seed.original_started_at,
     recovery_basis_hash: seed.recovery_basis_hash,
+    pending_model_boundary_hash: seed.pending_model_boundary_hash,
     checkpoint_ref: seed.checkpoint_ref,
     pending_model_step_ref: seed.pending_model_step_ref,
     original_bootstrap_ref: seed.original_bootstrap_ref,

@@ -71,6 +71,12 @@ metadata, and deep-clones/freeze-bounds the accepted descriptors before building
 provider tool schemas. A mutable seed or aliased descriptor cannot substitute a
 different schema under unchanged metadata.
 
+For uncertain-provider recovery, the seed also carries the journal recovery
+basis's pending-boundary hash. Controller validation recomputes the recovery
+basis with that pending hash before accepting the seed, so a copied seed cannot
+erase the pending model-step reference, swap in a non-pending notice, and still
+look preparation-valid.
+
 ### Budgets And Counters
 
 Recovery does not reset counters. Effective absolute ceilings are the stored
@@ -100,6 +106,12 @@ snapshot is included in the preparation hash and approved first context. The
 controller rechecks the same semantics immediately before the first recovered
 request; a changed action or warning blocks as stale preparation instead of
 silently sending a different request.
+
+Regular recovery preview builds this snapshot without requiring live execution
+readiness. Approved execution-preparation preview supplies the current provider
+preflight and fails closed when it returns blockers. When the first recovered
+request is later constructed in scripted controller tests, context uses the
+canonical bounded snapshot warnings rather than raw gate-warning strings.
 
 Only summary-level assistant/tool protocol relationships are reconstructed:
 tool-call IDs, canonical tool IDs, redacted provider-visible arguments,

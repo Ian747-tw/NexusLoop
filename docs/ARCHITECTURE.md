@@ -181,13 +181,15 @@ input/output schema metadata from schema objects, and deep-clones accepted
 descriptors before any scripted continuation can build provider tool schemas.
 The controller now feeds new investigations and recovery seeds into one shared
 model/tool loop; the verified recovery identity is used for both provider gates
-and provider request construction. Existing approvals that predate that
-semantic plan input become stale rather than corrupt. Uncertain pending model
-steps remain uncertain, are conservatively charged as one unresolved model
-attempt, and are never replayed or treated as known success/failure. Original
-investigation start time remains lineage metadata, while continuation active
-duration counts prior elapsed active time plus current active work rather than
-downtime.
+and provider request construction. The recovery seed binds the pending-boundary
+hash for uncertain outcomes, and the approved first context uses canonical
+bounded human/provider gate-warning snapshots. Existing approvals that predate
+that semantic plan input become stale rather than corrupt. Uncertain pending
+model steps remain uncertain, are conservatively charged as one unresolved
+model attempt, and are never replayed or treated as known success/failure.
+Original investigation start time remains lineage metadata, while continuation
+active duration counts prior elapsed active time plus current active work rather
+than downtime.
 
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In

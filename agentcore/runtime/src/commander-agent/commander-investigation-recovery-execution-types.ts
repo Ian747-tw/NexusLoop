@@ -121,7 +121,7 @@ export type CommanderInvestigationRecoveryPreModelGateSnapshot = {
   turn_index: number
   human_control_action: "continue"
   human_control_warnings: string[]
-  provider_preflight_ready: true
+  provider_preflight_ready: boolean
   provider_preflight_warnings: string[]
   gate_snapshot_hash: string
 }
@@ -145,6 +145,7 @@ export type CommanderInvestigationRecoveryContinuationSeed = {
   normalized_input_hash: string
   original_started_at: string
   recovery_basis_hash: string
+  pending_model_boundary_hash?: string
   checkpoint_ref: CommanderInvestigationRecoveryCheckpointApprovalRef
   pending_model_step_ref?: CommanderInvestigationRecoveryPendingApprovalRef
   original_bootstrap_ref: { bootstrap_id: string; bootstrap_hash: string }

@@ -5132,7 +5132,7 @@ export class RuntimeServer {
     return this.commanderInvestigationRecoveryServiceInstance
   }
 
-  private commanderInvestigationRecoveryContinuationBuilderOptions() {
+  private commanderInvestigationRecoveryContinuationBuilderOptions(options?: { includeProviderPreflight?: boolean }) {
     return {
       descriptors: COMMANDER_TOOL_REGISTRY,
       currentBootstrap: (input: Omit<CommanderInvestigationInput, "abort_signal">) => this.commanderInvestigationBootstrapService().compile(input),
@@ -5148,7 +5148,7 @@ export class RuntimeServer {
         before: "model_step",
         turn_index: input.turn_index,
       }),
-      providerPreflight: async (input: { phase: CommanderToolPhase; provider_id: string; provider_kind: string; model_id: string; turn_index: number }) => this.commanderInvestigationProviderConfig
+      providerPreflight: options?.includeProviderPreflight ? async (input: { phase: CommanderToolPhase; provider_id: string; provider_kind: string; model_id: string; turn_index: number }) => this.commanderInvestigationProviderConfig
         ? this.defaultCommanderInvestigationProviderGate().check({
           phase: input.phase,
           provider_id: input.provider_id,
@@ -5157,7 +5157,7 @@ export class RuntimeServer {
           before: "model_step",
           turn_index: input.turn_index,
         })
-        : undefined,
+        : undefined : undefined,
     }
   }
 
@@ -5175,7 +5175,7 @@ export class RuntimeServer {
     this.commanderInvestigationRecoveryExecutionServiceInstance ??= new CommanderInvestigationRecoveryExecutionService({
       recoveryPreview: (input) => this.commanderInvestigationRecoveryService().preview(input),
       recoverySource: (investigationId) => this.commanderInvestigationJournalService().recoverySource(investigationId),
-      continuationBuilder: new CommanderInvestigationRecoveryContinuationBuilder(this.commanderInvestigationRecoveryContinuationBuilderOptions()),
+      continuationBuilder: new CommanderInvestigationRecoveryContinuationBuilder(this.commanderInvestigationRecoveryContinuationBuilderOptions({ includeProviderPreflight: true })),
       now: this.researchSynthesisNow,
     })
     return this.commanderInvestigationRecoveryExecutionServiceInstance
