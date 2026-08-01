@@ -121,9 +121,11 @@ prefix from the accepted basis, checkpoint, pending boundary, current bootstrap,
 and recovery notice before dispatch, so copied seeds cannot reuse pending or
 historical request IDs by changing both prefix and preview.
 Before dispatch, the controller recompiles the current bootstrap through its own
-bootstrap service and compares it with the prepared seed. Post-journal-lookup
-blocked results use the accepted checkpoint working set and turn summaries, so a
-rejected copied seed cannot leak fabricated history through a blocked result.
+bootstrap service, using the same forced-continuity input as preparation, and
+compares it with the prepared seed. Post-journal-lookup blocked results use the
+accepted checkpoint working set, turn summaries, and provider-request count, so a
+rejected copied seed cannot leak fabricated history or counters through a
+blocked result.
 
 Preparation also captures a bounded semantic pre-model gate snapshot: the
 current human-control action and warnings plus provider-preflight warnings. That

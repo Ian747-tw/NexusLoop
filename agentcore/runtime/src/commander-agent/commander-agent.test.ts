@@ -6964,6 +6964,35 @@ describe("Commander in-memory investigation controller", () => {
     expect(built.seed?.effective_budget.original_budget_hash).toBe(source!.latest_checkpoint!.budget.budget_hash)
     expect(built.seed?.effective_budget.effective_budget_hash).toBe(built.seed?.effective_budget.effective_budget.budget_hash)
     expect(built.seed?.effective_budget.effective_budget_hash).toBe(stableHash({ ...built.seed!.effective_budget.effective_budget, budget_hash: "" }))
+    const omittedContinuitySource = structuredClone(source!)
+    omittedContinuitySource.normalized_input = { ...omittedContinuitySource.normalized_input!, include_continuity: false }
+    omittedContinuitySource.recovery_basis = {
+      ...omittedContinuitySource.recovery_basis!,
+      normalized_input_hash: stableHash(omittedContinuitySource.normalized_input),
+      basis_hash: "",
+    }
+    omittedContinuitySource.recovery_basis.basis_hash = stableHash({ ...omittedContinuitySource.recovery_basis, basis_hash: "" })
+    omittedContinuitySource.recovery_basis_hash = omittedContinuitySource.recovery_basis.basis_hash
+    const omittedContinuityBuilt = await builder.build({ source: omittedContinuitySource, preview: after, checkpoint: omittedContinuitySource.latest_checkpoint! })
+    expect(omittedContinuityBuilt.blockers).toEqual([])
+    expect(omittedContinuityBuilt.seed?.current_bootstrap.continuity_assessment_status).toBe("ready")
+    const omittedContinuityAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "forced continuity recovered final" }])
+    const omittedContinuityRegistry = new ModelCapabilityRegistry({ runtimeCapabilities: [commanderInvestigationModelCapability(validateCommanderInvestigationProviderConfig(providerConfig()))] })
+    const omittedContinuityController = new CommanderInvestigationController({
+      modelAdapter: omittedContinuityAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: omittedContinuityRegistry,
+      contextBudgetService: new ContextBudgetService({ registry: omittedContinuityRegistry }),
+      recoverySource: async () => omittedContinuitySource,
+    })
+    const omittedContinuityRun = await omittedContinuityController.runFromRecoverySeed(omittedContinuityBuilt.seed!)
+    expect(omittedContinuityRun).toMatchObject({ status: "final", provider_request_count: 1 })
+    expect(omittedContinuityRun.blockers).not.toContain("recovery continuation current bootstrap did not match controller compilation")
     const stricterContextBuilt = await builder.build({
       source: source!,
       checkpoint: source!.latest_checkpoint!,
@@ -7553,6 +7582,32 @@ describe("Commander in-memory investigation controller", () => {
     expect(forgedRequest).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(forgedRequest.blockers).toContain("recovery continuation request id prefix did not verify")
     expect(forgedRequestAdapter.request_summaries).toHaveLength(0)
+    const forgedProviderCountSeed = structuredClone(built.seed!)
+    forgedProviderCountSeed.provider_request_count_before = 99
+    forgedProviderCountSeed.effective_budget.consumed.provider_requests = 99
+    forgedProviderCountSeed.consumed.provider_requests = 99
+    forgedProviderCountSeed.working_set.provider_audit.provider_request_count = 99
+    forgedProviderCountSeed.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(forgedProviderCountSeed.working_set))
+    forgedProviderCountSeed.working_set_hash = forgedProviderCountSeed.working_set.working_set_hash
+    forgedProviderCountSeed.execution_preparation_hash = recoverySeedPreparationHash(forgedProviderCountSeed)
+    const forgedProviderCountAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "forged provider count should not run" }])
+    const forgedProviderCountController = new CommanderInvestigationController({
+      modelAdapter: forgedProviderCountAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    })
+    const forgedProviderCount = await forgedProviderCountController.runFromRecoverySeed(forgedProviderCountSeed)
+    expect(forgedProviderCount).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: source!.latest_checkpoint!.provider_request_count })
+    expect(forgedProviderCount.blockers).toContain("recovery continuation working set did not match journal checkpoint")
+    expect(forgedProviderCount.provider_audit.provider_request_count).toBe(source!.latest_checkpoint!.working_set.provider_audit.provider_request_count)
+    expect(forgedProviderCountAdapter.request_summaries).toHaveLength(0)
     const tamperedReplaySeed = {
       ...built.seed!,
       latest_assistant: {

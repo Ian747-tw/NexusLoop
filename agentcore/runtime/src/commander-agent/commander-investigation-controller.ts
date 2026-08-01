@@ -155,11 +155,12 @@ export class CommanderInvestigationController {
     const authoritativeWorkingSet = checkpointWorkingSet.workingSet
       ? (redactValue(checkpointWorkingSet.workingSet) as CommanderInvestigationWorkingSet)
       : (redactValue(checkpoint.working_set) as CommanderInvestigationWorkingSet)
+    const authoritativeProviderRequests = checkpoint.provider_request_count
     const finishAfterJournalLookup = (blocker: string, bootstrap: CommanderInvestigationBootstrap = seed.current_bootstrap, loadedTools: CommanderToolDescriptor[] = seed.loaded_tools) =>
-      this.finish(input, seed.investigation_id, "blocked", "controller_error", bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, authoritativeTurns, authoritativeWorkingSet, seed.provider_request_count_before, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+      this.finish(input, seed.investigation_id, "blocked", "controller_error", bootstrap, seed.effective_budget.effective_budget, seed.tool_protocol, authoritativeTurns, authoritativeWorkingSet, authoritativeProviderRequests, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     const identityError = validateRecoveryIdentity(seed)
     if (identityError) return finishAfterJournalLookup(identityError)
-    const currentBootstrap = await this.options.bootstrapService.compile(input)
+    const currentBootstrap = await this.options.bootstrapService.compile({ ...input, include_continuity: true })
     const currentBootstrapHash = sha256JsonHash({ ...currentBootstrap, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
     if (currentBootstrap.bootstrap_hash !== currentBootstrapHash || currentBootstrapHash !== seed.current_bootstrap_hash || stableHash(currentBootstrap) !== stableHash(seed.current_bootstrap)) {
       return finishAfterJournalLookup("recovery continuation current bootstrap did not match controller compilation", currentBootstrap)
@@ -178,7 +179,7 @@ export class CommanderInvestigationController {
     const turns = authoritativeTurns
     const latestAssistant = prepared.latestAssistant
     const latestToolResults = prepared.latestToolResults!
-    const providerRequests = seed.provider_request_count_before
+    const providerRequests = authoritativeProviderRequests
     const recentResults = new Map(workingSet.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
     if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
     if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
