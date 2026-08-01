@@ -7510,7 +7510,7 @@ describe("Commander in-memory investigation controller", () => {
     })
     const fabricatedExchangeResult = await fabricatedExchangeController.runFromRecoverySeed(fabricatedExchangeSeed)
     expect(fabricatedExchangeResult).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(fabricatedExchangeResult.blockers).toContain("recovery continuation authoritative checkpoint replay exchange is missing")
+    expect(fabricatedExchangeResult.blockers).toContain("recovery continuation replay availability did not match journal checkpoint")
     expect(fabricatedExchangeAdapter.request_summaries).toHaveLength(0)
     const forgedReplayAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "forged checkpoint replay should not run" }])
     const forgedReplayController = new CommanderInvestigationController({
@@ -7527,8 +7527,82 @@ describe("Commander in-memory investigation controller", () => {
     })
     const forgedReplay = await forgedReplayController.runFromRecoverySeed(fabricatedExchangeSeed)
     expect(forgedReplay).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
-    expect(forgedReplay.blockers).toContain("recovery continuation authoritative checkpoint replay exchange is missing")
+    expect(forgedReplay.blockers).toContain("recovery continuation replay availability did not match journal checkpoint")
     expect(forgedReplayAdapter.request_summaries).toHaveLength(0)
+    const replayAvailableWorkingSet = {
+      ...source!.latest_checkpoint!.working_set,
+      model_turn_count: 1,
+      working_set_hash: "",
+    }
+    replayAvailableWorkingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(replayAvailableWorkingSet as CommanderInvestigationWorkingSet))
+    const replayAvailableCheckpoint = finalizeTestCheckpoint({
+      ...source!.latest_checkpoint!,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "turn_complete",
+      turn_index: 1,
+      next_turn_index: 2,
+      previous_checkpoint_id: source!.latest_checkpoint!.checkpoint_id,
+      previous_checkpoint_hash: source!.latest_checkpoint!.checkpoint_hash,
+      provider_request_count: 1,
+      working_set: replayAvailableWorkingSet as CommanderInvestigationWorkingSet,
+      replay_exchange: summaryOnlyReplayExchangeFixture(1),
+    })
+    const replayAvailableBasis = {
+      ...source!.recovery_basis!,
+      latest_checkpoint_id: replayAvailableCheckpoint.checkpoint_id,
+      latest_checkpoint_sequence: replayAvailableCheckpoint.checkpoint_sequence,
+      latest_checkpoint_hash: replayAvailableCheckpoint.checkpoint_hash,
+      basis_hash: "",
+    }
+    replayAvailableBasis.basis_hash = stableHash({ ...replayAvailableBasis, basis_hash: "" })
+    const replayOmittedSeed = structuredClone(built.seed!)
+    replayOmittedSeed.checkpoint_ref = {
+      checkpoint_id: replayAvailableCheckpoint.checkpoint_id,
+      checkpoint_sequence: replayAvailableCheckpoint.checkpoint_sequence,
+      checkpoint_hash: replayAvailableCheckpoint.checkpoint_hash,
+    }
+    replayOmittedSeed.recovery_basis_hash = replayAvailableBasis.basis_hash
+    replayOmittedSeed.working_set = replayAvailableCheckpoint.working_set as unknown as CommanderInvestigationWorkingSet
+    replayOmittedSeed.working_set_hash = replayAvailableCheckpoint.working_set.working_set_hash
+    replayOmittedSeed.turn_summaries = replayAvailableCheckpoint.turn_summaries
+    replayOmittedSeed.next_turn_index = 2
+    replayOmittedSeed.provider_request_count_before = 1
+    replayOmittedSeed.replay_summary = {
+      replay_protocol_available: false,
+      tool_call_count: 0,
+      tool_result_count: 0,
+      assistant_text_persisted: false,
+      exact_replay_supported: false,
+      full_tool_results_persisted: false,
+    }
+    replayOmittedSeed.replay_exchange = undefined
+    replayOmittedSeed.replay_exchange_hash = undefined
+    replayOmittedSeed.latest_assistant = undefined
+    replayOmittedSeed.latest_tool_results = []
+    replayOmittedSeed.replay_message_hash = stableHash({ replay_exchange_hash: undefined, latest_assistant: undefined, latest_tool_results: [] })
+    replayOmittedSeed.execution_preparation_hash = recoverySeedPreparationHash(replayOmittedSeed)
+    const replayOmittedAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "omitted replay should not run" }])
+    const replayOmittedController = new CommanderInvestigationController({
+      modelAdapter: replayOmittedAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => ({
+        ...source!,
+        latest_checkpoint: replayAvailableCheckpoint,
+        recovery_basis: replayAvailableBasis,
+        recovery_basis_hash: replayAvailableBasis.basis_hash,
+      }),
+    })
+    const replayOmitted = await replayOmittedController.runFromRecoverySeed(replayOmittedSeed)
+    expect(replayOmitted).toMatchObject({ status: "blocked", stop_reason: "controller_error" })
+    expect(replayOmitted.blockers).toContain("recovery continuation replay availability did not match journal checkpoint")
+    expect(replayOmittedAdapter.request_summaries).toHaveLength(0)
     const tamperedNoticeSeed = {
       ...built.seed!,
       recovery_notice: {

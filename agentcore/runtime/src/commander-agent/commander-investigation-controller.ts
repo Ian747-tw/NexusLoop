@@ -195,7 +195,7 @@ export class CommanderInvestigationController {
 	  }
 
   private async recoverySeedCheckpoint(seed: CommanderInvestigationRecoveryContinuationSeed): Promise<{ checkpoint?: CommanderInvestigationCheckpoint; blocker?: string }> {
-    if (!seed.replay_summary.replay_protocol_available) return {}
+    if (seed.checkpoint_ref.checkpoint_sequence === 0 && !seed.replay_summary.replay_protocol_available) return {}
     if (!this.options.recoverySource) return { blocker: "recovery continuation authoritative journal source is required for replay exchange" }
     const source = await this.options.recoverySource(seed.investigation_id)
     if (!source || source.projection_status !== "ready" || !source.latest_checkpoint) return { blocker: "recovery continuation authoritative journal checkpoint is unavailable" }
@@ -221,6 +221,9 @@ export class CommanderInvestigationController {
     } else if (source.pending_model_step) {
       return { blocker: "recovery continuation authoritative journal pending boundary did not verify" }
     }
+    const checkpointHasReplay = Boolean(checkpoint.replay_exchange)
+    if (checkpoint.checkpoint_sequence > 0 && !checkpointHasReplay) return { blocker: "recovery continuation authoritative checkpoint replay exchange is missing" }
+    if (checkpointHasReplay !== seed.replay_summary.replay_protocol_available) return { blocker: "recovery continuation replay availability did not match journal checkpoint" }
     return { checkpoint }
   }
 

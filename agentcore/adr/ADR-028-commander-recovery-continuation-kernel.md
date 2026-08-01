@@ -106,9 +106,10 @@ assistant replay unavailable, and requires a fresh request.
 Replay messages are not accepted as caller authority. Replay-bearing seeds
 require the controller to resolve the accepted checkpoint from the authoritative
 journal recovery source. The controller verifies that checkpoint's semantic-state
-hash, checkpoint ID, and checkpoint hash, compares the seed replay exchange with
-that journal checkpoint, reconstructs the transient assistant/tool messages from
-the checkpoint's verified durable summary-only replay exchange, and compares the
+hash, checkpoint ID, and checkpoint hash, derives replay availability from that
+journal checkpoint, compares the seed replay exchange with the checkpoint when
+replay is required, reconstructs the transient assistant/tool messages from the
+checkpoint's verified durable summary-only replay exchange, and compares the
 seed's replay message hash to that canonical reconstruction before any adapter
 call.
 

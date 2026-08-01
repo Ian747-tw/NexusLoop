@@ -190,7 +190,8 @@ model attempt, and are never replayed or treated as known success/failure. The
 controller validates that charge before accepting a recovery seed. Summary-only
 assistant/tool replay messages are reconstructed from the authoritative
 journal checkpoint's hash-verified durable replay exchange instead of treated as
-seed or caller-supplied checkpoint authority.
+seed or caller-supplied checkpoint authority. Replay availability is derived
+from that journal checkpoint, not from copied seed flags.
 Original investigation start time remains lineage metadata, while continuation
 active duration counts prior elapsed active time plus current active work rather
 than downtime.
