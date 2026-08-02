@@ -442,13 +442,21 @@ export class CommanderInvestigationJournalService {
     recovery_request_id_prefix: string
   }): Promise<CommanderInvestigationJournalRun> {
     if (this.active.has(input.investigation_id)) throw new CommanderInvestigationJournalConflictError("duplicate concurrent durable investigation")
-    const source = await this.recoverySource(input.investigation_id)
-    const attempt = source?.current_recovery_attempt
-    const checkpoint = source?.latest_checkpoint
-    if (!source || source.projection_status !== "ready" || !attempt || !checkpoint || attempt.recovery_attempt_id !== input.recovery_attempt_id || attempt.approval_id !== input.consumed_approval_id) {
-      throw new CommanderInvestigationJournalConflictError("recovery persistence observer requires the active confirmed recovery attempt")
-    }
     this.active.add(input.investigation_id)
+    let source: CommanderInvestigationRecoverySource | undefined
+    try {
+      source = await this.recoverySource(input.investigation_id)
+      const attempt = source?.current_recovery_attempt
+      const checkpoint = source?.latest_checkpoint
+      if (!source || source.projection_status !== "ready" || !attempt || !checkpoint || attempt.recovery_attempt_id !== input.recovery_attempt_id || attempt.approval_id !== input.consumed_approval_id) {
+        throw new CommanderInvestigationJournalConflictError("recovery persistence observer requires the active confirmed recovery attempt")
+      }
+    } catch (error) {
+      this.active.delete(input.investigation_id)
+      throw error
+    }
+    const attempt = source.current_recovery_attempt!
+    const checkpoint = source.latest_checkpoint!
     const state: CommanderInvestigationJournalRunState = {
       started_persisted: true,
       terminal_persisted: false,

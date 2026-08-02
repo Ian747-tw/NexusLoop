@@ -9847,6 +9847,132 @@ describe("Commander in-memory investigation controller", () => {
     })
   })
 
+  test("recovery transaction runner failure preserves a fresh uncertain model boundary", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-fresh-uncertainty-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_transaction_fresh_uncertainty",
+      objective: "Retain a fresh uncertain provider boundary after runner failure",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const durableRun = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 32, input.investigation_id!) as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await durableRun.observer.onStarted(snapshot)
+    journal.release(durableRun)
+    await server.start()
+    const beforeApproval = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: input.investigation_id!,
+      recovery_plan_hash: beforeApproval.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "fresh_uncertainty_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+    const freshRequestId = preparation.first_model_request!.request_id
+    const transaction = new CommanderInvestigationRecoveryTransactionService({
+      recoveryPreview: (previewInput) => server.previewCommanderInvestigationRecovery(previewInput),
+      recoveryExecutionService: (server as any).commanderInvestigationRecoveryExecutionService(),
+      recoverySource: (investigationId) => journal.recoverySource(investigationId),
+      journalService: journal,
+      continuationRunner: {
+        run: async ({ seed, persistence_observer }) => {
+          await persistence_observer.onModelStepStarted({
+            investigation_id: seed.investigation_id,
+            input: seed.normalized_input,
+            turn_index: seed.next_turn_index,
+            model_request_id: seed.first_model_request_preview.request_id,
+            tool_protocol: seed.tool_protocol,
+            working_set_hash: seed.working_set.working_set_hash,
+            context_hash: seed.first_model_request_preview.context_hash,
+            input_bytes: seed.first_model_request_preview.input_bytes,
+            estimated_input_tokens: seed.first_model_request_preview.estimated_input_tokens,
+            loaded_tools: seed.loaded_tools,
+            provider_request_count_before: seed.provider_request_count_before,
+            external_api_audit_count_before: seed.external_api_audit_count_before,
+            started_at: "2026-01-01T00:00:34.000Z",
+          })
+          throw new Error("runner lost the fresh provider outcome")
+        },
+      },
+    })
+    const result = await transaction.run({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    })
+    expect(result).toMatchObject({
+      status: "failed",
+      approval_consumed: true,
+      model_step_event_count: 1,
+      checkpoint_event_count: 0,
+      terminal_event_count: 0,
+      events_appended: true,
+    })
+    expect(result.blockers).toContain("fresh recovery provider outcome is uncertain; terminal persistence is forbidden")
+    const source = await journal.recoverySource(input.investigation_id!)
+    expect(source).toMatchObject({
+      projection_status: "ready",
+      recovery_execution_in_progress: true,
+      recovery_execution_interrupted: true,
+      terminal: undefined,
+      pending_model_step: { model_request_id: freshRequestId },
+      current_recovery_attempt: { approval_id: approval.approval!.approval_id },
+    })
+  })
+
+  test("recovery persistence observer reserves one owner before projected reads", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-observer-reservation-"))
+    const journal = new CommanderInvestigationJournalService({ eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")) })
+    let releaseRead!: () => void
+    const heldRead = new Promise<void>((resolve) => { releaseRead = resolve })
+    let sourceReads = 0
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    journal.recoverySource = async () => {
+      sourceReads += 1
+      await heldRead
+      return undefined
+    }
+    const observerInput = {
+      investigation_id: "inv_recovery_observer_reservation",
+      recovery_attempt_id: "attempt_reservation",
+      consumed_approval_id: "approval_reservation",
+      recovery_start_event_id: "event_reservation",
+      expected_first_model_request: {} as any,
+      recovery_request_id_prefix: "recovery_reservation",
+    }
+    const first = journal.createRecoveryObserver(observerInput)
+    const second = journal.createRecoveryObserver(observerInput)
+    await Promise.resolve()
+    expect(sourceReads).toBe(1)
+    await expect(second).rejects.toThrow("duplicate concurrent durable investigation")
+    releaseRead()
+    await expect(first).rejects.toThrow("active confirmed recovery attempt")
+    journal.recoverySource = originalRecoverySource
+    await expect(journal.createRecoveryObserver(observerInput)).rejects.toThrow("active confirmed recovery attempt")
+  })
+
   test("durable Commander investigations are searchable through typed operational memory projection", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-operational-memory-"))
     await writeApprovedSpec(projectDir)

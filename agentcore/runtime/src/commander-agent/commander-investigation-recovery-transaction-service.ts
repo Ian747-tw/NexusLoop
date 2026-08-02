@@ -142,6 +142,19 @@ export class CommanderInvestigationRecoveryTransactionService {
       try {
         controllerResult = await this.options.continuationRunner.run({ seed, persistence_observer: run.observer })
       } catch (error) {
+        if (run.state.pending_model_request_id) {
+          return transactionResult({
+            status: "failed",
+            investigationId: input.investigation_id,
+            generatedAt,
+            attempt,
+            recoveryStartEventId,
+            eventCounts: observerEventCounts(run),
+            eventsAppended: true,
+            blockers: [boundedError(error), "fresh recovery provider outcome is uncertain; terminal persistence is forbidden"],
+            warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"],
+          })
+        }
         controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint)
       }
       if (controllerResult.external_api_audit_events_appended !== 0 || controllerResult.provider_audit.external_api_audit_event_count !== 0) {
