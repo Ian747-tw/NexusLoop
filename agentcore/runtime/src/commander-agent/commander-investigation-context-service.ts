@@ -1,6 +1,7 @@
 import { redactText } from "../security/redaction"
 import type { CommanderToolDescriptor, CommanderToolJsonSchema } from "../commander-tools/commander-tool-types"
 import type { CommanderInvestigationBootstrap, CommanderInvestigationContext, CommanderInvestigationExecutionDigest, CommanderInvestigationWorkingSet } from "./commander-investigation-types"
+import type { CommanderInvestigationRecoveryNotice } from "./commander-investigation-recovery-execution-types"
 import type { CommanderModelAssistantMessage, CommanderModelMessage, CommanderModelToolProtocol, CommanderModelToolResultMessage } from "./commander-model-types"
 
 export class CommanderInvestigationContextService {
@@ -12,13 +13,14 @@ export class CommanderInvestigationContextService {
     budget: { max_context_tokens?: number; max_context_bytes?: number }
     latestAssistant?: CommanderModelAssistantMessage
     latestToolResults: CommanderModelToolResultMessage[]
+    recoveryNotice?: CommanderInvestigationRecoveryNotice
   }): CommanderInvestigationContext {
     const warnings: string[] = []
     const blockers: string[] = []
     let evidence = input.workingSet.evidence_cards
     let digests = input.workingSet.recent_execution_digests
     let bootstrap = input.bootstrap
-    let messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults)
+    let messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
     let bytes = measure(messages, input.loadedTools, input.toolProtocol)
     let tokens = Math.ceil(bytes / 4)
     const byteCap = input.budget.max_context_bytes
@@ -28,21 +30,21 @@ export class CommanderInvestigationContextService {
     while (over() && evidence.length > 0) {
       evidence = evidence.slice(1)
       warnings.push("oldest evidence card omitted during deterministic context compaction")
-      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults)
+      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
       bytes = measure(messages, input.loadedTools, input.toolProtocol)
       tokens = Math.ceil(bytes / 4)
     }
     while (over() && digests.length > 0) {
       digests = digests.slice(1)
       warnings.push("oldest execution digest omitted during deterministic context compaction")
-      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults)
+      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
       bytes = measure(messages, input.loadedTools, input.toolProtocol)
       tokens = Math.ceil(bytes / 4)
     }
     if (over() && bootstrap.source_refs.length > 0) {
       bootstrap = { ...bootstrap, source_refs: [] }
       warnings.push("optional bootstrap source refs omitted during deterministic context compaction")
-      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults)
+      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
       bytes = measure(messages, input.loadedTools, input.toolProtocol)
       tokens = Math.ceil(bytes / 4)
     }
@@ -51,7 +53,7 @@ export class CommanderInvestigationContextService {
   }
 }
 
-function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: CommanderInvestigationWorkingSet, evidence: typeof workingSet.evidence_cards, digests: CommanderInvestigationExecutionDigest[], loadedTools: CommanderToolDescriptor[], toolProtocol: CommanderModelToolProtocol, latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[]): CommanderModelMessage[] {
+function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: CommanderInvestigationWorkingSet, evidence: typeof workingSet.evidence_cards, digests: CommanderInvestigationExecutionDigest[], loadedTools: CommanderToolDescriptor[], toolProtocol: CommanderModelToolProtocol, latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[], recoveryNotice?: CommanderInvestigationRecoveryNotice): CommanderModelMessage[] {
   const messages: CommanderModelMessage[] = [
     { role: "system", content: bootstrap.authority_kernel },
     { role: "user", content: JSON.stringify({
@@ -69,6 +71,33 @@ function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: C
       warnings: bootstrap.warnings,
       blockers: bootstrap.blockers,
     }) },
+    ...(recoveryNotice ? [{ role: "user" as const, content: JSON.stringify({
+      kind: "commander_investigation_recovery_notice",
+      notice_version: recoveryNotice.notice_version,
+      notice_kind: recoveryNotice.kind,
+      investigation_id: recoveryNotice.investigation_id,
+      checkpoint_id: recoveryNotice.checkpoint_id,
+      checkpoint_sequence: recoveryNotice.checkpoint_sequence,
+      checkpoint_hash: recoveryNotice.checkpoint_hash,
+      original_bootstrap_hash: recoveryNotice.original_bootstrap_hash,
+      current_bootstrap_hash: recoveryNotice.current_bootstrap_hash,
+      continuity_drift_detected: recoveryNotice.continuity_drift_detected,
+      previous_provider_outcome: recoveryNotice.previous_provider_outcome,
+      previous_model_request_id: recoveryNotice.previous_model_request_id,
+      previous_provider_request_may_have_been_sent: recoveryNotice.previous_provider_request_may_have_been_sent,
+      previous_provider_response_available: recoveryNotice.previous_provider_response_available,
+      previous_tool_execution_known: recoveryNotice.previous_tool_execution_known,
+      previous_request_replay_forbidden: recoveryNotice.previous_request_replay_forbidden,
+      previous_tool_execution_replay_forbidden: recoveryNotice.previous_tool_execution_replay_forbidden,
+      exact_replay_supported: recoveryNotice.exact_replay_supported,
+      original_assistant_text_available: recoveryNotice.original_assistant_text_available,
+      durable_tool_results_are_summary_only: recoveryNotice.durable_tool_results_are_summary_only,
+      counters_preserved: recoveryNotice.counters_preserved,
+      fresh_request_required: recoveryNotice.fresh_request_required,
+      next_turn_index: recoveryNotice.next_turn_index,
+      warning: recoveryNotice.warning,
+      notice_hash: recoveryNotice.notice_hash,
+    }) }] : []),
     { role: "user", content: JSON.stringify({
       kind: "commander_investigation_working_set",
       objective: workingSet.objective_preview,

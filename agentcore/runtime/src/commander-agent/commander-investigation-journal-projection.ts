@@ -185,7 +185,12 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
       if (checkpoint) approvalErrors.push(...approvalReferenceErrors(event.approval, checkpoint, pendingModel))
       if (identity && startedInputHash && checkpoint) {
         const basis = recoveryBasis(investigationId, projectionStatus, identity, startedInputHash, checkpoint, pendingModel, terminal)
-        if (event.approval.recovery_basis_hash !== basis?.basis_hash) approvalErrors.push("recovery approval basis hash mismatch")
+        const legacyBasisHash = basis
+          ? legacyRecoveryBasisHashForReady(investigationId, identity, startedInputHash, checkpoint, pendingModel, terminal)
+          : undefined
+        if (event.approval.recovery_basis_hash !== basis?.basis_hash && event.approval.recovery_basis_hash !== legacyBasisHash) {
+          approvalErrors.push("recovery approval basis hash mismatch")
+        }
       }
       if (!verifyApproval(event.approval)) approvalErrors.push("recovery approval hash mismatch")
       integrity.push(...approvalErrors)
@@ -449,6 +454,25 @@ function recoveryBasisForReady(
   return basis
 }
 
+function legacyRecoveryBasisHashForReady(
+  investigationId: string,
+  identity: CommanderInvestigationJournalIdentity,
+  normalizedInputHash: string,
+  checkpoint: CommanderInvestigationCheckpoint,
+  pendingModel?: CommanderInvestigationModelStepStartedPayload,
+  terminal?: CommanderInvestigationFinishedPayload,
+): string {
+  const basis = recoveryBasisForReady(investigationId, identity, normalizedInputHash, checkpoint, pendingModel, terminal)
+  const {
+    requested_by: _requestedBy,
+    mission_id: _missionId,
+    session_id: _sessionId,
+    launch_id: _launchId,
+    ...legacyIdentity
+  } = identity
+  return stableHash({ ...basis, immutable_identity: legacyIdentity, basis_hash: "" })
+}
+
 function recoveryBasis(
   investigationId: string,
   projectionStatus: CommanderInvestigationJournalProjectionStatus,
@@ -513,6 +537,10 @@ function identityFromStarted(started: CommanderInvestigationStartedPayload): Com
     investigation_id: started.investigation_id,
     phase: started.phase,
     objective_hash: started.objective_hash,
+    requested_by: started.requested_by,
+    mission_id: started.mission_id,
+    session_id: started.session_id,
+    launch_id: started.launch_id,
     provider_id: started.provider_id,
     provider_kind: started.provider_kind,
     model_id: started.model_id,
@@ -1336,6 +1364,9 @@ function isLoadedToolRef(value: unknown): boolean {
     (!("description_hash" in value) || hasString(value, "description_hash")) &&
     hasString(value, "input_schema_hash") &&
     hasString(value, "output_schema_hash") &&
+    (!("input_schema_bytes" in value) || hasNumber(value, "input_schema_bytes")) &&
+    (!("output_schema_bytes" in value) || hasNumber(value, "output_schema_bytes")) &&
+    (!("estimated_schema_tokens" in value) || hasNumber(value, "estimated_schema_tokens")) &&
     hasString(value, "load_policy") &&
     hasString(value, "trust_class") &&
     (!("max_output_bytes" in value) || hasNumber(value, "max_output_bytes")) &&

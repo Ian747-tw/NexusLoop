@@ -33,6 +33,9 @@ export type CommanderInvestigationLoadedToolRef = {
   description_hash?: string
   input_schema_hash: string
   output_schema_hash: string
+  input_schema_bytes?: number
+  output_schema_bytes?: number
+  estimated_schema_tokens?: number
   load_policy: string
   trust_class: CommanderToolTrustClass
   instruction_semantics: "none"
@@ -55,6 +58,10 @@ export type CommanderInvestigationJournalIdentity = {
   investigation_id: string
   phase: CommanderToolPhase
   objective_hash: string
+  requested_by: string
+  mission_id?: string
+  session_id?: string
+  launch_id?: string
   provider_id: string
   provider_kind: string
   model_id: string

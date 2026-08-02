@@ -2,9 +2,9 @@ import { open, readFile, stat } from "node:fs/promises"
 import { redactText, redactValue } from "../security/redaction"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
-import type { CommanderEvidenceCard, CommanderReadSourceRef } from "../commander-tools/commander-read-types"
 import type { CommanderToolDescriptor } from "../commander-tools/commander-tool-types"
 import { commanderProviderVisibleDescriptionHash, stableHash } from "./commander-model-schema"
+import { durableCommanderEvidenceCards, durableCommanderInvestigationWorkingSet } from "./commander-investigation-working-set"
 import type { CommanderModelAssistantMessage, CommanderModelToolCallPart, CommanderModelToolResultMessage } from "./commander-model-types"
 import type {
   CommanderInvestigationCheckpointSnapshot,
@@ -218,7 +218,7 @@ export class CommanderInvestigationJournalService {
       tool_call_count: result.tool_call_count,
       tool_search_call_count: result.tool_search_call_count,
       loaded_tool_ids: checkpoint.loaded_tools.map((tool) => tool.tool_id).slice(0, 24),
-      evidence_cards: sanitizeEvidence(result.evidence).slice(0, result.budget.max_evidence_cards),
+      evidence_cards: durableCommanderEvidenceCards(result.evidence).slice(0, result.budget.max_evidence_cards),
       turn_summaries: sanitizeTurnSummaries(result.turn_summaries),
       omitted_evidence_count: result.omitted_evidence_count,
       omitted_turn_count: result.omitted_turn_count,
@@ -630,7 +630,7 @@ export class CommanderInvestigationJournalService {
     measureBytes?: (checkpoint: CommanderInvestigationCheckpoint) => number
   }): CommanderInvestigationCheckpoint {
     const snapshot = input.snapshot
-    const workingSet = durableWorkingSet(snapshot.working_set)
+    const workingSet = durableCommanderInvestigationWorkingSet(snapshot.working_set)
     const replay = input.latestAssistant ? replayExchange(input.turnIndex, input.latestAssistant, input.latestToolResults) : undefined
     const previous = input.previous
     let checkpoint: CommanderInvestigationCheckpoint = {
@@ -675,7 +675,7 @@ export class CommanderInvestigationJournalService {
       finalized.checkpoint_hash = stableHash({ ...finalized, checkpoint_hash: "" })
       return finalized
     }
-    checkpoint = redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint
+    checkpoint = withCheckpointNestedHashes(redactValue(compactCheckpoint(checkpoint, this.checkpointPayloadCapBytes, (candidate) => measureBytes(finalize(candidate)))) as CommanderInvestigationCheckpoint)
     checkpoint = finalize(checkpoint)
     if (measureBytes(checkpoint) > this.checkpointPayloadCapBytes) throw new CommanderInvestigationPersistenceError("Commander investigation checkpoint exceeds durable event byte cap")
     return checkpoint
@@ -796,6 +796,9 @@ function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigatio
     description_hash: commanderProviderVisibleDescriptionHash(tool),
     input_schema_hash: tool.schema_metadata.input_schema_hash,
     output_schema_hash: tool.schema_metadata.output_schema_hash,
+    input_schema_bytes: tool.schema_metadata.input_schema_bytes,
+    output_schema_bytes: tool.schema_metadata.output_schema_bytes,
+    estimated_schema_tokens: tool.schema_metadata.estimated_schema_tokens,
     load_policy: tool.load_policy,
     trust_class: tool.trust_class,
     instruction_semantics: "none" as const,
@@ -813,67 +816,6 @@ function loadedToolRefs(tools: CommanderToolDescriptor[]): CommanderInvestigatio
     requires_approval: tool.requires_approval,
     requires_run_lock: tool.requires_run_lock,
   })).sort((a, b) => a.tool_id.localeCompare(b.tool_id))
-}
-
-function durableWorkingSet(input: CommanderInvestigationWorkingSet) {
-  return {
-    objective_preview: bound(input.objective_preview, 1000),
-    phase: input.phase,
-    loaded_tool_ids: [...input.loaded_tool_ids].sort(),
-    evidence_cards: sanitizeEvidence(input.evidence_cards),
-    recent_execution_digests: input.recent_execution_digests.map((digest) => redactValue({
-      turn_index: digest.turn_index,
-      tool_id: digest.tool_id,
-      call_signature_hash: digest.call_signature_hash,
-      execution_status: digest.execution_status,
-      result_hash: digest.result_hash,
-      evidence_ids: digest.evidence_ids.slice(0, 8),
-      loaded_tool_outcome: bound(digest.loaded_tool_outcome, 160),
-      blocker_warning_summary: bound(digest.blocker_warning_summary, 320),
-      order: digest.order,
-    })).slice(-24) as Array<Record<string, unknown>>,
-    recent_load_outcomes: input.recent_load_outcomes.map((item) => bound(item, 240)).slice(-24),
-    current_blockers: input.current_blockers.map((item) => bound(item, 300)).slice(-16),
-    current_warnings: input.current_warnings.map((item) => bound(item, 300)).slice(-24),
-    provider_audit: sanitizedProviderAudit(input.provider_audit),
-    omitted_evidence_count: input.omitted_evidence_count,
-    omitted_digest_count: input.omitted_digest_count,
-    omitted_turn_count: input.omitted_turn_count,
-    consecutive_no_progress_turns: input.consecutive_no_progress_turns,
-    cumulative_tool_result_bytes: input.cumulative_tool_result_bytes,
-    model_turn_count: input.model_turn_count,
-    tool_call_count: input.tool_call_count,
-    tool_search_call_count: input.tool_search_call_count,
-    recent_result_signatures: input.recent_result_signatures.slice(-64),
-    working_set_hash: input.working_set_hash,
-  }
-}
-
-function sanitizeEvidence(cards: CommanderEvidenceCard[]): CommanderEvidenceCard[] {
-  return cards.map((card) => {
-    const contentBearing = card.content_included || ["repository_file", "repository_search_match", "repository_symbol", "git_diff", "test_manifest"].includes(card.source_kind)
-    return redactValue({
-      ...card,
-      title: bound(card.title, 180),
-      summary_preview: contentBearing ? durablePointerSummary(card) : bound(card.summary_preview, 500),
-      source_refs: card.source_refs.map((ref: CommanderReadSourceRef) => ({
-        ...ref,
-        label: bound(ref.label, 160),
-        summary_preview: contentBearing ? durablePointerSummary(card) : bound(ref.summary_preview, 240),
-        pointer_only: true as const,
-      })).slice(0, 8),
-      warnings: [
-        ...card.warnings.map((item: string) => bound(item, 200)),
-        ...(contentBearing ? ["Durable journal stores pointer/hash metadata only for content-bearing evidence."] : []),
-      ].slice(0, 6),
-      content_included: false,
-      content_truncated: card.content_truncated || contentBearing,
-    }) as CommanderEvidenceCard
-  })
-}
-
-function durablePointerSummary(card: CommanderEvidenceCard): string {
-  return bound(`${card.source_kind} evidence content omitted from durable journal; use source_id=${card.source_id} evidence_hash=${card.evidence_hash ?? ""}`.trim(), 500)
 }
 
 function sanitizeTurnSummaries(turns: CommanderInvestigationTurnSummary[]): CommanderInvestigationTurnSummary[] {
@@ -935,7 +877,7 @@ function durableModelTextOmission(text: string, maxBytes: number): string {
 }
 
 function durableConclusion(result: CommanderInvestigationResult) {
-  const evidence = sanitizeEvidence(result.evidence).slice(0, result.budget.max_evidence_cards)
+  const evidence = durableCommanderEvidenceCards(result.evidence).slice(0, result.budget.max_evidence_cards)
   const finalOutput = result.final_summary ? durableModelTextFingerprint(result.final_summary) : undefined
   return {
     status: result.status,
@@ -1089,18 +1031,33 @@ function durableToolResult(message: CommanderModelToolResultMessage): CommanderD
 function compactCheckpoint(checkpoint: CommanderInvestigationCheckpoint, cap: number, measureBytes: (checkpoint: CommanderInvestigationCheckpoint) => number): CommanderInvestigationCheckpoint {
   let current = checkpoint
   while (measureBytes(current) > cap && current.turn_summaries.length > 0) {
-    current = { ...current, turn_summaries: current.turn_summaries.slice(1), working_set: { ...current.working_set, omitted_turn_count: current.working_set.omitted_turn_count + 1 } }
+    current = withWorkingSetHash({ ...current, turn_summaries: current.turn_summaries.slice(1), working_set: { ...current.working_set, omitted_turn_count: current.working_set.omitted_turn_count + 1 } })
   }
   while (measureBytes(current) > cap && current.working_set.recent_execution_digests.length > 0) {
-    current = { ...current, working_set: { ...current.working_set, recent_execution_digests: current.working_set.recent_execution_digests.slice(1), omitted_digest_count: current.working_set.omitted_digest_count + 1 } }
+    current = withWorkingSetHash({ ...current, working_set: { ...current.working_set, recent_execution_digests: current.working_set.recent_execution_digests.slice(1), omitted_digest_count: current.working_set.omitted_digest_count + 1 } })
   }
   while (measureBytes(current) > cap && current.working_set.evidence_cards.length > 0) {
-    current = { ...current, working_set: { ...current.working_set, evidence_cards: current.working_set.evidence_cards.slice(1), omitted_evidence_count: current.working_set.omitted_evidence_count + 1 } }
+    current = withWorkingSetHash({ ...current, working_set: { ...current.working_set, evidence_cards: current.working_set.evidence_cards.slice(1), omitted_evidence_count: current.working_set.omitted_evidence_count + 1 } })
   }
   if (measureBytes(current) > cap && current.replay_exchange) {
     current = { ...current, replay_exchange: compactReplayExchangeForCheckpointBudget(current.replay_exchange) }
   }
   return current
+}
+
+function withWorkingSetHash(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  return { ...checkpoint, working_set: durableCommanderInvestigationWorkingSet(checkpoint.working_set as unknown as CommanderInvestigationWorkingSet) }
+}
+
+function withReplayExchangeHash(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  if (!checkpoint.replay_exchange) return checkpoint
+  const replay_exchange = { ...checkpoint.replay_exchange, exchange_hash: "" }
+  replay_exchange.exchange_hash = stableHash(replay_exchange)
+  return { ...checkpoint, replay_exchange }
+}
+
+function withCheckpointNestedHashes(checkpoint: CommanderInvestigationCheckpoint): CommanderInvestigationCheckpoint {
+  return withWorkingSetHash(withReplayExchangeHash(checkpoint))
 }
 
 function compactReplayExchangeForCheckpointBudget(exchange: NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]>): NonNullable<CommanderInvestigationCheckpoint["replay_exchange"]> {

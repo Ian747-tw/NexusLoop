@@ -19,6 +19,7 @@ import type {
   CommanderInvestigationRecoveryApprovalState,
   CommanderInvestigationRecoveryApprovalSummary,
 } from "./commander-investigation-recovery-approval-types"
+import type { CommanderInvestigationRecoveryExecutionPreparationSummary } from "./commander-investigation-recovery-execution-types"
 
 export type CommanderInvestigationRecoveryPreviewInput = {
   investigation_id: string
@@ -137,9 +138,42 @@ export type CommanderInvestigationRecoveryToolCompatibility = {
   compatibility_hash: string
 }
 
+export type CommanderInvestigationRecoveryBoundToolAuthorityRef = {
+  tool_id: string
+  descriptor_present: boolean
+  descriptor_version?: string
+  authority_id?: string
+  runtime_command?: string
+  slash_command?: string
+  input_schema_hash?: string
+  output_schema_hash?: string
+  load_policy?: string
+  trust_class?: string
+  instruction_semantics?: string
+  namespace?: string
+  allowed_in_phase?: boolean
+  availability?: string
+  risk?: string
+  side_effect_class?: string
+  execution_backend?: string
+  process_policy?: string
+  max_output_bytes?: number
+  timeout_ms?: number
+  creates_external_process?: boolean
+  calls_provider?: boolean
+  mutates_events?: boolean
+  requires_network?: boolean
+  requires_credentials?: boolean
+  requires_approval?: boolean
+  requires_run_lock?: boolean
+  description_hash?: string
+  binding_ref_hash: string
+}
+
 export type CommanderInvestigationRecoveryToolCompatibilitySummary = {
   tools: CommanderInvestigationRecoveryToolCompatibility[]
   binding_count: number
+  current_bound_tool_refs: CommanderInvestigationRecoveryBoundToolAuthorityRef[]
   stored_subset_of_current_bindings: boolean
   compatible: boolean
   blockers: string[]
@@ -313,6 +347,10 @@ export type CommanderInvestigationRecoveryPacket = {
   no_progress_state: { consecutive_no_progress_turns: number; max_consecutive_no_progress_turns?: number }
   remaining_budget?: Pick<CommanderInvestigationRecoveryBudgetCompatibility, "effective_remaining" | "exhausted_dimensions">
   provider_execution_envelope_hash?: string
+  execution_preparation_hash?: string
+  first_model_request_preview_hash?: string
+  uncertain_model_turn_charge?: number
+  unresolved_provider_attempt_count?: number
   current_human_control?: CommanderInvestigationRecoveryHumanControl
   warnings: string[]
   blockers: string[]
@@ -355,6 +393,8 @@ export type CommanderInvestigationRecoveryPreview = {
   continuity_compatibility: CommanderInvestigationRecoveryContinuityCompatibility
   human_control: CommanderInvestigationRecoveryHumanControl
   recovery_packet?: CommanderInvestigationRecoveryPacket
+  execution_preparation?: CommanderInvestigationRecoveryExecutionPreparationSummary
+  execution_preparation_hash?: string
   approval_state: CommanderInvestigationRecoveryApprovalState
   current_approval?: CommanderInvestigationRecoveryApprovalSummary
   stale_approval_count: number
@@ -399,6 +439,7 @@ export type CommanderInvestigationRecoveryServiceOptions = {
   currentContextBudget(input: { phase: CommanderToolPhase; provider_kind: string; model_id: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderInvestigationRecoveryCurrentContextBudget>
   currentBootstrap(input: Omit<import("./commander-investigation-types").CommanderInvestigationInput, "abort_signal">): Promise<import("./commander-investigation-types").CommanderInvestigationBootstrap>
   currentHumanControl(input: { phase: CommanderToolPhase; session_id?: string; launch_id?: string }): Promise<CommanderInvestigationControlSnapshot>
+  continuationBuilder?: import("./commander-investigation-recovery-execution-types").CommanderInvestigationRecoveryContinuationBuilderOptions
   now?: () => Date
 }
 

@@ -126,9 +126,9 @@ export class CommanderInvestigationBootstrapService {
       estimated_tokens: 0,
       bootstrap_hash: "",
     }
-    const fitted = fitBootstrap(raw)
+    const fitted = fitBootstrap(redactValue(raw) as CommanderInvestigationBootstrap)
     fitted.bootstrap_hash = hash({ ...fitted, estimated_bytes: 0, estimated_tokens: 0, bootstrap_hash: "" })
-    return redactValue(fitted)
+    return fitted
   }
 }
 

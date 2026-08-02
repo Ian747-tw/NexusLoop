@@ -73,7 +73,12 @@ a read-only recovery readiness preview over that journal. It does not add
 resume, public commands, TUI state, proposal generation, or automatic recovery.
 Branch 9W3B2A adds durable human-only recovery approval bound to the exact
 recovery basis and plan hash. It records approval and stale-plan state only;
-recovery execution remains future work.
+recovery execution remains future work. Branch 9W3B2B1 adds deterministic
+recovery preparation and an internal scripted continuation kernel: it derives a
+continuation seed, mandatory recovery notice, summary-only replay relationship,
+pre-model gate-warning snapshot, and first fresh model-request preview, then
+binds that preparation into the recovery packet and plan hash without consuming
+approval or executing recovery.
 
 ```text
 NexusLoop domain control plane
@@ -133,6 +138,24 @@ recovery preview
 -> no provider/tool execution
 ```
 
+Recovery preparation proves the approved state can form the next bounded
+controller state without running it through RuntimeServer execution:
+
+```text
+durable checkpoint
+-> recovery compatibility
+-> deterministic continuation seed
+-> fresh current bootstrap
+-> mandatory recovery notice
+-> pre-model human/provider gate-warning snapshot
+-> summary-only protocol reconstruction
+-> first fresh request preview
+-> execution-preparation hash
+-> recovery packet and plan hash
+-> human approval
+-> no execution in 9W3B2B1
+```
+
 Continuity comparison is structured: a current bootstrap that reports degraded
 continuity cannot authorize recovery, while ordinary nonfatal continuity
 warnings remain warnings. Recovery recommendations also separate corrupt
@@ -151,6 +174,34 @@ and all compatibility hashes. Approval events are excluded from the recovery
 basis so an approval does not stale itself. Current/stale approval reporting is
 read-only; 9W3B2A does not consume approval, reopen terminal journals, clear
 pending uncertainty, or run recovery.
+9W3B2B1 extends the recovery packet and plan with the deterministic
+execution-preparation hash and first request preview hash. It reconstructs
+loaded descriptors from the current controller registry, recomputes actual
+input/output schema metadata from schema objects, and deep-clones accepted
+descriptors before any scripted continuation can build provider tool schemas.
+The controller now feeds new investigations and recovery seeds into one shared
+model/tool loop; the verified recovery identity is used for both provider gates
+and provider request construction. The recovery seed binds the pending-boundary
+hash for uncertain outcomes, and the approved first context uses canonical
+bounded human/provider gate-warning snapshots. Existing approvals that predate
+that semantic plan input become stale rather than corrupt. Uncertain pending
+model steps remain uncertain, are conservatively charged as one unresolved
+model attempt, and are never replayed or treated as known success/failure. The
+controller validates that charge before accepting a recovery seed. Summary-only
+assistant/tool replay messages are reconstructed from the authoritative
+journal checkpoint's hash-verified durable replay exchange instead of treated as
+seed or caller-supplied checkpoint authority. Replay availability is derived
+from that journal checkpoint, not from copied seed flags.
+At the continuation-kernel boundary, effective ceilings are re-derived with the
+same canonical budget function used during preparation from the accepted
+checkpoint plus current phase/model/context policy. Loaded-tool identity is
+likewise selected only from accepted checkpoint references, then revalidated
+against current bindings, eligibility, safe-read authority, and actual schema
+objects. Seed budget fields and seed tool references can prove equality with an
+approved preparation, but they cannot broaden or substitute execution authority.
+Original investigation start time remains lineage metadata, while continuation
+active duration counts prior elapsed active time plus current active work rather
+than downtime.
 
 The model SDK sits below the Commander controller. Tool schemas are derived from
 the NexusLoop registry. The SDK never executes NexusLoop tools directly. In
@@ -175,9 +226,12 @@ Commander provider loop remains disabled: there is no public investigation
 command, TUI surface, recovery approval command, resumable investigation,
 proposal gate, streaming
 connector transport, provider failover, GitHub/MCP gateway, or external read
-gateway. 9W3B2B owns approval consumption, plan-hash revalidation,
-uncertain-provider resolution by policy, fresh context reconstruction, and
-bounded recovery execution. SDK session memory is not
+gateway. 9W3B2B1 exposes only an internal read-only preparation preview and
+scripted controller continuation tests; RuntimeServer still has no recovery
+execution method. 9W3B2B2 owns approval consumption, plan-hash revalidation,
+uncertain-provider resolution by policy, fresh configured-provider requests,
+read-tool execution, continued checkpoints, terminal persistence, and shutdown
+drain. SDK session memory is not
 research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
@@ -188,7 +242,8 @@ Follow-on sequencing:
 - 9W3A: durable Commander investigation journal and checkpoints.
 - 9W3B1: recovery readiness and compatibility preview.
 - 9W3B2A: durable human approval and stale-plan gate.
-- 9W3B2B: bounded recovery execution from approved state.
+- 9W3B2B1: recovery preparation and continuation kernel.
+- 9W3B2B2: bounded recovery execution from approved state.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external GitHub and research read gateway.
 - 9Y: evidence-backed proposal gate.
