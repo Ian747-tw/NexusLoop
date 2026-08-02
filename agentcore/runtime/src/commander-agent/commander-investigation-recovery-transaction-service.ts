@@ -3,6 +3,7 @@ import { stableHash } from "./commander-model-schema"
 import type { CommanderInvestigationResult } from "./commander-investigation-types"
 import type { CommanderInvestigationRecoveryExecutionService } from "./commander-investigation-recovery-execution-service"
 import type { CommanderInvestigationRecoveryContinuationSeed } from "./commander-investigation-recovery-execution-types"
+import type { CommanderInvestigationCheckpoint } from "./commander-investigation-journal-types"
 import { CommanderInvestigationJournalConflictError, CommanderInvestigationPersistenceError } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationJournalRun, CommanderInvestigationJournalService } from "./commander-investigation-journal-service"
 import type { CommanderInvestigationRecoverySource } from "./commander-investigation-recovery-source"
@@ -129,7 +130,6 @@ export class CommanderInvestigationRecoveryTransactionService {
     let controllerResult: CommanderInvestigationResult | undefined
     let terminalEventId: string | undefined
     let terminalPersisted = false
-    const sourceAfterStart = await this.options.recoverySource(input.investigation_id)
     try {
       run = await this.options.journalService.createRecoveryObserver({
         investigation_id: input.investigation_id,
@@ -142,10 +142,10 @@ export class CommanderInvestigationRecoveryTransactionService {
       try {
         controllerResult = await this.options.continuationRunner.run({ seed, persistence_observer: run.observer })
       } catch (error) {
-        controllerResult = failedControllerResult(seed, error, this.now().toISOString())
+        controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint)
       }
       if (controllerResult.external_api_audit_events_appended !== 0 || controllerResult.provider_audit.external_api_audit_event_count !== 0) {
-        controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError("scripted recovery transaction must not append external API audits"), this.now().toISOString())
+        controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError("scripted recovery transaction must not append external API audits"), this.now().toISOString(), run.state.latest_checkpoint)
       }
       const durability = await this.options.journalService.finish(run, controllerResult)
       terminalPersisted = durability.terminal_persisted
@@ -154,13 +154,14 @@ export class CommanderInvestigationRecoveryTransactionService {
       const reconciled = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
       terminalPersisted = Boolean(reconciled?.terminal?.recovery_attempt_id === attempt.recovery_attempt_id && reconciled.terminal.semantic_result_hash === controllerResult?.result_hash)
       if (!terminalPersisted) {
-        return transactionResult({ status: "failed", investigationId: input.investigation_id, generatedAt, source: reconciled ?? sourceAfterStart, attempt, controllerResult, recoveryStartEventId, eventCounts: observerEventCounts(run), blockers: [boundedError(error)], warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"] })
+        return transactionResult({ status: "failed", investigationId: input.investigation_id, generatedAt, source: reconciled, attempt, controllerResult, recoveryStartEventId, eventCounts: observerEventCounts(run), eventsAppended: true, blockers: [boundedError(error)], warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"] })
       }
     } finally {
       if (run) this.options.journalService.release(run)
     }
-    const finalSource = await this.options.recoverySource(input.investigation_id)
-    return transactionResult({ status: terminalPersisted ? "completed" : "failed", investigationId: input.investigation_id, generatedAt, source: finalSource, attempt, controllerResult, recoveryStartEventId, terminalEventId, eventCounts: observerEventCounts(run), blockers: terminalPersisted ? [] : ["recovery terminal event was not confirmed"], warnings: prepared.preview.warnings })
+    const finalSource = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
+    const terminalConfirmed = Boolean(terminalPersisted && finalSource?.projection_status === "ready" && finalSource.terminal?.recovery_attempt_id === attempt.recovery_attempt_id && finalSource.terminal.semantic_result_hash === controllerResult?.result_hash)
+    return transactionResult({ status: terminalConfirmed ? "completed" : "failed", investigationId: input.investigation_id, generatedAt, source: finalSource, attempt, controllerResult, recoveryStartEventId, terminalEventId, eventCounts: observerEventCounts(run), eventsAppended: true, blockers: terminalConfirmed ? [] : ["recovery terminal event was not confirmed as authoritative"], warnings: prepared.preview.warnings })
   }
 }
 
@@ -239,7 +240,15 @@ function buildRecoveryAttempt(seed: CommanderInvestigationRecoveryContinuationSe
   return attempt
 }
 
-function failedControllerResult(seed: CommanderInvestigationRecoveryContinuationSeed, error: unknown, completedAt: string): CommanderInvestigationResult {
+function failedControllerResult(seed: CommanderInvestigationRecoveryContinuationSeed, error: unknown, completedAt: string, checkpoint?: CommanderInvestigationCheckpoint): CommanderInvestigationResult {
+  const budget = checkpoint?.budget ?? seed.effective_budget.effective_budget
+  const workingSet = checkpoint?.working_set ?? seed.working_set
+  const turnSummaries = checkpoint?.turn_summaries ?? seed.turn_summaries
+  const providerRequestCount = checkpoint?.provider_request_count ?? seed.provider_request_count_before
+  const elapsedActiveMs = checkpoint?.elapsed_active_ms ?? seed.elapsed_active_ms_before
+  const loadedToolRefs = checkpoint?.loaded_tools ?? seed.loaded_tool_refs
+  const bootstrapRef = checkpoint?.bootstrap_ref ?? seed.original_bootstrap_ref
+  const consumedModelTurns = Math.max(workingSet.model_turn_count, seed.effective_budget.consumed.model_turns)
   const result: CommanderInvestigationResult = {
     investigation_id: seed.investigation_id,
     status: "failed",
@@ -250,28 +259,28 @@ function failedControllerResult(seed: CommanderInvestigationRecoveryContinuation
     provider_kind: seed.immutable_identity.provider_kind,
     model_id: seed.immutable_identity.model_id,
     tool_protocol: seed.tool_protocol,
-    bootstrap_id: seed.current_bootstrap.bootstrap_id,
-    bootstrap_hash: seed.current_bootstrap.bootstrap_hash,
-    context_budget_id: seed.effective_budget.effective_budget.source_context_budget_id,
-    budget: seed.effective_budget.effective_budget,
-    model_turn_count: seed.working_set.model_turn_count,
-    provider_request_count: seed.provider_request_count_before,
-    tool_call_count: seed.working_set.tool_call_count,
-    tool_search_call_count: seed.working_set.tool_search_call_count,
-    loaded_tool_ids: seed.loaded_tools.map((tool) => tool.tool_id),
-    loaded_schema_bytes: seed.loaded_tools.reduce((sum, tool) => sum + tool.schema_metadata.input_schema_bytes + tool.schema_metadata.output_schema_bytes, 0),
-    loaded_schema_tokens: seed.loaded_tools.reduce((sum, tool) => sum + tool.schema_metadata.estimated_schema_tokens, 0),
-    cumulative_tool_result_bytes: seed.working_set.cumulative_tool_result_bytes,
-    evidence: seed.working_set.evidence_cards,
-    turn_summaries: seed.turn_summaries,
-    omitted_evidence_count: seed.working_set.omitted_evidence_count,
-    omitted_turn_count: seed.working_set.omitted_turn_count,
-    provider_audit: seed.working_set.provider_audit,
+    bootstrap_id: bootstrapRef.bootstrap_id,
+    bootstrap_hash: bootstrapRef.bootstrap_hash,
+    context_budget_id: budget.source_context_budget_id,
+    budget,
+    model_turn_count: consumedModelTurns,
+    provider_request_count: providerRequestCount,
+    tool_call_count: workingSet.tool_call_count,
+    tool_search_call_count: workingSet.tool_search_call_count,
+    loaded_tool_ids: loadedToolRefs.map((tool) => tool.tool_id),
+    loaded_schema_bytes: loadedToolRefs.reduce((sum, tool) => sum + (tool.input_schema_bytes ?? 0) + (tool.output_schema_bytes ?? 0), 0),
+    loaded_schema_tokens: loadedToolRefs.reduce((sum, tool) => sum + (tool.estimated_schema_tokens ?? 0), 0),
+    cumulative_tool_result_bytes: workingSet.cumulative_tool_result_bytes,
+    evidence: workingSet.evidence_cards,
+    turn_summaries: turnSummaries,
+    omitted_evidence_count: workingSet.omitted_evidence_count,
+    omitted_turn_count: workingSet.omitted_turn_count,
+    provider_audit: workingSet.provider_audit,
     blockers: [boundedError(error)],
-    warnings: seed.working_set.current_warnings,
+    warnings: workingSet.current_warnings,
     started_at: seed.original_started_at,
     completed_at: completedAt,
-    duration_ms: seed.elapsed_active_ms_before,
+    duration_ms: Math.max(seed.elapsed_active_ms_before, elapsedActiveMs),
     durability: { mode: "none", started_persisted: false, initial_checkpoint_persisted: false, terminal_persisted: false, investigation_event_count: 0, checkpoint_count: 0, resume_supported: false, full_transcript_persisted: false, raw_tool_results_persisted: false, chain_of_thought_persisted: false, warnings: [], durability_hash: stableHash({ mode: "none" }) },
     investigation_event_count: 0,
     in_memory_only: true,
@@ -304,6 +313,7 @@ function transactionResult(input: {
   recoveryStartEventId?: string
   terminalEventId?: string
   eventCounts?: { investigation: number; modelSteps: number; checkpoints: number; terminals: number }
+  eventsAppended?: boolean
   blockers?: string[]
   warnings?: string[]
 }): CommanderInvestigationRecoveryTransactionResult {
@@ -330,11 +340,11 @@ function transactionResult(input: {
     controller_result: input.controllerResult,
     recovery_start_event_id: input.recoveryStartEventId,
     terminal_event_id: input.terminalEventId,
-    investigation_event_count: input.eventCounts?.investigation ?? (attempt ? 1 : 0),
+    investigation_event_count: input.eventCounts?.investigation ?? 0,
     model_step_event_count: modelSteps,
     checkpoint_event_count: checkpointEvents,
     terminal_event_count: input.eventCounts?.terminals ?? 0,
-    events_appended: Boolean(attempt),
+    events_appended: input.eventsAppended ?? false,
     external_api_audit_events_appended: 0,
     provider_called: false,
     scripted_model_turn_count: modelSteps,
