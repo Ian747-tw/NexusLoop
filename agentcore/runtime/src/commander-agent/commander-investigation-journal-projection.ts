@@ -123,8 +123,12 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
         integrity.push(`model-step base checkpoint mismatch at sequence ${event.journal_sequence}`)
       }
       integrity.push(...modelStepLoadedToolErrors(model, previous))
-      const expectedWorkingSetHash = previous && activeAttempt?.recovery_kind === "uncertain_provider_outcome" && resolvedPendingBoundary
-        ? stableHash(stableCommanderInvestigationWorkingSet({ ...previous.working_set, model_turn_count: resolvedPendingBoundary.turn_index } as unknown as CommanderInvestigationWorkingSet))
+      const isFirstUncertainRecoveryStep = previous && activeAttempt?.recovery_kind === "uncertain_provider_outcome" && resolvedPendingBoundary &&
+        previous.checkpoint_id === activeAttempt.checkpoint_ref.checkpoint_id &&
+        previous.checkpoint_sequence === activeAttempt.checkpoint_ref.checkpoint_sequence &&
+        previous.checkpoint_hash === activeAttempt.checkpoint_ref.checkpoint_hash
+      const expectedWorkingSetHash = isFirstUncertainRecoveryStep
+        ? stableHash(stableCommanderInvestigationWorkingSet({ ...previous.working_set, model_turn_count: resolvedPendingBoundary!.turn_index } as unknown as CommanderInvestigationWorkingSet))
         : previous?.working_set.working_set_hash
       if (previous && model.working_set_hash !== expectedWorkingSetHash) {
         integrity.push(`model-step working-set hash mismatch at sequence ${event.journal_sequence}`)

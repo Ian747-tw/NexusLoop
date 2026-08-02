@@ -9703,6 +9703,162 @@ describe("Commander in-memory investigation controller", () => {
     })
   })
 
+  test("uncertain recovery uses later checkpoint authority for subsequent model steps", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-uncertain-later-checkpoint-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_uncertain_later_checkpoint",
+      objective: "Continue an uncertain recovery through a later accepted checkpoint",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const durableRun = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 33, input.investigation_id!) as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await durableRun.observer.onStarted(snapshot)
+    const initialCheckpoint = await journal.latestCheckpoint(input.investigation_id!)
+    await durableRun.observer.onModelStepStarted({
+      investigation_id: input.investigation_id!,
+      input,
+      turn_index: 1,
+      model_request_id: "model_request_uncertain_before_later_checkpoint",
+      tool_protocol: "native",
+      working_set_hash: initialCheckpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_uncertain_before_later_checkpoint",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:35.000Z",
+    })
+    journal.release(durableRun)
+    await server.start()
+    const beforeApproval = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: input.investigation_id!,
+      recovery_plan_hash: beforeApproval.recovery_plan_hash!,
+      decision: "approve_continue_after_uncertain_provider_outcome",
+      approved_by: "uncertain_later_checkpoint_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+        uncertain_provider_outcome: true,
+      },
+    })
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+    const secondFreshRequestId = `${preparation.first_model_request!.request_id.replace(/_turn_\d+$/, "")}_turn_3`
+    const transaction = new CommanderInvestigationRecoveryTransactionService({
+      recoveryPreview: (previewInput) => server.previewCommanderInvestigationRecovery(previewInput),
+      recoveryExecutionService: (server as any).commanderInvestigationRecoveryExecutionService(),
+      recoverySource: (investigationId) => journal.recoverySource(investigationId),
+      journalService: journal,
+      continuationRunner: {
+        run: async ({ seed, persistence_observer }) => {
+          const chargedWorkingSet = {
+            ...structuredClone(seed.working_set),
+            model_turn_count: Math.max(seed.working_set.model_turn_count, seed.effective_budget.consumed.model_turns),
+          }
+          chargedWorkingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(chargedWorkingSet))
+          await persistence_observer.onModelStepStarted({
+            investigation_id: seed.investigation_id,
+            input: seed.normalized_input,
+            turn_index: seed.next_turn_index,
+            model_request_id: seed.first_model_request_preview.request_id,
+            tool_protocol: seed.tool_protocol,
+            working_set_hash: chargedWorkingSet.working_set_hash,
+            context_hash: seed.first_model_request_preview.context_hash,
+            input_bytes: seed.first_model_request_preview.input_bytes,
+            estimated_input_tokens: seed.first_model_request_preview.estimated_input_tokens,
+            loaded_tools: seed.loaded_tools,
+            provider_request_count_before: seed.provider_request_count_before,
+            external_api_audit_count_before: seed.external_api_audit_count_before,
+            started_at: "2026-01-01T00:00:36.000Z",
+          })
+          const progressedWorkingSet = { ...chargedWorkingSet, model_turn_count: seed.next_turn_index }
+          progressedWorkingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(progressedWorkingSet))
+          const firstFreshSummary = {
+            turn_index: seed.next_turn_index,
+            model_request_id: seed.first_model_request_preview.request_id,
+            model_status: "final" as const,
+            provider_request_count: 1,
+            assistant_text_preview: "summary-only uncertain recovery progress",
+            tool_call_ids: [], tool_ids: [], tool_execution_ids: [], tool_execution_statuses: [], newly_loaded_tool_ids: [], new_evidence_ids: [],
+            input_estimated_tokens: seed.first_model_request_preview.estimated_input_tokens,
+            input_bytes: seed.first_model_request_preview.input_bytes,
+            cumulative_tool_calls: 0,
+            progress_made: true,
+            no_progress_reasons: [], warnings: [], provider_audit_request_ids: [], provider_audit_event_kinds: [], provider_audit_event_count: 0,
+            provider_audit_complete: true,
+            turn_hash: stableHash({ turn_index: seed.next_turn_index, request_id: seed.first_model_request_preview.request_id }),
+          }
+          await persistence_observer.onCheckpoint({
+            investigation_id: seed.investigation_id,
+            input: seed.normalized_input,
+            bootstrap: seed.current_bootstrap,
+            budget: seed.effective_budget.effective_budget,
+            tool_protocol: seed.tool_protocol,
+            turn_index: seed.next_turn_index,
+            next_turn_index: seed.next_turn_index + 1,
+            loaded_tools: seed.loaded_tools,
+            working_set: progressedWorkingSet,
+            turn_summaries: [firstFreshSummary],
+            latest_assistant: { role: "assistant", content: [{ type: "text", text: "summary-only uncertain recovery progress" }] },
+            latest_tool_results: [],
+            provider_request_count: seed.provider_request_count_before + 1,
+            elapsed_active_ms: seed.elapsed_active_ms_before + 1,
+            created_at: "2026-01-01T00:00:37.000Z",
+          })
+          await persistence_observer.onModelStepStarted({
+            investigation_id: seed.investigation_id,
+            input: seed.normalized_input,
+            turn_index: seed.next_turn_index + 1,
+            model_request_id: secondFreshRequestId,
+            tool_protocol: seed.tool_protocol,
+            working_set_hash: progressedWorkingSet.working_set_hash,
+            context_hash: stableHash({ request_id: secondFreshRequestId, working_set_hash: progressedWorkingSet.working_set_hash }),
+            input_bytes: seed.first_model_request_preview.input_bytes,
+            estimated_input_tokens: seed.first_model_request_preview.estimated_input_tokens,
+            loaded_tools: seed.loaded_tools,
+            provider_request_count_before: seed.provider_request_count_before + 1,
+            external_api_audit_count_before: seed.external_api_audit_count_before,
+            started_at: "2026-01-01T00:00:38.000Z",
+          })
+          throw new Error("second fresh provider outcome is uncertain")
+        },
+      },
+    })
+    const result = await transaction.run({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    })
+    expect(result).toMatchObject({ status: "failed", model_step_event_count: 2, checkpoint_event_count: 1, terminal_event_count: 0 })
+    const source = await journal.recoverySource(input.investigation_id!)
+    expect(source).toMatchObject({
+      projection_status: "ready",
+      latest_checkpoint: { turn_index: 2, next_turn_index: 3, working_set: { model_turn_count: 2 } },
+      pending_model_step: { model_request_id: secondFreshRequestId, turn_index: 3 },
+      resolved_pending_boundary: { model_request_id: "model_request_uncertain_before_later_checkpoint", outcome_remains_unknown: true },
+    })
+  })
+
   test("recovery transaction failure after a checkpoint persists monotonic durable counters", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-checkpoint-failure-"))
     await writeApprovedSpec(projectDir)
