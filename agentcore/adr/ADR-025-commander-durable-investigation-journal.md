@@ -181,8 +181,10 @@ inspection, and recovery-plan hashes. 9W3B2A owns durable human approval and
 stale-plan detection while still leaving `resume_supported=false` in stored
 records. 9W3B2B1 owns read-only deterministic recovery preparation and the
 internal scripted continuation kernel; it adds no journal event and consumes no
-approval. 9W3B2B2 owns approval consumption, uncertain-provider resolution,
-configured-provider execution, continued checkpoints, terminal persistence, and
-human-reviewed resume. 9W3C owns any public/operator
+approval. 9W3B2B2A adds one recovery-start event that atomically consumes
+approval; existing model-step/checkpoint/finished events continue the journal
+with recovery linkage while pending uncertainty remains historical. 9W3B2B2B
+owns configured-provider execution, external API audit, and shutdown ownership.
+9W3C owns any public/operator
 start/list/show/pause/resume/cancel surface decision. 9Y owns proposal
 generation.

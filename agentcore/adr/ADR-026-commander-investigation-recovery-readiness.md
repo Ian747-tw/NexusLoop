@@ -155,6 +155,7 @@ stale-plan gate. It writes one approval event but does not execute recovery.
 9W3B2B1 owns deterministic continuation preparation, mandatory recovery notice
 construction, summary-only replay reconstruction, and internal scripted
 controller continuation tests. It appends no event and consumes no approval.
-9W3B2B2 owns approval consumption, uncertain provider outcome resolution,
-configured-provider execution, continued checkpoints, and terminal persistence.
+9W3B2B2A reports consumed approvals and in-progress attempts after atomically
+recording recovery start, while pending-provider outcome remains unknown.
+9W3B2B2B owns configured-provider execution and external API audit.
 9W3C owns public/operator controls.

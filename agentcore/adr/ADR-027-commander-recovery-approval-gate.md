@@ -164,9 +164,8 @@ exact transcript replay. Public `provider_tool_loop_enabled` remains false.
 
 9W3B2B1 owns deterministic preparation, mandatory recovery notice construction,
 summary-only replay reconstruction, and scripted continuation-kernel tests
-without consuming approval or executing through RuntimeServer. 9W3B2B2 owns
-requiring a current unconsumed approval, revalidating the exact plan and
-preparation, resolving pending uncertainty by policy rather than inference,
-issuing a new provider request, never replaying the prior provider request,
-continuing checkpoint/terminal sequencing, and consuming approval once. 9W3C
-owns public/operator controls.
+without consuming approval or executing through RuntimeServer. 9W3B2B2A consumes
+approval only through the atomic recovery-start event, retains consumed approval
+history, and proves continued lifecycle persistence with injected scripted
+execution. 9W3B2B2B owns configured-provider execution and external API audit.
+9W3C owns public/operator controls.
