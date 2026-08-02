@@ -294,6 +294,28 @@ export class CommanderInvestigationRecoveryExecutionService {
     }
     return preparationPreview({ generatedAt, investigationId: validated.investigation_id, status: "ready", recovery, seed: built.seed, warnings: built.warnings })
   }
+
+  async buildCurrentSeed(input: CommanderInvestigationRecoveryExecutionPreparationInput): Promise<{
+    preview: CommanderInvestigationRecoveryExecutionPreparationPreview
+    recovery?: CommanderInvestigationRecoveryPreview
+    seed?: CommanderInvestigationRecoveryContinuationSeed
+  }> {
+    const preview = await this.preview(input)
+    if (preview.status !== "ready") return { preview }
+    const recovery = await this.options.recoveryPreview({ investigation_id: input.investigation_id, include_current_continuity: true })
+    if (recovery.status !== "approved_waiting_for_execution" || recovery.approval_state !== "current" || recovery.current_approval?.approval_id !== input.approval_id || recovery.current_approval.approval_hash !== input.approval_hash || recovery.recovery_plan_hash !== input.recovery_plan_hash) {
+      return { preview: preparationPreview({ generatedAt: preview.generated_at, investigationId: input.investigation_id, status: "blocked", recovery, blockers: ["current recovery approval changed before continuation seed rebuild"] }), recovery }
+    }
+    const source = await this.options.recoverySource(input.investigation_id)
+    if (!source?.latest_checkpoint || source.recovery_basis_hash !== recovery.recovery_basis_hash) {
+      return { preview: preparationPreview({ generatedAt: preview.generated_at, investigationId: input.investigation_id, status: "blocked", recovery, blockers: ["recovery journal source changed before continuation seed rebuild"] }), recovery }
+    }
+    const built = await this.options.continuationBuilder.build({ source, preview: recovery, checkpoint: source.latest_checkpoint })
+    if (!built.seed || built.seed.execution_preparation_hash !== preview.execution_preparation_hash) {
+      return { preview: preparationPreview({ generatedAt: preview.generated_at, investigationId: input.investigation_id, status: "blocked", recovery, blockers: ["continuation seed changed after approved preparation", ...built.blockers], warnings: built.warnings }), recovery }
+    }
+    return { preview, recovery, seed: built.seed }
+  }
 }
 
 export function restoreCommanderInvestigationWorkingSet(checkpoint: CommanderInvestigationCheckpoint): { workingSet?: CommanderInvestigationWorkingSet; blocker?: string } {

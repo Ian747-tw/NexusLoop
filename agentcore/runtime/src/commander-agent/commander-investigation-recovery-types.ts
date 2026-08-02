@@ -33,6 +33,7 @@ export type CommanderInvestigationRecoveryPreviewStatus =
   | "human_review_required"
   | "ready_for_approval"
   | "approved_waiting_for_execution"
+  | "recovery_in_progress"
 
 export type CommanderInvestigationRecoveryKind = "none" | "checkpoint" | "uncertain_provider_outcome"
 
@@ -43,6 +44,7 @@ export type CommanderInvestigationRecoveryRecommendedAction =
   | "review_uncertain_provider_outcome"
   | "approve_resume_from_checkpoint"
   | "await_recovery_execution"
+  | "await_recovery_completion"
   | "start_new_investigation"
 
 export type CommanderInvestigationRecoveryCheckpointSummary = {
@@ -399,7 +401,8 @@ export type CommanderInvestigationRecoveryPreview = {
   current_approval?: CommanderInvestigationRecoveryApprovalSummary
   stale_approval_count: number
   recovery_approval_required: boolean
-  recovery_approval_consumed: false
+  recovery_approval_consumed: boolean
+  current_recovery_attempt?: import("./commander-investigation-recovery-transaction-types").CommanderInvestigationRecoveryAttemptSummary
   automatic_resume_allowed: false
   human_approval_required: boolean
   exact_replay_supported: false

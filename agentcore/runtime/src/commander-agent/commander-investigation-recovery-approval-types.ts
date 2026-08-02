@@ -58,6 +58,8 @@ export type CommanderInvestigationRecoveryApprovalSummary = {
   recovery_basis_hash: string
   recovery_plan_hash: string
   recovery_packet_hash: string
+  execution_preparation_hash?: string
+  first_model_request_preview_hash?: string
   checkpoint_ref: CommanderInvestigationRecoveryCheckpointApprovalRef
   pending_model_step_ref?: CommanderInvestigationRecoveryPendingApprovalRef
   pending_model_request_id?: string
@@ -69,9 +71,12 @@ export type CommanderInvestigationRecoveryApprovalSummary = {
   continuity_compatibility_hash: string
   human_control_compatibility_hash: string
   approval_hash: string
+  consumed: boolean
+  consumed_by_recovery_attempt_id?: string
+  consumed_at?: string
 }
 
-export type CommanderInvestigationRecoveryApprovalState = "none" | "current" | "stale"
+export type CommanderInvestigationRecoveryApprovalState = "none" | "current" | "stale" | "consumed"
 
 export type CommanderInvestigationRecoveryApprovalRecord = {
   schema_version: 1
@@ -89,6 +94,8 @@ export type CommanderInvestigationRecoveryApprovalRecord = {
   recovery_basis_hash: string
   recovery_plan_hash: string
   recovery_packet_hash: string
+  execution_preparation_hash?: string
+  first_model_request_preview_hash?: string
   preview_hash: string
   checkpoint_ref: CommanderInvestigationRecoveryCheckpointApprovalRef
   pending_model_step_ref?: CommanderInvestigationRecoveryPendingApprovalRef
@@ -142,6 +149,8 @@ export type CommanderInvestigationRecoveryApprovalPreview = {
   pending_model_step_ref?: CommanderInvestigationRecoveryPendingApprovalRef
   provider_execution_envelope_hash?: string
   recovery_packet_hash?: string
+  execution_preparation_hash?: string
+  first_model_request_preview_hash?: string
   tool_compatibility_hash?: string
   provider_compatibility_hash?: string
   budget_compatibility_hash?: string

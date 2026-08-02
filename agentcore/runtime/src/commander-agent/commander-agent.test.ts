@@ -34,6 +34,7 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
+  CommanderInvestigationRecoveryTransactionService,
   buildCommanderInvestigationRecoveryNotice,
   reconstructCommanderRecoveryReplayExchange,
 	  CommanderInvestigationRecoveryApprovalService,
@@ -6689,6 +6690,8 @@ describe("Commander in-memory investigation controller", () => {
           recovery_basis_hash: capturedAmbiguousApproval.recovery_basis_hash,
           recovery_plan_hash: capturedAmbiguousApproval.recovery_plan_hash,
           recovery_packet_hash: capturedAmbiguousApproval.recovery_packet_hash,
+          execution_preparation_hash: capturedAmbiguousApproval.execution_preparation_hash,
+          first_model_request_preview_hash: capturedAmbiguousApproval.first_model_request_preview_hash,
           checkpoint_ref: capturedAmbiguousApproval.checkpoint_ref,
           pending_model_step_ref: capturedAmbiguousApproval.pending_model_step_ref,
           pending_model_request_id: capturedAmbiguousApproval.pending_model_step_ref?.model_request_id,
@@ -6700,6 +6703,7 @@ describe("Commander in-memory investigation controller", () => {
           continuity_compatibility_hash: capturedAmbiguousApproval.continuity_compatibility_hash,
           human_control_compatibility_hash: capturedAmbiguousApproval.human_control_compatibility_hash,
           approval_hash: capturedAmbiguousApproval.approval_hash,
+          consumed: false,
         }
         return { ...source!, recovery_approvals: [summary], latest_recovery_approval: summary }
       },
@@ -9467,6 +9471,231 @@ describe("Commander in-memory investigation controller", () => {
       projection_status: "corrupt",
       recovery_approval_recorded: false,
       latest_recovery_approval_id: undefined,
+    })
+  })
+
+  test("recovery transaction atomically consumes approval and persists one scripted final continuation", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-final-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_transaction_final",
+      objective: "Complete one scripted recovery transaction",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const durableRun = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 29, input.investigation_id!) as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await durableRun.observer.onStarted(snapshot)
+    journal.release(durableRun)
+    await server.start()
+    const recoveryBeforeApproval = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: input.investigation_id!,
+      recovery_plan_hash: recoveryBeforeApproval.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "scripted_recovery_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(approval.status).toBe("recorded")
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    expect(approved).toMatchObject({ status: "approved_waiting_for_execution", approval_state: "current", recovery_approval_consumed: false })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+    expect(preparation.status).toBe("ready")
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "scripted recovery completed" }])
+    let runnerCalls = 0
+    const transaction = new CommanderInvestigationRecoveryTransactionService({
+      recoveryPreview: (previewInput) => server.previewCommanderInvestigationRecovery(previewInput),
+      recoveryExecutionService: (server as any).commanderInvestigationRecoveryExecutionService(),
+      recoverySource: (investigationId) => journal.recoverySource(investigationId),
+      journalService: journal,
+      continuationRunner: {
+        run: async ({ seed, persistence_observer }) => {
+          runnerCalls += 1
+          return new CommanderInvestigationController({
+            ...(server as any).commanderInvestigationControllerOptions(),
+            modelAdapter: adapter,
+            providerAuditPolicy: { required: false, transport_kind: "none" },
+            persistenceObserver: persistence_observer,
+          }).runFromRecoverySeed(seed)
+        },
+      },
+    })
+    const transactionInput = {
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    }
+    const appendIfLatest = server.eventStore.appendIfLatest.bind(server.eventStore)
+    server.eventStore.appendIfLatest = async (event, expectedLatestEventId) => {
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_recovery_started") throw new Error("recovery start append failed before commit")
+      return appendIfLatest(event, expectedLatestEventId)
+    }
+    const failedStart = await transaction.run(transactionInput)
+    expect(failedStart).toMatchObject({ status: "failed", approval_consumed: false, events_appended: false })
+    expect(runnerCalls).toBe(0)
+    server.eventStore.appendIfLatest = appendIfLatest
+    const [first, duplicate] = await Promise.all([transaction.run(transactionInput), transaction.run(transactionInput)])
+    expect(first).toMatchObject({ status: "completed", approval_consumed: true, model_step_event_count: 1, checkpoint_event_count: 0, terminal_event_count: 1, external_api_audit_events_appended: 0, provider_called: false, network_called: false })
+    expect(duplicate.status).toBe("already_started")
+    expect(runnerCalls).toBe(1)
+    expect(adapter.request_summaries).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    const kinds = events.filter((event) => event.investigation_id === input.investigation_id).map((event) => event.kind)
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_recovery_approved",
+      "runtime_commander_investigation_recovery_started",
+      "runtime_commander_investigation_model_step_started",
+      "runtime_commander_investigation_finished",
+    ])
+    const start = events.find((event) => event.kind === "runtime_commander_investigation_recovery_started") as any
+    expect(start.recovery_attempt).toMatchObject({ approval_consumed: true, recovery_attempt_sequence: 0, pending_boundary_disposition: "not_applicable", execution_transport: "injected_scripted_adapter" })
+    expect(start.recovery_attempt.attempt_hash).toBe(stableHash({ ...start.recovery_attempt, started_at: "", attempt_hash: "" }))
+    const model = events.find((event) => event.kind === "runtime_commander_investigation_model_step_started") as any
+    const terminal = events.find((event) => event.kind === "runtime_commander_investigation_finished") as any
+    expect(model).toMatchObject({ recovery_attempt_id: start.recovery_attempt.recovery_attempt_id, consumed_approval_id: approval.approval!.approval_id })
+    expect(terminal.terminal).toMatchObject({ recovery_attempt_id: start.recovery_attempt.recovery_attempt_id, consumed_approval_id: approval.approval!.approval_id, recovery_kind: "checkpoint", unresolved_provider_attempt_count: 0 })
+    const source = await journal.recoverySource(input.investigation_id!)
+    expect(source).toMatchObject({ projection_status: "ready", recovery_execution_in_progress: false, terminal: { status: "final" }, latest_recovery_attempt: { approval_consumed: true } })
+    expect(source?.recovery_approvals?.[0]).toMatchObject({ consumed: true, consumed_by_recovery_attempt_id: start.recovery_attempt.recovery_attempt_id })
+    expect(source?.latest_recovery_approval?.consumed).toBe(true)
+    const after = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    expect(after).toMatchObject({ status: "not_applicable", approval_state: "consumed", recovery_approval_consumed: true, automatic_resume_allowed: false })
+    expect(JSON.stringify(start)).not.toMatch(/https?:\/\/|authorization|api[_-]?key|credential|provider prompt|provider response|execution_arguments|chain.of.thought/i)
+
+    const tampered = structuredClone(start)
+    tampered.recovery_attempt.execution_preparation_hash = "f".repeat(64)
+    tampered.recovery_attempt.attempt_hash = stableHash({ ...tampered.recovery_attempt, started_at: "", attempt_hash: "" })
+    tampered.event_payload_hash = journalPayloadHash(tampered)
+    const tamperedDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-tampered-start-"))
+    const tamperedStore = new EventStore(join(tamperedDir, ".nxl", "events.jsonl"))
+    for (const event of events.filter((event) => event.investigation_id === input.investigation_id && event.kind !== "runtime_commander_investigation_recovery_started" && event.kind !== "runtime_commander_investigation_model_step_started" && event.kind !== "runtime_commander_investigation_finished")) {
+      await tamperedStore.append(event as Parameters<EventStore["append"]>[0])
+    }
+    await tamperedStore.append(tampered)
+    const tamperedSource = await new CommanderInvestigationJournalService({ eventStore: tamperedStore }).recoverySource(input.investigation_id!)
+    expect(tamperedSource).toMatchObject({ projection_status: "corrupt", current_recovery_attempt: undefined, latest_recovery_attempt: undefined, consumed_recovery_approval: undefined })
+  })
+
+  test("recovery transaction resolves uncertain provider policy without inferring or replaying the old request", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-uncertain-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const input = baseInvestigation({
+      investigation_id: "inv_recovery_transaction_uncertain",
+      objective: "Continue after one uncertain scripted provider request",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const durableRun = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 30, input.investigation_id!) as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 8192, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await durableRun.observer.onStarted(snapshot)
+    const checkpoint = await journal.latestCheckpoint(input.investigation_id!)
+    const oldRequestId = "model_request_uncertain_before_recovery"
+    await durableRun.observer.onModelStepStarted({
+      investigation_id: input.investigation_id!,
+      input,
+      turn_index: 1,
+      model_request_id: oldRequestId,
+      tool_protocol: "native",
+      working_set_hash: checkpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_uncertain_before_recovery",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tools: [],
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:31.000Z",
+    })
+    journal.release(durableRun)
+    await server.start()
+    const before = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    expect(before).toMatchObject({ status: "human_review_required", recovery_kind: "uncertain_provider_outcome", pending_model_step: { model_request_id: oldRequestId } })
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: input.investigation_id!,
+      recovery_plan_hash: before.recovery_plan_hash!,
+      decision: "approve_continue_after_uncertain_provider_outcome",
+      approved_by: "scripted_uncertainty_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+        uncertain_provider_outcome: true,
+      },
+    })
+    expect(approval.status).toBe("recorded")
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "fresh uncertain continuation completed" }])
+    const transaction = new CommanderInvestigationRecoveryTransactionService({
+      recoveryPreview: (previewInput) => server.previewCommanderInvestigationRecovery(previewInput),
+      recoveryExecutionService: (server as any).commanderInvestigationRecoveryExecutionService(),
+      recoverySource: (investigationId) => journal.recoverySource(investigationId),
+      journalService: journal,
+      continuationRunner: {
+        run: ({ seed, persistence_observer }) => new CommanderInvestigationController({
+          ...(server as any).commanderInvestigationControllerOptions(),
+          modelAdapter: adapter,
+          providerAuditPolicy: { required: false, transport_kind: "none" },
+          persistenceObserver: persistence_observer,
+        }).runFromRecoverySeed(seed),
+      },
+    })
+    const result = await transaction.run({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    })
+    const afterTransactionSource = await journal.recoverySource(input.investigation_id!)
+    expect(afterTransactionSource?.record).toMatchObject({ projection_status: "ready", integrity_errors: [] })
+    expect(result).toMatchObject({ status: "completed", pending_boundary_disposition: "continue_from_checkpoint_with_fresh_request", model_step_event_count: 1, checkpoint_event_count: 0, terminal_event_count: 1 })
+    expect(adapter.request_summaries[0]?.request_id).toEndWith("_turn_2")
+    expect(adapter.request_summaries[0]?.request_id).not.toBe(oldRequestId)
+    const source = await journal.recoverySource(input.investigation_id!)
+    expect(source).toMatchObject({
+      projection_status: "ready",
+      pending_model_step: undefined,
+      resolved_pending_boundary: {
+        model_request_id: oldRequestId,
+        disposition: "continue_from_checkpoint_with_fresh_request",
+        outcome_remains_unknown: true,
+        request_replayed: false,
+        tool_execution_replayed: false,
+      },
+      terminal: { unresolved_provider_attempt_count: 1 },
     })
   })
 
