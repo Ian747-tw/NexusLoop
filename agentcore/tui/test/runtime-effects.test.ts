@@ -6887,6 +6887,7 @@ describe("runtime UI effects", () => {
             },
           }
         }
+        if (name === "runtime.preview_commander_investigation_recovery") return { investigation_id: payload?.investigation_id, recovery_plan_hash: "plan_b" }
         if (name === "runtime.cancel_commander_investigation_recovery") return { status: "cancellation_requested", cancellation_requested: true }
         throw new Error(`unexpected command ${name}`)
       },
@@ -6914,8 +6915,9 @@ describe("runtime UI effects", () => {
     })
     expect(state.commanderRecovery?.operation).toMatchObject({ recovery_attempt_id: "attempt_a" })
 
-    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
     expect(state.commanderRecovery?.selected).toMatchObject({ investigation_id: "inv_b" })
+    expect(state.commanderRecovery?.preview).toMatchObject({ investigation_id: "inv_b" })
     expect(state.commanderRecovery?.operation).toBeNull()
   })
 

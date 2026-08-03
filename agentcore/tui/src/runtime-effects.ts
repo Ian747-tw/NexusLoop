@@ -18967,7 +18967,14 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   if (command === "commander-recovery-preview") {
     const result = await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: requiredArg(args, 0, "investigation_id") })
-    return { ...state, commanderRecovery: { ...current, preview: safeOptionalRecord(result), selected: current.selected, commandError: undefined } }
+    const preview = safeOptionalRecord(result)
+    const previewInvestigationId = typeof preview?.investigation_id === "string" ? preview.investigation_id : undefined
+    if (previewInvestigationId && current.selected?.investigation_id !== previewInvestigationId) {
+      const detail = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: previewInvestigationId }))
+      const operation = detail && isRecord(detail.active_operation) ? safeOptionalRecord(detail.active_operation) : null
+      return { ...state, commanderRecovery: { ...current, preview, selected: detail, operation, commandError: undefined } }
+    }
+    return { ...state, commanderRecovery: { ...current, preview, commandError: undefined } }
   }
   if (command === "commander-recovery-approve") {
     const fields = recoveryKeyValues(args, new Set(["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome", "confirm"]))

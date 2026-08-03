@@ -69,7 +69,7 @@ function summaryFromRecord(record: CommanderInvestigationRecord): CommanderRecov
     projection_status: record.projection_status,
     record_status: record.status,
     recovery_state: record.recovery_state,
-    recovery_kind: record.uncertain_provider_outcome ? "uncertain_provider_outcome" : record.checkpoint_available ? "checkpoint" : "none",
+    recovery_kind: record.status !== "running" ? "none" : record.uncertain_provider_outcome ? "uncertain_provider_outcome" : record.checkpoint_available ? "checkpoint" : "none",
     objective_preview: redactText(record.objective_preview).slice(0, 300),
     phase: record.phase,
     updated_at: record.updated_at,

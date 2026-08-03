@@ -3292,6 +3292,8 @@ describe("Commander in-memory investigation controller", () => {
     service.release(run)
     const record = await service.get("inv_terminal_compact")
     expect(record).toMatchObject({ status: "final", projection_status: "ready", recovery_state: "not_required" })
+    const operatorList = await new CommanderInvestigationRecoveryOperatorService(service).list()
+    expect(operatorList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_terminal_compact", terminal: true, recovery_kind: "none" }))
     const finished = (await store.readAll()).find((event) => event.kind === "runtime_commander_investigation_finished")
     expect(finished).toBeDefined()
     expect(Buffer.byteLength(JSON.stringify(finished))).toBeLessThanOrEqual(48_000)
