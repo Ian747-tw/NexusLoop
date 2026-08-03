@@ -10574,6 +10574,34 @@ describe("Commander in-memory investigation controller", () => {
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
   })
 
+  test("thrown public preflight remains replaceable only after journal reconciliation proves no attempt", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-thrown-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("reconciled recovery completed") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_thrown_preflight")
+    const configuredRun = server.runCommanderInvestigationRecoveryConfigured.bind(server)
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = async () => { throw new Error("transient preflight read failed") }
+
+    const failedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const failedEntry = (server as any).publicCommanderRecoveryOperations.get(failedOperation.operation_id)
+    await failedEntry.promise
+    expect(failedEntry.record.status).toBe("failed")
+    expect(failedEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(transport.requests).toHaveLength(0)
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source?.latest_recovery_approval).toMatchObject({ consumed: false })
+
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = configuredRun
+    const retriedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(retriedOperation.operation_id).not.toBe(failedOperation.operation_id)
+    const retriedEntry = (server as any).publicCommanderRecoveryOperations.get(retriedOperation.operation_id)
+    await retriedEntry.promise
+    expect(retriedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+  })
+
   test("public cancellation after durable model boundary forwards abort and preserves uncertainty", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-transport-"))
     await writeApprovedSpec(projectDir)

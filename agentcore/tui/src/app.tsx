@@ -6,6 +6,7 @@ import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
+import { commanderRecoveryAuthorityValues } from "./commander-recovery-view"
 import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
@@ -49,10 +50,6 @@ function operatorField(value: Record<string, unknown>, key: string): string {
   return typeof item === "string" || typeof item === "number" || typeof item === "boolean"
     ? redactText(String(item)).slice(0, 240)
     : "none"
-}
-
-function operatorHash(value: Record<string, unknown>, key: string): string {
-  return operatorField(value, key).slice(0, 12)
 }
 
 function Panel(props: {
@@ -300,6 +297,7 @@ function ApprovalPanel(props: { state: UiState }) {
   const proposals = () => props.state.proposals
   const bundles = () => props.state.proposalBundles
   const recovery = () => props.state.commanderRecovery
+  const recoveryAuthority = () => commanderRecoveryAuthorityValues(recovery() ?? { records: [] })
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
       <Show when={recovery()}>
@@ -316,7 +314,10 @@ function ApprovalPanel(props: { state: UiState }) {
             <Show when={value().preview}>
               {(preview) => (
                 <>
-                  <text fg={color.text}>preview {operatorField(preview(), "status")} kind={operatorField(preview(), "recovery_kind")} plan={operatorHash(preview(), "recovery_plan_hash")}</text>
+                  <text fg={color.text}>preview {operatorField(preview(), "status")} kind={operatorField(preview(), "recovery_kind")}</text>
+                  <text fg={color.text}>recovery_plan_hash={recoveryAuthority().recovery_plan_hash}</text>
+                  <text fg={color.text}>execution_preparation_hash={recoveryAuthority().execution_preparation_hash}</text>
+                  <text fg={color.muted}>recovery_packet_hash={recoveryAuthority().recovery_packet_hash}</text>
                   <Show when={operatorField(preview(), "recovery_kind") === "uncertain_provider_outcome"}>
                     <text fg={color.warning}>provider outcome unknown; previous request and tool execution will not be replayed</text>
                   </Show>
@@ -328,6 +329,15 @@ function ApprovalPanel(props: { state: UiState }) {
             </Show>
             <Show when={value().pendingConfirmation === "execution"}>
               <text fg={color.warning}>execution confirmation required: approval and execution are separate actions</text>
+            </Show>
+            <Show when={value().approval}>
+              {(approval) => (
+                <>
+                  <text fg={color.accent}>approval result={operatorField(approval(), "status")}</text>
+                  <text fg={color.text}>approval_id={recoveryAuthority().approval_id}</text>
+                  <text fg={color.text}>approval_hash={recoveryAuthority().approval_hash}</text>
+                </>
+              )}
             </Show>
             <Show when={value().operation}>
               {(operation) => <text fg={color.accent}>operation {operatorField(operation(), "operation_id")} [{operatorField(operation(), "status")}]</text>}

@@ -18963,7 +18963,15 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     const activeOperation = selected && isRecord(selected.active_operation)
       ? safeOptionalRecord(selected.active_operation)
       : cachedOperationMatches ? current.operation : null
-    return { ...state, commanderRecovery: { ...current, selected, operation: activeOperation, commandError: undefined } }
+    const selectionChanged = selectedInvestigationId !== undefined
+      && typeof current.selected?.investigation_id === "string"
+      && current.selected.investigation_id !== selectedInvestigationId
+    return {
+      ...state,
+      commanderRecovery: selectionChanged
+        ? { ...current, selected, preview: null, approval: null, pendingConfirmation: undefined, operation: activeOperation, cancellation: null, commandError: undefined }
+        : { ...current, selected, operation: activeOperation, commandError: undefined },
+    }
   }
   if (command === "commander-recovery-preview") {
     const result = await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: requiredArg(args, 0, "investigation_id") })
