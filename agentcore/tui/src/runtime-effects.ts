@@ -18965,16 +18965,18 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       : cachedOperationMatches ? current.operation : null
     const selectionChanged = selectedInvestigationId !== undefined
       && commanderRecoveryTargetChanged(current, selectedInvestigationId)
-    const approvalNoLongerCurrent = selected !== null
-      && selected.approval_state !== "current"
-      && Boolean(current.preview || current.approval)
     return {
       ...state,
-      commanderRecovery: selectionChanged
-        ? { ...current, selected, preview: null, approval: null, pendingConfirmation: undefined, operation: activeOperation, cancellation: null, commandError: undefined }
-        : approvalNoLongerCurrent
-          ? { ...current, selected, preview: null, approval: null, pendingConfirmation: undefined, operation: activeOperation, commandError: undefined }
-        : { ...current, selected, operation: activeOperation, commandError: undefined },
+      commanderRecovery: {
+        ...current,
+        selected,
+        preview: null,
+        approval: null,
+        pendingConfirmation: undefined,
+        operation: activeOperation,
+        cancellation: selectionChanged ? null : current.cancellation,
+        commandError: undefined,
+      },
     }
   }
   if (command === "commander-recovery-preview") {

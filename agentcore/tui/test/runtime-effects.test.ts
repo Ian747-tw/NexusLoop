@@ -6895,6 +6895,8 @@ describe("runtime UI effects", () => {
   })
 
   test("Commander recovery execute and cancel clear authority from another investigation", async () => {
+    let shownApprovalState = "consumed"
+    let shownApprovalId = "approval_b"
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
       async sendUserMessage(): Promise<void> {},
@@ -6904,7 +6906,7 @@ describe("runtime UI effects", () => {
           return { operation_id: "operation_b", investigation_id: payload?.investigation_id, approval_id: payload?.approval_id, status: "running" }
         }
         if (name === "runtime.get_commander_investigation_recovery") {
-          return { found: true, investigation_id: payload?.investigation_id, approval_state: "consumed", active_operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" } }
+          return { found: true, investigation_id: payload?.investigation_id, approval_state: shownApprovalState, latest_approval: { approval_id: shownApprovalId }, active_operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" } }
         }
         if (name === "runtime.cancel_commander_investigation_recovery") {
           return { status: "cancellation_requested", cancellation_requested: true, investigation_id: "inv_b", operation_id: "operation_b", approval_id: "approval_b" }
@@ -6973,6 +6975,24 @@ describe("runtime UI effects", () => {
     }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
     expect(refreshed.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b", approval_state: "consumed" }, preview: null, approval: null, operation: { investigation_id: "inv_b" } })
     expect(refreshed.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    shownApprovalState = "current"
+    shownApprovalId = "approval_b_replacement"
+    const replacement = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "old_plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+        pendingConfirmation: "execution",
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(replacement.commanderRecovery).toMatchObject({ selected: { approval_state: "current", latest_approval: { approval_id: "approval_b_replacement" } }, preview: null, approval: null })
+    expect(replacement.commanderRecovery?.pendingConfirmation).toBeUndefined()
   })
 
   test("Commander recovery approval display exposes bounded blocked outcomes", () => {
