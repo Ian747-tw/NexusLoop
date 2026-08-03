@@ -34,6 +34,7 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
+  CommanderInvestigationRecoveryOperatorService,
   CommanderInvestigationRecoveryTransactionService,
   buildCommanderInvestigationRecoveryNotice,
   reconstructCommanderRecoveryReplayExchange,
@@ -3326,7 +3327,8 @@ describe("Commander in-memory investigation controller", () => {
     service.release(fulfilled!.value)
 
     const journalDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-pagination-"))
-    const journalService = new CommanderInvestigationJournalService({ eventStore: new EventStore(join(journalDir, ".nxl", "events.jsonl")) })
+    const journalStore = new EventStore(join(journalDir, ".nxl", "events.jsonl"))
+    const journalService = new CommanderInvestigationJournalService({ eventStore: journalStore })
     for (let index = 0; index < 101; index += 1) {
       const investigationId = index === 0 ? "inv_oldest_exact_lookup" : `inv_newer_${index}`
       const input = baseInvestigation({ investigation_id: investigationId, objective: `durable lookup ${index}` })
@@ -3339,6 +3341,38 @@ describe("Commander in-memory investigation controller", () => {
     const visibleList = await journalService.list({ limit: 100 })
     expect(visibleList).toHaveLength(100)
     expect(visibleList.some((record) => record.investigation_id === "inv_oldest_exact_lookup")).toBe(false)
+    const oldestCheckpoint = await journalService.latestCheckpoint("inv_oldest_exact_lookup")
+    const oldestInput = baseInvestigation({ investigation_id: "inv_oldest_exact_lookup", objective: "durable lookup 0" })
+    const pendingEvent = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: oldestInput.investigation_id,
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_oldest_filtered_recovery",
+      provider_id: oldestInput.provider_id,
+      provider_kind: oldestInput.provider_kind,
+      model_id: oldestInput.model_id,
+      tool_protocol: "native",
+      base_checkpoint_id: oldestCheckpoint!.checkpoint_id,
+      base_checkpoint_sequence: oldestCheckpoint!.checkpoint_sequence,
+      base_checkpoint_hash: oldestCheckpoint!.checkpoint_hash,
+      working_set_hash: oldestCheckpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_oldest_filtered_recovery",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: oldestCheckpoint!.loaded_tools,
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:00.500Z",
+      requested_by: oldestInput.requested_by,
+      occurred_at: "2026-01-01T00:00:00.500Z",
+      event_payload_hash: "",
+    }
+    pendingEvent.event_payload_hash = journalPayloadHash(pendingEvent)
+    await journalStore.append(pendingEvent as Parameters<EventStore["append"]>[0])
+    const filteredBeforeCap = await journalService.list({ limit: 100, recovery_state: "uncertain_provider_outcome_resume_not_implemented" })
+    expect(filteredBeforeCap.map((record) => record.investigation_id)).toEqual(["inv_oldest_exact_lookup"])
     const summary = await journalService.summary()
     expect(summary).toMatchObject({ total: 101, running_count: 101, checkpoint_available_count: 101 })
     await expect(journalService.createObserver(baseInvestigation({ investigation_id: "inv_oldest_exact_lookup", objective: "duplicate oldest durable lookup" }))).rejects.toThrow("9W3B recovery")
@@ -6837,6 +6871,8 @@ describe("Commander in-memory investigation controller", () => {
       recovery_approval_recorded: false,
       latest_recovery_approval_id: undefined,
     })
+    const operatorList = await new CommanderInvestigationRecoveryOperatorService(journal).list({ approval_state: "stale" })
+    expect(operatorList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_recovery_approval_checkpoint", approval_state: "stale" }))
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string; [key: string]: unknown })
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
     expect(JSON.stringify(events)).not.toContain("https://api.example.test")

@@ -18958,7 +18958,11 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   if (command === "commander-recovery-show") {
     const result = await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: requiredArg(args, 0, "investigation_id") })
     const selected = safeOptionalRecord(result)
-    const activeOperation = selected && isRecord(selected.active_operation) ? safeOptionalRecord(selected.active_operation) : current.operation
+    const selectedInvestigationId = typeof selected?.investigation_id === "string" ? selected.investigation_id : undefined
+    const cachedOperationMatches = selectedInvestigationId !== undefined && current.operation?.investigation_id === selectedInvestigationId
+    const activeOperation = selected && isRecord(selected.active_operation)
+      ? safeOptionalRecord(selected.active_operation)
+      : cachedOperationMatches ? current.operation : null
     return { ...state, commanderRecovery: { ...current, selected, operation: activeOperation, commandError: undefined } }
   }
   if (command === "commander-recovery-preview") {
@@ -19001,15 +19005,20 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     return { ...state, commanderRecovery: { ...current, operation: safeOptionalRecord(result), pendingConfirmation: undefined, commandError: undefined } }
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
-  const activeOperationId = typeof current.operation?.operation_id === "string" ? current.operation.operation_id : undefined
-  const activeAttemptId = typeof current.operation?.recovery_attempt_id === "string" ? current.operation.recovery_attempt_id : undefined
+  const investigationId = requiredRecoveryField(fields, "investigation_id")
+  const shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
+  const shownOperation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : undefined
+  const cachedOperation = current.operation?.investigation_id === investigationId ? current.operation : undefined
+  const operation = shownOperation ?? cachedOperation
+  const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
+  const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined
   const result = await runtime.command("runtime.cancel_commander_investigation_recovery", {
-    investigation_id: requiredRecoveryField(fields, "investigation_id"),
+    investigation_id: investigationId,
     operation_id: fields.operation_id ?? activeOperationId ?? requiredRecoveryField(fields, "operation_id"),
     approval_id: requiredRecoveryField(fields, "approval_id"),
     ...(fields.recovery_attempt_id || activeAttemptId ? { recovery_attempt_id: fields.recovery_attempt_id ?? activeAttemptId } : {}),
   })
-  return { ...state, commanderRecovery: { ...current, cancellation: safeOptionalRecord(result), commandError: undefined } }
+  return { ...state, commanderRecovery: { ...current, selected: shown ?? current.selected, operation: operation ?? current.operation, cancellation: safeOptionalRecord(result), commandError: undefined } }
 }
 
 function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>): Record<string, string> {

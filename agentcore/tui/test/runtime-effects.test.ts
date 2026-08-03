@@ -6865,6 +6865,60 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("connector_url")
   })
 
+  test("Commander recovery cancellation refreshes attempt identity and clears cross-investigation operations", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        if (name === "runtime.get_commander_investigation_recovery") {
+          if (payload?.investigation_id === "inv_b") return { found: true, investigation_id: "inv_b" }
+          return {
+            found: true,
+            investigation_id: "inv_a",
+            active_operation: {
+              operation_id: "operation_a",
+              investigation_id: "inv_a",
+              approval_id: "approval_a",
+              recovery_attempt_id: "attempt_a",
+              status: "running",
+            },
+          }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") return { status: "cancellation_requested", cancellation_requested: true }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: { operation_id: "operation_a", investigation_id: "inv_a", approval_id: "approval_a", status: "running" },
+        cancellation: null,
+      },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_a", "operation_id=operation_a", "approval_id=approval_a"],
+    })
+    expect(calls.at(-1)).toEqual({
+      name: "runtime.cancel_commander_investigation_recovery",
+      payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a" },
+    })
+    expect(state.commanderRecovery?.operation).toMatchObject({ recovery_attempt_id: "attempt_a" })
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(state.commanderRecovery?.selected).toMatchObject({ investigation_id: "inv_b" })
+    expect(state.commanderRecovery?.operation).toBeNull()
+  })
+
   test("Commander recovery slash parsing rejects generic confirmation and implicit acknowledgements", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }

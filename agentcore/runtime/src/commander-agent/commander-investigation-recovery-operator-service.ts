@@ -21,11 +21,14 @@ export class CommanderInvestigationRecoveryOperatorService {
 
   async list(input: CommanderRecoveryOperatorListInput = {}): Promise<CommanderRecoveryOperatorList> {
     const limit = boundedLimit(input.limit)
-    const records = await this.journal.list({ limit: MAX_LIMIT, status: input.status as never })
+    const records = await this.journal.list({
+      limit: MAX_LIMIT,
+      status: input.status as never,
+      recovery_state: input.recovery_state,
+      recovery_approval_state: input.approval_state,
+    })
     const items = records
       .map(summaryFromRecord)
-      .filter((item) => !input.recovery_state || item.recovery_state === input.recovery_state)
-      .filter((item) => !input.approval_state || item.approval_state === input.approval_state)
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.investigation_id.localeCompare(b.investigation_id))
       .slice(0, limit)
     return { items, count: items.length, limit, current_compatibility_checked: false, observed_at: this.now().toISOString() }
@@ -60,7 +63,7 @@ function summaryFromRecord(record: CommanderInvestigationRecord): CommanderRecov
     ? "consumed"
     : record.recovery_approval_recorded
       ? "current"
-      : "none"
+      : record.recovery_approval_count > 0 ? "stale" : "none"
   return {
     investigation_id: record.investigation_id,
     projection_status: record.projection_status,

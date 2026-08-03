@@ -102,6 +102,8 @@ export type CommanderInvestigationJournalServiceOptions = {
 export type CommanderInvestigationJournalListOptions = {
   status?: string
   statuses?: string[]
+  recovery_state?: string
+  recovery_approval_state?: "none" | "current" | "stale" | "consumed"
   phase?: string
   provider_id?: string
   session_id?: string
@@ -139,6 +141,12 @@ export type CommanderInvestigationJournalRunState = {
   first_recovery_model_step_persisted?: boolean
   recovery_model_step_event_count?: number
   recovery_checkpoint_event_count?: number
+}
+
+function recoveryApprovalState(record: CommanderInvestigationRecord): "none" | "current" | "stale" | "consumed" {
+  if (record.recovery_approval_consumed) return "consumed"
+  if (record.recovery_approval_recorded) return "current"
+  return record.recovery_approval_count > 0 ? "stale" : "none"
 }
 
 export class CommanderInvestigationJournalService {
@@ -314,6 +322,8 @@ export class CommanderInvestigationJournalService {
     return projection.records
       .filter((record) => !options.status || record.status === options.status)
       .filter((record) => !options.statuses?.length || options.statuses.includes(record.status))
+      .filter((record) => !options.recovery_state || record.recovery_state === options.recovery_state)
+      .filter((record) => !options.recovery_approval_state || recoveryApprovalState(record) === options.recovery_approval_state)
       .filter((record) => !options.phase || record.phase === options.phase)
       .filter((record) => !options.provider_id || record.provider_id === options.provider_id)
       .filter((record) => !options.session_id || record.session_id === options.session_id)
