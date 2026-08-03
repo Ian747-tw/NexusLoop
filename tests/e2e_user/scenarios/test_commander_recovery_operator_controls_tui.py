@@ -172,9 +172,7 @@ def test_operator_controls_commander_recovery_through_real_tui(sandbox) -> None:
     executed = run_commands([
         f"/commander-recovery-execute investigation_id=commander_recovery_checkpoint_e2e approval_id={approval_id} approval_hash={approval_hash} recovery_plan_hash={current_plan} execution_preparation_hash={preparation_hash}",
         f"/commander-recovery-execute investigation_id=commander_recovery_checkpoint_e2e approval_id={approval_id} approval_hash={approval_hash} recovery_plan_hash={current_plan} execution_preparation_hash={preparation_hash} confirm=EXECUTE",
-        "/commander-recovery-show commander_recovery_checkpoint_e2e",
-        "/commander-recovery-show commander_recovery_checkpoint_e2e",
-        "/commander-recovery-show commander_recovery_checkpoint_e2e",
+        *["/commander-recovery-show commander_recovery_checkpoint_e2e" for _ in range(12)],
     ])
     assert "confirmation=execution required" not in executed.stdout
     events = [json.loads(line) for line in (project / ".nxl" / "events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -196,6 +194,7 @@ def test_operator_controls_commander_recovery_through_real_tui(sandbox) -> None:
     uncertain_current_plan = field(uncertain_current.stdout, "recovery_plan_hash")
     uncertain_preparation = field(uncertain_current.stdout, "execution_preparation_hash")
     server.delay_response = True  # type: ignore[attr-defined]
+    request_count_before_cancellation = len(requests)
     cancelled = run_commands([
         f"/commander-recovery-execute investigation_id=commander_recovery_uncertain_e2e approval_id={uncertain_approval_id} approval_hash={uncertain_approval_hash} recovery_plan_hash={uncertain_current_plan} execution_preparation_hash={uncertain_preparation} confirm=EXECUTE",
         f"/commander-recovery-cancel investigation_id=commander_recovery_uncertain_e2e approval_id={uncertain_approval_id}",
@@ -210,6 +209,32 @@ def test_operator_controls_commander_recovery_through_real_tui(sandbox) -> None:
     else:
         approvals = [event for event in uncertain_events if event["kind"] == "runtime_commander_investigation_recovery_approved"]
         assert approvals and approvals[-1]["approval"]["approval_id"] == uncertain_approval_id
-    assert "historical_pending_request_e2e" not in json.dumps(requests)
+    historical_mentions: list[tuple[tuple[object, ...], str]] = []
+
+    def collect_historical_mentions(value: object, path: tuple[object, ...] = ()) -> None:
+        if isinstance(value, str) and "historical_pending_request_e2e" in value:
+            historical_mentions.append((path, value))
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                collect_historical_mentions(child, (*path, key))
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                collect_historical_mentions(child, (*path, index))
+
+    collect_historical_mentions(requests)
+    if len(requests) == request_count_before_cancellation:
+        assert historical_mentions == []
+    else:
+        assert len(requests) == request_count_before_cancellation + 1
+        assert len(historical_mentions) == 1
+        mention_path, notice_content = historical_mentions[0]
+        assert mention_path[-1] == "content"
+        notice = json.loads(notice_content)
+        assert notice["kind"] == "commander_investigation_recovery_notice"
+        assert notice["previous_model_request_id"] == "historical_pending_request_e2e"
+        assert notice["previous_provider_outcome"] == "uncertain"
+        assert notice["previous_request_replay_forbidden"] is True
+        assert notice["previous_tool_execution_replay_forbidden"] is True
+        assert notice["fresh_request_required"] is True
     server.shutdown()
     server.server_close()
