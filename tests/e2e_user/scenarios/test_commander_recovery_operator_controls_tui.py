@@ -54,7 +54,7 @@ def test_operator_controls_commander_recovery_through_real_tui(sandbox) -> None:
             body = self.rfile.read(int(self.headers.get("content-length", "0")))
             requests.append(json.loads(body))
             if self.server.delay_response:  # type: ignore[attr-defined]
-                time.sleep(1)
+                time.sleep(3)
             response = json.dumps(
                 {
                     "id": "chatcmpl_e2e_recovery",
@@ -197,7 +197,8 @@ def test_operator_controls_commander_recovery_through_real_tui(sandbox) -> None:
     request_count_before_cancellation = len(requests)
     cancelled = run_commands([
         f"/commander-recovery-execute investigation_id=commander_recovery_uncertain_e2e approval_id={uncertain_approval_id} approval_hash={uncertain_approval_hash} recovery_plan_hash={uncertain_current_plan} execution_preparation_hash={uncertain_preparation} confirm=EXECUTE",
-        f"/commander-recovery-cancel investigation_id=commander_recovery_uncertain_e2e approval_id={uncertain_approval_id}",
+        *["/commander-recovery-show commander_recovery_uncertain_e2e" for _ in range(16)],
+        "/commander-recovery-cancel investigation_id=commander_recovery_uncertain_e2e",
         "/commander-recovery-show commander_recovery_uncertain_e2e",
     ])
     assert "cancellation requested" in cancelled.stdout
@@ -205,6 +206,8 @@ def test_operator_controls_commander_recovery_through_real_tui(sandbox) -> None:
     uncertain_events = [event for event in events if event.get("investigation_id") == "commander_recovery_uncertain_e2e"]
     uncertain_kinds = [event["kind"] for event in uncertain_events]
     if "runtime_commander_investigation_recovery_started" in uncertain_kinds:
+        recovery_start_index = uncertain_kinds.index("runtime_commander_investigation_recovery_started")
+        assert "runtime_commander_investigation_model_step_started" in uncertain_kinds[recovery_start_index + 1 :]
         assert "runtime_commander_investigation_finished" not in uncertain_kinds
     else:
         approvals = [event for event in uncertain_events if event["kind"] == "runtime_commander_investigation_recovery_approved"]
