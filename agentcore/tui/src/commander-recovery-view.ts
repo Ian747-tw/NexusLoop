@@ -32,3 +32,16 @@ export function commanderRecoveryAuthorityValues(recovery: CommanderRecoveryUiSt
     approval_hash: authorityField(approval, "approval_hash"),
   }
 }
+
+export function commanderRecoveryApprovalDisplay(approval: Record<string, unknown> | null | undefined): {
+  status: string
+  blockers: string[]
+} {
+  const value = approval ?? {}
+  return {
+    status: authorityField(value, "status"),
+    blockers: Array.isArray(value.blockers)
+      ? value.blockers.slice(0, 6).map((item) => redactText(String(item)).slice(0, 240))
+      : [],
+  }
+}

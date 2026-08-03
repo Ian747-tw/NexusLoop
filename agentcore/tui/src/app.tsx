@@ -6,7 +6,7 @@ import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
-import { commanderRecoveryAuthorityValues } from "./commander-recovery-view"
+import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues } from "./commander-recovery-view"
 import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
@@ -298,6 +298,7 @@ function ApprovalPanel(props: { state: UiState }) {
   const bundles = () => props.state.proposalBundles
   const recovery = () => props.state.commanderRecovery
   const recoveryAuthority = () => commanderRecoveryAuthorityValues(recovery() ?? { records: [] })
+  const recoveryApproval = () => commanderRecoveryApprovalDisplay(recovery()?.approval)
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
       <Show when={recovery()}>
@@ -330,6 +331,12 @@ function ApprovalPanel(props: { state: UiState }) {
             <Show when={value().pendingConfirmation === "execution"}>
               <text fg={color.warning}>execution confirmation required: approval and execution are separate actions</text>
             </Show>
+            <Show when={value().approval}>
+              <text fg={recoveryApproval().status === "blocked" ? color.warning : color.accent}>approval result={recoveryApproval().status}</text>
+            </Show>
+            <For each={recoveryApproval().blockers}>
+              {(blocker) => <text fg={color.warning}>approval blocker: {blocker}</text>}
+            </For>
             <Show when={recoveryAuthority().approval_id !== "none"}>
               <text fg={color.accent}>approval authority=current</text>
               <text fg={color.text}>approval_id={recoveryAuthority().approval_id}</text>
