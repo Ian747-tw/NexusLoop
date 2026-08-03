@@ -506,7 +506,7 @@ export class RuntimeServer {
     run?: import("./commander-agent").CommanderInvestigationJournalRun
   }>()
   private readonly activeCommanderRecoveryApprovalWrites = new Set<Promise<unknown>>()
-  private readonly activeCommanderRecoveryApprovalInvestigationIds = new Set<string>()
+  private readonly activeCommanderRecoveryApprovalInvestigationIds = new Map<string, number>()
   private readonly activeConfiguredCommanderRecoveries = new Set<{
     promise: Promise<unknown>
     investigation_id: string
@@ -2854,12 +2854,17 @@ export class RuntimeServer {
       const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
       return commanderRecoveryApprovalBlockedResult(input, preview, "Commander recovery approval write requires inactive durable investigation", this.researchSynthesisNow?.() ?? new Date())
     }
+    const investigationId = typeof input.investigation_id === "string" ? input.investigation_id : undefined
+    if (investigationId) this.activeCommanderRecoveryApprovalInvestigationIds.set(investigationId, (this.activeCommanderRecoveryApprovalInvestigationIds.get(investigationId) ?? 0) + 1)
     let tracked!: Promise<CommanderInvestigationRecoveryApprovalResult>
     tracked = this.commanderInvestigationRecoveryApprovalService().record(input).finally(() => {
       this.activeCommanderRecoveryApprovalWrites.delete(tracked)
-      if (typeof input.investigation_id === "string") this.activeCommanderRecoveryApprovalInvestigationIds.delete(input.investigation_id)
+      if (investigationId) {
+        const remaining = (this.activeCommanderRecoveryApprovalInvestigationIds.get(investigationId) ?? 1) - 1
+        if (remaining > 0) this.activeCommanderRecoveryApprovalInvestigationIds.set(investigationId, remaining)
+        else this.activeCommanderRecoveryApprovalInvestigationIds.delete(investigationId)
+      }
     })
-    if (typeof input.investigation_id === "string") this.activeCommanderRecoveryApprovalInvestigationIds.add(input.investigation_id)
     this.activeCommanderRecoveryApprovalWrites.add(tracked)
     return tracked
   }

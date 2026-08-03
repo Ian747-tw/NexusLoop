@@ -9651,6 +9651,70 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(1)
   })
 
+  test("configured recovery validates the fresh connector audit without rejecting historical connector metadata", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-historical-audit-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured recovery after connector change") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_historical_audit", [], "historical-connector")
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "completed", provider_called: true, network_called: true, external_api_audit_events_appended: 1 })
+    expect(result.controller_result?.provider_audit).toMatchObject({
+      connector_ids: ["historical-connector", "openai-test"],
+      provider_request_count: 1,
+      external_api_audit_event_count: 1,
+      all_provider_requests_audited: true,
+    })
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  test("configured recovery remains fenced until every overlapping approval write settles", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-approval-fence-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch while approval is active") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_approval_fence")
+    const approvalInput = {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: authority.recovery.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint" as const,
+      approved_by: "configured_recovery_operator",
+      acknowledgements: {
+        fresh_context_required: true as const,
+        exact_replay_unavailable: true as const,
+        provider_request_replay_forbidden: true as const,
+        tool_execution_replay_forbidden: true as const,
+      },
+    }
+    const pending: Array<{ promise: Promise<any>; resolve: (value: any) => void }> = []
+    ;(server as any).commanderInvestigationRecoveryApprovalService().record = () => {
+      let resolve!: (value: any) => void
+      const promise = new Promise<any>((done) => { resolve = done })
+      pending.push({ promise, resolve })
+      return promise
+    }
+
+    const first = server.recordCommanderInvestigationRecoveryApproval(approvalInput)
+    const second = server.recordCommanderInvestigationRecoveryApproval(approvalInput)
+    expect(pending).toHaveLength(2)
+    pending[0]!.resolve(authority.approval)
+    await first
+
+    const blocked = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    expect(blocked).toMatchObject({ status: "blocked", provider_called: false, network_called: false, events_appended: false })
+    expect(blocked.blockers.join(" ")).toContain("approval write is active")
+    expect(transport.requests).toHaveLength(0)
+
+    pending[1]!.resolve(authority.approval)
+    await second
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+  })
+
   test("configured RuntimeServer recovery uses the real bound safe-read executor and checkpoints before the next provider request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-tool-"))
     await writeApprovedSpec(projectDir)
@@ -11311,7 +11375,7 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
   }
 }
 
-async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investigationId: string, loadedToolIds: string[] = []) {
+async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investigationId: string, loadedToolIds: string[] = [], historicalConnectorId?: string) {
   const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
   const configured = providerConfig()
   const input = baseInvestigation({
@@ -11327,6 +11391,13 @@ async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investig
   const loadedTools = COMMANDER_TOOL_REGISTRY.filter((tool) => loadedToolIds.includes(tool.tool_id))
   snapshot.loaded_tools = loadedTools
   snapshot.working_set.loaded_tool_ids = loadedTools.map((tool) => tool.tool_id)
+  if (historicalConnectorId) {
+    snapshot.working_set.provider_audit = {
+      ...snapshot.working_set.provider_audit,
+      transport_kind: "external_api_connector",
+      connector_ids: [historicalConnectorId],
+    }
+  }
   snapshot.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(snapshot.working_set))
   snapshot.budget = { ...snapshot.budget, max_context_bytes: 65_536, max_context_tokens: 16_384, max_cumulative_tool_result_bytes: 32_000, budget_hash: "" }
   snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
