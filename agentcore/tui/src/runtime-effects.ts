@@ -18964,6 +18964,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       : null
     const selectionChanged = selectedInvestigationId !== undefined
       && commanderRecoveryTargetChanged(current, selectedInvestigationId)
+    const operationChanged = current.operation?.operation_id !== activeOperation?.operation_id
     return {
       ...state,
       commanderRecovery: {
@@ -18973,7 +18974,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
         approval: null,
         pendingConfirmation: undefined,
         operation: activeOperation,
-        cancellation: selectionChanged ? null : current.cancellation,
+        cancellation: selectionChanged || operationChanged ? null : current.cancellation,
         commandError: undefined,
       },
     }

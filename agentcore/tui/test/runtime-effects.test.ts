@@ -6985,6 +6985,24 @@ describe("runtime UI effects", () => {
     expect(shown.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, preview: null, approval: null, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, cancellation: null })
     expect(shown.commanderRecovery?.pendingConfirmation).toBeUndefined()
 
+    const shownReplacement = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: null,
+        approval: null,
+        operation: { operation_id: "operation_a", investigation_id: "inv_b", approval_id: "approval_b", status: "blocked" },
+        cancellation: { status: "not_active", operation_id: "operation_a" },
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(shownReplacement.commanderRecovery).toMatchObject({
+      selected: { investigation_id: "inv_b" },
+      operation: { investigation_id: "inv_b", operation_id: "operation_b" },
+      cancellation: null,
+    })
+
     const refreshed = await applyRuntimeUiEffect({
       ...initialState("/tmp/demo"),
       screen: "main",
