@@ -10118,6 +10118,61 @@ describe("Commander in-memory investigation controller", () => {
     expect(source).toMatchObject({ projection_status: "ready", recovery_execution_in_progress: true, recovery_execution_interrupted: true, terminal: undefined })
   })
 
+  test("configured recovery preflight is shutdown-owned and cannot consume approval after runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-preflight-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch after shutdown") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_preflight_shutdown")
+    const originalRecoverySource = authority.journal.recoverySource.bind(authority.journal)
+    let preflightEntered!: () => void
+    let releasePreflight!: () => void
+    const entered = new Promise<void>((resolve) => { preflightEntered = resolve })
+    const release = new Promise<void>((resolve) => { releasePreflight = resolve })
+    let delayed = false
+    authority.journal.recoverySource = async (investigationId) => {
+      if (!delayed) {
+        delayed = true
+        preflightEntered()
+        await release
+      }
+      return originalRecoverySource(investigationId)
+    }
+
+    const recovery = server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    await entered
+    const shutdown = server.shutdown("configured recovery preflight shutdown")
+    await waitFor(() => (server as any).lifecycleState === "stopping")
+    expect((server as any).runLock.isHeld()).toBe(true)
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+
+    releasePreflight()
+    const result = await recovery
+    await shutdown
+
+    expect(result).toMatchObject({ status: "blocked", approval_consumed: false, provider_called: false, network_called: false, events_appended: false })
+    expect(result.blockers.join(" ")).toMatch(/provider is not execution-ready|authority changed during preflight/)
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_checkpointed")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    expect(events[events.length - 1]?.kind).toBe("runtime_shutdown")
+    const source = await originalRecoverySource(authority.investigation_id)
+    expect(source).toMatchObject({
+      projection_status: "ready",
+      recovery_execution_in_progress: false,
+      latest_recovery_approval: { consumed: false },
+      consumed_recovery_approval: undefined,
+      current_recovery_attempt: undefined,
+      terminal: undefined,
+    })
+  })
+
   test("configured recovery fails closed before durable start when runtime or provider authority is unavailable", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-preflight-"))
     await writeApprovedSpec(projectDir)

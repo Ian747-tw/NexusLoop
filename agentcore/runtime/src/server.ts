@@ -2879,8 +2879,7 @@ export class RuntimeServer {
     operational: { abort_signal?: AbortSignal } = {},
   ): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const now = this.researchSynthesisNow?.() ?? new Date()
-    const runtimeReady = this.mode === "active" && this.started && this.lifecycleState === "ready" && !this.lifecycleShutdownRequested && this.runLock.isHeld()
-    if (!runtimeReady || !this.commanderInvestigationProviderConfig || this.commanderModelStepAdapter?.adapter_id !== "external_api_connector_ai_sdk_core") {
+    if (!this.configuredCommanderRecoveryRuntimeAuthorityReady()) {
       return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires active ready RuntimeServer authority, run lock, and connector-backed provider", now)
     }
     if (this.activeCommanderRecoveryApprovalInvestigationIds.has(input.investigation_id)) {
@@ -2890,39 +2889,53 @@ export class RuntimeServer {
       return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires an inactive durable investigation", now)
     }
     this.activeConfiguredCommanderRecoveryInvestigationIds.set(input.investigation_id, (this.activeConfiguredCommanderRecoveryInvestigationIds.get(input.investigation_id) ?? 0) + 1)
-    try {
-      const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-      const identity = source?.immutable_identity
-      if (!identity) return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires authoritative journal identity", now)
-      const readiness = this.previewCommanderInvestigationProviderReadiness({
-        phase: identity.phase,
-        provider_id: identity.provider_id,
-        provider_kind: identity.provider_kind,
-        model_id: identity.model_id,
-      })
-      if (!readiness.execution_ready) {
-        return commanderRecoveryTransactionBlockedResult(input, `configured Commander recovery provider is not execution-ready: ${readiness.blockers.join("; ").slice(0, 240)}`, now)
-      }
-
-      const combined = this.commanderInvestigationAbortSignal(operational.abort_signal)
-      const active = { investigation_id: input.investigation_id } as {
-        promise: Promise<unknown>
-        investigation_id: string
-        run?: import("./commander-agent").CommanderInvestigationJournalRun
-      }
-      let tracked!: Promise<CommanderInvestigationRecoveryTransactionResult>
-      tracked = this.commanderInvestigationRecoveryTransactionService().run(input, { abort_signal: combined.signal }).finally(() => {
+    const combined = this.commanderInvestigationAbortSignal(operational.abort_signal)
+    const active = { investigation_id: input.investigation_id } as {
+      promise: Promise<unknown>
+      investigation_id: string
+      run?: import("./commander-agent").CommanderInvestigationJournalRun
+    }
+    const tracked = (async (): Promise<CommanderInvestigationRecoveryTransactionResult> => {
+      try {
+        const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+        const identity = source?.immutable_identity
+        if (!identity) return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires authoritative journal identity", now)
+        const readiness = this.previewCommanderInvestigationProviderReadiness({
+          phase: identity.phase,
+          provider_id: identity.provider_id,
+          provider_kind: identity.provider_kind,
+          model_id: identity.model_id,
+        })
+        if (!readiness.execution_ready) {
+          return commanderRecoveryTransactionBlockedResult(input, `configured Commander recovery provider is not execution-ready: ${readiness.blockers.join("; ").slice(0, 240)}`, now)
+        }
+        if (!this.configuredCommanderRecoveryRuntimeAuthorityReady()) {
+          return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery authority changed during preflight", this.researchSynthesisNow?.() ?? new Date())
+        }
+        return await this.commanderInvestigationRecoveryTransactionService().run(input, { abort_signal: combined.signal })
+      } finally {
         combined.cleanup()
         this.activeConfiguredCommanderRecoveries.delete(active)
-      })
-      active.promise = tracked
-      this.activeConfiguredCommanderRecoveries.add(active)
-      return await tracked
-    } finally {
-      const remaining = (this.activeConfiguredCommanderRecoveryInvestigationIds.get(input.investigation_id) ?? 1) - 1
-      if (remaining > 0) this.activeConfiguredCommanderRecoveryInvestigationIds.set(input.investigation_id, remaining)
-      else this.activeConfiguredCommanderRecoveryInvestigationIds.delete(input.investigation_id)
-    }
+        const remaining = (this.activeConfiguredCommanderRecoveryInvestigationIds.get(input.investigation_id) ?? 1) - 1
+        if (remaining > 0) this.activeConfiguredCommanderRecoveryInvestigationIds.set(input.investigation_id, remaining)
+        else this.activeConfiguredCommanderRecoveryInvestigationIds.delete(input.investigation_id)
+      }
+    })()
+    active.promise = tracked
+    this.activeConfiguredCommanderRecoveries.add(active)
+    return tracked
+  }
+
+  private configuredCommanderRecoveryRuntimeAuthorityReady(): boolean {
+    return (
+      this.mode === "active" &&
+      this.started &&
+      this.lifecycleState === "ready" &&
+      !this.lifecycleShutdownRequested &&
+      this.runLock.isHeld() &&
+      this.commanderInvestigationProviderConfig !== undefined &&
+      this.commanderModelStepAdapter?.adapter_id === "external_api_connector_ai_sdk_core"
+    )
   }
 
   private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
