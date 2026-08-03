@@ -44,6 +44,7 @@ export function layoutSnapshot(state: UiState): string {
   out.push(`  candidates=${state.commander.candidates.join(", ") || "none"}`)
   out.push(...runtimeLines(state))
   out.push(...commandAuthorityLines(state))
+  out.push(...commanderRecoveryLines(state))
   out.push(...reasoningProviderLines(state))
   out.push(...missionExecutionLines(state))
   out.push("Live system actions")
@@ -122,6 +123,64 @@ export function layoutSnapshot(state: UiState): string {
   out.push(...wakeSchedulerLines(state))
   out.push(`Message box: ${state.messageDraft}`)
   return out.join("\n")
+}
+
+function commanderRecoveryLines(state: UiState): string[] {
+  const recovery = state.commanderRecovery
+  if (!recovery) return []
+  const out = ["Commander recovery", "  mode=fresh recovery continuation", "  exact replay unavailable; fresh context required"]
+  out.push(`  records=${recovery.records.length}`)
+  for (const item of recovery.records.slice(0, 10)) {
+    out.push(`    - ${safeField(item, "investigation_id")} status=${safeField(item, "record_status")} recovery=${safeField(item, "recovery_state")} approval=${safeField(item, "approval_state")}`)
+  }
+  if (recovery.selected) {
+    out.push(`  selected=${safeField(recovery.selected, "investigation_id")} projection=${safeField(recovery.selected, "projection_status")} next=${safeField(recovery.selected, "recommended_next_operator_action")}`)
+  }
+  if (recovery.preview) {
+    out.push(`  preview=${safeField(recovery.preview, "status")} kind=${safeField(recovery.preview, "recovery_kind")} plan=${abbreviatedField(recovery.preview, "recovery_plan_hash")}`)
+    out.push(`  checkpoint=${abbreviatedNestedField(recovery.preview, "checkpoint", "checkpoint_hash")} preparation=${abbreviatedField(recovery.preview, "execution_preparation_hash")}`)
+    out.push(`  recovery_plan_hash=${safeField(recovery.preview, "recovery_plan_hash")}`)
+    out.push(`  execution_preparation_hash=${safeField(recovery.preview, "execution_preparation_hash")}`)
+    const approval = recovery.preview.current_approval
+    if (typeof approval === "object" && approval !== null && !Array.isArray(approval)) {
+      out.push(`  approval_id=${safeField(approval as Record<string, unknown>, "approval_id")}`)
+      out.push(`  approval_hash=${safeField(approval as Record<string, unknown>, "approval_hash")}`)
+    }
+    if (safeField(recovery.preview, "recovery_kind") === "uncertain_provider_outcome") out.push("  provider outcome unknown; previous request and tool execution will not be replayed")
+  }
+  if (recovery.pendingConfirmation === "approval") out.push("  confirmation=approval required; review recovery kind, plan hash, checkpoint, fresh-context and no-replay acknowledgements")
+  if (recovery.pendingConfirmation === "execution") out.push("  confirmation=execution required; approval and execution are separate operator actions")
+  if (recovery.approval) {
+    out.push(`  approval=${safeField(recovery.approval, "status")} approval recorded=${String(safeField(recovery.approval, "events_appended") === "true")}`)
+    const blockers = recovery.approval.blockers
+    if (Array.isArray(blockers)) out.push(`  approval_blockers=${blockers.slice(0, 6).map((item) => preview(redactText(String(item)))).join(" | ") || "none"}`)
+    const record = recovery.approval.approval
+    if (typeof record === "object" && record !== null && !Array.isArray(record)) {
+      out.push(`  approval_id=${safeField(record as Record<string, unknown>, "approval_id")}`)
+      out.push(`  approval_hash=${safeField(record as Record<string, unknown>, "approval_hash")}`)
+    }
+  }
+  if (recovery.operation) out.push(`  operation=${safeField(recovery.operation, "operation_id")} status=${safeField(recovery.operation, "status")} cancellation_requested=${safeField(recovery.operation, "cancellation_requested")}`)
+  if (recovery.cancellation) out.push(`  cancellation=${safeField(recovery.cancellation, "status")} wording=cancellation requested`)
+  if (recovery.commandError) out.push(`  error=${preview(redactText(recovery.commandError))}`)
+  out.push("  commands=/commander-recoveries /commander-recovery-show /commander-recovery-preview /commander-recovery-approve /commander-recovery-execute /commander-recovery-cancel")
+  return out
+}
+
+function safeField(value: Record<string, unknown>, key: string): string {
+  const item = value[key]
+  if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") return preview(redactText(String(item)))
+  return "none"
+}
+
+function abbreviatedField(value: Record<string, unknown>, key: string): string {
+  const item = value[key]
+  return typeof item === "string" ? redactText(item).slice(0, 12) : "none"
+}
+
+function abbreviatedNestedField(value: Record<string, unknown>, key: string, nested: string): string {
+  const item = value[key]
+  return typeof item === "object" && item !== null && !Array.isArray(item) ? abbreviatedField(item as Record<string, unknown>, nested) : "none"
 }
 
 function opencodeContinuityLines(state: UiState): string[] {

@@ -80,6 +80,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly minimaxLiveValidations: MiniMaxLiveValidationResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
+  private readonly commanderRecoveryOperations = new Map<string, Record<string, unknown>>()
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
   private commanderToolServiceInstance: CommanderToolService | null = null
   private readonly continuationPlans: ContinuationPlanSummary[] = []
@@ -270,6 +271,42 @@ export class FakeRuntimeClient implements RuntimeClient {
           scan_limit: 800,
           returned_count: 1,
         }, "runtime_authoritative", false)
+      case "runtime.list_commander_investigation_recoveries":
+        return {
+          items: [fakeCommanderRecoverySummary()],
+          count: 1,
+          limit: readLimit(payload.limit, 20),
+          current_compatibility_checked: false,
+          observed_at: new Date(0).toISOString(),
+        }
+      case "runtime.get_commander_investigation_recovery":
+        return { ...fakeCommanderRecoverySummary(), found: true, recommended_next_operator_action: "preview_checkpoint_recovery", blockers: [], warnings: [], observed_at: new Date(0).toISOString() }
+      case "runtime.preview_commander_investigation_recovery":
+        return fakeCommanderRecoveryPreview(String(payload.investigation_id ?? "fake_commander_recovery"))
+      case "runtime.approve_commander_investigation_recovery":
+        return { status: "recorded", investigation_id: payload.investigation_id, events_appended: true, provider_called: false, network_called: false }
+      case "runtime.execute_commander_investigation_recovery": {
+        const operation = {
+          operation_id: `fake_recovery_operation_${this.commanderRecoveryOperations.size}`,
+          operation_version: 1,
+          investigation_id: payload.investigation_id,
+          approval_id: payload.approval_id,
+          approval_hash: payload.approval_hash,
+          recovery_plan_hash: payload.recovery_plan_hash,
+          execution_preparation_hash: payload.execution_preparation_hash,
+          status: "running",
+          cancellation_requested: false,
+          started_at: new Date(0).toISOString(),
+        }
+        this.commanderRecoveryOperations.set(String(operation.operation_id), operation)
+        return operation
+      }
+      case "runtime.cancel_commander_investigation_recovery": {
+        const operation = this.commanderRecoveryOperations.get(String(payload.operation_id ?? ""))
+        if (!operation) return { status: "not_active", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, cancellation_requested: false }
+        operation.cancellation_requested = true
+        return { status: "cancellation_requested", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, cancellation_requested: true, provider_outcome_known: false, durable_state_changed: false, generated_at: new Date(0).toISOString() }
+      }
       case "runtime.commander_repo_tree":
         return fakeInternalRead("repo.tree", { root: ".", path: String(payload.path ?? "."), depth: 2, entries: [{ path: "agentcore/runtime/src/commander-tools", kind: "directory", depth: 4, readable: true }, { path: "agentcore/runtime/src/commander-tools/commander-tool-service.ts", kind: "file", size_bytes: 1234, depth: 5, extension: ".ts", readable: true, content_hash: "fake-tree-hash" }], omitted_entries: 0 })
       case "runtime.commander_repo_search_text":
@@ -11161,9 +11198,53 @@ function fakeApplyReadinessStatusSummary(status: string): string {
   return "Apply readiness target is unknown."
 }
 
+function fakeCommanderRecoverySummary(): Record<string, unknown> {
+  return {
+    investigation_id: "fake_commander_recovery",
+    projection_status: "ready",
+    record_status: "running",
+    recovery_state: "checkpoint_available_resume_not_implemented",
+    recovery_kind: "checkpoint",
+    objective_preview: "Inspect durable recovery state",
+    phase: "implementation",
+    updated_at: new Date(0).toISOString(),
+    record_hash: "fake_record_hash",
+    checkpoint_id: "fake_checkpoint",
+    terminal: false,
+    approval_state: "none",
+    recovery_approval_count: 0,
+    recovery_attempt_count: 0,
+    recovery_execution_in_progress: false,
+    human_review_required: false,
+    current_compatibility_checked: false,
+  }
+}
+
+function fakeCommanderRecoveryPreview(investigationId: string): Record<string, unknown> {
+  return {
+    status: "ready_for_approval",
+    investigation_id: investigationId,
+    recovery_kind: "checkpoint",
+    recovery_plan_hash: "fake_recovery_plan_hash",
+    execution_preparation_hash: "fake_execution_preparation_hash",
+    checkpoint: { checkpoint_id: "fake_checkpoint", checkpoint_hash: "fake_checkpoint_hash" },
+    exact_replay_supported: false,
+    fresh_context_required: true,
+    current_continuity_required: true,
+    blockers: [],
+    warnings: [],
+  }
+}
+
 function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
   return [
     fakeCommandAuthorityRecord("/authority", "runtime.command_authority_summary", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"] }),
+    fakeCommandAuthorityRecord("/commander-recoveries", "runtime.list_commander_investigation_recoveries", "safe_read", "none", "commander_recovery", { targeted: ["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"] }),
+    fakeCommandAuthorityRecord("/commander-recovery-show", "runtime.get_commander_investigation_recovery", "safe_read", "none", "commander_recovery", { targeted: ["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"] }),
+    fakeCommandAuthorityRecord("/commander-recovery-preview", "runtime.preview_commander_investigation_recovery", "safe_read", "commander_recovery_runtime", "commander_recovery", { targeted: ["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"] }),
+    fakeCommandAuthorityRecord("/commander-recovery-approve", "runtime.approve_commander_investigation_recovery", "medium_risk_write", "commander_recovery_runtime", "commander_recovery", { mutates: true, active: true, lock: true, approval: true, events: ["runtime_commander_investigation_recovery_approved"], targeted: ["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"] }),
+    fakeCommandAuthorityRecord("/commander-recovery-execute", "runtime.execute_commander_investigation_recovery", "high_impact_write", "commander_recovery_runtime", "commander_recovery", { mutates: true, active: true, lock: true, approval: true, blocked: true, events: ["runtime_commander_investigation_recovery_started", "runtime_commander_investigation_model_step_started", "runtime_commander_investigation_checkpointed", "runtime_commander_investigation_finished"], targeted: ["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"] }),
+    fakeCommandAuthorityRecord("/commander-recovery-cancel", "runtime.cancel_commander_investigation_recovery", "medium_risk_write", "commander_recovery_runtime", "commander_recovery", { active: true, blocked: true, targeted: ["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"] }),
     fakeCommandAuthorityRecord("/status", "runtime.status", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_spec_onboarding_tui.py"] }),
     fakeCommandAuthorityRecord("/scheduler-nav-checkpoint-run", "runtime.execute_wake_scheduler_navigation_checkpoint_write_run", "medium_risk_write", "checkpoint_runtime", "scheduler_navigation_checkpoint_write", {
       mutates: true,

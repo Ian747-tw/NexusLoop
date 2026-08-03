@@ -6818,4 +6818,69 @@ describe("runtime UI effects", () => {
     await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "path=src/a", "b.ts", "context_lines=0"] })
     expect(calls[5]).toEqual({ name: "runtime.commander_repo_git_diff", payload: { scope: "working_tree", path: "src/a b.ts", context_lines: 0 } })
   })
+
+  test("Commander recovery UI keeps approval execution and reachable cancellation separate", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recoveries", args: ["limit=5"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["fake_commander_recovery"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["fake_commander_recovery"] })
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true"],
+    })
+    expect(state.commanderRecovery?.pendingConfirmation).toBe("approval")
+    expect(state.commanderRecovery?.approval).toBeNull()
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(state.commanderRecovery?.approval).toMatchObject({ status: "recorded", events_appended: true })
+    expect(state.commanderRecovery?.operation).toBeNull()
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=fake_commander_recovery", "approval_id=fake_approval", "approval_hash=fake_approval_hash", "recovery_plan_hash=fake_recovery_plan_hash", "execution_preparation_hash=fake_execution_preparation_hash"],
+    })
+    expect(state.commanderRecovery?.pendingConfirmation).toBe("execution")
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=fake_commander_recovery", "approval_id=fake_approval", "approval_hash=fake_approval_hash", "recovery_plan_hash=fake_recovery_plan_hash", "execution_preparation_hash=fake_execution_preparation_hash", "confirm=EXECUTE"],
+    })
+    expect(state.commanderRecovery?.operation).toMatchObject({ status: "running", operation_id: "fake_recovery_operation_0" })
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=fake_commander_recovery", "operation_id=fake_recovery_operation_0", "approval_id=fake_approval"],
+    })
+    expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander recovery")
+    expect(snapshot).toContain("fresh recovery continuation")
+    expect(snapshot).toContain("exact replay unavailable")
+    expect(snapshot).toContain("cancellation requested")
+    expect(snapshot).not.toContain("connector_url")
+  })
+
+  test("Commander recovery slash parsing rejects generic confirmation and implicit acknowledgements", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    const generic = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-approve", args: ["yes"] })
+    expect(generic.commanderRecovery?.commandError).toContain("key=value")
+    const missing = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "confirm=APPROVE"],
+    })
+    expect(missing.commanderRecovery?.commandError).toContain("fresh_context_required must be explicitly true")
+    const uncertain = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_continue_after_uncertain_provider_outcome", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(uncertain.commanderRecovery?.commandError).toContain("uncertain_provider_outcome")
+  })
 })

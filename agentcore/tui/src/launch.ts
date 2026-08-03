@@ -91,7 +91,11 @@ function isExplicitRuntimeResumeText(text: string): boolean {
 function isNoStartInspectionText(text: string): boolean {
   const trimmed = text.trim()
   return (
-	    trimmed.startsWith("/opencode-smoke")
+	    trimmed.startsWith("/commander-recoveries")
+	    || trimmed.startsWith("/commander-recovery-show")
+	    || trimmed.startsWith("/commander-recovery-preview")
+	    || trimmed.startsWith("/authority")
+	    || trimmed.startsWith("/opencode-smoke")
 	    || trimmed.startsWith("/opencode-process-smoke")
 	    || trimmed.startsWith("/opencode-health-smoke")
 	    || trimmed.startsWith("/handoff-readiness")

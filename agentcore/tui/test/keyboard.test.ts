@@ -83,6 +83,27 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([{ type: "send-command", command: "status" }])
   })
 
+  test("Commander recovery slash commands route only the six canonical surfaces", () => {
+    const commands = [
+      "/commander-recoveries limit=5",
+      "/commander-recovery-show inv_1",
+      "/commander-recovery-preview inv_1",
+      "/commander-recovery-approve investigation_id=inv_1",
+      "/commander-recovery-execute investigation_id=inv_1",
+      "/commander-recovery-cancel investigation_id=inv_1",
+    ]
+    for (const messageDraft of commands) {
+      const result = applyKeyCommandWithEffects({ ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft }, { type: "submit" })
+      expect(result.effects).toEqual([{
+        type: "send-command",
+        command: messageDraft.slice(1).split(" ")[0],
+        args: messageDraft.split(" ").slice(1),
+      }])
+    }
+    const forbidden = applyKeyCommandWithEffects({ ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/commander-recovery-resume inv_1" }, { type: "submit" })
+    expect(forbidden.effects).toEqual([{ type: "send-user-message", message: "/commander-recovery-resume inv_1" }])
+  })
+
   test("research slash commands route through whitelisted runtime command effects with args", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

@@ -5741,6 +5741,17 @@ export type CommandAuthorityState = {
   commandError?: string
 }
 
+export type CommanderRecoveryUiState = {
+  records: Array<Record<string, unknown>>
+  selected?: Record<string, unknown> | null
+  preview?: Record<string, unknown> | null
+  approval?: Record<string, unknown> | null
+  pendingConfirmation?: "approval" | "execution"
+  operation?: Record<string, unknown> | null
+  cancellation?: Record<string, unknown> | null
+  commandError?: string
+}
+
 export type UiState = {
   screen: Screen
   projectDir: string
@@ -5768,6 +5779,7 @@ export type UiState = {
   missionExecution?: MissionExecutionState
   runtimeCommandError?: string
   commandAuthority?: CommandAuthorityState
+  commanderRecovery?: CommanderRecoveryUiState
   research?: ResearchRecordsState
   reviews?: ReviewsState
   proposals?: ProposalsState
@@ -5902,6 +5914,14 @@ export function initialState(projectDir: string): UiState {
       claims: [],
       progress: [],
       results: [],
+    },
+    commanderRecovery: {
+      records: [],
+      selected: null,
+      preview: null,
+      approval: null,
+      operation: null,
+      cancellation: null,
     },
     research: {
       topics: [],
