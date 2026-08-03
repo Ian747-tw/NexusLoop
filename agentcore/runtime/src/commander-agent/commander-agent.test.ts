@@ -9600,6 +9600,114 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedSource).toMatchObject({ projection_status: "corrupt", current_recovery_attempt: undefined, latest_recovery_attempt: undefined, consumed_recovery_approval: undefined })
   })
 
+  test("scripted recovery validates zero fresh audits independently of historical connector audits", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-scripted-historical-audit-"))
+    await writeApprovedSpec(projectDir)
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const input = baseInvestigation({
+      investigation_id: "inv_scripted_recovery_historical_audit",
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const started: CommanderInvestigationStartedSnapshot[] = []
+    const modelSteps: any[] = []
+    const checkpoints: CommanderInvestigationCheckpointSnapshot[] = []
+    const auditMetadata = { nexusloop_transport: { transport_kind: "external_api_connector", connector_id: "openai-test", request_ids: ["historical-audit-request"], audit_event_kinds: ["external_api_request_executed"], audit_event_count: 1, successful_audit_count: 1, failed_audit_count: 0, dropped_header_names: [], request_body_persisted: false, response_body_persisted: false, credentials_persisted: false } }
+    const capture = new CommanderInvestigationController({
+      ...(server as any).commanderInvestigationControllerOptions(),
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("historical_search", "commander.tool_search", { query: "historical connector audit" })], provider_metadata: auditMetadata },
+        { assert_request: () => { throw new Error("stop after connector-audited checkpoint") } },
+      ]),
+      providerGate: undefined,
+      providerAuditPolicy: { required: true, transport_kind: "external_api_connector", connector_id: "openai-test" },
+      persistenceObserver: {
+        onStarted: (snapshot) => { started.push(structuredClone(snapshot)) },
+        onModelStepStarted: (snapshot) => { modelSteps.push(structuredClone(snapshot)) },
+        onCheckpoint: (snapshot) => { checkpoints.push(structuredClone(snapshot)) },
+      },
+    })
+    await expect(capture.run(input)).rejects.toThrow("stop after connector-audited checkpoint")
+    expect(checkpoints).toHaveLength(1)
+    const durableStart = durableStartedSnapshot(input, 43, input.investigation_id!) as CommanderInvestigationStartedSnapshot
+    durableStart.bootstrap = started[0]!.bootstrap
+    durableStart.loaded_tools = started[0]!.loaded_tools
+    durableStart.working_set = started[0]!.working_set
+    durableStart.budget = { ...durableStart.budget, max_context_bytes: 65_536, max_context_tokens: 16_384, budget_hash: "" }
+    durableStart.budget.budget_hash = stableHash({ ...durableStart.budget, budget_hash: "" })
+    const durableCheckpoint = { ...checkpoints[0]!, bootstrap: durableStart.bootstrap, budget: durableStart.budget }
+    const durableRun = await journal.createObserver(input)
+    await durableRun.observer.onStarted(durableStart)
+    await durableRun.observer.onModelStepStarted(modelSteps[0]!)
+    await durableRun.observer.onCheckpoint(durableCheckpoint)
+    journal.release(durableRun)
+    const historicalSource = await journal.recoverySource(input.investigation_id!)
+    expect(historicalSource).toMatchObject({
+      projection_status: "ready",
+      latest_checkpoint: { working_set: { provider_audit: { provider_request_count: 1, external_api_audit_event_count: 1, all_provider_requests_audited: true } } },
+      pending_model_step: undefined,
+      terminal: undefined,
+    })
+    await server.start()
+    const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    expect(recovery).toMatchObject({ status: "ready_for_approval", recovery_kind: "checkpoint", blockers: [] })
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: input.investigation_id!,
+      recovery_plan_hash: recovery.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "scripted_recovery_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(approval).toMatchObject({ status: "recorded", blockers: [] })
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: input.investigation_id! })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+    const adapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "scripted continuation after historical audit" }])
+    const auditEventsBefore = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("external_api_request_")).length
+    const transaction = new CommanderInvestigationRecoveryTransactionService({
+      recoveryPreview: (previewInput) => server.previewCommanderInvestigationRecovery(previewInput),
+      recoveryExecutionService: (server as any).commanderInvestigationRecoveryExecutionService(),
+      recoverySource: (investigationId) => journal.recoverySource(investigationId),
+      journalService: journal,
+      continuationRunner: {
+        run: ({ seed, persistence_observer }) => new CommanderInvestigationController({
+          ...(server as any).commanderInvestigationControllerOptions(),
+          modelAdapter: adapter,
+          providerGate: undefined,
+          providerAuditPolicy: { required: false, transport_kind: "none" },
+          persistenceObserver: persistence_observer,
+        }).runFromRecoverySeed(seed),
+      },
+    })
+
+    const result = await transaction.run({
+      investigation_id: input.investigation_id!,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    })
+
+    expect(result).toMatchObject({ status: "completed", execution_transport: "injected_scripted_adapter", provider_called: false, network_called: false, external_api_audit_events_appended: 0, terminal_event_count: 1, pending_boundary_disposition: "not_applicable" })
+    expect(result.controller_result?.provider_audit).toMatchObject({ provider_request_count: 2, external_api_audit_event_count: 1, all_provider_requests_audited: false })
+    expect(adapter.request_summaries).toHaveLength(1)
+    expect((await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("external_api_request_")).length).toBe(auditEventsBefore)
+    expect(await journal.recoverySource(input.investigation_id!)).toMatchObject({ projection_status: "ready", terminal: { provider_audit: { provider_request_count: 2, external_api_audit_event_count: 1, all_provider_requests_audited: false } } })
+  })
+
   test("configured RuntimeServer recovery executes only after durable start and reports connector audits truthfully", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-final-"))
     await writeApprovedSpec(projectDir)

@@ -1145,7 +1145,7 @@ function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummar
     if (metadata.request_body_persisted || metadata.response_body_persisted || metadata.credentials_persisted) summary.warnings.push("provider transport metadata reported persisted sensitive content")
   }
   if (policy?.required !== true) {
-    summary.all_provider_requests_audited = metadata ? summary.external_api_audit_event_count === summary.provider_request_count : true
+    summary.all_provider_requests_audited = summary.transport_kind === "none" || summary.external_api_audit_event_count === summary.provider_request_count
     return { metadata, warnings: [] }
   }
   const requiredPolicy = policy as { required: true; transport_kind: "external_api_connector"; connector_id: string }

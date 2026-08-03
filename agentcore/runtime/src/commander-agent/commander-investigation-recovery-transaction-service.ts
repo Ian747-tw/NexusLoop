@@ -390,7 +390,7 @@ function executionModeBlocker(
   result: CommanderInvestigationResult,
 ): string | undefined {
   if (mode.kind === "scripted") {
-    if (facts.externalApiAuditEventsAppended !== 0 || result.provider_audit.external_api_audit_event_count !== 0) {
+    if (facts.externalApiAuditEventsAppended !== 0) {
       return "scripted recovery transaction must not append external API audits"
     }
     return undefined
