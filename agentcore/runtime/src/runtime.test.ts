@@ -25422,12 +25422,24 @@ test("EventStore reads complete snapshots during queued appends and retries part
   expect(await store.readAll()).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
 
   await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
+  let partialObserved!: () => void
+  const observedPartialTail = new Promise<void>((resolve) => { partialObserved = resolve })
+  const snapshotInternals = store as unknown as { readAllSnapshot(): Promise<JsonlEvent[]> }
+  const readAllSnapshot = snapshotInternals.readAllSnapshot.bind(store)
+  snapshotInternals.readAllSnapshot = async () => {
+    try {
+      return await readAllSnapshot()
+    } catch (error) {
+      if (error instanceof SyntaxError) partialObserved()
+      throw error
+    }
+  }
   let settled = false
   const read = store.readAll().then((events) => {
     settled = true
     return events
   })
-  await Promise.resolve()
+  await observedPartialTail
   expect(settled).toBe(false)
   await writeFile(store.eventsPath, `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "after" })}\n`)
   release()
