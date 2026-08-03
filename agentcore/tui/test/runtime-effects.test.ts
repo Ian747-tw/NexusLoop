@@ -6882,13 +6882,15 @@ describe("runtime UI effects", () => {
               operation_id: "operation_a",
               investigation_id: "inv_a",
               approval_id: "approval_a",
-              recovery_attempt_id: "attempt_a",
               status: "running",
             },
           }
         }
         if (name === "runtime.preview_commander_investigation_recovery") return { investigation_id: payload?.investigation_id, recovery_plan_hash: "plan_b" }
-        if (name === "runtime.cancel_commander_investigation_recovery") return { status: "cancellation_requested", cancellation_requested: true }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          if (payload?.recovery_attempt_id !== "attempt_a") return { status: "operation_identity_mismatch", cancellation_requested: false, recovery_attempt_id: "attempt_a" }
+          return { status: "cancellation_requested", cancellation_requested: true, recovery_attempt_id: "attempt_a" }
+        }
         throw new Error(`unexpected command ${name}`)
       },
     }
@@ -6909,16 +6911,37 @@ describe("runtime UI effects", () => {
       command: "commander-recovery-cancel",
       args: ["investigation_id=inv_a", "operation_id=operation_a", "approval_id=approval_a"],
     })
-    expect(calls.at(-1)).toEqual({
+    expect(calls.slice(-2)).toEqual([{
+      name: "runtime.cancel_commander_investigation_recovery",
+      payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a" },
+    }, {
       name: "runtime.cancel_commander_investigation_recovery",
       payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a" },
-    })
-    expect(state.commanderRecovery?.operation).toMatchObject({ recovery_attempt_id: "attempt_a" })
+    }])
+    expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", recovery_attempt_id: "attempt_a" })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
     expect(state.commanderRecovery?.selected).toMatchObject({ investigation_id: "inv_b" })
     expect(state.commanderRecovery?.preview).toMatchObject({ investigation_id: "inv_b" })
     expect(state.commanderRecovery?.operation).toBeNull()
+  })
+
+  test("Commander recovery snapshot does not claim cancellation for rejected requests", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: null,
+        cancellation: { status: "operation_identity_mismatch", cancellation_requested: false },
+      },
+    }
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("wording=operation identity mismatch")
+    expect(snapshot).not.toContain("wording=cancellation requested")
   })
 
   test("Commander recovery slash parsing rejects generic confirmation and implicit acknowledgements", async () => {

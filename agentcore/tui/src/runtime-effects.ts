@@ -19019,12 +19019,20 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   const operation = shownOperation ?? cachedOperation
   const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
   const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined
-  const result = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+  const cancelInput = {
     investigation_id: investigationId,
     operation_id: fields.operation_id ?? activeOperationId ?? requiredRecoveryField(fields, "operation_id"),
     approval_id: requiredRecoveryField(fields, "approval_id"),
     ...(fields.recovery_attempt_id || activeAttemptId ? { recovery_attempt_id: fields.recovery_attempt_id ?? activeAttemptId } : {}),
-  })
+  }
+  let result = await runtime.command("runtime.cancel_commander_investigation_recovery", cancelInput)
+  const cancellation = safeOptionalRecord(result)
+  if (cancellation?.status === "operation_identity_mismatch" && !cancelInput.recovery_attempt_id && typeof cancellation.recovery_attempt_id === "string") {
+    result = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+      ...cancelInput,
+      recovery_attempt_id: cancellation.recovery_attempt_id,
+    })
+  }
   return { ...state, commanderRecovery: { ...current, selected: shown ?? current.selected, operation: operation ?? current.operation, cancellation: safeOptionalRecord(result), commandError: undefined } }
 }
 

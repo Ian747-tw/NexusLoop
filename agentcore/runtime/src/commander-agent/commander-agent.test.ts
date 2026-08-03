@@ -10549,6 +10549,31 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(0)
   })
 
+  test("blocked public preflight does not poison a corrected recovery execution", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-corrected-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("corrected recovery completed") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_corrected_preflight")
+    const staleInput = { ...authority.transaction_input, recovery_plan_hash: `${authority.transaction_input.recovery_plan_hash}_stale` }
+
+    const staleOperation = await server.command("runtime.execute_commander_investigation_recovery", staleInput) as any
+    const staleEntry = (server as any).publicCommanderRecoveryOperations.get(staleOperation.operation_id)
+    await staleEntry.promise
+    expect(staleEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined, cancellation_requested: false })
+    expect(transport.requests).toHaveLength(0)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+
+    const correctedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(correctedOperation.operation_id).not.toBe(staleOperation.operation_id)
+    const correctedEntry = (server as any).publicCommanderRecoveryOperations.get(correctedOperation.operation_id)
+    await correctedEntry.promise
+    expect(correctedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+  })
+
   test("public cancellation after durable model boundary forwards abort and preserves uncertainty", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-transport-"))
     await writeApprovedSpec(projectDir)
@@ -10566,10 +10591,18 @@ describe("Commander in-memory investigation controller", () => {
       recovery_attempt_id: "commander_recovery_attempt_wrong",
     }) as any
     expect(mismatched.status).toBe("operation_identity_mismatch")
+    const missingAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(missingAttempt).toMatchObject({ status: "operation_identity_mismatch", cancellation_requested: false })
+    expect(typeof missingAttempt.recovery_attempt_id).toBe("string")
     const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
       investigation_id: authority.investigation_id,
       operation_id: operation.operation_id,
       approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: missingAttempt.recovery_attempt_id,
     }) as any
     expect(cancellation.status).toBe("cancellation_requested")
     const attemptId = cancellation.recovery_attempt_id

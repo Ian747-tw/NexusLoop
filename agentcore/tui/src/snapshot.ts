@@ -161,7 +161,17 @@ function commanderRecoveryLines(state: UiState): string[] {
     }
   }
   if (recovery.operation) out.push(`  operation=${safeField(recovery.operation, "operation_id")} status=${safeField(recovery.operation, "status")} cancellation_requested=${safeField(recovery.operation, "cancellation_requested")}`)
-  if (recovery.cancellation) out.push(`  cancellation=${safeField(recovery.cancellation, "status")} wording=cancellation requested`)
+  if (recovery.cancellation) {
+    const status = safeField(recovery.cancellation, "status")
+    const wording = status === "cancellation_requested" || status === "already_requested"
+      ? "cancellation requested"
+      : status === "operation_identity_mismatch"
+        ? "operation identity mismatch"
+        : status === "not_active"
+          ? "operation not active"
+          : "cancellation status unavailable"
+    out.push(`  cancellation=${status} wording=${wording}`)
+  }
   if (recovery.commandError) out.push(`  error=${preview(redactText(recovery.commandError))}`)
   out.push("  commands=/commander-recoveries /commander-recovery-show /commander-recovery-preview /commander-recovery-approve /commander-recovery-execute /commander-recovery-cancel")
   return out

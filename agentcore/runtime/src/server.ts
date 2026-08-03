@@ -528,6 +528,7 @@ export class RuntimeServer {
     promise: Promise<void>
   }>()
   private readonly recentPublicCommanderRecoveryOperations = new Map<string, CommanderRecoveryOperation>()
+  private readonly replaceablePublicCommanderRecoveryOperationIds = new Set<string>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2938,11 +2939,16 @@ export class RuntimeServer {
     }
     const settled = Array.from(this.recentPublicCommanderRecoveryOperations.values()).find((record) => record.investigation_id === input.investigation_id)
     if (settled) {
-      if (sameRecoveryAuthority(settled, input)) return cloneRecoveryOperation(settled)
-      return {
-        ...cloneRecoveryOperation(settled),
-        status: "blocked",
-        error: "a recovery attempt already exists for this investigation and different authority cannot start another",
+      if (this.replaceablePublicCommanderRecoveryOperationIds.has(settled.operation_id)) {
+        this.recentPublicCommanderRecoveryOperations.delete(settled.operation_id)
+        this.replaceablePublicCommanderRecoveryOperationIds.delete(settled.operation_id)
+      } else {
+        if (sameRecoveryAuthority(settled, input)) return cloneRecoveryOperation(settled)
+        return {
+          ...cloneRecoveryOperation(settled),
+          status: "blocked",
+          error: "a recovery attempt already exists for this investigation and different authority cannot start another",
+        }
       }
     }
     const operationId = `commander_recovery_operation_${randomUUID().replaceAll("-", "").slice(0, 24)}`
@@ -2965,6 +2971,9 @@ export class RuntimeServer {
     entry.promise = this.runCommanderInvestigationRecoveryConfigured(input, { abort_signal: controller.signal })
       .then((result) => {
         record.recovery_attempt_id = result.recovery_attempt_id
+        if (result.status === "blocked" && !result.approval_consumed && !result.recovery_attempt_id && !record.cancellation_requested) {
+          this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
+        }
         record.status = result.status === "already_started"
           ? "already_started"
           : result.status === "completed"
@@ -2985,6 +2994,7 @@ export class RuntimeServer {
           const oldest = this.recentPublicCommanderRecoveryOperations.keys().next().value
           if (typeof oldest !== "string") break
           this.recentPublicCommanderRecoveryOperations.delete(oldest)
+          this.replaceablePublicCommanderRecoveryOperationIds.delete(oldest)
         }
       })
     return cloneRecoveryOperation(record)
@@ -3005,9 +3015,11 @@ export class RuntimeServer {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt)
     }
     const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-    const attemptId = source?.current_recovery_attempt?.recovery_attempt_id ?? source?.latest_recovery_attempt?.recovery_attempt_id
+    const attemptId = source?.current_recovery_attempt?.recovery_attempt_id
+      ?? source?.latest_recovery_attempt?.recovery_attempt_id
+      ?? entry.record.recovery_attempt_id
     if (attemptId) entry.record.recovery_attempt_id = attemptId
-    if (input.recovery_attempt_id !== undefined && input.recovery_attempt_id !== attemptId) {
+    if (attemptId && input.recovery_attempt_id !== attemptId) {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
     }
     if (!this.publicCommanderRecoveryOperations.has(input.operation_id) || entry.record.status !== "running") {
