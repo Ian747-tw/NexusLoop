@@ -100,6 +100,7 @@ export type CommanderInvestigationProviderAuditSummary = {
   connector_ids: string[]
   provider_request_count: number
   external_api_audit_event_count: number
+  transport_dispatch_count?: number
   successful_audit_count: number
   failed_audit_count: number
   audit_request_ids: string[]

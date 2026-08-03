@@ -11,11 +11,19 @@ import type { CommanderInvestigationRecoveryPreview } from "./commander-investig
 import type {
   CommanderInvestigationRecoveryAttempt,
   CommanderInvestigationRecoveryContinuationRunner,
+  CommanderInvestigationRecoveryExecutionMode,
   CommanderInvestigationRecoveryTransactionInput,
   CommanderInvestigationRecoveryTransactionResult,
 } from "./commander-investigation-recovery-transaction-types"
 
 type NormalizedTransactionInput = Readonly<CommanderInvestigationRecoveryTransactionInput>
+type RecoveryExecutionFacts = {
+  providerRequestCount: number
+  externalApiAuditEventsAppended: number
+  transportDispatchCount: number
+  providerCalled: boolean
+  networkCalled: boolean
+}
 
 export type CommanderInvestigationRecoveryTransactionServiceOptions = {
   recoveryPreview(input: { investigation_id: string; include_current_continuity?: boolean }): Promise<CommanderInvestigationRecoveryPreview>
@@ -23,22 +31,31 @@ export type CommanderInvestigationRecoveryTransactionServiceOptions = {
   recoverySource(investigationId: string): Promise<CommanderInvestigationRecoverySource | undefined>
   journalService: CommanderInvestigationJournalService
   continuationRunner: CommanderInvestigationRecoveryContinuationRunner
+  executionMode?: CommanderInvestigationRecoveryExecutionMode
+  onPersistenceRun?(run: CommanderInvestigationJournalRun): void
+  onPersistenceRunReleased?(run: CommanderInvestigationJournalRun): void
   now?: () => Date
 }
 
 export class CommanderInvestigationRecoveryTransactionService {
   private readonly now: () => Date
+  private readonly executionMode: CommanderInvestigationRecoveryExecutionMode
   private readonly transactions = new Map<string, Promise<void>>()
 
   constructor(private readonly options: CommanderInvestigationRecoveryTransactionServiceOptions) {
     this.now = options.now ?? (() => new Date())
+    this.executionMode = options.executionMode ?? {
+      kind: "scripted",
+      execution_transport: "injected_scripted_adapter",
+      provider_audit_required: false,
+    }
   }
 
-  async run(input: CommanderInvestigationRecoveryTransactionInput): Promise<CommanderInvestigationRecoveryTransactionResult> {
+  async run(input: CommanderInvestigationRecoveryTransactionInput, operational: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const generatedAt = this.now().toISOString()
     const validated = normalizeTransactionInput(input)
     if (validated.blockers.length) return transactionResult({ status: "blocked", investigationId: validated.input.investigation_id || "invalid", generatedAt, blockers: validated.blockers })
-    return this.serialized(validated.input.investigation_id, () => this.runSerialized(validated.input, generatedAt))
+    return this.serialized(validated.input.investigation_id, () => this.runSerialized(validated.input, generatedAt, operational.abort_signal))
   }
 
   private async serialized(investigationId: string, operation: () => Promise<CommanderInvestigationRecoveryTransactionResult>): Promise<CommanderInvestigationRecoveryTransactionResult> {
@@ -56,7 +73,7 @@ export class CommanderInvestigationRecoveryTransactionService {
     }
   }
 
-  private async runSerialized(input: NormalizedTransactionInput, generatedAt: string): Promise<CommanderInvestigationRecoveryTransactionResult> {
+  private async runSerialized(input: NormalizedTransactionInput, generatedAt: string, abortSignal?: AbortSignal): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const initialSource = await this.options.recoverySource(input.investigation_id)
     const existing = initialSource?.latest_recovery_attempt
     if (existing) {
@@ -92,7 +109,7 @@ export class CommanderInvestigationRecoveryTransactionService {
     if (!sameSourceAuthority(authoritativeSource, seed, prepared.recovery)) {
       return transactionResult({ status: "blocked", investigationId: input.investigation_id, generatedAt, blockers: ["recovery journal authority changed before transaction start"] })
     }
-    const attempt = buildRecoveryAttempt(seed, prepared.recovery, generatedAt)
+    const attempt = buildRecoveryAttempt(seed, prepared.recovery, generatedAt, this.executionMode)
     let recoveryStartEventId: string | undefined
     try {
       const appended = await this.options.journalService.recordRecoveryStartAfterRevalidation(input.investigation_id, async () => {
@@ -105,12 +122,12 @@ export class CommanderInvestigationRecoveryTransactionService {
         if (revalidated.preview.status !== "ready" || !revalidated.seed || !revalidated.recovery?.recovery_packet || !revalidated.recovery.current_approval) {
           throw new CommanderInvestigationJournalConflictError("recovery execution preparation changed at the transaction append boundary")
         }
-        const currentAttempt = buildRecoveryAttempt(revalidated.seed, revalidated.recovery, generatedAt)
+        const currentAttempt = buildRecoveryAttempt(revalidated.seed, revalidated.recovery, generatedAt, this.executionMode)
         if (currentAttempt.attempt_hash !== attempt.attempt_hash || currentAttempt.recovery_attempt_id !== attempt.recovery_attempt_id) {
           throw new CommanderInvestigationJournalConflictError("recovery attempt authority changed at the transaction append boundary")
         }
         return { recovery_attempt: currentAttempt }
-      })
+      }, { abort_signal: abortSignal })
       recoveryStartEventId = appended.event_id
     } catch (error) {
       const reconciled = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
@@ -128,6 +145,7 @@ export class CommanderInvestigationRecoveryTransactionService {
 
     let run: CommanderInvestigationJournalRun | undefined
     let controllerResult: CommanderInvestigationResult | undefined
+    let executionFacts: RecoveryExecutionFacts | undefined
     let terminalEventId: string | undefined
     let terminalPersisted = false
     try {
@@ -139,8 +157,9 @@ export class CommanderInvestigationRecoveryTransactionService {
         expected_first_model_request: seed.first_model_request_preview,
         recovery_request_id_prefix: seed.request_id_prefix,
       })
+      this.options.onPersistenceRun?.(run)
       try {
-        controllerResult = await this.options.continuationRunner.run({ seed, persistence_observer: run.observer })
+        controllerResult = await this.options.continuationRunner.run({ seed, persistence_observer: run.observer, abort_signal: abortSignal })
       } catch (error) {
         if (run.state.pending_model_request_id) {
           return transactionResult({
@@ -155,10 +174,27 @@ export class CommanderInvestigationRecoveryTransactionService {
             warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"],
           })
         }
-        controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint)
+        controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint, this.executionMode)
       }
-      if (controllerResult.external_api_audit_events_appended !== 0 || controllerResult.provider_audit.external_api_audit_event_count !== 0) {
-        controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError("scripted recovery transaction must not append external API audits"), this.now().toISOString(), run.state.latest_checkpoint)
+      executionFacts = recoveryExecutionFacts(seed, controllerResult, this.executionMode)
+      const executionBlocker = executionModeBlocker(this.executionMode, executionFacts, controllerResult)
+      if (executionBlocker) {
+        controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError(executionBlocker), this.now().toISOString(), run.state.latest_checkpoint, this.executionMode)
+      }
+      if (run.state.pending_model_request_id && !terminalOutcomeIsKnown(controllerResult)) {
+        return transactionResult({
+          status: "failed",
+          investigationId: input.investigation_id,
+          generatedAt,
+          attempt,
+          controllerResult,
+          recoveryStartEventId,
+          eventCounts: observerEventCounts(run),
+          eventsAppended: true,
+          executionFacts,
+          blockers: ["fresh recovery provider outcome is uncertain; terminal persistence is forbidden"],
+          warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"],
+        })
       }
       const durability = await this.options.journalService.finish(run, controllerResult)
       terminalPersisted = durability.terminal_persisted
@@ -167,15 +203,31 @@ export class CommanderInvestigationRecoveryTransactionService {
       const reconciled = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
       terminalPersisted = Boolean(reconciled?.terminal?.recovery_attempt_id === attempt.recovery_attempt_id && reconciled.terminal.semantic_result_hash === controllerResult?.result_hash)
       if (!terminalPersisted) {
-        return transactionResult({ status: "failed", investigationId: input.investigation_id, generatedAt, source: reconciled, attempt, controllerResult, recoveryStartEventId, eventCounts: observerEventCounts(run), eventsAppended: true, blockers: [boundedError(error)], warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"] })
+        return transactionResult({ status: "failed", investigationId: input.investigation_id, generatedAt, source: reconciled, attempt, controllerResult, recoveryStartEventId, eventCounts: observerEventCounts(run), eventsAppended: true, executionFacts: executionFacts ?? (controllerResult ? recoveryExecutionFacts(seed, controllerResult, this.executionMode) : undefined), blockers: [boundedError(error)], warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"] })
       }
     } finally {
-      if (run) this.options.journalService.release(run)
+      if (run) {
+        this.options.journalService.release(run)
+        this.options.onPersistenceRunReleased?.(run)
+      }
     }
     const finalSource = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
     const terminalConfirmed = Boolean(terminalPersisted && finalSource?.projection_status === "ready" && finalSource.terminal?.recovery_attempt_id === attempt.recovery_attempt_id && finalSource.terminal.semantic_result_hash === controllerResult?.result_hash)
-    return transactionResult({ status: terminalConfirmed ? "completed" : "failed", investigationId: input.investigation_id, generatedAt, source: finalSource, attempt, controllerResult, recoveryStartEventId, terminalEventId, eventCounts: observerEventCounts(run), eventsAppended: true, blockers: terminalConfirmed ? [] : ["recovery terminal event was not confirmed as authoritative"], warnings: prepared.preview.warnings })
+    return transactionResult({ status: terminalConfirmed ? "completed" : "failed", investigationId: input.investigation_id, generatedAt, source: finalSource, attempt, controllerResult, recoveryStartEventId, terminalEventId, eventCounts: observerEventCounts(run), eventsAppended: true, executionFacts: executionFacts ?? (controllerResult ? recoveryExecutionFacts(seed, controllerResult, this.executionMode) : undefined), blockers: terminalConfirmed ? [] : ["recovery terminal event was not confirmed as authoritative"], warnings: prepared.preview.warnings })
   }
+}
+
+export function commanderRecoveryTransactionBlockedResult(
+  input: CommanderInvestigationRecoveryTransactionInput,
+  blocker: string,
+  generatedAt: Date = new Date(),
+): CommanderInvestigationRecoveryTransactionResult {
+  return transactionResult({
+    status: "blocked",
+    investigationId: typeof input.investigation_id === "string" ? input.investigation_id : "invalid",
+    generatedAt: generatedAt.toISOString(),
+    blockers: [blocker],
+  })
 }
 
 function normalizeTransactionInput(input: CommanderInvestigationRecoveryTransactionInput): { input: NormalizedTransactionInput; blockers: string[] } {
@@ -204,7 +256,7 @@ function sameSourceAuthority(source: CommanderInvestigationRecoverySource | unde
     source.latest_checkpoint?.checkpoint_hash === seed.checkpoint_ref.checkpoint_hash && recovery.current_approval && !recovery.recovery_approval_consumed)
 }
 
-function buildRecoveryAttempt(seed: CommanderInvestigationRecoveryContinuationSeed, recovery: CommanderInvestigationRecoveryPreview, startedAt: string): CommanderInvestigationRecoveryAttempt {
+function buildRecoveryAttempt(seed: CommanderInvestigationRecoveryContinuationSeed, recovery: CommanderInvestigationRecoveryPreview, startedAt: string, mode: CommanderInvestigationRecoveryExecutionMode): CommanderInvestigationRecoveryAttempt {
   const approval = recovery.current_approval!
   const packet = recovery.recovery_packet!
   const authority = {
@@ -212,7 +264,7 @@ function buildRecoveryAttempt(seed: CommanderInvestigationRecoveryContinuationSe
     recovery_attempt_sequence: 0,
     investigation_id: seed.investigation_id,
     recovery_kind: seed.recovery_kind,
-    execution_transport: "injected_scripted_adapter" as const,
+    execution_transport: mode.execution_transport,
     approval_id: approval.approval_id,
     approval_hash: approval.approval_hash,
     approval_sequence: approval.approval_sequence,
@@ -253,7 +305,13 @@ function buildRecoveryAttempt(seed: CommanderInvestigationRecoveryContinuationSe
   return attempt
 }
 
-function failedControllerResult(seed: CommanderInvestigationRecoveryContinuationSeed, error: unknown, completedAt: string, checkpoint?: CommanderInvestigationCheckpoint): CommanderInvestigationResult {
+function failedControllerResult(
+  seed: CommanderInvestigationRecoveryContinuationSeed,
+  error: unknown,
+  completedAt: string,
+  checkpoint?: CommanderInvestigationCheckpoint,
+  mode: CommanderInvestigationRecoveryExecutionMode = { kind: "scripted", execution_transport: "injected_scripted_adapter", provider_audit_required: false },
+): CommanderInvestigationResult {
   const budget = checkpoint?.budget ?? seed.effective_budget.effective_budget
   const workingSet = checkpoint?.working_set ?? seed.working_set
   const turnSummaries = checkpoint?.turn_summaries ?? seed.turn_summaries
@@ -288,7 +346,7 @@ function failedControllerResult(seed: CommanderInvestigationRecoveryContinuation
     turn_summaries: turnSummaries,
     omitted_evidence_count: workingSet.omitted_evidence_count,
     omitted_turn_count: workingSet.omitted_turn_count,
-    provider_audit: workingSet.provider_audit,
+    provider_audit: providerAuditForExecutionMode(workingSet.provider_audit, mode),
     blockers: [boundedError(error)],
     warnings: workingSet.current_warnings,
     started_at: seed.original_started_at,
@@ -316,6 +374,61 @@ function failedControllerResult(seed: CommanderInvestigationRecoveryContinuation
   return redactValue(result) as CommanderInvestigationResult
 }
 
+function providerAuditForExecutionMode(
+  summary: CommanderInvestigationResult["provider_audit"],
+  mode: CommanderInvestigationRecoveryExecutionMode,
+): CommanderInvestigationResult["provider_audit"] {
+  const audit = structuredClone(summary)
+  if (mode.kind !== "configured_connector") return audit
+  audit.audit_required = true
+  audit.transport_kind = "external_api_connector"
+  if (!audit.connector_ids.includes(mode.connector_id) && audit.connector_ids.length < 4) audit.connector_ids.push(mode.connector_id)
+  audit.all_provider_requests_audited = audit.provider_request_count > 0 && audit.external_api_audit_event_count === audit.provider_request_count
+  return audit
+}
+
+function recoveryExecutionFacts(
+  seed: CommanderInvestigationRecoveryContinuationSeed,
+  result: CommanderInvestigationResult,
+  mode: CommanderInvestigationRecoveryExecutionMode = { kind: "scripted", execution_transport: "injected_scripted_adapter", provider_audit_required: false },
+): RecoveryExecutionFacts {
+  const providerRequests = Math.max(0, result.provider_request_count - seed.provider_request_count_before)
+  const externalApiAudits = Math.max(0, result.provider_audit.external_api_audit_event_count - seed.external_api_audit_count_before)
+  const transportDispatches = Math.max(0, (result.provider_audit.transport_dispatch_count ?? 0) - (seed.working_set.provider_audit.transport_dispatch_count ?? 0))
+  return {
+    providerRequestCount: providerRequests,
+    externalApiAuditEventsAppended: externalApiAudits,
+    transportDispatchCount: transportDispatches,
+    providerCalled: mode.kind === "configured_connector" && providerRequests > 0,
+    networkCalled: mode.kind === "configured_connector" && transportDispatches > 0,
+  }
+}
+
+function executionModeBlocker(
+  mode: CommanderInvestigationRecoveryExecutionMode,
+  facts: RecoveryExecutionFacts,
+  result: CommanderInvestigationResult,
+): string | undefined {
+  if (mode.kind === "scripted") {
+    if (facts.externalApiAuditEventsAppended !== 0) {
+      return "scripted recovery transaction must not append external API audits"
+    }
+    if (facts.transportDispatchCount !== 0) return "scripted recovery transaction must not dispatch external API transport"
+    return undefined
+  }
+  const newProviderRequests = facts.providerRequestCount
+  if (facts.providerCalled && facts.externalApiAuditEventsAppended === 0) return "configured recovery provider request is missing an external API audit"
+  if (facts.externalApiAuditEventsAppended !== newProviderRequests) return "configured recovery provider request and external API audit counts do not match"
+  if (facts.transportDispatchCount > newProviderRequests) return "configured recovery transport dispatch count exceeds fresh provider requests"
+  if (facts.externalApiAuditEventsAppended > 0 && result.provider_audit.transport_kind !== "external_api_connector") return "configured recovery audit transport kind is invalid"
+  if (result.provider_audit.request_body_persisted || result.provider_audit.response_body_persisted || result.provider_audit.credentials_persisted) return "configured recovery audit metadata claims forbidden provider material was persisted"
+  return undefined
+}
+
+function terminalOutcomeIsKnown(result: CommanderInvestigationResult): boolean {
+  return result.status === "final" || result.status === "refused" || result.stop_reason === "model_malformed"
+}
+
 function transactionResult(input: {
   status: CommanderInvestigationRecoveryTransactionResult["status"]
   investigationId: string
@@ -327,6 +440,7 @@ function transactionResult(input: {
   terminalEventId?: string
   eventCounts?: { investigation: number; modelSteps: number; checkpoints: number; terminals: number }
   eventsAppended?: boolean
+  executionFacts?: RecoveryExecutionFacts
   blockers?: string[]
   warnings?: string[]
 }): CommanderInvestigationRecoveryTransactionResult {
@@ -358,10 +472,12 @@ function transactionResult(input: {
     checkpoint_event_count: checkpointEvents,
     terminal_event_count: input.eventCounts?.terminals ?? 0,
     events_appended: input.eventsAppended ?? false,
-    external_api_audit_events_appended: 0,
-    provider_called: false,
-    scripted_model_turn_count: modelSteps,
-    network_called: false,
+    execution_transport: attempt?.execution_transport,
+    external_api_audit_events_appended: input.executionFacts?.externalApiAuditEventsAppended ?? 0,
+    provider_called: input.executionFacts?.providerCalled ?? false,
+    scripted_model_turn_count: attempt?.execution_transport === "configured_connector_provider" ? 0 : modelSteps,
+    configured_model_turn_count: attempt?.execution_transport === "configured_connector_provider" ? modelSteps : 0,
+    network_called: input.executionFacts?.networkCalled ?? false,
     files_written: false,
     research_db_written: false,
     mission_mutated: false,

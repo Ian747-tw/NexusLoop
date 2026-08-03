@@ -128,3 +128,8 @@ The public Commander profile remains conservative:
 records only. 9W3B owns recovery and human-reviewed resume. 9W3C owns any
 future public/operator activation decision. 9Y owns proposal generation.
 Existing MiniMax one-shot compatibility paths remain unchanged.
+
+Branch 9W3B2B2B applies the same configured-provider readiness, one-request,
+audit-completeness, abort, and shutdown-drain authority to approved Commander
+recovery. Recovery additionally requires the durable one-shot transaction and
+current plan/preparation revalidation before this connector path can run.

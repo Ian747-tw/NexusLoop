@@ -634,6 +634,7 @@ function recoveryAttemptSummary(attempt: CommanderInvestigationRecoveryAttempt):
     recovery_attempt_id: attempt.recovery_attempt_id,
     recovery_attempt_sequence: attempt.recovery_attempt_sequence,
     recovery_kind: attempt.recovery_kind,
+    execution_transport: attempt.execution_transport,
     approval_id: attempt.approval_id,
     approval_hash: attempt.approval_hash,
     approval_sequence: attempt.approval_sequence,
@@ -1140,7 +1141,7 @@ export function isCommanderInvestigationRecoveryAttempt(value: unknown): value i
     "tool_execution_replay_allowed", "previous_provider_outcome_inferred", "started_at", "attempt_hash",
   ])
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false
-  if (value.attempt_version !== 1 || value.execution_transport !== "injected_scripted_adapter") return false
+  if (value.attempt_version !== 1 || (value.execution_transport !== "injected_scripted_adapter" && value.execution_transport !== "configured_connector_provider")) return false
   if (!isNonnegativeInteger(value.recovery_attempt_sequence) || value.recovery_attempt_sequence !== 0 || !isNonnegativeInteger(value.approval_sequence)) return false
   for (const [key, max] of [
     ["recovery_attempt_id", 160], ["investigation_id", 200], ["approval_id", 160], ["approval_hash", 240], ["approved_by", 200],
@@ -1396,6 +1397,7 @@ function isProviderAuditSummary(value: unknown): boolean {
   const auditRequired = value.audit_required
   const providerRequestCount = value.provider_request_count
   const auditEventCount = value.external_api_audit_event_count
+  const transportDispatchCount = value.transport_dispatch_count
   const successfulAuditCount = value.successful_audit_count
   const failedAuditCount = value.failed_audit_count
   const omittedRequestIdCount = value.omitted_request_id_count
@@ -1408,6 +1410,7 @@ function isProviderAuditSummary(value: unknown): boolean {
     (auditRequired === true && transport !== "external_api_connector") ||
     !isNonnegativeInteger(providerRequestCount) ||
     !isNonnegativeInteger(auditEventCount) ||
+    (transportDispatchCount !== undefined && !isNonnegativeInteger(transportDispatchCount)) ||
     !isNonnegativeInteger(successfulAuditCount) ||
     !isNonnegativeInteger(failedAuditCount) ||
     !isNonnegativeInteger(omittedRequestIdCount) ||
@@ -1425,6 +1428,7 @@ function isProviderAuditSummary(value: unknown): boolean {
       auditRequired === false &&
       connectorIds.length === 0 &&
       auditEventCount === 0 &&
+      (transportDispatchCount ?? 0) === 0 &&
       successfulAuditCount === 0 &&
       failedAuditCount === 0 &&
       auditRequestIds.length === 0 &&
@@ -1448,6 +1452,7 @@ function isProviderAuditSummary(value: unknown): boolean {
   return (
     connectorIds.length > 0 &&
     auditEventCount <= providerRequestCount &&
+    (transportDispatchCount ?? 0) <= providerRequestCount &&
     successfulAuditCount + failedAuditCount === auditEventCount &&
     requestIdsComplete &&
     eventKindsComplete &&

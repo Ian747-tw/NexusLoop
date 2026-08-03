@@ -19,6 +19,7 @@ export type CommanderConnectorModelTransportMetadata = {
   audit_event_count: number
   successful_audit_count: number
   failed_audit_count: number
+  transport_dispatch_count?: number
   dropped_header_names: string[]
   request_body_persisted: false
   response_body_persisted: false

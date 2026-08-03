@@ -60,11 +60,11 @@ export class ExternalApiRequestService {
     return this.executeBuilt(input, false, {})
   }
 
-  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void } = {}): Promise<ExternalApiInternalRequestResult> {
+  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void; on_transport_dispatched?: () => void } = {}): Promise<ExternalApiInternalRequestResult> {
     return this.executeBuilt(input, true, options)
   }
 
-  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void }): Promise<ExternalApiInternalRequestResult> {
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void; on_transport_dispatched?: () => void }): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
@@ -161,6 +161,7 @@ export class ExternalApiRequestService {
       }
     }
     try {
+      options.on_transport_dispatched?.()
       const response = await this.options.transport.request({
         method: built.method,
         url: built.url.toString(),

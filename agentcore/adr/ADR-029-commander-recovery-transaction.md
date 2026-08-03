@@ -129,3 +129,9 @@ connector-backed provider execution, external API audit, real bound safe-read
 tools, abort and shutdown drain, and continued terminal persistence. It must
 still use the same start transaction and must never replay the old pending
 request. 9W3C owns public/operator controls.
+
+Branch 9W3B2B2B now composes this transaction under RuntimeServer authority.
+The transaction has explicit scripted and configured-connector modes so legacy
+B2B2A events and zero-network tests remain valid while live attempts record
+truthful transport and audit facts. Approval consumption and event sequencing
+are unchanged.

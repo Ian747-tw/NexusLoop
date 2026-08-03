@@ -35,7 +35,11 @@ export class EventStore {
     return operation
   }
 
-  async appendIfLatest(event: JsonlEvent, expectedLatestEventId: string | null): Promise<string> {
+  async appendIfLatest(
+    event: JsonlEvent,
+    expectedLatestEventId: string | null,
+    operational: { before_write?: () => void } = {},
+  ): Promise<string> {
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
       const events = await this.readAll()
@@ -50,6 +54,7 @@ export class EventStore {
       })
       const handle = await open(this.eventsPath, "a")
       try {
+        operational.before_write?.()
         await handle.write(JSON.stringify(safeEvent) + "\n")
         await handle.sync()
       } finally {

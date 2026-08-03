@@ -47,7 +47,7 @@ export type CommanderInvestigationResolvedPendingBoundary = {
 export type CommanderInvestigationRecoveryAttempt = CommanderInvestigationRecoveryAttemptRef & {
   attempt_version: 1
   investigation_id: string
-  execution_transport: "injected_scripted_adapter"
+  execution_transport: CommanderInvestigationRecoveryExecutionTransport
   approval_decision: CommanderInvestigationRecoveryApprovalDecision
   approved_by: string
   approval_consumed: true
@@ -67,6 +67,23 @@ export type CommanderInvestigationRecoveryAttempt = CommanderInvestigationRecove
   previous_provider_outcome_inferred: false
 }
 
+export type CommanderInvestigationRecoveryExecutionTransport =
+  | "injected_scripted_adapter"
+  | "configured_connector_provider"
+
+export type CommanderInvestigationRecoveryExecutionMode =
+  | {
+    kind: "scripted"
+    execution_transport: "injected_scripted_adapter"
+    provider_audit_required: false
+  }
+  | {
+    kind: "configured_connector"
+    execution_transport: "configured_connector_provider"
+    connector_id: string
+    provider_audit_required: true
+  }
+
 export type CommanderInvestigationRecoveryStartedPayload = {
   schema_version: 1
   investigation_id: string
@@ -82,6 +99,7 @@ export type CommanderInvestigationRecoveryStartAppendInput = {
 }
 
 export type CommanderInvestigationRecoveryAttemptSummary = CommanderInvestigationRecoveryAttemptRef & {
+  execution_transport: CommanderInvestigationRecoveryExecutionTransport
   approval_decision: CommanderInvestigationRecoveryApprovalDecision
   pending_boundary_disposition: CommanderInvestigationRecoveryPendingBoundaryDisposition
   approval_consumed: true
@@ -125,10 +143,12 @@ export type CommanderInvestigationRecoveryTransactionResult = {
   checkpoint_event_count: number
   terminal_event_count: number
   events_appended: boolean
-  external_api_audit_events_appended: 0
-  provider_called: false
+  execution_transport?: CommanderInvestigationRecoveryExecutionTransport
+  external_api_audit_events_appended: number
+  provider_called: boolean
   scripted_model_turn_count: number
-  network_called: false
+  configured_model_turn_count: number
+  network_called: boolean
   files_written: false
   research_db_written: false
   mission_mutated: false
