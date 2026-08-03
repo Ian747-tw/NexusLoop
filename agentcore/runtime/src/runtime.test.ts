@@ -1006,6 +1006,12 @@ describe("CommandAuthorityService", () => {
 
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    expect(service.get("/commander-recoveries")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_commander_investigation_recoveries", owner: "commander_recovery", mutates_events: false, calls_provider: false })
+    expect(service.get("/commander-recovery-show")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.get_commander_investigation_recovery", owner: "commander_recovery", mutates_events: false })
+    expect(service.get("/commander-recovery-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_commander_investigation_recovery", mutates_events: false, calls_provider: false })
+    expect(service.get("/commander-recovery-approve")).toMatchObject({ risk: "medium_risk_write", gate: "commander_recovery_runtime", owner: "commander_recovery", mutates_events: true, calls_provider: false, requires_approval: true, blocked_by_default: true, expected_event_kinds: ["runtime_commander_investigation_recovery_approved"] })
+    expect(service.get("/commander-recovery-execute")).toMatchObject({ risk: "high_impact_write", gate: "commander_recovery_runtime", owner: "commander_recovery", mutates_events: true, calls_provider: true, requires_approval: true, blocked_by_default: true })
+    expect(service.get("/commander-recovery-cancel")).toMatchObject({ risk: "medium_risk_write", gate: "commander_recovery_runtime", owner: "commander_recovery", mutates_events: false, calls_provider: false, blocked_by_default: true })
     expect(service.get("/scheduler-status")).toMatchObject({ risk: "safe_read", mutates_events: false })
     expect(service.get("/wake-tick-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "wake_schedule_tick", mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/wake-tick")).toMatchObject({ risk: "high_impact_write", gate: "wake_schedule_tick", mutates_events: true })

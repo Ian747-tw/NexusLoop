@@ -21,6 +21,7 @@ export type CommandAuthorityGate =
   | "research_runtime"
   | "opencode_runtime"
   | "external_api_runtime"
+  | "commander_recovery_runtime"
   | "unknown"
 
 export type CommandAuthorityOwner =
@@ -50,6 +51,7 @@ export type CommandAuthorityOwner =
   | "review"
   | "playbook"
   | "commander_apply"
+  | "commander_recovery"
   | "unknown"
 
 export type CommandPhaseStatus =
