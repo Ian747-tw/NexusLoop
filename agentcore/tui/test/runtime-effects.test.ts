@@ -6910,7 +6910,7 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-cancel",
-      args: ["investigation_id=inv_a", "operation_id=operation_a", "approval_id=approval_a"],
+      args: ["investigation_id=inv_a", "operation_id=operation_a"],
     })
     expect(calls.slice(-2)).toEqual([{
       name: "runtime.cancel_commander_investigation_recovery",

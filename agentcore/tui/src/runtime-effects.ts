@@ -19027,10 +19027,11 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   const operation = shownOperation ?? cachedOperation
   const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
   const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined
+  const activeApprovalId = typeof operation?.approval_id === "string" ? operation.approval_id : undefined
   const cancelInput = {
     investigation_id: investigationId,
     operation_id: fields.operation_id ?? activeOperationId ?? requiredRecoveryField(fields, "operation_id"),
-    approval_id: requiredRecoveryField(fields, "approval_id"),
+    approval_id: fields.approval_id ?? activeApprovalId ?? requiredRecoveryField(fields, "approval_id"),
     ...(fields.recovery_attempt_id || activeAttemptId ? { recovery_attempt_id: fields.recovery_attempt_id ?? activeAttemptId } : {}),
   }
   let result = await runtime.command("runtime.cancel_commander_investigation_recovery", cancelInput)

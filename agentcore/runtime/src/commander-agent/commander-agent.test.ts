@@ -10543,10 +10543,12 @@ describe("Commander in-memory investigation controller", () => {
     expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
     const source = await originalRecoverySource(authority.investigation_id)
     expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
-    const settledDuplicate = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
-    expect(settledDuplicate.operation_id).toBe(operation.operation_id)
-    expect(settledDuplicate.status).toBe("blocked")
-    expect(transport.requests).toHaveLength(0)
+    const retriedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(retriedOperation.operation_id).not.toBe(operation.operation_id)
+    const retriedEntry = (server as any).publicCommanderRecoveryOperations.get(retriedOperation.operation_id)
+    await retriedEntry.promise
+    expect(retriedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
   })
 
   test("public cancellation requires the prepared attempt identity while recovery start is committing", async () => {
@@ -10601,6 +10603,13 @@ describe("Commander in-memory investigation controller", () => {
     expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
     const source = await authority.journal.recoverySource(authority.investigation_id)
     expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
+
+    const retriedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(retriedOperation.operation_id).not.toBe(operation.operation_id)
+    const retriedEntry = (server as any).publicCommanderRecoveryOperations.get(retriedOperation.operation_id)
+    await retriedEntry.promise
+    expect(retriedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
   })
 
   test("blocked public preflight does not poison a corrected recovery execution", async () => {

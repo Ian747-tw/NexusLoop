@@ -2974,10 +2974,25 @@ export class RuntimeServer {
         record.recovery_attempt_id = recoveryAttemptId
       },
     })
-      .then((result) => {
+      .then(async (result) => {
         record.recovery_attempt_id = result.recovery_attempt_id
-        if (result.status === "blocked" && !result.approval_consumed && !result.recovery_attempt_id && !record.cancellation_requested) {
-          this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
+        if (!result.approval_consumed && !result.recovery_attempt_id) {
+          try {
+            const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+            const approval = source?.latest_recovery_approval
+            if (source?.projection_status === "ready"
+              && !source.terminal
+              && !source.current_recovery_attempt
+              && !source.latest_recovery_attempt
+              && (source.recovery_attempts?.length ?? 0) === 0
+              && approval?.approval_id === input.approval_id
+              && approval.approval_hash === input.approval_hash
+              && !approval.consumed) {
+              this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
+            }
+          } catch {
+            // Replacement requires an authoritative reread proving that recovery never started.
+          }
         }
         record.status = result.status === "already_started"
           ? "already_started"
@@ -3004,8 +3019,7 @@ export class RuntimeServer {
             && (source.recovery_attempts?.length ?? 0) === 0
             && approval?.approval_id === input.approval_id
             && approval.approval_hash === input.approval_hash
-            && !approval.consumed
-            && !record.cancellation_requested) {
+            && !approval.consumed) {
             this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
           }
         } catch {
