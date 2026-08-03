@@ -9715,6 +9715,54 @@ describe("Commander in-memory investigation controller", () => {
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
   })
 
+  test("configured recovery reserves approval authority across asynchronous preflight", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-preflight-reservation-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured recovery owns preflight") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_preflight_reservation")
+    const originalRecoverySource = authority.journal.recoverySource.bind(authority.journal)
+    let releasePreflight!: () => void
+    let preflightEntered!: () => void
+    const entered = new Promise<void>((resolve) => { preflightEntered = resolve })
+    const release = new Promise<void>((resolve) => { releasePreflight = resolve })
+    let delayed = false
+    authority.journal.recoverySource = async (investigationId) => {
+      if (!delayed) {
+        delayed = true
+        preflightEntered()
+        await release
+      }
+      return originalRecoverySource(investigationId)
+    }
+
+    const recovery = server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    await entered
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: authority.recovery.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "configured_recovery_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(approval).toMatchObject({ status: "blocked", events_appended: false })
+    expect(approval.blockers.join(" ")).toContain("configured recovery is active")
+
+    releasePreflight()
+    const result = await recovery
+    expect(result).toMatchObject({ status: "completed", provider_called: true, external_api_audit_events_appended: 1 })
+    expect(transport.requests).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+  })
+
   test("configured RuntimeServer recovery uses the real bound safe-read executor and checkpoints before the next provider request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-tool-"))
     await writeApprovedSpec(projectDir)

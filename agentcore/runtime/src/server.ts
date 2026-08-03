@@ -512,6 +512,7 @@ export class RuntimeServer {
     investigation_id: string
     run?: import("./commander-agent").CommanderInvestigationJournalRun
   }>()
+  private readonly activeConfiguredCommanderRecoveryInvestigationIds = new Map<string, number>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2854,6 +2855,10 @@ export class RuntimeServer {
       const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
       return commanderRecoveryApprovalBlockedResult(input, preview, "Commander recovery approval write requires inactive durable investigation", this.researchSynthesisNow?.() ?? new Date())
     }
+    if (typeof input.investigation_id === "string" && this.activeConfiguredCommanderRecoveryInvestigationIds.has(input.investigation_id)) {
+      const preview = await this.commanderInvestigationRecoveryApprovalService().preview(input)
+      return commanderRecoveryApprovalBlockedResult(input, preview, "Commander recovery approval write is blocked while configured recovery is active for the investigation", this.researchSynthesisNow?.() ?? new Date())
+    }
     const investigationId = typeof input.investigation_id === "string" ? input.investigation_id : undefined
     if (investigationId) this.activeCommanderRecoveryApprovalInvestigationIds.set(investigationId, (this.activeCommanderRecoveryApprovalInvestigationIds.get(investigationId) ?? 0) + 1)
     let tracked!: Promise<CommanderInvestigationRecoveryApprovalResult>
@@ -2884,33 +2889,40 @@ export class RuntimeServer {
     if (Array.from(this.activeDurableCommanderInvestigations).some((entry) => entry.investigation_id === input.investigation_id || entry.run?.investigation_id === input.investigation_id)) {
       return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires an inactive durable investigation", now)
     }
-    const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-    const identity = source?.immutable_identity
-    if (!identity) return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires authoritative journal identity", now)
-    const readiness = this.previewCommanderInvestigationProviderReadiness({
-      phase: identity.phase,
-      provider_id: identity.provider_id,
-      provider_kind: identity.provider_kind,
-      model_id: identity.model_id,
-    })
-    if (!readiness.execution_ready) {
-      return commanderRecoveryTransactionBlockedResult(input, `configured Commander recovery provider is not execution-ready: ${readiness.blockers.join("; ").slice(0, 240)}`, now)
-    }
+    this.activeConfiguredCommanderRecoveryInvestigationIds.set(input.investigation_id, (this.activeConfiguredCommanderRecoveryInvestigationIds.get(input.investigation_id) ?? 0) + 1)
+    try {
+      const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+      const identity = source?.immutable_identity
+      if (!identity) return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires authoritative journal identity", now)
+      const readiness = this.previewCommanderInvestigationProviderReadiness({
+        phase: identity.phase,
+        provider_id: identity.provider_id,
+        provider_kind: identity.provider_kind,
+        model_id: identity.model_id,
+      })
+      if (!readiness.execution_ready) {
+        return commanderRecoveryTransactionBlockedResult(input, `configured Commander recovery provider is not execution-ready: ${readiness.blockers.join("; ").slice(0, 240)}`, now)
+      }
 
-    const combined = this.commanderInvestigationAbortSignal(operational.abort_signal)
-    const active = { investigation_id: input.investigation_id } as {
-      promise: Promise<unknown>
-      investigation_id: string
-      run?: import("./commander-agent").CommanderInvestigationJournalRun
+      const combined = this.commanderInvestigationAbortSignal(operational.abort_signal)
+      const active = { investigation_id: input.investigation_id } as {
+        promise: Promise<unknown>
+        investigation_id: string
+        run?: import("./commander-agent").CommanderInvestigationJournalRun
+      }
+      let tracked!: Promise<CommanderInvestigationRecoveryTransactionResult>
+      tracked = this.commanderInvestigationRecoveryTransactionService().run(input, { abort_signal: combined.signal }).finally(() => {
+        combined.cleanup()
+        this.activeConfiguredCommanderRecoveries.delete(active)
+      })
+      active.promise = tracked
+      this.activeConfiguredCommanderRecoveries.add(active)
+      return await tracked
+    } finally {
+      const remaining = (this.activeConfiguredCommanderRecoveryInvestigationIds.get(input.investigation_id) ?? 1) - 1
+      if (remaining > 0) this.activeConfiguredCommanderRecoveryInvestigationIds.set(input.investigation_id, remaining)
+      else this.activeConfiguredCommanderRecoveryInvestigationIds.delete(input.investigation_id)
     }
-    let tracked!: Promise<CommanderInvestigationRecoveryTransactionResult>
-    tracked = this.commanderInvestigationRecoveryTransactionService().run(input, { abort_signal: combined.signal }).finally(() => {
-      combined.cleanup()
-      this.activeConfiguredCommanderRecoveries.delete(active)
-    })
-    active.promise = tracked
-    this.activeConfiguredCommanderRecoveries.add(active)
-    return tracked
   }
 
   private commanderInvestigationAbortSignal(callerSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
