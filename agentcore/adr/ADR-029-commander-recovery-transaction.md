@@ -135,3 +135,8 @@ The transaction has explicit scripted and configured-connector modes so legacy
 B2B2A events and zero-network tests remain valid while live attempts record
 truthful transport and audit facts. Approval consumption and event sequencing
 are unchanged.
+
+Branch 9W3C delegates public execute to the configured RuntimeServer path. Its
+operation wrapper neither constructs a transaction nor adds an event kind;
+duplicate and cancellation behavior remains subordinate to this one-shot
+transaction.

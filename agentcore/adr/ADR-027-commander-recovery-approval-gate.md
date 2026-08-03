@@ -168,4 +168,6 @@ without consuming approval or executing through RuntimeServer. 9W3B2B2A consumes
 approval only through the atomic recovery-start event, retains consumed approval
 history, and proves continued lifecycle persistence with injected scripted
 execution. 9W3B2B2B owns configured-provider execution and external API audit.
-9W3C owns public/operator controls.
+9W3C exposes approval as a separate human-only command with all acknowledgements
+explicitly supplied. The public adapter delegates to this service and does not
+infer authority from TUI state or combine approval with execution.

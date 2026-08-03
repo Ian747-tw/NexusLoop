@@ -383,6 +383,30 @@ constraints, and approvals are satisfied.
 7. OpenTUI reflects live status, operator interventions, approvals, and search
    results from authoritative backend state.
 
+## Commander Recovery Operator Flow
+
+Interrupted durable Commander investigations are exposed through one narrow
+operator path:
+
+```text
+typed journal list/show
+-> current continuity recovery preview
+-> exact human approval with explicit no-replay acknowledgements
+-> separate configured execution request
+-> atomic recovery start and approval consumption
+-> fresh provider request plus external API audit
+-> current bound safe-read tools
+-> existing checkpoint/terminal events
+```
+
+RuntimeServer owns each active public recovery operation before its first
+asynchronous preflight and returns an opaque operation ID. Operator cancellation
+requests abort that owned operation but do not claim provider cancellation or a
+known outcome. A cancellation before durable start leaves approval unconsumed;
+after start, consumed nonterminal attempts require human review and cannot be
+retried. Historical provider requests and tool execution are never replayed.
+OpenTUI state is evidence, not authority.
+
 ## Explicit Non-Goals
 
 The target architecture is **not**:
@@ -418,3 +442,4 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-028-commander-recovery-continuation-kernel.md`
 - `agentcore/adr/ADR-029-commander-recovery-transaction.md`
 - `agentcore/adr/ADR-030-commander-configured-live-recovery-execution.md`
+- `agentcore/adr/ADR-031-commander-recovery-operator-controls.md`

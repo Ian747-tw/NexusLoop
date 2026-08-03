@@ -249,4 +249,5 @@ false.
 9W3B2B2 owns requiring a current unconsumed approval, final plan/preparation
 revalidation, durable recovery-start and approval-consumption boundaries, fresh
 configured-provider requests, read-tool execution, continued checkpoints,
-terminal persistence, and shutdown drain. 9W3C owns public/operator controls.
+terminal persistence, and shutdown drain. 9W3C exposes only exact preparation
+hashes/references and never exposes the seed, raw context, or replay content.

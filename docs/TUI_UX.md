@@ -119,6 +119,25 @@ Approvals and clarifications need a dedicated surface.
 The user should never need to infer whether a prose reply actually changed
 system state.
 
+### Commander Recovery Controls
+
+The approval block also hosts the six Commander recovery controls: bounded
+list, show, current preview, explicit approval, separate execution, and active
+operation cancellation. The UI displays recovery kind, exact operator-safe
+authority hashes, abbreviated confirmation references, fresh-context and
+no-replay guarantees, and an explicit unknown-outcome warning when a historical
+provider request is pending.
+
+Approval and execution are never combined. Approval requires every explicit
+acknowledgement; a generic yes is insufficient. Execute returns a
+RuntimeServer-owned operation immediately so the UI remains responsive and can
+send cancellation while recovery is active. The UI says "cancellation
+requested", not "cancelled", and refreshes durable show state to distinguish a
+terminal result from a consumed nonterminal attempt requiring human review.
+
+Cached preview and operation state are display evidence only. Every mutation
+sends exact identifiers/hashes to RuntimeServer for fresh validation.
+
 ## Unified Message Box
 
 The user interacts through one message box that can route intent to the right
