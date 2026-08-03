@@ -9671,6 +9671,106 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(1)
   })
 
+  test("configured recovery validates fresh audit completeness independently of legacy scripted requests", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-legacy-audit-"))
+    await writeApprovedSpec(projectDir)
+    const investigationId = "inv_configured_recovery_legacy_unaudited"
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured continuation audits only its fresh request") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const started: CommanderInvestigationStartedSnapshot[] = []
+    const modelSteps: any[] = []
+    const checkpoints: CommanderInvestigationCheckpointSnapshot[] = []
+    const input = baseInvestigation({
+      investigation_id: investigationId,
+      provider_id: "fixture_provider",
+      provider_kind: "openai",
+      model_id: "fixture-model",
+      tool_protocol: "native",
+    })
+    const scripted = new CommanderInvestigationController({
+      ...(server as any).commanderInvestigationControllerOptions(),
+      modelAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("legacy_search", "commander.tool_search", { query: "legacy scripted request" })] },
+        { assert_request: () => { throw new Error("leave a scripted pending boundary after one completed checkpoint") } },
+      ]),
+      providerGate: undefined,
+      providerAuditPolicy: { required: false, transport_kind: "none" },
+      persistenceObserver: {
+        onStarted: (snapshot) => { started.push(structuredClone(snapshot)) },
+        onModelStepStarted: (snapshot) => { modelSteps.push(structuredClone(snapshot)) },
+        onCheckpoint: (snapshot) => { checkpoints.push(structuredClone(snapshot)) },
+      },
+    })
+    await expect(scripted.run(input)).rejects.toThrow("leave a scripted pending boundary")
+    expect(started).toHaveLength(1)
+    expect(modelSteps).toHaveLength(2)
+    expect(checkpoints).toHaveLength(1)
+    expect(checkpoints[0]!.working_set.provider_audit).toMatchObject({ provider_request_count: 1, external_api_audit_event_count: 0, all_provider_requests_audited: true })
+
+    const durableStart = durableStartedSnapshot(input, 42, investigationId) as CommanderInvestigationStartedSnapshot
+    durableStart.bootstrap = started[0]!.bootstrap
+    durableStart.loaded_tools = started[0]!.loaded_tools
+    durableStart.working_set = started[0]!.working_set
+    durableStart.budget = { ...durableStart.budget, max_context_bytes: 65_536, max_context_tokens: 16_384, budget_hash: "" }
+    durableStart.budget.budget_hash = stableHash({ ...durableStart.budget, budget_hash: "" })
+    const durableCheckpoint = {
+      ...checkpoints[0]!,
+      bootstrap: durableStart.bootstrap,
+      budget: durableStart.budget,
+    }
+    const journalRun = await journal.createObserver(input)
+    await journalRun.observer.onStarted(durableStart)
+    await journalRun.observer.onModelStepStarted(modelSteps[0]!)
+    await journalRun.observer.onCheckpoint(durableCheckpoint)
+    journal.release(journalRun)
+    expect((await journal.recoverySource(investigationId))?.record?.integrity_errors).toEqual([])
+
+    await server.start()
+    const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
+    expect(recovery).toMatchObject({ status: "ready_for_approval", recovery_kind: "checkpoint" })
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: investigationId,
+      recovery_plan_hash: recovery.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "configured_recovery_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(approval.status).toBe("recorded")
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: investigationId,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured({
+      investigation_id: investigationId,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    })
+
+    expect(result).toMatchObject({ status: "completed", provider_called: true, network_called: true, external_api_audit_events_appended: 1 })
+    expect(result.controller_result?.provider_audit).toMatchObject({
+      provider_request_count: 2,
+      external_api_audit_event_count: 1,
+      all_provider_requests_audited: false,
+    })
+    expect(transport.requests).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_finished" && event.investigation_id === investigationId)).toHaveLength(1)
+  })
+
   test("configured recovery remains fenced until every overlapping approval write settles", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-approval-fence-"))
     await writeApprovedSpec(projectDir)

@@ -398,7 +398,6 @@ function executionModeBlocker(
   const newProviderRequests = facts.providerRequestCount
   if (facts.providerCalled && facts.externalApiAuditEventsAppended === 0) return "configured recovery provider request is missing an external API audit"
   if (facts.externalApiAuditEventsAppended !== newProviderRequests) return "configured recovery provider request and external API audit counts do not match"
-  if (newProviderRequests > 0 && !result.provider_audit.all_provider_requests_audited) return "configured recovery provider requests are not completely audited"
   if (facts.externalApiAuditEventsAppended > 0 && result.provider_audit.transport_kind !== "external_api_connector") return "configured recovery audit transport kind is invalid"
   // The controller validates each fresh transport metadata envelope against the
   // current connector policy. The aggregate may also retain historical IDs.
