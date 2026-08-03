@@ -634,6 +634,7 @@ function recoveryAttemptSummary(attempt: CommanderInvestigationRecoveryAttempt):
     recovery_attempt_id: attempt.recovery_attempt_id,
     recovery_attempt_sequence: attempt.recovery_attempt_sequence,
     recovery_kind: attempt.recovery_kind,
+    execution_transport: attempt.execution_transport,
     approval_id: attempt.approval_id,
     approval_hash: attempt.approval_hash,
     approval_sequence: attempt.approval_sequence,
@@ -1140,7 +1141,7 @@ export function isCommanderInvestigationRecoveryAttempt(value: unknown): value i
     "tool_execution_replay_allowed", "previous_provider_outcome_inferred", "started_at", "attempt_hash",
   ])
   if (Object.keys(value).some((key) => !allowedKeys.has(key))) return false
-  if (value.attempt_version !== 1 || value.execution_transport !== "injected_scripted_adapter") return false
+  if (value.attempt_version !== 1 || (value.execution_transport !== "injected_scripted_adapter" && value.execution_transport !== "configured_connector_provider")) return false
   if (!isNonnegativeInteger(value.recovery_attempt_sequence) || value.recovery_attempt_sequence !== 0 || !isNonnegativeInteger(value.approval_sequence)) return false
   for (const [key, max] of [
     ["recovery_attempt_id", 160], ["investigation_id", 200], ["approval_id", 160], ["approval_hash", 240], ["approved_by", 200],

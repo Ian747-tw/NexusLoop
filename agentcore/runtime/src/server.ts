@@ -188,11 +188,13 @@ import {
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
   CommanderInvestigationRecoveryService,
+  CommanderInvestigationRecoveryTransactionService,
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
   commanderInvestigationModelCapability,
   connectorChatCompletionsUrl,
   stableHash,
+  commanderRecoveryTransactionBlockedResult,
   validateCommanderInvestigationProviderConfig,
   type CommanderInvestigationControlGate,
   type CommanderInvestigationControlSnapshot,
@@ -210,6 +212,8 @@ import {
   type CommanderInvestigationRecoveryExecutionPreparationInput,
   type CommanderInvestigationRecoveryExecutionPreparationPreview,
   type CommanderInvestigationRecoveryExecutionEnvelope,
+  type CommanderInvestigationRecoveryTransactionInput,
+  type CommanderInvestigationRecoveryTransactionResult,
   type CommanderInvestigationRecoverySource,
   type CommanderInvestigationProviderConfig,
   type CommanderInvestigationProviderGate,
@@ -449,6 +453,7 @@ export class RuntimeServer {
   private commanderInvestigationRecoveryServiceInstance: CommanderInvestigationRecoveryService | null = null
   private commanderInvestigationRecoveryApprovalServiceInstance: CommanderInvestigationRecoveryApprovalService | null = null
   private commanderInvestigationRecoveryExecutionServiceInstance: CommanderInvestigationRecoveryExecutionService | null = null
+  private commanderInvestigationRecoveryTransactionServiceInstance: CommanderInvestigationRecoveryTransactionService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -501,6 +506,12 @@ export class RuntimeServer {
     run?: import("./commander-agent").CommanderInvestigationJournalRun
   }>()
   private readonly activeCommanderRecoveryApprovalWrites = new Set<Promise<unknown>>()
+  private readonly activeCommanderRecoveryApprovalInvestigationIds = new Set<string>()
+  private readonly activeConfiguredCommanderRecoveries = new Set<{
+    promise: Promise<unknown>
+    investigation_id: string
+    run?: import("./commander-agent").CommanderInvestigationJournalRun
+  }>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -2846,8 +2857,54 @@ export class RuntimeServer {
     let tracked!: Promise<CommanderInvestigationRecoveryApprovalResult>
     tracked = this.commanderInvestigationRecoveryApprovalService().record(input).finally(() => {
       this.activeCommanderRecoveryApprovalWrites.delete(tracked)
+      if (typeof input.investigation_id === "string") this.activeCommanderRecoveryApprovalInvestigationIds.delete(input.investigation_id)
     })
+    if (typeof input.investigation_id === "string") this.activeCommanderRecoveryApprovalInvestigationIds.add(input.investigation_id)
     this.activeCommanderRecoveryApprovalWrites.add(tracked)
+    return tracked
+  }
+
+  async runCommanderInvestigationRecoveryConfigured(
+    input: CommanderInvestigationRecoveryTransactionInput,
+    operational: { abort_signal?: AbortSignal } = {},
+  ): Promise<CommanderInvestigationRecoveryTransactionResult> {
+    const now = this.researchSynthesisNow?.() ?? new Date()
+    const runtimeReady = this.mode === "active" && this.started && this.lifecycleState === "ready" && !this.lifecycleShutdownRequested && this.runLock.isHeld()
+    if (!runtimeReady || !this.commanderInvestigationProviderConfig || this.commanderModelStepAdapter?.adapter_id !== "external_api_connector_ai_sdk_core") {
+      return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires active ready RuntimeServer authority, run lock, and connector-backed provider", now)
+    }
+    if (this.activeCommanderRecoveryApprovalInvestigationIds.has(input.investigation_id)) {
+      return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery is blocked while an approval write is active for the investigation", now)
+    }
+    if (Array.from(this.activeDurableCommanderInvestigations).some((entry) => entry.investigation_id === input.investigation_id || entry.run?.investigation_id === input.investigation_id)) {
+      return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires an inactive durable investigation", now)
+    }
+    const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+    const identity = source?.immutable_identity
+    if (!identity) return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery requires authoritative journal identity", now)
+    const readiness = this.previewCommanderInvestigationProviderReadiness({
+      phase: identity.phase,
+      provider_id: identity.provider_id,
+      provider_kind: identity.provider_kind,
+      model_id: identity.model_id,
+    })
+    if (!readiness.execution_ready) {
+      return commanderRecoveryTransactionBlockedResult(input, `configured Commander recovery provider is not execution-ready: ${readiness.blockers.join("; ").slice(0, 240)}`, now)
+    }
+
+    const combined = this.commanderInvestigationAbortSignal(operational.abort_signal)
+    const active = { investigation_id: input.investigation_id } as {
+      promise: Promise<unknown>
+      investigation_id: string
+      run?: import("./commander-agent").CommanderInvestigationJournalRun
+    }
+    let tracked!: Promise<CommanderInvestigationRecoveryTransactionResult>
+    tracked = this.commanderInvestigationRecoveryTransactionService().run(input, { abort_signal: combined.signal }).finally(() => {
+      combined.cleanup()
+      this.activeConfiguredCommanderRecoveries.delete(active)
+    })
+    active.promise = tracked
+    this.activeConfiguredCommanderRecoveries.add(active)
     return tracked
   }
 
@@ -2880,7 +2937,8 @@ export class RuntimeServer {
 
   private async drainConfiguredCommanderInvestigations(): Promise<void> {
     const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
-    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
+    const activeRecoveries = Array.from(this.activeConfiguredCommanderRecoveries)
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
@@ -2899,8 +2957,13 @@ export class RuntimeServer {
           journal.fence(entry.run, "RuntimeServer shutdown drain timed out before durable investigation settled")
         }
       }
-      const inFlightPersistence = activeDurable
-        .filter((entry) => this.activeDurableCommanderInvestigations.has(entry) && entry.run && journal.inFlightPersistenceCount(entry.run) > 0)
+      for (const entry of activeRecoveries) {
+        if (this.activeConfiguredCommanderRecoveries.has(entry) && entry.run) {
+          journal.fence(entry.run, "RuntimeServer shutdown drain timed out before configured recovery settled")
+        }
+      }
+      const inFlightPersistence = [...activeDurable, ...activeRecoveries]
+        .filter((entry) => entry.run && journal.inFlightPersistenceCount(entry.run) > 0)
         .map((entry) => journal.settleInFlightPersistence(entry.run!))
       if (inFlightPersistence.length > 0) {
         const persistenceSettled = Symbol("commander-journal-persistence-settled")
@@ -5180,6 +5243,38 @@ export class RuntimeServer {
       now: this.researchSynthesisNow,
     })
     return this.commanderInvestigationRecoveryExecutionServiceInstance
+  }
+
+  private commanderInvestigationRecoveryTransactionService(): CommanderInvestigationRecoveryTransactionService {
+    const config = this.commanderInvestigationProviderConfig
+    if (!config) throw new Error("configured Commander recovery transaction requires provider config")
+    this.commanderInvestigationRecoveryTransactionServiceInstance ??= new CommanderInvestigationRecoveryTransactionService({
+      recoveryPreview: (input) => this.commanderInvestigationRecoveryService().preview(input),
+      recoveryExecutionService: this.commanderInvestigationRecoveryExecutionService(),
+      recoverySource: (investigationId) => this.commanderInvestigationJournalService().recoverySource(investigationId),
+      journalService: this.commanderInvestigationJournalService(),
+      executionMode: {
+        kind: "configured_connector",
+        execution_transport: "configured_connector_provider",
+        connector_id: config.connector_id,
+        provider_audit_required: true,
+      },
+      continuationRunner: {
+        run: ({ seed, persistence_observer, abort_signal }) => this.createCommanderInvestigationController(persistence_observer).runFromRecoverySeed(seed, { abort_signal }),
+      },
+      onPersistenceRun: (run) => {
+        for (const active of this.activeConfiguredCommanderRecoveries) {
+          if (active.investigation_id === run.investigation_id) active.run = run
+        }
+      },
+      onPersistenceRunReleased: (run) => {
+        for (const active of this.activeConfiguredCommanderRecoveries) {
+          if (active.run === run) active.run = undefined
+        }
+      },
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderInvestigationRecoveryTransactionServiceInstance
   }
 
   private createConfiguredCommanderModelStepAdapter(): CommanderModelStepAdapter | undefined {

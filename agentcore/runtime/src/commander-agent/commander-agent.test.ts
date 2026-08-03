@@ -9600,6 +9600,236 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedSource).toMatchObject({ projection_status: "corrupt", current_recovery_attempt: undefined, latest_recovery_attempt: undefined, consumed_recovery_approval: undefined })
   })
 
+  test("configured RuntimeServer recovery executes only after durable start and reports connector audits truthfully", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-final-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured recovered final") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_final")
+
+    expect(transport.requests).toHaveLength(0)
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({
+      status: "completed",
+      approval_consumed: true,
+      execution_transport: "configured_connector_provider",
+      provider_called: true,
+      network_called: true,
+      external_api_audit_events_appended: 1,
+      model_step_event_count: 1,
+      terminal_event_count: 1,
+    })
+    expect(result.controller_result?.provider_audit).toMatchObject({
+      audit_required: true,
+      transport_kind: "external_api_connector",
+      connector_ids: ["openai-test"],
+      external_api_audit_event_count: 1,
+      successful_audit_count: 1,
+      failed_audit_count: 0,
+      all_provider_requests_audited: true,
+    })
+    expect(transport.requests).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    const kinds = events.filter((event) => event.investigation_id === authority.investigation_id || String(event.kind).startsWith("external_api_request_")).map((event) => event.kind)
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_recovery_approved",
+      "runtime_commander_investigation_recovery_started",
+      "runtime_commander_investigation_model_step_started",
+      "external_api_request_executed",
+      "runtime_commander_investigation_finished",
+    ])
+    const start = events.find((event) => event.kind === "runtime_commander_investigation_recovery_started") as any
+    expect(start.recovery_attempt.execution_transport).toBe("configured_connector_provider")
+    expect(JSON.stringify(events)).not.toContain("configured recovered final")
+    expect(JSON.stringify(events)).not.toContain("real-provider-key")
+
+    const duplicate = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    expect(duplicate).toMatchObject({ status: "already_started", provider_called: false, network_called: false, external_api_audit_events_appended: 0 })
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  test("configured RuntimeServer recovery uses the real bound safe-read executor and checkpoints before the next provider request", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-tool-"))
+    await writeApprovedSpec(projectDir)
+    const toolResponse = JSON.stringify({
+      id: "chatcmpl_recovery_tool",
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{
+        index: 0,
+        finish_reason: "tool_calls",
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_recovery_search", type: "function", function: { name: "commander__tool_search", arguments: JSON.stringify({ query: "memory", phase: "proposal_investigation" }) } }],
+        },
+      }],
+    })
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: toolResponse },
+      { status_code: 200, body: chatCompletionText("configured recovery after safe read") },
+    ])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_tool", ["commander.tool_search"])
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "completed", provider_called: true, network_called: true, external_api_audit_events_appended: 2, model_step_event_count: 2, checkpoint_event_count: 1, terminal_event_count: 1 })
+    expect(result.controller_result).toMatchObject({ provider_request_count: 2, tool_call_count: 1, tool_search_call_count: 1, external_api_audit_events_appended: 2 })
+    expect(transport.requests).toHaveLength(2)
+    const events = await server.eventStore.readAll()
+    const kinds = events.filter((event) => event.investigation_id === authority.investigation_id || String(event.kind).startsWith("external_api_request_")).map((event) => event.kind)
+    const firstModel = kinds.indexOf("runtime_commander_investigation_model_step_started")
+    const checkpoint = kinds.indexOf("runtime_commander_investigation_checkpointed")
+    const secondModel = kinds.lastIndexOf("runtime_commander_investigation_model_step_started")
+    expect(firstModel).toBeGreaterThan(kinds.indexOf("runtime_commander_investigation_recovery_started"))
+    expect(checkpoint).toBeGreaterThan(firstModel)
+    expect(secondModel).toBeGreaterThan(checkpoint)
+    expect(kinds[kinds.length - 1]).toBe("runtime_commander_investigation_finished")
+    expect(JSON.stringify(events)).not.toContain("configured recovery after safe read")
+  })
+
+  test("configured recovery shutdown aborts and drains audit and journal work before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let releaseTransport!: () => void
+    const transportReleased = new Promise<void>((resolve) => { releaseTransport = resolve })
+    const transport = delayedAbortTransport(transportReleased)
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_shutdown")
+
+    const execution = server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    await waitFor(() => transport.requests === 1)
+    const shutdown = server.shutdown("configured recovery drain")
+    await waitFor(() => transport.aborted)
+    const beforeRelease = await server.eventStore.readAll()
+    expect(beforeRelease.map((event) => event.kind)).not.toContain("runtime_shutdown")
+
+    releaseTransport()
+    const result = await execution
+    await shutdown
+    expect(result).toMatchObject({ status: "failed", approval_consumed: true, provider_called: true, network_called: true, external_api_audit_events_appended: 1, terminal_event_count: 0 })
+    expect(result.blockers.join(" ")).toContain("outcome is uncertain")
+    const events = await server.eventStore.readAll()
+    const kinds = events.map((event) => event.kind)
+    expect(kinds.indexOf("runtime_commander_investigation_recovery_started")).toBeLessThan(kinds.indexOf("runtime_commander_investigation_model_step_started"))
+    expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ projection_status: "ready", recovery_execution_in_progress: true, recovery_execution_interrupted: true, terminal: undefined })
+  })
+
+  test("configured recovery fails closed before durable start when runtime or provider authority is unavailable", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const originalTransport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not run") }])
+    const original = configuredProviderRuntimeServer(projectDir, { transport: originalTransport })
+    const authority = await prepareApprovedConfiguredRecovery(original, "inv_configured_recovery_preflight")
+    await original.shutdown("replace configured recovery runtime")
+
+    const stoppedTransport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("stopped must not run") }])
+    const stopped = configuredProviderRuntimeServer(projectDir, { transport: stoppedTransport })
+    const beforeStart = await stopped.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    expect(beforeStart).toMatchObject({ status: "blocked", approval_consumed: false, provider_called: false, network_called: false })
+    expect(stoppedTransport.requests).toHaveLength(0)
+
+    const missingCredentialTransport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("credential must not run") }])
+    const missingCredentials = configuredProviderRuntimeServer(projectDir, { transport: missingCredentialTransport, externalApiEnv: {} })
+    await missingCredentials.start()
+    const blocked = await missingCredentials.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    expect(blocked).toMatchObject({ status: "blocked", approval_consumed: false, provider_called: false, network_called: false })
+    expect(blocked.blockers.join(" ")).toContain("not execution-ready")
+    expect(missingCredentialTransport.requests).toHaveLength(0)
+    const events = await missingCredentials.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const preview = await missingCredentials.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(preview).toMatchObject({ approval_state: "stale", recovery_approval_consumed: false })
+    await missingCredentials.shutdown("configured recovery preflight complete")
+  })
+
+  test("concurrent configured recovery invokes the connector once and later duplicates never execute again", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-concurrent-"))
+    await writeApprovedSpec(projectDir)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const transport: ExternalApiTransport & { requests: number } = {
+      requests: 0,
+      async request() {
+        transport.requests += 1
+        await gate
+        return { status_code: 200, headers: {}, body: chatCompletionText("one concurrent recovery") }
+      },
+    }
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_concurrent")
+
+    const first = server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    const second = server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    await waitFor(() => transport.requests === 1)
+    release()
+    const results = await Promise.all([first, second])
+    expect(results.map((result) => result.status).sort()).toEqual(["already_started", "completed"])
+    expect(results.filter((result) => result.provider_called)).toHaveLength(1)
+    expect(results.filter((result) => result.external_api_audit_events_appended === 1)).toHaveLength(1)
+    expect(transport.requests).toBe(1)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(1)
+  })
+
+  test("configured recovery terminal append failure preserves consumed nonterminal authority and truthful audit facts", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-terminal-failure-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("known final before terminal failure") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_terminal_failure")
+    const append = server.eventStore.append.bind(server.eventStore)
+    server.eventStore.append = async (event) => {
+      if ((event as { kind?: string }).kind === "runtime_commander_investigation_finished") throw new Error("configured terminal append fixture failure")
+      return append(event)
+    }
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "failed", approval_consumed: true, provider_called: true, network_called: true, external_api_audit_events_appended: 1, terminal_event_count: 0 })
+    expect(result.blockers.join(" ")).toContain("terminal append fixture failure")
+    expect(transport.requests).toHaveLength(1)
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ projection_status: "ready", recovery_execution_in_progress: true, recovery_execution_interrupted: true, terminal: undefined })
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(1)
+  })
+
+  test("configured recovery caller abort before provider dispatch consumes once without model, network, or audit activity", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-pre-dispatch-abort-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("aborted must not run") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_pre_dispatch_abort")
+    const abort = new AbortController()
+    abort.abort(new Error("operator cancelled before configured recovery dispatch"))
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input, { abort_signal: abort.signal })
+
+    expect(result).toMatchObject({ status: "completed", approval_consumed: true, provider_called: false, network_called: false, external_api_audit_events_appended: 0, model_step_event_count: 0, terminal_event_count: 1 })
+    expect(result.controller_result).toMatchObject({ status: "cancelled", provider_request_count: 0 })
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+  })
+
   test("recovery transaction resolves uncertain provider policy without inferring or replaying the old request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-uncertain-"))
     await writeApprovedSpec(projectDir)
@@ -11078,6 +11308,68 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
     loaded_tools: [],
 	    working_set: workingSet,
     started_at: occurred,
+  }
+}
+
+async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investigationId: string, loadedToolIds: string[] = []) {
+  const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+  const configured = providerConfig()
+  const input = baseInvestigation({
+    investigation_id: investigationId,
+    objective: `Execute configured recovery for ${investigationId}`,
+    provider_id: String(configured.provider_id),
+    provider_kind: "openai",
+    model_id: String(configured.model_id),
+    tool_protocol: "native",
+  })
+  const durableRun = await journal.createObserver(input)
+  const snapshot = durableStartedSnapshot(input, 41, investigationId) as any
+  const loadedTools = COMMANDER_TOOL_REGISTRY.filter((tool) => loadedToolIds.includes(tool.tool_id))
+  snapshot.loaded_tools = loadedTools
+  snapshot.working_set.loaded_tool_ids = loadedTools.map((tool) => tool.tool_id)
+  snapshot.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(snapshot.working_set))
+  snapshot.budget = { ...snapshot.budget, max_context_bytes: 65_536, max_context_tokens: 16_384, max_cumulative_tool_result_bytes: 32_000, budget_hash: "" }
+  snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+  await durableRun.observer.onStarted(snapshot)
+  journal.release(durableRun)
+  await server.start()
+  const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
+  expect(recovery.blockers).toEqual([])
+  expect(recovery.status).toBe("ready_for_approval")
+  const approval = await server.recordCommanderInvestigationRecoveryApproval({
+    investigation_id: investigationId,
+    recovery_plan_hash: recovery.recovery_plan_hash!,
+    decision: "approve_resume_from_checkpoint",
+    approved_by: "configured_recovery_operator",
+    acknowledgements: {
+      fresh_context_required: true,
+      exact_replay_unavailable: true,
+      provider_request_replay_forbidden: true,
+      tool_execution_replay_forbidden: true,
+    },
+  })
+  expect(approval.status).toBe("recorded")
+  const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
+  const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+    investigation_id: investigationId,
+    approval_id: approval.approval!.approval_id,
+    approval_hash: approval.approval!.approval_hash,
+    recovery_plan_hash: approved.recovery_plan_hash!,
+  })
+  expect(preparation.status).toBe("ready")
+  return {
+    investigation_id: investigationId,
+    journal,
+    approval,
+    recovery: approved,
+    preparation,
+    transaction_input: {
+      investigation_id: investigationId,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    },
   }
 }
 

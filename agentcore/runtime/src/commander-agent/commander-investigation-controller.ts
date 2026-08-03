@@ -1113,6 +1113,11 @@ function emptyProviderAudit(policy?: CommanderInvestigationProviderAuditPolicy):
 }
 
 function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummary, policy: CommanderInvestigationProviderAuditPolicy | undefined, modelResult: CommanderModelStepResult): { metadata?: CommanderConnectorModelTransportMetadata; blocker?: string; warnings: string[] } {
+  if (policy?.required === true) {
+    summary.audit_required = true
+    summary.transport_kind = policy.transport_kind
+    addUniqueCapped(summary.connector_ids, policy.connector_id, 4)
+  }
   summary.provider_request_count += modelResult.request_count
   const metadata = transportMetadata(modelResult.provider_metadata?.nexusloop_transport)
   if (metadata) {
