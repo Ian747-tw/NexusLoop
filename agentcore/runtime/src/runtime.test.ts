@@ -16910,6 +16910,10 @@ describe("RuntimeServerClient", () => {
     await client.command("runtime.status")
     await client.shutdown()
 
+    await expect(client.command("runtime.list_commander_investigation_recoveries")).resolves.toMatchObject({
+      current_compatibility_checked: false,
+      items: [],
+    })
     await expect(client.command("runtime.status")).rejects.toThrow("runtime client has been shut down")
     await expect(client.command("runtime.command_authority_summary")).rejects.toThrow("runtime client has been shut down")
     await expect(client.submitUserMessage("after shutdown")).rejects.toThrow("runtime client has been shut down")

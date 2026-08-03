@@ -180,6 +180,12 @@ const noStartCommands = new Set([
   "runtime.get_minimax_live_validation",
 ])
 
+const postShutdownCommands = new Set([
+  "runtime.list_commander_investigation_recoveries",
+  "runtime.get_commander_investigation_recovery",
+  "runtime.preview_commander_investigation_recovery",
+])
+
 export interface RuntimeServerClientOptions {
   server: RuntimeServer
   autoStart?: boolean
@@ -228,7 +234,7 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
-    if (this.shutdownRequested && !noStartCommands.has(name)) throw new Error("runtime client has been shut down")
+    if (this.shutdownRequested && !postShutdownCommands.has(name)) throw new Error("runtime client has been shut down")
     try {
       if (await this.shouldAutoStart(name, payload)) await this.ensureStarted()
       const result = await this.server.command(name, payload)
