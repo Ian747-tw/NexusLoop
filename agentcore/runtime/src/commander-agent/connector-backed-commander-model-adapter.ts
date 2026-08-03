@@ -94,6 +94,7 @@ function metadata(connectorId: string, observed: ReturnType<typeof createExterna
     audit_event_count: records.length,
     successful_audit_count: records.filter((record) => record.event_kind === "external_api_request_executed").length,
     failed_audit_count: records.filter((record) => record.event_kind === "external_api_request_failed").length,
+    transport_dispatch_count: observed.transport_dispatch_count(),
     dropped_header_names: observed.dropped_header_names.slice(0, 8),
     request_body_persisted: false,
     response_body_persisted: false,

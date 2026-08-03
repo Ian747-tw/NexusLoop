@@ -10,7 +10,7 @@ import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFrom
 import { EventStore } from "../events/event-store"
 import { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
 import { ExternalApiRequestService } from "../external-api/api-request-service"
-import { FakeExternalApiTransport, FetchExternalApiTransport, type ExternalApiTransport } from "../external-api/api-transport"
+import { FakeExternalApiTransport, FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "../external-api/api-transport"
 import { FakeOpenCodeAdapter } from "../opencode/fake-adapter"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
@@ -9734,6 +9734,7 @@ describe("Commander in-memory investigation controller", () => {
       transport_kind: "external_api_connector",
       connector_ids: ["openai-test"],
       external_api_audit_event_count: 1,
+      transport_dispatch_count: 1,
       successful_audit_count: 1,
       failed_audit_count: 0,
       all_provider_requests_audited: true,
@@ -9757,6 +9758,55 @@ describe("Commander in-memory investigation controller", () => {
     const duplicate = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
     expect(duplicate).toMatchObject({ status: "already_started", provider_called: false, network_called: false, external_api_audit_events_appended: 0 })
     expect(transport.requests).toHaveLength(1)
+  })
+
+  test("configured recovery reports no network call when request policy rejects before transport dispatch", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-pre-transport-rejection-"))
+    await writeApprovedSpec(projectDir)
+    const transport: ExternalApiTransport & { requests: number } = {
+      requiresResolvedHostValidation: true,
+      requests: 0,
+      async request() {
+        transport.requests += 1
+        throw new Error("transport must not be called after host policy rejection")
+      },
+    }
+    const server = configuredProviderRuntimeServer(projectDir, {
+      transport,
+      externalApiResolveHostAddresses: async () => [{ address: "127.0.0.1", family: 4 }],
+    })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_pre_transport_rejection")
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({
+      status: "failed",
+      approval_consumed: true,
+      provider_called: true,
+      network_called: false,
+      external_api_audit_events_appended: 1,
+      model_step_event_count: 1,
+      terminal_event_count: 0,
+    })
+    expect(result.controller_result?.provider_audit).toMatchObject({
+      provider_request_count: 1,
+      external_api_audit_event_count: 1,
+      transport_dispatch_count: 0,
+      failed_audit_count: 1,
+    })
+    expect(transport.requests).toBe(0)
+    const events = await server.eventStore.readAll()
+    const kinds = events.filter((event) => event.investigation_id === authority.investigation_id || String(event.kind).startsWith("external_api_request_")).map((event) => event.kind)
+    expect(kinds).toEqual([
+      "runtime_commander_investigation_started",
+      "runtime_commander_investigation_recovery_approved",
+      "runtime_commander_investigation_recovery_started",
+      "runtime_commander_investigation_model_step_started",
+      "external_api_request_failed",
+    ])
+    const eventText = JSON.stringify(events)
+    expect(eventText).not.toContain("real-provider-key")
   })
 
   test("configured recovery validates the fresh connector audit without rejecting historical connector metadata", async () => {
@@ -11122,7 +11172,7 @@ function providerLaunchEnv(baseUrl: string) {
   }
 }
 
-function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport; externalApiEnv?: Record<string, string | undefined>; externalApiConnectorRegistry?: ExternalApiConnectorRegistry } = {}) {
+function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport; externalApiEnv?: Record<string, string | undefined>; externalApiConnectorRegistry?: ExternalApiConnectorRegistry; externalApiResolveHostAddresses?: ExternalApiHostResolver } = {}) {
   return new RuntimeServer({
     projectDir,
     adapter: options.adapter ?? new FakeOpenCodeAdapter(),
@@ -11130,6 +11180,7 @@ function configuredProviderRuntimeServer(projectDir: string, options: { adapter?
     externalApiConnectorRegistry: options.externalApiConnectorRegistry,
     externalApiConnectors: options.externalApiConnectorRegistry ? undefined : [connector("openai-test", "https://api.example.test/v1")],
     externalApiTransport: options.transport ?? new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured final") }]),
+    externalApiResolveHostAddresses: options.externalApiResolveHostAddresses,
     externalApiEnv: options.externalApiEnv ?? { NXL_TEST_MODEL_KEY: "real-provider-key" },
     externalApiRequestId: (() => {
       let index = 0

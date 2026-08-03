@@ -17,6 +17,7 @@ export type ExternalApiConnectorFetchMetadata = {
   readonly dropped_header_names: string[]
   readonly audit_records: ExternalApiPersistedAuditRecord[]
   readonly request_attempt_count: () => number
+  readonly transport_dispatch_count: () => number
 }
 
 export type ExternalApiConnectorFetchOptions = {
@@ -36,6 +37,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
   const dropped = new Set<string>()
   const auditRecords: ExternalApiPersistedAuditRecord[] = []
   let attempts = 0
+  let transportDispatches = 0
   const bridge = (async (input, init) => {
     attempts += 1
     const request = await parseBridgeRequest(input, init)
@@ -56,6 +58,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
       omit_response_preview_from_audit: true,
       persist_audit: true,
       on_audit_persisted: (record) => auditRecords.push(record),
+      on_transport_dispatched: () => { transportDispatches += 1 },
     })
     return new Response(providerResponseBody(result), {
       status: result.status_code ?? 500,
@@ -72,6 +75,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
         return auditRecords.slice(0, 4)
       },
       request_attempt_count: () => attempts,
+      transport_dispatch_count: () => transportDispatches,
     },
   }
 }

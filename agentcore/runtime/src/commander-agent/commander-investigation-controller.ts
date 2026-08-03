@@ -1100,6 +1100,7 @@ function emptyProviderAudit(policy?: CommanderInvestigationProviderAuditPolicy):
     connector_ids: policy?.required === true ? [policy.connector_id] : [],
     provider_request_count: 0,
     external_api_audit_event_count: 0,
+    transport_dispatch_count: 0,
     successful_audit_count: 0,
     failed_audit_count: 0,
     audit_request_ids: [],
@@ -1140,6 +1141,7 @@ function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummar
     }
     for (const kind of metadata.audit_event_kinds) if (summary.audit_event_kinds.length < 24) summary.audit_event_kinds.push(kind)
     summary.external_api_audit_event_count += metadata.audit_event_count
+    summary.transport_dispatch_count = (summary.transport_dispatch_count ?? 0) + (metadata.transport_dispatch_count ?? 0)
     summary.successful_audit_count += metadata.successful_audit_count
     summary.failed_audit_count += metadata.failed_audit_count
     if (metadata.request_body_persisted || metadata.response_body_persisted || metadata.credentials_persisted) summary.warnings.push("provider transport metadata reported persisted sensitive content")
@@ -1162,6 +1164,7 @@ function validateTransportMetadata(metadata: CommanderConnectorModelTransportMet
   if (metadata.transport_kind !== "external_api_connector") return { blocker: "configured provider transport kind is invalid", warnings: [] }
   if (metadata.connector_id !== policy.connector_id) return { blocker: "configured provider audit connector_id does not match policy", warnings: [] }
   if (metadata.audit_event_count !== 1) return { blocker: "configured provider request did not produce exactly one external API audit", warnings: [] }
+  if ((metadata.transport_dispatch_count ?? 0) > requestCount) return { blocker: "configured provider transport dispatch count exceeds request_count", warnings: [] }
   if (metadata.request_ids.length !== 1) return { blocker: "configured provider audit request_id is missing", warnings: [] }
   if (metadata.audit_event_kinds.length !== 1) return { blocker: "configured provider audit event kind is missing", warnings: [] }
   if (metadata.successful_audit_count + metadata.failed_audit_count !== 1) return { blocker: "configured provider audit success/failure counts are inconsistent", warnings: [] }
@@ -1184,6 +1187,7 @@ function transportMetadata(value: unknown): CommanderConnectorModelTransportMeta
     audit_event_count: integerOrZero(raw.audit_event_count),
     successful_audit_count: integerOrZero(raw.successful_audit_count),
     failed_audit_count: integerOrZero(raw.failed_audit_count),
+    transport_dispatch_count: integerOrZero(raw.transport_dispatch_count),
     dropped_header_names: Array.isArray(raw.dropped_header_names) ? raw.dropped_header_names.filter((item): item is string => typeof item === "string").slice(0, 8).map((item) => preview(item, 80)) : [],
     request_body_persisted: raw.request_body_persisted === false ? false : true as never,
     response_body_persisted: raw.response_body_persisted === false ? false : true as never,

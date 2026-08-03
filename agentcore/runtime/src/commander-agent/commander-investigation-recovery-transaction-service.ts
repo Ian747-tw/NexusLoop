@@ -20,6 +20,7 @@ type NormalizedTransactionInput = Readonly<CommanderInvestigationRecoveryTransac
 type RecoveryExecutionFacts = {
   providerRequestCount: number
   externalApiAuditEventsAppended: number
+  transportDispatchCount: number
   providerCalled: boolean
   networkCalled: boolean
 }
@@ -175,7 +176,7 @@ export class CommanderInvestigationRecoveryTransactionService {
         }
         controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint)
       }
-      executionFacts = recoveryExecutionFacts(seed, controllerResult, run, this.executionMode)
+      executionFacts = recoveryExecutionFacts(seed, controllerResult, this.executionMode)
       const executionBlocker = executionModeBlocker(this.executionMode, executionFacts, controllerResult)
       if (executionBlocker) {
         controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError(executionBlocker), this.now().toISOString(), run.state.latest_checkpoint)
@@ -202,7 +203,7 @@ export class CommanderInvestigationRecoveryTransactionService {
       const reconciled = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
       terminalPersisted = Boolean(reconciled?.terminal?.recovery_attempt_id === attempt.recovery_attempt_id && reconciled.terminal.semantic_result_hash === controllerResult?.result_hash)
       if (!terminalPersisted) {
-        return transactionResult({ status: "failed", investigationId: input.investigation_id, generatedAt, source: reconciled, attempt, controllerResult, recoveryStartEventId, eventCounts: observerEventCounts(run), eventsAppended: true, executionFacts: executionFacts ?? (controllerResult ? recoveryExecutionFacts(seed, controllerResult, run, this.executionMode) : undefined), blockers: [boundedError(error)], warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"] })
+        return transactionResult({ status: "failed", investigationId: input.investigation_id, generatedAt, source: reconciled, attempt, controllerResult, recoveryStartEventId, eventCounts: observerEventCounts(run), eventsAppended: true, executionFacts: executionFacts ?? (controllerResult ? recoveryExecutionFacts(seed, controllerResult, this.executionMode) : undefined), blockers: [boundedError(error)], warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"] })
       }
     } finally {
       if (run) {
@@ -212,7 +213,7 @@ export class CommanderInvestigationRecoveryTransactionService {
     }
     const finalSource = await this.options.recoverySource(input.investigation_id).catch(() => undefined)
     const terminalConfirmed = Boolean(terminalPersisted && finalSource?.projection_status === "ready" && finalSource.terminal?.recovery_attempt_id === attempt.recovery_attempt_id && finalSource.terminal.semantic_result_hash === controllerResult?.result_hash)
-    return transactionResult({ status: terminalConfirmed ? "completed" : "failed", investigationId: input.investigation_id, generatedAt, source: finalSource, attempt, controllerResult, recoveryStartEventId, terminalEventId, eventCounts: observerEventCounts(run), eventsAppended: true, executionFacts: executionFacts ?? (controllerResult ? recoveryExecutionFacts(seed, controllerResult, run, this.executionMode) : undefined), blockers: terminalConfirmed ? [] : ["recovery terminal event was not confirmed as authoritative"], warnings: prepared.preview.warnings })
+    return transactionResult({ status: terminalConfirmed ? "completed" : "failed", investigationId: input.investigation_id, generatedAt, source: finalSource, attempt, controllerResult, recoveryStartEventId, terminalEventId, eventCounts: observerEventCounts(run), eventsAppended: true, executionFacts: executionFacts ?? (controllerResult ? recoveryExecutionFacts(seed, controllerResult, this.executionMode) : undefined), blockers: terminalConfirmed ? [] : ["recovery terminal event was not confirmed as authoritative"], warnings: prepared.preview.warnings })
   }
 }
 
@@ -370,17 +371,17 @@ function failedControllerResult(seed: CommanderInvestigationRecoveryContinuation
 function recoveryExecutionFacts(
   seed: CommanderInvestigationRecoveryContinuationSeed,
   result: CommanderInvestigationResult,
-  run?: CommanderInvestigationJournalRun,
   mode: CommanderInvestigationRecoveryExecutionMode = { kind: "scripted", execution_transport: "injected_scripted_adapter", provider_audit_required: false },
 ): RecoveryExecutionFacts {
   const providerRequests = Math.max(0, result.provider_request_count - seed.provider_request_count_before)
   const externalApiAudits = Math.max(0, result.provider_audit.external_api_audit_event_count - seed.external_api_audit_count_before)
-  const persistedModelSteps = run?.state.recovery_model_step_event_count ?? 0
+  const transportDispatches = Math.max(0, (result.provider_audit.transport_dispatch_count ?? 0) - (seed.working_set.provider_audit.transport_dispatch_count ?? 0))
   return {
     providerRequestCount: providerRequests,
     externalApiAuditEventsAppended: externalApiAudits,
+    transportDispatchCount: transportDispatches,
     providerCalled: mode.kind === "configured_connector" && providerRequests > 0,
-    networkCalled: mode.kind === "configured_connector" && (externalApiAudits > 0 || (providerRequests > 0 && persistedModelSteps > 0)),
+    networkCalled: mode.kind === "configured_connector" && transportDispatches > 0,
   }
 }
 
@@ -393,11 +394,13 @@ function executionModeBlocker(
     if (facts.externalApiAuditEventsAppended !== 0) {
       return "scripted recovery transaction must not append external API audits"
     }
+    if (facts.transportDispatchCount !== 0) return "scripted recovery transaction must not dispatch external API transport"
     return undefined
   }
   const newProviderRequests = facts.providerRequestCount
   if (facts.providerCalled && facts.externalApiAuditEventsAppended === 0) return "configured recovery provider request is missing an external API audit"
   if (facts.externalApiAuditEventsAppended !== newProviderRequests) return "configured recovery provider request and external API audit counts do not match"
+  if (facts.transportDispatchCount > newProviderRequests) return "configured recovery transport dispatch count exceeds fresh provider requests"
   if (facts.externalApiAuditEventsAppended > 0 && result.provider_audit.transport_kind !== "external_api_connector") return "configured recovery audit transport kind is invalid"
   if (result.provider_audit.request_body_persisted || result.provider_audit.response_body_persisted || result.provider_audit.credentials_persisted) return "configured recovery audit metadata claims forbidden provider material was persisted"
   return undefined
