@@ -437,7 +437,13 @@ export class CommanderInvestigationJournalService {
         event_payload_hash: "",
       } satisfies CommanderInvestigationRecoveryStartedPayload)
       assertRecoveryStartNotAborted(operational.abort_signal)
-      const eventId = await this.appendCapped("runtime_commander_investigation_recovery_started", payload, RECOVERY_START_CAP, expectedLatestEventId)
+      const eventId = await this.appendCapped(
+        "runtime_commander_investigation_recovery_started",
+        payload,
+        RECOVERY_START_CAP,
+        expectedLatestEventId,
+        () => assertRecoveryStartNotAborted(operational.abort_signal),
+      )
       return { recovery_attempt: attempt, event_id: eventId, events_appended: true }
     } finally {
       release()
@@ -845,14 +851,20 @@ export class CommanderInvestigationJournalService {
     }
   }
 
-  private async appendCapped(kind: string, payload: Record<string, unknown>, cap: number, expectedLatestEventId?: string | null): Promise<string> {
+  private async appendCapped(
+    kind: string,
+    payload: Record<string, unknown>,
+    cap: number,
+    expectedLatestEventId?: string | null,
+    beforeWrite?: () => void,
+  ): Promise<string> {
     const redacted = redactValue(payload) as Record<string, unknown>
     if (eventBytes({ kind, ...redacted }) > cap) throw new CommanderInvestigationPersistenceError(`${kind} payload exceeds durable event byte cap`)
     await this.assertAppendSafeTail()
     try {
       return await (expectedLatestEventId === undefined
         ? this.options.eventStore.append({ kind, ...redacted } as JsonlEvent)
-        : this.options.eventStore.appendIfLatest({ kind, ...redacted } as JsonlEvent, expectedLatestEventId))
+        : this.options.eventStore.appendIfLatest({ kind, ...redacted } as JsonlEvent, expectedLatestEventId, { before_write: beforeWrite }))
     } catch (error) {
       if (expectedLatestEventId !== undefined && error instanceof Error && error.message === "event log changed before append") {
         throw new CommanderInvestigationJournalConflictError("event log changed before append")

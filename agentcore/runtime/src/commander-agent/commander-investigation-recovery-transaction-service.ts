@@ -174,12 +174,12 @@ export class CommanderInvestigationRecoveryTransactionService {
             warnings: ["recovery attempt remains consumed and requires human review; automatic retry is forbidden"],
           })
         }
-        controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint)
+        controllerResult = failedControllerResult(seed, error, this.now().toISOString(), run.state.latest_checkpoint, this.executionMode)
       }
       executionFacts = recoveryExecutionFacts(seed, controllerResult, this.executionMode)
       const executionBlocker = executionModeBlocker(this.executionMode, executionFacts, controllerResult)
       if (executionBlocker) {
-        controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError(executionBlocker), this.now().toISOString(), run.state.latest_checkpoint)
+        controllerResult = failedControllerResult(seed, new CommanderInvestigationPersistenceError(executionBlocker), this.now().toISOString(), run.state.latest_checkpoint, this.executionMode)
       }
       if (run.state.pending_model_request_id && !terminalOutcomeIsKnown(controllerResult)) {
         return transactionResult({
@@ -305,7 +305,13 @@ function buildRecoveryAttempt(seed: CommanderInvestigationRecoveryContinuationSe
   return attempt
 }
 
-function failedControllerResult(seed: CommanderInvestigationRecoveryContinuationSeed, error: unknown, completedAt: string, checkpoint?: CommanderInvestigationCheckpoint): CommanderInvestigationResult {
+function failedControllerResult(
+  seed: CommanderInvestigationRecoveryContinuationSeed,
+  error: unknown,
+  completedAt: string,
+  checkpoint?: CommanderInvestigationCheckpoint,
+  mode: CommanderInvestigationRecoveryExecutionMode = { kind: "scripted", execution_transport: "injected_scripted_adapter", provider_audit_required: false },
+): CommanderInvestigationResult {
   const budget = checkpoint?.budget ?? seed.effective_budget.effective_budget
   const workingSet = checkpoint?.working_set ?? seed.working_set
   const turnSummaries = checkpoint?.turn_summaries ?? seed.turn_summaries
@@ -340,7 +346,7 @@ function failedControllerResult(seed: CommanderInvestigationRecoveryContinuation
     turn_summaries: turnSummaries,
     omitted_evidence_count: workingSet.omitted_evidence_count,
     omitted_turn_count: workingSet.omitted_turn_count,
-    provider_audit: workingSet.provider_audit,
+    provider_audit: providerAuditForExecutionMode(workingSet.provider_audit, mode),
     blockers: [boundedError(error)],
     warnings: workingSet.current_warnings,
     started_at: seed.original_started_at,
@@ -366,6 +372,19 @@ function failedControllerResult(seed: CommanderInvestigationRecoveryContinuation
   }
   result.result_hash = stableHash({ ...result, completed_at: "", duration_ms: 0, result_hash: "" })
   return redactValue(result) as CommanderInvestigationResult
+}
+
+function providerAuditForExecutionMode(
+  summary: CommanderInvestigationResult["provider_audit"],
+  mode: CommanderInvestigationRecoveryExecutionMode,
+): CommanderInvestigationResult["provider_audit"] {
+  const audit = structuredClone(summary)
+  if (mode.kind !== "configured_connector") return audit
+  audit.audit_required = true
+  audit.transport_kind = "external_api_connector"
+  if (!audit.connector_ids.includes(mode.connector_id) && audit.connector_ids.length < 4) audit.connector_ids.push(mode.connector_id)
+  audit.all_provider_requests_audited = audit.provider_request_count > 0 && audit.external_api_audit_event_count === audit.provider_request_count
+  return audit
 }
 
 function recoveryExecutionFacts(

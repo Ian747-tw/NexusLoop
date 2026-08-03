@@ -10229,6 +10229,48 @@ describe("Commander in-memory investigation controller", () => {
     })
   })
 
+  test("configured recovery cancellation fences a recovery start queued inside EventStore", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-queued-start-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("queued start must not dispatch") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_queued_start_shutdown")
+    let releaseQueue!: () => void
+    const queueGate = new Promise<void>((resolve) => { releaseQueue = resolve })
+    ;(server.eventStore as any).appendQueue = queueGate
+    const originalAppendIfLatest = server.eventStore.appendIfLatest.bind(server.eventStore)
+    let appendEntered!: () => void
+    const entered = new Promise<void>((resolve) => { appendEntered = resolve })
+    server.eventStore.appendIfLatest = async (...args: Parameters<typeof originalAppendIfLatest>) => {
+      appendEntered()
+      return originalAppendIfLatest(...args)
+    }
+
+    const recovery = server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+    await entered
+    const shutdown = server.shutdown("configured recovery queued start shutdown")
+    await waitFor(() => (server as any).lifecycleState === "stopping")
+    expect((server as any).runLock.isHeld()).toBe(true)
+
+    releaseQueue()
+    const result = await recovery
+    await shutdown
+
+    expect(result).toMatchObject({ status: "blocked", approval_consumed: false, provider_called: false, network_called: false, events_appended: false })
+    expect(result.blockers.join(" ")).toContain("cancelled before the durable recovery-start boundary")
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    expect(events[events.length - 1]?.kind).toBe("runtime_shutdown")
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
+  })
+
   test("configured recovery fails closed before durable start when runtime or provider authority is unavailable", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-preflight-"))
     await writeApprovedSpec(projectDir)
@@ -10312,6 +10354,49 @@ describe("Commander in-memory investigation controller", () => {
     const events = await server.eventStore.readAll()
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
     expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(1)
+  })
+
+  test("configured recovery runner failure before dispatch persists configured audit authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-runner-failure-audit-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("runner failure must not dispatch") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_runner_failure_audit")
+    const transactionService = (server as any).commanderInvestigationRecoveryTransactionService()
+    transactionService.options.continuationRunner.run = async () => {
+      throw new Error("authoritative recovery lookup failed before provider dispatch")
+    }
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "completed", approval_consumed: true, provider_called: false, network_called: false, external_api_audit_events_appended: 0, terminal_event_count: 1 })
+    expect(result.controller_result).toMatchObject({
+      status: "failed",
+      provider_request_count: 0,
+      provider_audit: {
+        audit_required: true,
+        transport_kind: "external_api_connector",
+        connector_ids: ["openai-test"],
+        provider_request_count: 0,
+        external_api_audit_event_count: 0,
+        all_provider_requests_audited: false,
+      },
+    })
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const terminal = events.find((event) => event.kind === "runtime_commander_investigation_finished" && event.investigation_id === authority.investigation_id) as any
+    expect(terminal.terminal.provider_audit).toMatchObject({
+      audit_required: true,
+      transport_kind: "external_api_connector",
+      connector_ids: ["openai-test"],
+      provider_request_count: 0,
+      external_api_audit_event_count: 0,
+      all_provider_requests_audited: false,
+    })
   })
 
   test("configured recovery caller abort before durable start leaves approval unconsumed", async () => {
