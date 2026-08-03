@@ -81,7 +81,7 @@ function summaryFromRecord(record: CommanderInvestigationRecord): CommanderRecov
     recovery_approval_count: record.recovery_approval_count,
     recovery_attempt_count: record.recovery_attempt_count,
     recovery_execution_in_progress: record.recovery_execution_in_progress,
-    human_review_required: record.projection_status !== "ready" || record.uncertain_provider_outcome || record.recovery_execution_in_progress || record.recovery_approval_consumed,
+    human_review_required: record.projection_status !== "ready" || (record.status === "running" && (record.uncertain_provider_outcome || record.recovery_execution_in_progress || record.recovery_approval_consumed)),
     current_compatibility_checked: false,
   }
 }

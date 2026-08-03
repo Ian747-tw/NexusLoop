@@ -10628,13 +10628,35 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(0)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
 
+    const wrongApprovalOperation = await server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_id: "commander_recovery_approval_wrong",
+    }) as any
+    expect(wrongApprovalOperation.operation_id).not.toBe(staleOperation.operation_id)
+    const wrongApprovalEntry = (server as any).publicCommanderRecoveryOperations.get(wrongApprovalOperation.operation_id)
+    await wrongApprovalEntry.promise
+    expect(wrongApprovalEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined })
+
+    const wrongApprovalHashOperation = await server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_hash: `${authority.transaction_input.approval_hash}_wrong`,
+    }) as any
+    expect(wrongApprovalHashOperation.operation_id).not.toBe(wrongApprovalOperation.operation_id)
+    const wrongApprovalHashEntry = (server as any).publicCommanderRecoveryOperations.get(wrongApprovalHashOperation.operation_id)
+    await wrongApprovalHashEntry.promise
+    expect(wrongApprovalHashEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined })
+
     const correctedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
-    expect(correctedOperation.operation_id).not.toBe(staleOperation.operation_id)
+    expect(correctedOperation.operation_id).not.toBe(wrongApprovalHashOperation.operation_id)
     const correctedEntry = (server as any).publicCommanderRecoveryOperations.get(correctedOperation.operation_id)
     await correctedEntry.promise
     expect(correctedEntry.record.status).toBe("completed")
     expect(transport.requests).toHaveLength(1)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    const completedList = await server.command("runtime.list_commander_investigation_recoveries", { limit: 10 }) as any
+    expect(completedList.items.find((item: any) => item.investigation_id === authority.investigation_id)).toMatchObject({ terminal: true, approval_state: "consumed", human_review_required: false })
+    const completedShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(completedShow).toMatchObject({ terminal: true, human_review_required: false, recommended_next_operator_action: "none" })
   })
 
   test("thrown public preflight remains replaceable only after journal reconciliation proves no attempt", async () => {

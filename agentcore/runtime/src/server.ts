@@ -2985,8 +2985,7 @@ export class RuntimeServer {
               && !source.current_recovery_attempt
               && !source.latest_recovery_attempt
               && (source.recovery_attempts?.length ?? 0) === 0
-              && approval?.approval_id === input.approval_id
-              && approval.approval_hash === input.approval_hash
+              && approval
               && !approval.consumed) {
               this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
             }
@@ -3017,8 +3016,7 @@ export class RuntimeServer {
             && !source.current_recovery_attempt
             && !source.latest_recovery_attempt
             && (source.recovery_attempts?.length ?? 0) === 0
-            && approval?.approval_id === input.approval_id
-            && approval.approval_hash === input.approval_hash
+            && approval
             && !approval.consumed) {
             this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
           }

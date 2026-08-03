@@ -18987,12 +18987,13 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   if (command === "commander-recovery-approve") {
     const fields = recoveryKeyValues(args, new Set(["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome", "confirm"]))
     if (fields.confirm !== "APPROVE") return { ...state, commanderRecovery: { ...current, pendingConfirmation: "approval", commandError: undefined } }
+    const investigationId = requiredRecoveryField(fields, "investigation_id")
     const decision = requiredRecoveryDecision(fields.decision)
     if (decision === "approve_continue_after_uncertain_provider_outcome" && fields.uncertain_provider_outcome !== "true") {
       throw new Error("uncertain_provider_outcome must be explicitly true")
     }
     const result = await runtime.command("runtime.approve_commander_investigation_recovery", {
-      investigation_id: requiredRecoveryField(fields, "investigation_id"),
+      investigation_id: investigationId,
       recovery_plan_hash: requiredRecoveryField(fields, "recovery_plan_hash"),
       decision,
       approved_by: requiredRecoveryField(fields, "approved_by"),
@@ -19005,7 +19006,17 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
         ...(fields.uncertain_provider_outcome === "true" ? { uncertain_provider_outcome: true as const } : {}),
       },
     })
-    return { ...state, commanderRecovery: { ...current, approval: safeOptionalRecord(result), pendingConfirmation: undefined, commandError: undefined } }
+    const approval = safeOptionalRecord(result)
+    const selectedInvestigationId = typeof current.selected?.investigation_id === "string" ? current.selected.investigation_id : undefined
+    const previewInvestigationId = typeof current.preview?.investigation_id === "string" ? current.preview.investigation_id : undefined
+    const targetChanged = (selectedInvestigationId !== undefined && selectedInvestigationId !== investigationId)
+      || (previewInvestigationId !== undefined && previewInvestigationId !== investigationId)
+    return {
+      ...state,
+      commanderRecovery: targetChanged
+        ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
+        : { ...current, approval, pendingConfirmation: undefined, commandError: undefined },
+    }
   }
   if (command === "commander-recovery-execute") {
     const fields = recoveryKeyValues(args, new Set(["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash", "confirm"]))

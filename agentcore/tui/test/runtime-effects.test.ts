@@ -6833,13 +6833,23 @@ describe("runtime UI effects", () => {
     })
     expect(state.commanderRecovery?.pendingConfirmation).toBe("approval")
     expect(state.commanderRecovery?.approval).toBeNull()
+    state.commanderRecovery = {
+      ...state.commanderRecovery!,
+      selected: { investigation_id: "different_recovery" },
+      preview: { investigation_id: "different_recovery", recovery_plan_hash: "different_plan" },
+      operation: { operation_id: "different_operation", investigation_id: "different_recovery", approval_id: "different_approval", status: "running" },
+      cancellation: { status: "cancellation_requested" },
+    }
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-approve",
       args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
     })
     expect(state.commanderRecovery?.approval).toMatchObject({ status: "recorded", events_appended: true })
+    expect(state.commanderRecovery?.selected).toBeNull()
+    expect(state.commanderRecovery?.preview).toBeNull()
     expect(state.commanderRecovery?.operation).toBeNull()
+    expect(state.commanderRecovery?.cancellation).toBeNull()
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-execute",
