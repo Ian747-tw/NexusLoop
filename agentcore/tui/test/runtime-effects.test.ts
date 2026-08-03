@@ -6907,6 +6907,21 @@ describe("runtime UI effects", () => {
     expect(state.commanderRecovery?.operation).toMatchObject({ status: "running", operation_id: "fake_recovery_operation_0" })
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
+      command: "commander-recovery-preview",
+      args: ["fake_commander_recovery"],
+    })
+    expect(state.commanderRecovery?.preview).toMatchObject({ status: "recovery_in_progress", approval_state: "consumed" })
+    expect(state.commanderRecovery?.preview).not.toHaveProperty("current_approval")
+    const duplicateOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      approval_id: fakeAuthority.approval_id,
+      approval_hash: fakeAuthority.approval_hash,
+      recovery_plan_hash: fakeAuthority.recovery_plan_hash,
+      execution_preparation_hash: fakeAuthority.execution_preparation_hash,
+    }) as Record<string, unknown>
+    expect(duplicateOperation.operation_id).toBe("fake_recovery_operation_0")
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
       command: "commander-recovery-cancel",
       args: ["investigation_id=fake_commander_recovery", "operation_id=fake_recovery_operation_0", "approval_id=fake_approval"],
     })
@@ -7081,6 +7096,36 @@ describe("runtime UI effects", () => {
       status: "blocked",
       blockers: ["stale recovery plan", "x".repeat(240), "three", "four", "five", "six"],
     })
+  })
+
+  test("Commander recovery cancellation drops an operation absent from authoritative show", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.get_commander_investigation_recovery") return { found: true, investigation_id: "inv_a" }
+        if (name === "runtime.cancel_commander_investigation_recovery") return { status: "not_active", cancellation_requested: false }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: null,
+        approval: null,
+        operation: { operation_id: "evicted_operation", investigation_id: "inv_a", approval_id: "approval_a", status: "running" },
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_a", "operation_id=evicted_operation", "approval_id=approval_a"],
+    })
+    expect(state.commanderRecovery).toMatchObject({ operation: null, cancellation: { status: "not_active" } })
   })
 
   test("Commander recovery cancellation refreshes attempt identity and clears cross-investigation operations", async () => {

@@ -281,8 +281,19 @@ export class FakeRuntimeClient implements RuntimeClient {
           current_compatibility_checked: false,
           observed_at: new Date(0).toISOString(),
         }
-      case "runtime.get_commander_investigation_recovery":
-        return { ...fakeCommanderRecoverySummary(this.commanderRecoveryApproval), found: true, recommended_next_operator_action: "preview_checkpoint_recovery", blockers: [], warnings: [], observed_at: new Date(0).toISOString() }
+      case "runtime.get_commander_investigation_recovery": {
+        const activeOperation = [...this.commanderRecoveryOperations.values()]
+          .find((item) => item.investigation_id === payload.investigation_id)
+        return {
+          ...fakeCommanderRecoverySummary(this.commanderRecoveryApproval),
+          found: true,
+          recommended_next_operator_action: "preview_checkpoint_recovery",
+          blockers: [],
+          warnings: [],
+          observed_at: new Date(0).toISOString(),
+          ...(activeOperation ? { active_operation: structuredClone(activeOperation) } : {}),
+        }
+      }
       case "runtime.preview_commander_investigation_recovery":
         return fakeCommanderRecoveryPreview(String(payload.investigation_id ?? "fake_commander_recovery"), this.commanderRecoveryApproval)
       case "runtime.approve_commander_investigation_recovery": {
@@ -301,6 +312,9 @@ export class FakeRuntimeClient implements RuntimeClient {
         return { status: "recorded", investigation_id: approval.investigation_id, approval, approval_state: "current", events_appended: true, provider_called: false, network_called: false }
       }
       case "runtime.execute_commander_investigation_recovery": {
+        const existing = [...this.commanderRecoveryOperations.values()]
+          .find((item) => item.investigation_id === payload.investigation_id)
+        if (existing) return structuredClone(existing)
         const operation = {
           operation_id: `fake_recovery_operation_${this.commanderRecoveryOperations.size}`,
           operation_version: 1,
@@ -314,6 +328,14 @@ export class FakeRuntimeClient implements RuntimeClient {
           started_at: new Date(0).toISOString(),
         }
         this.commanderRecoveryOperations.set(String(operation.operation_id), operation)
+        if (this.commanderRecoveryApproval?.approval_id === payload.approval_id) {
+          this.commanderRecoveryApproval = {
+            ...this.commanderRecoveryApproval,
+            consumed: true,
+            consumed_at: new Date(0).toISOString(),
+            consumed_by_recovery_attempt_id: "fake_recovery_attempt_0",
+          }
+        }
         return operation
       }
       case "runtime.cancel_commander_investigation_recovery": {
@@ -11215,6 +11237,7 @@ function fakeApplyReadinessStatusSummary(status: string): string {
 
 function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null = null): Record<string, unknown> {
   const currentApproval = approval?.investigation_id === "fake_commander_recovery" ? approval : null
+  const approvalConsumed = currentApproval?.consumed === true
   return {
     investigation_id: "fake_commander_recovery",
     projection_status: "ready",
@@ -11227,20 +11250,22 @@ function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null =
     record_hash: "fake_record_hash",
     checkpoint_id: "fake_checkpoint",
     terminal: false,
-    approval_state: currentApproval ? "current" : "none",
+    approval_state: approvalConsumed ? "consumed" : currentApproval ? "current" : "none",
     recovery_approval_count: currentApproval ? 1 : 0,
     ...(currentApproval ? { latest_approval: structuredClone(currentApproval) } : {}),
     recovery_attempt_count: 0,
-    recovery_execution_in_progress: false,
+    recovery_execution_in_progress: approvalConsumed,
     human_review_required: false,
     current_compatibility_checked: false,
   }
 }
 
 function fakeCommanderRecoveryPreview(investigationId: string, approval: Record<string, unknown> | null = null): Record<string, unknown> {
-  const currentApproval = approval?.investigation_id === investigationId ? structuredClone(approval) : undefined
+  const matchingApproval = approval?.investigation_id === investigationId ? structuredClone(approval) : undefined
+  const approvalConsumed = matchingApproval?.consumed === true
+  const currentApproval = approvalConsumed ? undefined : matchingApproval
   return {
-    status: currentApproval ? "approved_waiting_for_execution" : "ready_for_approval",
+    status: approvalConsumed ? "recovery_in_progress" : currentApproval ? "approved_waiting_for_execution" : "ready_for_approval",
     investigation_id: investigationId,
     recovery_kind: "checkpoint",
     recovery_plan_hash: "fake_recovery_plan_hash",
@@ -11249,8 +11274,9 @@ function fakeCommanderRecoveryPreview(investigationId: string, approval: Record<
     exact_replay_supported: false,
     fresh_context_required: true,
     current_continuity_required: true,
-    approval_state: currentApproval ? "current" : "none",
+    approval_state: approvalConsumed ? "consumed" : currentApproval ? "current" : "none",
     ...(currentApproval ? { current_approval: currentApproval, recommended_action: "await_recovery_execution" } : {}),
+    ...(approvalConsumed ? { recommended_action: "await_recovery_completion", recovery_execution_in_progress: true } : {}),
     blockers: [],
     warnings: [],
   }
