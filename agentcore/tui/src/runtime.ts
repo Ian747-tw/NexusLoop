@@ -314,7 +314,26 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.execute_commander_investigation_recovery": {
         const existing = [...this.commanderRecoveryOperations.values()]
           .find((item) => item.investigation_id === payload.investigation_id)
-        if (existing) return structuredClone(existing)
+        if (existing) {
+          const exactDuplicate = existing.approval_id === payload.approval_id
+            && existing.approval_hash === payload.approval_hash
+            && existing.recovery_plan_hash === payload.recovery_plan_hash
+            && existing.execution_preparation_hash === payload.execution_preparation_hash
+          return exactDuplicate
+            ? structuredClone(existing)
+            : { status: "blocked", investigation_id: payload.investigation_id, error: "a recovery attempt already exists with different authority" }
+        }
+        const approval = this.commanderRecoveryApproval
+        const approvalCurrent = approval
+          && approval.consumed !== true
+          && approval.investigation_id === payload.investigation_id
+          && approval.approval_id === payload.approval_id
+          && approval.approval_hash === payload.approval_hash
+          && approval.recovery_plan_hash === payload.recovery_plan_hash
+          && payload.execution_preparation_hash === "fake_execution_preparation_hash"
+        if (!approvalCurrent) {
+          return { status: "blocked", investigation_id: payload.investigation_id, error: "current exact recovery approval authority is required" }
+        }
         const operation = {
           operation_id: `fake_recovery_operation_${this.commanderRecoveryOperations.size}`,
           operation_version: 1,
@@ -328,9 +347,9 @@ export class FakeRuntimeClient implements RuntimeClient {
           started_at: new Date(0).toISOString(),
         }
         this.commanderRecoveryOperations.set(String(operation.operation_id), operation)
-        if (this.commanderRecoveryApproval?.approval_id === payload.approval_id) {
+        if (approval.approval_id === payload.approval_id) {
           this.commanderRecoveryApproval = {
-            ...this.commanderRecoveryApproval,
+            ...approval,
             consumed: true,
             consumed_at: new Date(0).toISOString(),
             consumed_by_recovery_attempt_id: "fake_recovery_attempt_0",

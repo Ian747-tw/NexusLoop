@@ -3004,6 +3004,11 @@ export class RuntimeServer {
           : result.status === "blocked"
             ? "blocked"
             : "failed"
+        if (record.status === "blocked" || record.status === "failed") {
+          const explanation = [...result.blockers, ...result.warnings]
+            .find((item) => typeof item === "string" && item.trim().length > 0)
+          if (explanation) record.error = redactText(explanation).slice(0, 300)
+        }
       })
       .catch(async (error) => {
         record.status = "failed"

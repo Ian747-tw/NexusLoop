@@ -6834,6 +6834,15 @@ describe("runtime UI effects", () => {
 
   test("Commander recovery UI keeps approval execution and reachable cancellation separate", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const unauthorizedOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      approval_id: "unapproved",
+      approval_hash: "unapproved_hash",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      execution_preparation_hash: "fake_execution_preparation_hash",
+    }) as Record<string, unknown>
+    expect(unauthorizedOperation).toMatchObject({ status: "blocked", error: "current exact recovery approval authority is required" })
+    expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).not.toHaveProperty("active_operation")
     let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recoveries", args: ["limit=5"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["fake_commander_recovery"] })
@@ -6920,6 +6929,14 @@ describe("runtime UI effects", () => {
       execution_preparation_hash: fakeAuthority.execution_preparation_hash,
     }) as Record<string, unknown>
     expect(duplicateOperation.operation_id).toBe("fake_recovery_operation_0")
+    const differentOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      approval_id: "different_approval",
+      approval_hash: fakeAuthority.approval_hash,
+      recovery_plan_hash: fakeAuthority.recovery_plan_hash,
+      execution_preparation_hash: fakeAuthority.execution_preparation_hash,
+    }) as Record<string, unknown>
+    expect(differentOperation).toMatchObject({ status: "blocked", error: "a recovery attempt already exists with different authority" })
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-cancel",

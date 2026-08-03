@@ -10654,6 +10654,9 @@ describe("Commander in-memory investigation controller", () => {
     const staleEntry = (server as any).publicCommanderRecoveryOperations.get(staleOperation.operation_id)
     await staleEntry.promise
     expect(staleEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined, cancellation_requested: false })
+    expect(typeof staleEntry.record.error).toBe("string")
+    expect(staleEntry.record.error.length).toBeGreaterThan(0)
+    expect(staleEntry.record.error.length).toBeLessThanOrEqual(300)
     expect(transport.requests).toHaveLength(0)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
 
