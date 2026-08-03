@@ -9671,6 +9671,30 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(1)
   })
 
+  test("configured recovery validates fresh connector metadata when bounded historical connector IDs are full", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-full-connector-history-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured recovery after bounded connector history") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const historicalConnectorIds = ["historical-a", "historical-b", "historical-c", "historical-d"]
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_full_connector_history", [], historicalConnectorIds)
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "completed", provider_called: true, network_called: true, external_api_audit_events_appended: 1, terminal_event_count: 1 })
+    expect(result.controller_result?.provider_audit).toMatchObject({
+      connector_ids: historicalConnectorIds,
+      provider_request_count: 1,
+      external_api_audit_event_count: 1,
+      all_provider_requests_audited: true,
+    })
+    expect(transport.requests).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_finished" && event.investigation_id === authority.investigation_id)).toHaveLength(1)
+  })
+
   test("configured recovery validates fresh audit completeness independently of legacy scripted requests", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-legacy-audit-"))
     await writeApprovedSpec(projectDir)
@@ -11543,7 +11567,7 @@ function durableStartedSnapshot(input: ReturnType<typeof baseInvestigation>, ind
   }
 }
 
-async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investigationId: string, loadedToolIds: string[] = [], historicalConnectorId?: string) {
+async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investigationId: string, loadedToolIds: string[] = [], historicalConnectorId?: string | string[]) {
   const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
   const configured = providerConfig()
   const input = baseInvestigation({
@@ -11563,7 +11587,7 @@ async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investig
     snapshot.working_set.provider_audit = {
       ...snapshot.working_set.provider_audit,
       transport_kind: "external_api_connector",
-      connector_ids: [historicalConnectorId],
+      connector_ids: Array.isArray(historicalConnectorId) ? historicalConnectorId : [historicalConnectorId],
     }
   }
   snapshot.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(snapshot.working_set))
