@@ -232,7 +232,7 @@ export type CommanderInvestigationRecoveryExecutionPreparationPreview = {
   approval_sequence?: number
   approval_decision?: CommanderInvestigationRecoveryApprovalSummary["decision"]
   approval_current: boolean
-  approval_consumed: false
+  approval_consumed: boolean
   checkpoint_ref?: CommanderInvestigationRecoveryCheckpointApprovalRef
   pending_model_step_ref?: CommanderInvestigationRecoveryPendingApprovalRef
   continuation_summary?: CommanderInvestigationRecoveryExecutionPreparationSummary

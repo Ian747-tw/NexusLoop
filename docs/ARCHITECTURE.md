@@ -79,6 +79,11 @@ continuation seed, mandatory recovery notice, summary-only replay relationship,
 pre-model gate-warning snapshot, and first fresh model-request preview, then
 binds that preparation into the recovery packet and plan hash without consuming
 approval or executing recovery.
+Branch 9W3B2B2A adds one atomic recovery-start/approval-consumption event and a
+package-internal persistence observer. Injected scripted tests continue the
+existing model-step/checkpoint/finished journal sequence; RuntimeServer still
+does not expose or execute recovery, and no configured provider or network path
+is activated.
 
 ```text
 NexusLoop domain control plane
@@ -156,6 +161,20 @@ durable checkpoint
 -> no execution in 9W3B2B1
 ```
 
+The transaction boundary remains package-internal:
+
+```text
+current approved recovery plan
+-> final recovery basis/plan/preparation revalidation
+-> runtime_commander_investigation_recovery_started
+   (approval consumed atomically)
+-> recovery-aware persistence observer
+-> injected scripted continuation kernel
+-> existing model-step/checkpoint/finished events
+-> terminal or interrupted-attempt projection
+-> no configured-provider execution in 9W3B2B2A
+```
+
 Continuity comparison is structured: a current bootstrap that reports degraded
 continuity cannot authorize recovery, while ordinary nonfatal continuity
 warnings remain warnings. Recovery recommendations also separate corrupt
@@ -227,11 +246,11 @@ command, TUI surface, recovery approval command, resumable investigation,
 proposal gate, streaming
 connector transport, provider failover, GitHub/MCP gateway, or external read
 gateway. 9W3B2B1 exposes only an internal read-only preparation preview and
-scripted controller continuation tests; RuntimeServer still has no recovery
-execution method. 9W3B2B2 owns approval consumption, plan-hash revalidation,
-uncertain-provider resolution by policy, fresh configured-provider requests,
-read-tool execution, continued checkpoints, terminal persistence, and shutdown
-drain. SDK session memory is not
+scripted controller continuation tests. 9W3B2B2A owns atomic approval
+consumption, recovery-start persistence, and scripted lifecycle continuation;
+RuntimeServer still has no recovery execution method. 9W3B2B2B owns configured
+provider activation, external API audit, real bound safe-read tools, and
+lifecycle/shutdown drain. SDK session memory is not
 research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
@@ -243,7 +262,8 @@ Follow-on sequencing:
 - 9W3B1: recovery readiness and compatibility preview.
 - 9W3B2A: durable human approval and stale-plan gate.
 - 9W3B2B1: recovery preparation and continuation kernel.
-- 9W3B2B2: bounded recovery execution from approved state.
+- 9W3B2B2A: recovery transaction and scripted persistence.
+- 9W3B2B2B: configured-provider live recovery execution.
 - 9W3C: public/operator investigation surface decision.
 - 9X: external GitHub and research read gateway.
 - 9Y: evidence-backed proposal gate.

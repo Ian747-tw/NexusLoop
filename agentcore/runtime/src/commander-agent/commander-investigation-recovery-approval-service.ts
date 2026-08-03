@@ -235,6 +235,8 @@ export class CommanderInvestigationRecoveryApprovalService {
       pending_model_step_ref: pendingRef,
       provider_execution_envelope_hash: recovery?.provider_compatibility.execution_envelope?.execution_envelope_hash,
       recovery_packet_hash: recovery?.recovery_packet?.packet_hash,
+      execution_preparation_hash: recovery?.execution_preparation_hash,
+      first_model_request_preview_hash: recovery?.execution_preparation?.first_model_request_preview_hash,
       tool_compatibility_hash: recovery?.tool_compatibility.compatibility_hash,
       provider_compatibility_hash: recovery?.provider_compatibility.compatibility_hash,
       budget_compatibility_hash: recovery?.budget_compatibility.compatibility_hash,
@@ -325,7 +327,7 @@ function approvalPreviewBlockers(input: NormalizedRecoveryApprovalInput, recover
 }
 
 function buildApprovalRecord(input: NormalizedRecoveryApprovalInput, preview: CommanderInvestigationRecoveryApprovalPreview, approvedAt: string): CommanderInvestigationRecoveryApprovalRecord {
-  if (!preview.checkpoint_ref || !preview.recovery_basis_hash || !preview.current_recovery_plan_hash || !preview.recovery_packet_hash || !preview.provider_execution_envelope_hash || !preview.tool_compatibility_hash || !preview.provider_compatibility_hash || !preview.budget_compatibility_hash || !preview.context_compatibility_hash || !preview.continuity_compatibility_hash || !preview.human_control_compatibility_hash) {
+  if (!preview.checkpoint_ref || !preview.recovery_basis_hash || !preview.current_recovery_plan_hash || !preview.recovery_packet_hash || !preview.execution_preparation_hash || !preview.first_model_request_preview_hash || !preview.provider_execution_envelope_hash || !preview.tool_compatibility_hash || !preview.provider_compatibility_hash || !preview.budget_compatibility_hash || !preview.context_compatibility_hash || !preview.continuity_compatibility_hash || !preview.human_control_compatibility_hash) {
     throw new CommanderInvestigationPersistenceError("cannot build recovery approval without bounded plan references")
   }
   if (preview.recovery_kind !== "checkpoint" && preview.recovery_kind !== "uncertain_provider_outcome") {
@@ -347,6 +349,8 @@ function buildApprovalRecord(input: NormalizedRecoveryApprovalInput, preview: Co
     recovery_basis_hash: preview.recovery_basis_hash,
     recovery_plan_hash: preview.current_recovery_plan_hash,
     recovery_packet_hash: preview.recovery_packet_hash,
+    execution_preparation_hash: preview.execution_preparation_hash,
+    first_model_request_preview_hash: preview.first_model_request_preview_hash,
     preview_hash: preview.preview_hash,
     checkpoint_ref: preview.checkpoint_ref,
     pending_model_step_ref: preview.pending_model_step_ref,
@@ -521,6 +525,8 @@ function sameApprovalAuthority(candidate: NonNullable<CommanderInvestigationReco
   return candidate.recovery_basis_hash === approval.recovery_basis_hash &&
     candidate.recovery_plan_hash === approval.recovery_plan_hash &&
     candidate.recovery_packet_hash === approval.recovery_packet_hash &&
+    candidate.execution_preparation_hash === approval.execution_preparation_hash &&
+    candidate.first_model_request_preview_hash === approval.first_model_request_preview_hash &&
     candidate.decision === approval.decision &&
     candidate.approved_by === approval.approved_by &&
     candidate.human_note_hash === approval.human_note_hash &&

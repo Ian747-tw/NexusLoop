@@ -12,6 +12,7 @@ import type {
   CommanderInvestigationTurnSummary,
 } from "./commander-investigation-types"
 import type { CommanderInvestigationRecoveryApprovedPayload } from "./commander-investigation-recovery-approval-types"
+import type { CommanderInvestigationRecoveryStartedPayload } from "./commander-investigation-recovery-transaction-types"
 
 export const COMMANDER_INVESTIGATION_EVENT_KINDS = [
   "runtime_commander_investigation_started",
@@ -19,6 +20,7 @@ export const COMMANDER_INVESTIGATION_EVENT_KINDS = [
   "runtime_commander_investigation_checkpointed",
   "runtime_commander_investigation_finished",
   "runtime_commander_investigation_recovery_approved",
+  "runtime_commander_investigation_recovery_started",
 ] as const
 
 export type CommanderInvestigationJournalEventKind = typeof COMMANDER_INVESTIGATION_EVENT_KINDS[number]
@@ -180,6 +182,8 @@ export type CommanderInvestigationCheckpoint = {
   full_transcript_persisted: false
   raw_tool_results_persisted: false
   chain_of_thought_persisted: false
+  recovery_attempt_id?: string
+  consumed_approval_id?: string
 }
 
 export type CommanderInvestigationStartedPayload = {
@@ -234,6 +238,8 @@ export type CommanderInvestigationModelStepStartedPayload = {
   requested_by: string
   occurred_at: string
   event_payload_hash: string
+  recovery_attempt_id?: string
+  consumed_approval_id?: string
 }
 
 export type CommanderInvestigationCheckpointedPayload = {
@@ -286,6 +292,12 @@ export type CommanderInvestigationTerminalRecord = {
   transcript_persisted: false
   raw_tool_results_persisted: false
   chain_of_thought_persisted: false
+  recovery_attempt_id?: string
+  consumed_approval_id?: string
+  recovery_kind?: "checkpoint" | "uncertain_provider_outcome"
+  recovery_plan_hash?: string
+  execution_preparation_hash?: string
+  unresolved_provider_attempt_count?: number
 }
 
 export type CommanderInvestigationFinishedPayload = {
@@ -304,6 +316,7 @@ export type CommanderInvestigationJournalPayload =
   | CommanderInvestigationCheckpointedPayload
   | CommanderInvestigationFinishedPayload
   | CommanderInvestigationRecoveryApprovedPayload
+  | CommanderInvestigationRecoveryStartedPayload
 
 export type CommanderInvestigationJsonlEvent = JsonlEvent & {
   kind: CommanderInvestigationJournalEventKind
@@ -314,13 +327,16 @@ export type CommanderInvestigationJsonlEvent = JsonlEvent & {
 }
 
 export type CommanderInvestigationJournalProjectionStatus = "ready" | "corrupt" | "unsupported_version"
-export type CommanderInvestigationJournalLastTransition = "started" | "model_step_started" | "checkpointed" | "finished" | "recovery_approved"
+export type CommanderInvestigationJournalLastTransition = "started" | "model_step_started" | "checkpointed" | "finished" | "recovery_approved" | "recovery_started"
 export type CommanderInvestigationRecoveryState =
   | "not_required"
   | "checkpoint_available_resume_not_implemented"
   | "uncertain_provider_outcome_resume_not_implemented"
   | "checkpoint_approval_recorded_execution_not_implemented"
   | "uncertain_outcome_approval_recorded_execution_not_implemented"
+  | "recovery_transaction_started"
+  | "recovery_execution_in_progress"
+  | "recovery_execution_interrupted_review_required"
   | "no_checkpoint_resume_not_implemented"
 
 export type CommanderInvestigationRecord = {
@@ -380,7 +396,21 @@ export type CommanderInvestigationRecord = {
   latest_recovery_approved_by?: string
   latest_recovery_approved_at?: string
   recovery_approval_recorded: boolean
-  recovery_approval_consumed: false
+  recovery_approval_consumed: boolean
+  recovery_attempt_count: number
+  recovery_execution_started: boolean
+  recovery_execution_in_progress: boolean
+  latest_recovery_attempt_id?: string
+  latest_recovery_attempt_sequence?: number
+  latest_recovery_kind?: "checkpoint" | "uncertain_provider_outcome"
+  latest_recovery_started_at?: string
+  latest_recovery_plan_hash?: string
+  latest_recovery_preparation_hash?: string
+  latest_recovery_first_request_preview_hash?: string
+  latest_recovery_pending_disposition?: import("./commander-investigation-recovery-transaction-types").CommanderInvestigationRecoveryPendingBoundaryDisposition
+  latest_recovery_attempt_hash?: string
+  recovery_approval_consumed_at?: string
+  recovery_approval_consumed_by_attempt_id?: string
 }
 
 export type CommanderInvestigationJournalSummary = {

@@ -214,6 +214,12 @@ RuntimeServer addition is a read-only preparation preview method that requires
 a current approval and revalidates the current source and preparation before
 returning a safe preview.
 
+9W3B2B2A may run the same kernel only behind a recovery persistence observer and
+an injected scripted runner. The observer rejects `onStarted`, persists the
+existing model-step/checkpoint/finished events with recovery linkage, and is
+created only after the atomic recovery-start/approval-consumption event is
+confirmed. Configured-provider execution remains disabled until 9W3B2B2B.
+
 ## Consequences
 
 The internal stack for this branch is:

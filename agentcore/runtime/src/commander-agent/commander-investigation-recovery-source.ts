@@ -10,6 +10,10 @@ import type {
 import type { CommanderInvestigationInput } from "./commander-investigation-types"
 import type { CommanderInvestigationRecoveryBasis } from "./commander-investigation-recovery-basis"
 import type { CommanderInvestigationRecoveryApprovalSummary } from "./commander-investigation-recovery-approval-types"
+import type {
+  CommanderInvestigationRecoveryAttemptSummary,
+  CommanderInvestigationResolvedPendingBoundary,
+} from "./commander-investigation-recovery-transaction-types"
 
 export type CommanderInvestigationRecoverySource = {
   investigation_id: string
@@ -24,6 +28,13 @@ export type CommanderInvestigationRecoverySource = {
   recovery_basis_hash?: string
   recovery_approvals?: CommanderInvestigationRecoveryApprovalSummary[]
   latest_recovery_approval?: CommanderInvestigationRecoveryApprovalSummary
+  recovery_attempts?: CommanderInvestigationRecoveryAttemptSummary[]
+  current_recovery_attempt?: CommanderInvestigationRecoveryAttemptSummary
+  latest_recovery_attempt?: CommanderInvestigationRecoveryAttemptSummary
+  consumed_recovery_approval?: CommanderInvestigationRecoveryApprovalSummary
+  resolved_pending_boundary?: CommanderInvestigationResolvedPendingBoundary
+  recovery_execution_in_progress?: boolean
+  recovery_execution_interrupted?: boolean
   source_event_count: number
   source_hash: string
 }

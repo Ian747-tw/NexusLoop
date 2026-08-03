@@ -58,6 +58,22 @@ export class CommanderInvestigationRecoveryService {
     if (record.status !== "running") {
       return this.withSource(source, "not_applicable", "none", terminalAction(record.status), undefined, undefined, undefined, undefined, [], ["terminal Commander investigation journals are not reopened in 9W3B1"], generatedAt)
     }
+    if (source.current_recovery_attempt) {
+      const attempt = source.current_recovery_attempt
+      return this.withSource(
+        source,
+        "recovery_in_progress",
+        attempt.recovery_kind,
+        "await_recovery_completion",
+        source.latest_checkpoint ? checkpointSummaryFrom(source.latest_checkpoint) : undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        ["recovery execution may have been interrupted; approval remains consumed and automatic retry is forbidden"],
+        generatedAt,
+      )
+    }
     const checkpoint = source.latest_checkpoint
     if (!checkpoint || !source.normalized_input || !source.immutable_identity) {
       return this.withSource(source, "blocked", "none", "inspect_corrupt_record", undefined, undefined, undefined, undefined, ["ready journal did not expose an authoritative checkpoint/input source"], [], generatedAt)
@@ -750,11 +766,14 @@ export class CommanderInvestigationRecoveryService {
       recoveryKind,
       action,
     }) : undefined
-    const approval = currentApprovalFor(source, planHash, packet?.packet_hash, recoveryKind, checkpoint, pending, compat)
-    const effectiveStatus = approval.current && (status === "ready_for_approval" || status === "human_review_required")
+    const approval = currentApprovalFor(source, planHash, packet?.packet_hash, executionPreparation?.execution_preparation_hash, executionPreparation?.first_model_request_preview_hash, recoveryKind, checkpoint, pending, compat)
+    const consumed = Boolean(source.consumed_recovery_approval || source.current_recovery_attempt)
+    const effectiveStatus = source.current_recovery_attempt
+      ? "recovery_in_progress" as const
+      : approval.current && (status === "ready_for_approval" || status === "human_review_required")
       ? "approved_waiting_for_execution" as const
       : status
-    const effectiveAction = approval.current ? "await_recovery_execution" as const : action
+    const effectiveAction = source.current_recovery_attempt ? "await_recovery_completion" as const : approval.current ? "await_recovery_execution" as const : action
     const preview = {
       preview_id: `commander_recovery_preview_${stableHash({ source: source.source_hash, generated_at: generatedAt }).slice(0, 16)}`,
       preview_version: 1 as const,
@@ -786,19 +805,20 @@ export class CommanderInvestigationRecoveryService {
       recovery_packet: packet,
       execution_preparation: executionPreparation,
       execution_preparation_hash: executionPreparation?.execution_preparation_hash,
-      approval_state: approval.current ? "current" as const : approval.staleCount > 0 ? "stale" as const : "none" as const,
-      current_approval: approval.current,
+      approval_state: consumed ? "consumed" as const : approval.current ? "current" as const : approval.staleCount > 0 ? "stale" as const : "none" as const,
+      current_approval: consumed ? undefined : approval.current,
       stale_approval_count: approval.staleCount,
-      recovery_approval_required: !approval.current && (status === "ready_for_approval" || status === "human_review_required"),
-      recovery_approval_consumed: false as const,
+      recovery_approval_required: !consumed && !approval.current && (status === "ready_for_approval" || status === "human_review_required"),
+      recovery_approval_consumed: consumed,
+      current_recovery_attempt: source.current_recovery_attempt,
       automatic_resume_allowed: false as const,
-      human_approval_required: !approval.current && (status === "ready_for_approval" || status === "human_review_required"),
+      human_approval_required: !consumed && !approval.current && (status === "ready_for_approval" || status === "human_review_required"),
       exact_replay_supported: false as const,
       original_assistant_text_available: false as const,
       provider_request_replay_allowed: false as const,
       tool_execution_replay_allowed: false as const,
       fresh_context_required: true as const,
-      same_journal_resume_candidate: status === "ready_for_approval" || status === "human_review_required" || Boolean(approval.current),
+      same_journal_resume_candidate: !consumed && (status === "ready_for_approval" || status === "human_review_required" || Boolean(approval.current)),
       terminal_continuation_requires_new_investigation: record?.status !== undefined && record.status !== "running",
       recovery_basis_hash: source.recovery_basis_hash,
       recovery_plan_hash: planHash,
@@ -989,6 +1009,8 @@ function currentApprovalFor(
   source: CommanderInvestigationRecoverySource,
   planHash: string | undefined,
   packetHash: string | undefined,
+  executionPreparationHash: string | undefined,
+  firstModelRequestPreviewHash: string | undefined,
   recoveryKind: "none" | "checkpoint" | "uncertain_provider_outcome",
   checkpoint: CommanderInvestigationRecoveryCheckpointSummary | undefined,
   pending: CommanderInvestigationRecoveryPendingModelStep | undefined,
@@ -1002,7 +1024,7 @@ function currentApprovalFor(
   } | undefined,
 ): { current?: NonNullable<CommanderInvestigationRecoverySource["latest_recovery_approval"]>; staleCount: number } {
   const approvals = source.recovery_approvals ?? []
-  if (!planHash || !packetHash || !source.recovery_basis_hash || recoveryKind === "none" || !checkpoint || !compat) return { staleCount: approvals.length }
+  if (!planHash || !packetHash || !executionPreparationHash || !firstModelRequestPreviewHash || !source.recovery_basis_hash || recoveryKind === "none" || !checkpoint || !compat) return { staleCount: approvals.length }
   let current: NonNullable<CommanderInvestigationRecoverySource["latest_recovery_approval"]> | undefined
   let staleCount = 0
   for (const approval of approvals) {
@@ -1013,6 +1035,8 @@ function currentApprovalFor(
       approval.recovery_basis_hash === source.recovery_basis_hash &&
       approval.recovery_plan_hash === planHash &&
       approval.recovery_packet_hash === packetHash &&
+      approval.execution_preparation_hash === executionPreparationHash &&
+      approval.first_model_request_preview_hash === firstModelRequestPreviewHash &&
       approval.checkpoint_ref.checkpoint_id === checkpoint.checkpoint_id &&
       approval.checkpoint_ref.checkpoint_sequence === checkpoint.checkpoint_sequence &&
       approval.checkpoint_ref.checkpoint_hash === checkpoint.checkpoint_hash &&

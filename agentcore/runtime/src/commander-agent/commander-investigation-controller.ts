@@ -101,6 +101,7 @@ export class CommanderInvestigationController {
       requestIdForTurn: (turn) => `${investigationId}_turn_${turn}`,
       abortSignal: input.abort_signal,
       persistCheckpoints: true,
+      persistTerminalTurnCheckpoint: true,
     })
   }
 
@@ -175,7 +176,7 @@ export class CommanderInvestigationController {
     const prepared = validateAndPrepareRecoverySeed(seed, this.options.descriptors, this.options.boundToolIds, checkpoint)
     if (prepared.blocker) return finishAfterJournalLookup(prepared.blocker, currentBootstrap)
     if (checkpointWorkingSet.blocker) return finishAfterJournalLookup(checkpointWorkingSet.blocker, currentBootstrap, prepared.loadedTools)
-    const authoritativeBudget = await this.deriveRecoveryContinuationBudget(input, checkpoint, authoritativeSource.pending_model_step)
+    const authoritativeBudget = await this.deriveRecoveryContinuationBudget(input, checkpoint, authoritativeSource.pending_model_step, Boolean(authoritativeSource.resolved_pending_boundary))
     if (authoritativeBudget.blockers.length > 0) return finishAfterJournalLookup(authoritativeBudget.blockers[0], currentBootstrap, prepared.loadedTools)
     if (stableHash(authoritativeBudget.budget) !== stableHash(seed.effective_budget)) {
       return finishAfterJournalLookup("recovery continuation budget no longer matches current authority", currentBootstrap, prepared.loadedTools)
@@ -218,12 +219,13 @@ export class CommanderInvestigationController {
       recoveryNotice: seed.recovery_notice,
       firstRequestPreview: seed.first_model_request_preview,
       preModelGateSnapshot: seed.pre_model_gate_snapshot,
-      persistCheckpoints: false,
+      persistCheckpoints: Boolean(this.options.persistenceObserver),
+      persistTerminalTurnCheckpoint: false,
       durationMs: () => elapsedWallMs(wallStartedMs),
     })
 	  }
 
-  private async deriveRecoveryContinuationBudget(input: CommanderInvestigationInput, checkpoint: CommanderInvestigationCheckpoint, pendingModelStep?: import("./commander-investigation-journal-types").CommanderInvestigationModelStepStartedPayload) {
+  private async deriveRecoveryContinuationBudget(input: CommanderInvestigationInput, checkpoint: CommanderInvestigationCheckpoint, pendingModelStep?: import("./commander-investigation-journal-types").CommanderInvestigationModelStepStartedPayload, uncertainProviderAttempt = false) {
     const profile = this.options.toolService.profile({ phase: input.phase })
     const context = await this.options.contextBudgetService.preview({
       purpose: "commander_research_decision",
@@ -252,6 +254,7 @@ export class CommanderInvestigationController {
         checkpoint,
         current_policy_limits: commanderInvestigationRecoveryCurrentPolicyLimits({ profile, context: currentContext }),
         pending_model_step: pendingModelStep,
+        uncertain_provider_attempt: uncertainProviderAttempt,
       }),
       blockers: context.blockers.map((item) => preview(item, 300)).slice(0, 8),
     }
@@ -270,15 +273,28 @@ export class CommanderInvestigationController {
     ) return { blocker: "recovery continuation authoritative journal checkpoint reference did not verify" }
     if (seed.pending_model_step_ref) {
       const pending = source.pending_model_step
+      const resolved = source.resolved_pending_boundary
       if (
-        !pending ||
-        pending.model_request_id !== seed.pending_model_step_ref.model_request_id ||
-        pending.turn_index !== seed.pending_model_step_ref.turn_index ||
-        pending.base_checkpoint_id !== seed.pending_model_step_ref.base_checkpoint_id ||
-        pending.base_checkpoint_sequence !== seed.pending_model_step_ref.base_checkpoint_sequence ||
-        pending.base_checkpoint_hash !== seed.pending_model_step_ref.base_checkpoint_hash ||
-        pending.working_set_hash !== seed.pending_model_step_ref.working_set_hash ||
-        pending.context_hash !== seed.pending_model_step_ref.context_hash
+        (!pending && !resolved) ||
+        (pending && (
+          pending.model_request_id !== seed.pending_model_step_ref.model_request_id ||
+          pending.turn_index !== seed.pending_model_step_ref.turn_index ||
+          pending.base_checkpoint_id !== seed.pending_model_step_ref.base_checkpoint_id ||
+          pending.base_checkpoint_sequence !== seed.pending_model_step_ref.base_checkpoint_sequence ||
+          pending.base_checkpoint_hash !== seed.pending_model_step_ref.base_checkpoint_hash ||
+          pending.working_set_hash !== seed.pending_model_step_ref.working_set_hash ||
+          pending.context_hash !== seed.pending_model_step_ref.context_hash
+        )) ||
+        (resolved && (
+          resolved.model_request_id !== seed.pending_model_step_ref.model_request_id ||
+          resolved.turn_index !== seed.pending_model_step_ref.turn_index ||
+          resolved.base_checkpoint_ref.checkpoint_id !== seed.pending_model_step_ref.base_checkpoint_id ||
+          resolved.base_checkpoint_ref.checkpoint_sequence !== seed.pending_model_step_ref.base_checkpoint_sequence ||
+          resolved.base_checkpoint_ref.checkpoint_hash !== seed.pending_model_step_ref.base_checkpoint_hash ||
+          resolved.working_set_hash !== seed.pending_model_step_ref.working_set_hash ||
+          resolved.context_hash !== seed.pending_model_step_ref.context_hash ||
+          resolved.resolved_by_recovery_attempt_id !== source.current_recovery_attempt?.recovery_attempt_id
+        ))
       ) return { blocker: "recovery continuation authoritative journal pending boundary did not verify" }
     } else if (source.pending_model_step) {
       return { blocker: "recovery continuation authoritative journal pending boundary did not verify" }
@@ -307,6 +323,7 @@ export class CommanderInvestigationController {
       firstRequestPreview,
       preModelGateSnapshot,
       persistCheckpoints,
+      persistTerminalTurnCheckpoint,
     } = state
     let latestAssistant = state.latestAssistant
     let latestToolResults = state.latestToolResults
@@ -394,7 +411,7 @@ export class CommanderInvestigationController {
         latestToolResults = []
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
-        if (persistCheckpoints) {
+        if (persistCheckpoints && persistTerminalTurnCheckpoint) {
           const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
           if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.())
         }
@@ -812,6 +829,7 @@ type CommanderInvestigationPreparedLoopState = {
   firstRequestPreview?: CommanderInvestigationRecoveryFirstModelRequestPreview
   preModelGateSnapshot?: CommanderInvestigationRecoveryContinuationSeed["pre_model_gate_snapshot"]
   persistCheckpoints: boolean
+  persistTerminalTurnCheckpoint: boolean
   durationMs?: () => number
 }
 

@@ -61,11 +61,13 @@ export function deriveCommanderInvestigationRecoveryContinuationBudget(input: {
   checkpoint: CommanderInvestigationCheckpoint
   current_policy_limits: Partial<CommanderInvestigationRecoveryCurrentPolicyLimits>
   pending_model_step?: CommanderInvestigationModelStepStartedPayload
+  uncertain_provider_attempt?: boolean
 }): CommanderInvestigationRecoveryContinuationBudget {
   const { checkpoint, current_policy_limits: limits } = input
   const stored = checkpoint.budget
-  const uncertainCharge = input.pending_model_step ? 1 : 0
-  const unresolvedAttempts = input.pending_model_step ? 1 : 0
+  const uncertain = Boolean(input.pending_model_step || input.uncertain_provider_attempt)
+  const uncertainCharge = uncertain ? 1 : 0
+  const unresolvedAttempts = uncertain ? 1 : 0
   const budget = {
     ...stored,
     max_model_turns: boundedCurrentLimit(limits.max_model_turns, stored.max_model_turns),
