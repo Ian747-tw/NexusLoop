@@ -734,6 +734,7 @@ export class CommanderInvestigationController {
   }
 
   private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string, activeDurationMs?: number): CommanderInvestigationResult {
+    applyCurrentProviderAuditPolicy(workingSet, this.options.providerAuditPolicy)
     const completed = this.now()
     const result: CommanderInvestigationResult = {
       investigation_id: investigationId,
@@ -1110,6 +1111,16 @@ function emptyProviderAudit(policy?: CommanderInvestigationProviderAuditPolicy):
     credentials_persisted: false,
     warnings: [],
   }
+}
+
+function applyCurrentProviderAuditPolicy(workingSet: CommanderInvestigationWorkingSet, policy: CommanderInvestigationProviderAuditPolicy | undefined): void {
+  if (policy?.required !== true) return
+  const summary = workingSet.provider_audit
+  summary.audit_required = true
+  summary.transport_kind = policy.transport_kind
+  addUniqueCapped(summary.connector_ids, policy.connector_id, 4)
+  summary.all_provider_requests_audited = summary.provider_request_count > 0 && summary.external_api_audit_event_count === summary.provider_request_count
+  workingSet.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(workingSet))
 }
 
 function observeProviderAudit(summary: CommanderInvestigationProviderAuditSummary, policy: CommanderInvestigationProviderAuditPolicy | undefined, modelResult: CommanderModelStepResult): { metadata?: CommanderConnectorModelTransportMetadata; blocker?: string; warnings: string[] } {

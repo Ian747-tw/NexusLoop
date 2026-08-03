@@ -10034,12 +10034,32 @@ describe("Commander in-memory investigation controller", () => {
     const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input, { abort_signal: abort.signal })
 
     expect(result).toMatchObject({ status: "completed", approval_consumed: true, provider_called: false, network_called: false, external_api_audit_events_appended: 0, model_step_event_count: 0, terminal_event_count: 1 })
-    expect(result.controller_result).toMatchObject({ status: "cancelled", provider_request_count: 0 })
+    expect(result.controller_result).toMatchObject({
+      status: "cancelled",
+      provider_request_count: 0,
+      provider_audit: {
+        audit_required: true,
+        transport_kind: "external_api_connector",
+        connector_ids: ["openai-test"],
+        provider_request_count: 0,
+        external_api_audit_event_count: 0,
+        all_provider_requests_audited: false,
+      },
+    })
     expect(transport.requests).toHaveLength(0)
     const events = await server.eventStore.readAll()
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
     expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const terminal = events.find((event) => event.kind === "runtime_commander_investigation_finished" && event.investigation_id === authority.investigation_id) as any
+    expect(terminal.terminal.provider_audit).toMatchObject({
+      audit_required: true,
+      transport_kind: "external_api_connector",
+      connector_ids: ["openai-test"],
+      provider_request_count: 0,
+      external_api_audit_event_count: 0,
+      all_provider_requests_audited: false,
+    })
   })
 
   test("recovery transaction resolves uncertain provider policy without inferring or replaying the old request", async () => {
