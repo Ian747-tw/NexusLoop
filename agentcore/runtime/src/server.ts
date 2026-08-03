@@ -2964,7 +2964,6 @@ export class RuntimeServer {
     this.publicCommanderRecoveryOperations.set(operationId, entry)
     entry.promise = this.runCommanderInvestigationRecoveryConfigured(input, { abort_signal: controller.signal })
       .then((result) => {
-        record.result = result
         record.recovery_attempt_id = result.recovery_attempt_id
         record.status = result.status === "already_started"
           ? "already_started"
@@ -3008,7 +3007,7 @@ export class RuntimeServer {
     const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
     const attemptId = source?.current_recovery_attempt?.recovery_attempt_id ?? source?.latest_recovery_attempt?.recovery_attempt_id
     if (attemptId) entry.record.recovery_attempt_id = attemptId
-    if ((attemptId && input.recovery_attempt_id !== attemptId) || (!attemptId && input.recovery_attempt_id !== undefined)) {
+    if (input.recovery_attempt_id !== undefined && input.recovery_attempt_id !== attemptId) {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
     }
     if (!this.publicCommanderRecoveryOperations.has(input.operation_id) || entry.record.status !== "running") {

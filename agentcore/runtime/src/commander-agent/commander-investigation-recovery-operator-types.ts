@@ -1,6 +1,6 @@
 import type { CommanderInvestigationJournalProjectionStatus, CommanderInvestigationRecoveryState } from "./commander-investigation-journal-types"
 import type { CommanderInvestigationRecoveryApprovalState, CommanderInvestigationRecoveryApprovalSummary } from "./commander-investigation-recovery-approval-types"
-import type { CommanderInvestigationRecoveryAttemptSummary, CommanderInvestigationRecoveryTransactionInput, CommanderInvestigationRecoveryTransactionResult } from "./commander-investigation-recovery-transaction-types"
+import type { CommanderInvestigationRecoveryAttemptSummary, CommanderInvestigationRecoveryTransactionInput } from "./commander-investigation-recovery-transaction-types"
 import type { CommanderInvestigationRecoveryKind, CommanderInvestigationRecoveryPreview } from "./commander-investigation-recovery-types"
 
 export type CommanderRecoveryOperatorListInput = {
@@ -89,7 +89,6 @@ export type CommanderRecoveryOperation = {
   status: CommanderRecoveryOperationStatus
   cancellation_requested: boolean
   recovery_attempt_id?: string
-  result?: CommanderInvestigationRecoveryTransactionResult
   error?: string
   started_at: string
   settled_at?: string

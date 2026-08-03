@@ -10559,16 +10559,21 @@ describe("Commander in-memory investigation controller", () => {
 
     const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
     await waitFor(() => transport.requests === 1)
-    const shown = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
-    const attemptId = shown.active_operation?.recovery_attempt_id
-    expect(attemptId).toBeTruthy()
+    const mismatched = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: "commander_recovery_attempt_wrong",
+    }) as any
+    expect(mismatched.status).toBe("operation_identity_mismatch")
     const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
       investigation_id: authority.investigation_id,
       operation_id: operation.operation_id,
       approval_id: authority.transaction_input.approval_id,
-      recovery_attempt_id: attemptId,
     }) as any
     expect(cancellation.status).toBe("cancellation_requested")
+    const attemptId = cancellation.recovery_attempt_id
+    expect(typeof attemptId).toBe("string")
     const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
     await activeEntry.promise
     const duplicate = await server.command("runtime.cancel_commander_investigation_recovery", {
@@ -10578,6 +10583,10 @@ describe("Commander in-memory investigation controller", () => {
       recovery_attempt_id: attemptId,
     }) as any
     expect(duplicate.status).toBe("already_requested")
+    const settledShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(settledShow.active_operation).not.toHaveProperty("result")
+    expect(JSON.stringify(settledShow.active_operation)).not.toContain("controller_result")
+    expect(JSON.stringify(settledShow.active_operation)).not.toContain("configured recovery response")
 
     const events = await server.eventStore.readAll()
     const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
