@@ -42,7 +42,7 @@ export class EventStore {
   ): Promise<string> {
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
-      const events = await this.readAll()
+      const events = await this.readAllSnapshot()
       const latest = events.at(-1)?.event_id ? String(events.at(-1)?.event_id) : null
       if (latest !== expectedLatestEventId) {
         throw new Error("event log changed before append")
@@ -67,6 +67,11 @@ export class EventStore {
   }
 
   async readAll(): Promise<JsonlEvent[]> {
+    await this.appendQueue
+    return this.readAllSnapshot()
+  }
+
+  private async readAllSnapshot(): Promise<JsonlEvent[]> {
     try {
       const text = await readFile(this.eventsPath, "utf8")
       return text

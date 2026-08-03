@@ -25409,3 +25409,20 @@ describe("ProcessOpenCodeAdapter", () => {
     await client.shutdown()
   })
 })
+test("EventStore reads wait for an in-flight append boundary", async () => {
+  const dir = await tempProject()
+  const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+  await store.append({ kind: "runtime_test_event", value: "before" })
+  let release!: () => void
+  const inFlight = new Promise<void>((resolve) => { release = resolve })
+  ;(store as unknown as { appendQueue: Promise<unknown> }).appendQueue = inFlight
+  let settled = false
+  const read = store.readAll().then((events) => {
+    settled = true
+    return events
+  })
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  release()
+  expect(await read).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
+})
