@@ -19007,13 +19007,9 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       },
     })
     const approval = safeOptionalRecord(result)
-    const selectedInvestigationId = typeof current.selected?.investigation_id === "string" ? current.selected.investigation_id : undefined
-    const previewInvestigationId = typeof current.preview?.investigation_id === "string" ? current.preview.investigation_id : undefined
-    const targetChanged = (selectedInvestigationId !== undefined && selectedInvestigationId !== investigationId)
-      || (previewInvestigationId !== undefined && previewInvestigationId !== investigationId)
     return {
       ...state,
-      commanderRecovery: targetChanged
+      commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
         ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
         : { ...current, approval, pendingConfirmation: undefined, commandError: undefined },
     }
