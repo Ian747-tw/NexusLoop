@@ -25409,13 +25409,19 @@ describe("ProcessOpenCodeAdapter", () => {
     await client.shutdown()
   })
 })
-test("EventStore reads wait for an in-flight append boundary", async () => {
+test("EventStore reads complete snapshots during queued appends and retries partial in-flight tails", async () => {
   const dir = await tempProject()
   const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
   await store.append({ kind: "runtime_test_event", value: "before" })
+  const completeText = await readFile(store.eventsPath, "utf8")
   let release!: () => void
   const inFlight = new Promise<void>((resolve) => { release = resolve })
-  ;(store as unknown as { appendQueue: Promise<unknown> }).appendQueue = inFlight
+  const internals = store as unknown as { appendQueue: Promise<unknown>; pendingAppends: number }
+  internals.appendQueue = inFlight
+  internals.pendingAppends = 1
+  expect(await store.readAll()).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
+
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
   let settled = false
   const read = store.readAll().then((events) => {
     settled = true
@@ -25423,6 +25429,10 @@ test("EventStore reads wait for an in-flight append boundary", async () => {
   })
   await Promise.resolve()
   expect(settled).toBe(false)
+  await writeFile(store.eventsPath, `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "after" })}\n`)
   release()
-  expect(await read).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
+  expect(await read).toEqual([
+    expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
+    expect.objectContaining({ kind: "runtime_test_event", value: "after" }),
+  ])
 })

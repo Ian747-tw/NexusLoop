@@ -11,10 +11,12 @@ function makeEventId(): string {
 
 export class EventStore {
   private appendQueue: Promise<unknown> = Promise.resolve()
+  private pendingAppends = 0
 
   constructor(readonly eventsPath: string) {}
 
   async append(event: JsonlEvent): Promise<string> {
+    this.pendingAppends += 1
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
       const safeEvent = redactValue({
@@ -32,7 +34,7 @@ export class EventStore {
       return String(safeEvent.event_id)
     })
     this.appendQueue = operation.catch(() => undefined)
-    return operation
+    return operation.finally(() => { this.pendingAppends -= 1 })
   }
 
   async appendIfLatest(
@@ -40,6 +42,7 @@ export class EventStore {
     expectedLatestEventId: string | null,
     operational: { before_write?: () => void } = {},
   ): Promise<string> {
+    this.pendingAppends += 1
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
       const events = await this.readAllSnapshot()
@@ -63,12 +66,17 @@ export class EventStore {
       return String(safeEvent.event_id)
     })
     this.appendQueue = operation.catch(() => undefined)
-    return operation
+    return operation.finally(() => { this.pendingAppends -= 1 })
   }
 
   async readAll(): Promise<JsonlEvent[]> {
-    await this.appendQueue
-    return this.readAllSnapshot()
+    try {
+      return await this.readAllSnapshot()
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || this.pendingAppends === 0) throw error
+      await this.appendQueue
+      return this.readAllSnapshot()
+    }
   }
 
   private async readAllSnapshot(): Promise<JsonlEvent[]> {
