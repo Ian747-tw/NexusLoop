@@ -4818,6 +4818,18 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-smoke"] })
     expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/opencode-smoke", risk: "low_risk_write", blocked_by_default: true })
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-recovery-preview"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ risk: "safe_read", gate: "none", mutates_events: false, calls_provider: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-recovery-approve"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ risk: "medium_risk_write", blocked_by_default: true, calls_provider: false, expected_event_kinds: ["runtime_commander_investigation_recovery_approved"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-recovery-execute"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      risk: "high_impact_write",
+      blocked_by_default: true,
+      calls_provider: true,
+      expected_event_kinds: expect.arrayContaining(["external_api_request_executed", "external_api_request_failed"]),
+    })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/tmp/repro"] })
     expect(state.commandAuthority?.selected).toMatchObject({ risk: "unsupported", blocked_by_default: true })
 

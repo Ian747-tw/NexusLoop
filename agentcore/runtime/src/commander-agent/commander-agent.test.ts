@@ -10487,6 +10487,20 @@ describe("Commander in-memory investigation controller", () => {
       approved_by: "public_operator",
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: false },
     })).rejects.toThrow("tool_execution_replay_forbidden acknowledgement must be true")
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "x".repeat(201),
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).rejects.toThrow("investigation_id must use bounded durable ID characters")
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "https://credentials.invalid/Bearer-pasted-secret",
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).rejects.toThrow("investigation_id must use bounded durable ID characters")
     await expect(server.command("runtime.execute_commander_investigation_recovery", { ...authority.transaction_input, force: true })).rejects.toThrow("unknown fields")
     const operationCountBeforeInvalidAuthority = (server as any).publicCommanderRecoveryOperations.size
     const recentCountBeforeInvalidAuthority = (server as any).recentPublicCommanderRecoveryOperations.size

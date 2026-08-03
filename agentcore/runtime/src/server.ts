@@ -6286,7 +6286,7 @@ function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): C
   const uncertain = acknowledgements.uncertain_provider_outcome
   if (uncertain !== undefined && uncertain !== true) throw new Error("uncertain_provider_outcome acknowledgement must be true when present")
   return {
-    investigation_id: requiredString(payload.investigation_id, "investigation_id"),
+    investigation_id: requiredRecoveryAuthorityId(payload.investigation_id, "investigation_id", 200),
     recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
     decision,
     approved_by: requiredString(payload.approved_by, "approved_by"),
