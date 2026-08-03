@@ -17,6 +17,9 @@ const noStartCommands = new Set([
   "runtime.preview_commander_tool_bootstrap",
   "runtime.validate_commander_tool_registry",
   "runtime.search_commander_operational_memory",
+  "runtime.list_commander_investigation_recoveries",
+  "runtime.get_commander_investigation_recovery",
+  "runtime.preview_commander_investigation_recovery",
   "runtime.commander_repo_tree",
   "runtime.commander_repo_search_text",
   "runtime.commander_repo_read_lines",
@@ -225,7 +228,7 @@ export class RuntimeServerClient implements RuntimeClient {
   }
 
   command = (async (name: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
-    if (this.shutdownRequested) throw new Error("runtime client has been shut down")
+    if (this.shutdownRequested && !noStartCommands.has(name)) throw new Error("runtime client has been shut down")
     try {
       if (await this.shouldAutoStart(name, payload)) await this.ensureStarted()
       const result = await this.server.command(name, payload)

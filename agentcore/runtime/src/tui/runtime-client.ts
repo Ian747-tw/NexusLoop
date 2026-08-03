@@ -51,6 +51,7 @@ import type { ResearchIngestionPreview, ResearchIngestionPreviewInput, ResearchI
 import type { CommanderContinuityOpenLoop, CommanderContinuitySummary, CommanderContinuityThreadCard, CommanderMidMissionContinuityInput, CommanderMidMissionContinuityPacket, CommanderProposalContinuityInput, CommanderProposalContinuityPacket } from "../continuity/commander-continuity-types"
 import type { CommanderToolBootstrapPreview, CommanderToolDescriptor, CommanderToolDescriptorSummary, CommanderToolListInput, CommanderToolProfile, CommanderToolRegistrySummary, CommanderToolRegistryValidation, CommanderToolSearchInput, CommanderToolSearchPreview } from "../commander-tools/commander-tool-types"
 import type { CommanderDependencyManifestResult, CommanderGitDiffResult, CommanderGitLogResult, CommanderGitStatusResult, CommanderInternalReadResult, CommanderOperationalMemorySearchPreview, CommanderRepoFileResult, CommanderRepoSearchResult, CommanderRepoSymbolResult, CommanderRepoTreeResult, CommanderTestManifestResult } from "../commander-tools/commander-read-types"
+import type { CommanderInvestigationRecoveryApprovalInput, CommanderInvestigationRecoveryApprovalResult, CommanderRecoveryCancelInput, CommanderRecoveryCancellationResult, CommanderRecoveryExecuteInput, CommanderRecoveryOperation, CommanderRecoveryOperatorDetail, CommanderRecoveryOperatorList, CommanderRecoveryOperatorListInput, CommanderRecoveryOperatorMissing, CommanderRecoveryOperatorPreview } from "../commander-agent"
 import type { OpenCodeContinuationInput, OpenCodeContinuationPacket, OpenCodeSessionContinuityInput, OpenCodeSessionContinuityPacket } from "../opencode-session/opencode-session-continuity-types"
 import type { OpenCodeContextRefreshPreview, OpenCodeContextRefreshRecord, OpenCodeContextRefreshResult, OpenCodeContextRefreshSummary, OpenCodeContextRefreshWriteInput } from "../opencode-session/opencode-context-refresh-types"
 import type { RuntimeCheckpoint, RuntimeCheckpointInput, RuntimeCheckpointPreview, RuntimeCheckpointRecord } from "../checkpoints/runtime-checkpoint-types"
@@ -98,6 +99,12 @@ export interface RuntimeClient {
   command(name: "runtime.preview_commander_tool_bootstrap", payload: { phase?: string; provider_kind?: string; provider?: string; model_id?: string; model?: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderToolBootstrapPreview>
   command(name: "runtime.validate_commander_tool_registry"): Promise<CommanderToolRegistryValidation>
   command(name: "runtime.search_commander_operational_memory", payload: Record<string, unknown>): Promise<CommanderOperationalMemorySearchPreview>
+  command(name: "runtime.list_commander_investigation_recoveries", payload?: CommanderRecoveryOperatorListInput): Promise<CommanderRecoveryOperatorList>
+  command(name: "runtime.get_commander_investigation_recovery", payload: { investigation_id: string }): Promise<CommanderRecoveryOperatorDetail | CommanderRecoveryOperatorMissing>
+  command(name: "runtime.preview_commander_investigation_recovery", payload: { investigation_id: string }): Promise<CommanderRecoveryOperatorPreview>
+  command(name: "runtime.approve_commander_investigation_recovery", payload: CommanderInvestigationRecoveryApprovalInput): Promise<CommanderInvestigationRecoveryApprovalResult>
+  command(name: "runtime.execute_commander_investigation_recovery", payload: CommanderRecoveryExecuteInput): Promise<CommanderRecoveryOperation>
+  command(name: "runtime.cancel_commander_investigation_recovery", payload: CommanderRecoveryCancelInput): Promise<CommanderRecoveryCancellationResult>
   command(name: "runtime.commander_repo_tree", payload?: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoTreeResult>>
   command(name: "runtime.commander_repo_search_text", payload: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoSearchResult>>
   command(name: "runtime.commander_repo_read_lines", payload: Record<string, unknown>): Promise<CommanderInternalReadResult<CommanderRepoFileResult>>

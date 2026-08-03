@@ -187,6 +187,7 @@ import {
   CommanderInvestigationRecoveryApprovalService,
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
+  CommanderInvestigationRecoveryOperatorService,
   CommanderInvestigationRecoveryService,
   CommanderInvestigationRecoveryTransactionService,
   CommanderToolExecutor,
@@ -214,6 +215,13 @@ import {
   type CommanderInvestigationRecoveryExecutionEnvelope,
   type CommanderInvestigationRecoveryTransactionInput,
   type CommanderInvestigationRecoveryTransactionResult,
+  type CommanderRecoveryOperatorList,
+  type CommanderRecoveryOperatorDetail,
+  type CommanderRecoveryOperatorMissing,
+  type CommanderRecoveryOperatorPreview,
+  type CommanderRecoveryOperation,
+  type CommanderRecoveryCancelInput,
+  type CommanderRecoveryCancellationResult,
   type CommanderInvestigationRecoverySource,
   type CommanderInvestigationProviderConfig,
   type CommanderInvestigationProviderGate,
@@ -454,6 +462,7 @@ export class RuntimeServer {
   private commanderInvestigationRecoveryApprovalServiceInstance: CommanderInvestigationRecoveryApprovalService | null = null
   private commanderInvestigationRecoveryExecutionServiceInstance: CommanderInvestigationRecoveryExecutionService | null = null
   private commanderInvestigationRecoveryTransactionServiceInstance: CommanderInvestigationRecoveryTransactionService | null = null
+  private commanderInvestigationRecoveryOperatorServiceInstance: CommanderInvestigationRecoveryOperatorService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -513,6 +522,12 @@ export class RuntimeServer {
     run?: import("./commander-agent").CommanderInvestigationJournalRun
   }>()
   private readonly activeConfiguredCommanderRecoveryInvestigationIds = new Map<string, number>()
+  private readonly publicCommanderRecoveryOperations = new Map<string, {
+    record: CommanderRecoveryOperation
+    controller: AbortController
+    promise: Promise<void>
+  }>()
+  private readonly recentPublicCommanderRecoveryOperations = new Map<string, CommanderRecoveryOperation>()
   private started = false
   private executorStreamTask: Promise<void> | null = null
   private executorStreamAbort = false
@@ -785,6 +800,18 @@ export class RuntimeServer {
         return this.validateCommanderToolRegistry()
       case "runtime.search_commander_operational_memory":
         return this.searchCommanderOperationalMemory(readCommanderOperationalMemorySearchInput(payload))
+      case "runtime.list_commander_investigation_recoveries":
+        return this.listCommanderInvestigationRecoveries(readCommanderRecoveryListInput(payload))
+      case "runtime.get_commander_investigation_recovery":
+        return this.getCommanderInvestigationRecovery(readCommanderRecoveryShowInput(payload).investigation_id)
+      case "runtime.preview_commander_investigation_recovery":
+        return this.previewCommanderInvestigationRecoveryPublic(readCommanderRecoveryShowInput(payload).investigation_id)
+      case "runtime.approve_commander_investigation_recovery":
+        return this.recordCommanderInvestigationRecoveryApproval(readCommanderRecoveryApprovalInput(payload))
+      case "runtime.execute_commander_investigation_recovery":
+        return this.startCommanderInvestigationRecoveryOperation(readCommanderRecoveryExecuteInput(payload))
+      case "runtime.cancel_commander_investigation_recovery":
+        return this.cancelCommanderInvestigationRecoveryOperation(readCommanderRecoveryCancelInput(payload))
       case "runtime.commander_repo_tree":
         return this.commanderRepoTree(payload)
       case "runtime.commander_repo_search_text":
@@ -2834,6 +2861,31 @@ export class RuntimeServer {
     return this.commanderInvestigationJournalService().recoverySource(investigationId)
   }
 
+  listCommanderInvestigationRecoveries(input: Parameters<CommanderInvestigationRecoveryOperatorService["list"]>[0] = {}): Promise<CommanderRecoveryOperatorList> {
+    return this.commanderInvestigationRecoveryOperatorService().list(input)
+  }
+
+  async getCommanderInvestigationRecovery(investigationId: string): Promise<CommanderRecoveryOperatorDetail | CommanderRecoveryOperatorMissing> {
+    let detail = await this.commanderInvestigationRecoveryOperatorService().show(investigationId)
+    if (!detail.found) return detail
+    let active = Array.from(this.publicCommanderRecoveryOperations.values()).find((entry) => entry.record.investigation_id === investigationId)
+    if (active?.record.status === "running") {
+      await Promise.race([active.promise, new Promise<void>((resolve) => setTimeout(resolve, 50))])
+      detail = await this.commanderInvestigationRecoveryOperatorService().show(investigationId)
+      if (!detail.found) return detail
+      active = Array.from(this.publicCommanderRecoveryOperations.values()).find((entry) => entry.record.investigation_id === investigationId)
+    }
+    if (active && detail.latest_recovery_attempt) active.record.recovery_attempt_id = detail.latest_recovery_attempt.recovery_attempt_id
+    const recent = Array.from(this.recentPublicCommanderRecoveryOperations.values()).reverse().find((record) => record.investigation_id === investigationId)
+    const operation = active?.record ?? recent
+    return operation ? { ...detail, active_operation: cloneRecoveryOperation(operation) } : detail
+  }
+
+  async previewCommanderInvestigationRecoveryPublic(investigationId: string): Promise<CommanderRecoveryOperatorPreview> {
+    const preview = await this.commanderInvestigationRecoveryService().preview({ investigation_id: investigationId, include_current_continuity: true })
+    return { ...preview, current_continuity_required: true }
+  }
+
   previewCommanderInvestigationRecovery(input: CommanderInvestigationRecoveryPreviewInput): Promise<CommanderInvestigationRecoveryPreview> {
     return this.commanderInvestigationRecoveryService().preview(input)
   }
@@ -2872,6 +2924,100 @@ export class RuntimeServer {
     })
     this.activeCommanderRecoveryApprovalWrites.add(tracked)
     return tracked
+  }
+
+  startCommanderInvestigationRecoveryOperation(input: CommanderInvestigationRecoveryTransactionInput): CommanderRecoveryOperation {
+    const existing = Array.from(this.publicCommanderRecoveryOperations.values()).find((entry) => entry.record.investigation_id === input.investigation_id && entry.record.status === "running")
+    if (existing) {
+      if (sameRecoveryAuthority(existing.record, input)) return cloneRecoveryOperation(existing.record)
+      return {
+        ...cloneRecoveryOperation(existing.record),
+        status: "blocked",
+        error: "a different Commander recovery operation is already active for this investigation",
+      }
+    }
+    const settled = Array.from(this.recentPublicCommanderRecoveryOperations.values()).find((record) => record.investigation_id === input.investigation_id)
+    if (settled) {
+      if (sameRecoveryAuthority(settled, input)) return cloneRecoveryOperation(settled)
+      return {
+        ...cloneRecoveryOperation(settled),
+        status: "blocked",
+        error: "a recovery attempt already exists for this investigation and different authority cannot start another",
+      }
+    }
+    const operationId = `commander_recovery_operation_${randomUUID().replaceAll("-", "").slice(0, 24)}`
+    const startedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    const record: CommanderRecoveryOperation = {
+      operation_id: operationId,
+      operation_version: 1,
+      investigation_id: input.investigation_id,
+      approval_id: input.approval_id,
+      approval_hash: input.approval_hash,
+      recovery_plan_hash: input.recovery_plan_hash,
+      execution_preparation_hash: input.execution_preparation_hash,
+      status: "running",
+      cancellation_requested: false,
+      started_at: startedAt,
+    }
+    const controller = new AbortController()
+    const entry = { record, controller, promise: Promise.resolve() }
+    this.publicCommanderRecoveryOperations.set(operationId, entry)
+    entry.promise = this.runCommanderInvestigationRecoveryConfigured(input, { abort_signal: controller.signal })
+      .then((result) => {
+        record.result = result
+        record.recovery_attempt_id = result.recovery_attempt_id
+        record.status = result.status === "already_started"
+          ? "already_started"
+          : result.status === "completed"
+            ? "completed"
+          : result.status === "blocked"
+            ? "blocked"
+            : "failed"
+      })
+      .catch((error) => {
+        record.status = "failed"
+        record.error = redactText(error instanceof Error ? error.message : String(error)).slice(0, 300)
+      })
+      .finally(() => {
+        record.settled_at = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+        this.publicCommanderRecoveryOperations.delete(operationId)
+        this.recentPublicCommanderRecoveryOperations.set(operationId, cloneRecoveryOperation(record))
+        while (this.recentPublicCommanderRecoveryOperations.size > 32) {
+          const oldest = this.recentPublicCommanderRecoveryOperations.keys().next().value
+          if (typeof oldest !== "string") break
+          this.recentPublicCommanderRecoveryOperations.delete(oldest)
+        }
+      })
+    return cloneRecoveryOperation(record)
+  }
+
+  async cancelCommanderInvestigationRecoveryOperation(input: CommanderRecoveryCancelInput): Promise<CommanderRecoveryCancellationResult> {
+    const generatedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    const entry = this.publicCommanderRecoveryOperations.get(input.operation_id)
+    if (!entry || entry.record.status !== "running") {
+      const recent = this.recentPublicCommanderRecoveryOperations.get(input.operation_id)
+      if (recent && (recent.investigation_id !== input.investigation_id || recent.approval_id !== input.approval_id || (input.recovery_attempt_id !== undefined && recent.recovery_attempt_id !== input.recovery_attempt_id))) {
+        return recoveryCancellationResult(input, "operation_identity_mismatch", recent.cancellation_requested, generatedAt, recent.recovery_attempt_id)
+      }
+      if (recent?.cancellation_requested) return recoveryCancellationResult(input, "already_requested", true, generatedAt, recent.recovery_attempt_id)
+      return recoveryCancellationResult(input, "not_active", false, generatedAt, recent?.recovery_attempt_id)
+    }
+    if (entry.record.investigation_id !== input.investigation_id || entry.record.approval_id !== input.approval_id) {
+      return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt)
+    }
+    const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+    const attemptId = source?.current_recovery_attempt?.recovery_attempt_id ?? source?.latest_recovery_attempt?.recovery_attempt_id
+    if (attemptId) entry.record.recovery_attempt_id = attemptId
+    if ((attemptId && input.recovery_attempt_id !== attemptId) || (!attemptId && input.recovery_attempt_id !== undefined)) {
+      return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
+    }
+    if (!this.publicCommanderRecoveryOperations.has(input.operation_id) || entry.record.status !== "running") {
+      return recoveryCancellationResult(input, "not_active", entry.record.cancellation_requested, generatedAt, attemptId)
+    }
+    if (entry.record.cancellation_requested) return recoveryCancellationResult(input, "already_requested", true, generatedAt, entry.record.recovery_attempt_id)
+    entry.record.cancellation_requested = true
+    entry.controller.abort(new Error("operator requested Commander recovery cancellation"))
+    return recoveryCancellationResult(input, "cancellation_requested", true, generatedAt, entry.record.recovery_attempt_id)
   }
 
   async runCommanderInvestigationRecoveryConfigured(
@@ -5265,6 +5411,14 @@ export class RuntimeServer {
     return this.commanderInvestigationRecoveryApprovalServiceInstance
   }
 
+  private commanderInvestigationRecoveryOperatorService(): CommanderInvestigationRecoveryOperatorService {
+    this.commanderInvestigationRecoveryOperatorServiceInstance ??= new CommanderInvestigationRecoveryOperatorService(
+      this.commanderInvestigationJournalService(),
+      this.researchSynthesisNow,
+    )
+    return this.commanderInvestigationRecoveryOperatorServiceInstance
+  }
+
   private commanderInvestigationRecoveryExecutionService(): CommanderInvestigationRecoveryExecutionService {
     this.commanderInvestigationRecoveryExecutionServiceInstance ??= new CommanderInvestigationRecoveryExecutionService({
       recoveryPreview: (input) => this.commanderInvestigationRecoveryService().preview(input),
@@ -6019,6 +6173,131 @@ function readRebuildProjectionOptions(value: unknown): { force: boolean } {
   if (!isRecord(value)) throw new Error("options must be an object")
   if (value.force !== undefined && typeof value.force !== "boolean") throw new Error("force must be a boolean")
   return { force: value.force ?? false }
+}
+
+function readCommanderRecoveryListInput(payload: Record<string, unknown>): import("./commander-agent").CommanderRecoveryOperatorListInput {
+  assertExactKeys(payload, ["limit", "status", "recovery_state", "approval_state"])
+  const limit = payload.limit === undefined ? undefined : requiredInteger(payload.limit, "limit")
+  const status = optionalString(payload.status, "status")
+  const recoveryState = optionalString(payload.recovery_state, "recovery_state")
+  const approvalState = optionalString(payload.approval_state, "approval_state")
+  if (status !== undefined && !["running", "final", "refused", "blocked", "failed", "cancelled", "budget_exhausted", "no_progress", "needs_human_review"].includes(status)) throw new Error("status is invalid")
+  if (recoveryState !== undefined && ![
+    "not_required",
+    "checkpoint_available_resume_not_implemented",
+    "uncertain_provider_outcome_resume_not_implemented",
+    "checkpoint_approval_recorded_execution_not_implemented",
+    "uncertain_outcome_approval_recorded_execution_not_implemented",
+    "recovery_transaction_started",
+    "recovery_execution_in_progress",
+    "recovery_execution_interrupted_review_required",
+    "no_checkpoint_resume_not_implemented",
+  ].includes(recoveryState)) throw new Error("recovery_state is invalid")
+  if (approvalState !== undefined && !["none", "current", "stale", "consumed"].includes(approvalState)) throw new Error("approval_state is invalid")
+  return {
+    limit,
+    status,
+    recovery_state: recoveryState as import("./commander-agent").CommanderInvestigationRecoveryState | undefined,
+    approval_state: approvalState as import("./commander-agent").CommanderInvestigationRecoveryApprovalState | undefined,
+  }
+}
+
+function readCommanderRecoveryShowInput(payload: Record<string, unknown>): { investigation_id: string } {
+  assertExactKeys(payload, ["investigation_id"])
+  return { investigation_id: requiredRecoveryAuthorityId(payload.investigation_id, "investigation_id", 200) }
+}
+
+function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): CommanderInvestigationRecoveryApprovalInput {
+  assertExactKeys(payload, ["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "acknowledgements"])
+  if (!isRecord(payload.acknowledgements)) throw new Error("acknowledgements must be an object")
+  const acknowledgements = payload.acknowledgements
+  assertExactKeys(acknowledgements, ["fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome"])
+  const decision = requiredString(payload.decision, "decision")
+  if (decision !== "approve_resume_from_checkpoint" && decision !== "approve_continue_after_uncertain_provider_outcome") throw new Error("decision is invalid")
+  const requiredTrue = (key: string): true => {
+    if (acknowledgements[key] !== true) throw new Error(`${key} acknowledgement must be true`)
+    return true
+  }
+  const uncertain = acknowledgements.uncertain_provider_outcome
+  if (uncertain !== undefined && uncertain !== true) throw new Error("uncertain_provider_outcome acknowledgement must be true when present")
+  return {
+    investigation_id: requiredString(payload.investigation_id, "investigation_id"),
+    recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
+    decision,
+    approved_by: requiredString(payload.approved_by, "approved_by"),
+    human_note: optionalString(payload.human_note, "human_note"),
+    acknowledgements: {
+      fresh_context_required: requiredTrue("fresh_context_required"),
+      exact_replay_unavailable: requiredTrue("exact_replay_unavailable"),
+      provider_request_replay_forbidden: requiredTrue("provider_request_replay_forbidden"),
+      tool_execution_replay_forbidden: requiredTrue("tool_execution_replay_forbidden"),
+      ...(uncertain === true ? { uncertain_provider_outcome: true as const } : {}),
+    },
+  }
+}
+
+function readCommanderRecoveryExecuteInput(payload: Record<string, unknown>): CommanderInvestigationRecoveryTransactionInput {
+  assertExactKeys(payload, ["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash"])
+  return {
+    investigation_id: requiredString(payload.investigation_id, "investigation_id"),
+    approval_id: requiredString(payload.approval_id, "approval_id"),
+    approval_hash: requiredString(payload.approval_hash, "approval_hash"),
+    recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
+    execution_preparation_hash: requiredString(payload.execution_preparation_hash, "execution_preparation_hash"),
+  }
+}
+
+function readCommanderRecoveryCancelInput(payload: Record<string, unknown>): CommanderRecoveryCancelInput {
+  assertExactKeys(payload, ["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"])
+  return {
+    investigation_id: requiredRecoveryAuthorityId(payload.investigation_id, "investigation_id", 200),
+    operation_id: requiredRecoveryAuthorityId(payload.operation_id, "operation_id", 160),
+    approval_id: requiredRecoveryAuthorityId(payload.approval_id, "approval_id", 160),
+    recovery_attempt_id: payload.recovery_attempt_id === undefined ? undefined : requiredRecoveryAuthorityId(payload.recovery_attempt_id, "recovery_attempt_id", 160),
+  }
+}
+
+function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  const allowedSet = new Set(allowed)
+  const unknown = Object.keys(value).filter((key) => !allowedSet.has(key))
+  if (unknown.length > 0) throw new Error(`unknown fields: ${unknown.sort().join(", ")}`)
+}
+
+function requiredInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value)) throw new Error(`${field} must be an integer`)
+  return Number(value)
+}
+
+function requiredRecoveryAuthorityId(value: unknown, field: string, max: number): string {
+  const result = requiredString(value, field).trim()
+  if (result.length > max || !/^[A-Za-z0-9_.:-]+$/.test(result)) throw new Error(`${field} must use bounded durable ID characters`)
+  return result
+}
+
+function sameRecoveryAuthority(operation: CommanderRecoveryOperation, input: CommanderInvestigationRecoveryTransactionInput): boolean {
+  return operation.investigation_id === input.investigation_id
+    && operation.approval_id === input.approval_id
+    && operation.approval_hash === input.approval_hash
+    && operation.recovery_plan_hash === input.recovery_plan_hash
+    && operation.execution_preparation_hash === input.execution_preparation_hash
+}
+
+function cloneRecoveryOperation(operation: CommanderRecoveryOperation): CommanderRecoveryOperation {
+  return structuredClone(operation)
+}
+
+function recoveryCancellationResult(input: CommanderRecoveryCancelInput, status: CommanderRecoveryCancellationResult["status"], requested: boolean, generatedAt: string, attemptId?: string): CommanderRecoveryCancellationResult {
+  return {
+    status,
+    investigation_id: input.investigation_id,
+    operation_id: input.operation_id,
+    approval_id: input.approval_id,
+    recovery_attempt_id: attemptId ?? input.recovery_attempt_id,
+    cancellation_requested: requested,
+    provider_outcome_known: false,
+    durable_state_changed: false,
+    generated_at: generatedAt,
+  }
 }
 
 function alreadyAbortedSignal(reason: string): AbortSignal {

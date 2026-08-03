@@ -10423,6 +10423,139 @@ describe("Commander in-memory investigation controller", () => {
     expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
   })
 
+  test("public recovery commands expose bounded reads and require strict explicit authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-reads-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("unused public preview transport") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_reads")
+
+    const listed = await server.command("runtime.list_commander_investigation_recoveries", { limit: 10 }) as any
+    expect(listed).toMatchObject({ count: 1, limit: 10, current_compatibility_checked: false })
+    expect(listed.items[0]).toMatchObject({ investigation_id: authority.investigation_id, approval_state: "current", current_compatibility_checked: false })
+    const shown = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(shown).toMatchObject({ found: true, investigation_id: authority.investigation_id, approval_state: "current" })
+    const missing = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: "inv_missing_public_recovery" }) as any
+    expect(missing).toMatchObject({ found: false, projection_status: "missing" })
+    const preview = await server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(preview).toMatchObject({ status: "approved_waiting_for_execution", current_continuity_required: true, provider_called: false, tool_executed: false, network_called: false, events_appended: false })
+    expect(transport.requests).toHaveLength(0)
+    await expect(server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id, include_current_continuity: false })).rejects.toThrow("unknown fields")
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: false },
+    })).rejects.toThrow("tool_execution_replay_forbidden acknowledgement must be true")
+    await expect(server.command("runtime.execute_commander_investigation_recovery", { ...authority.transaction_input, force: true })).rejects.toThrow("unknown fields")
+  })
+
+  test("public execute registers before preflight so command cancellation is reachable and preserves approval", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch after public cancellation") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_preflight")
+    const journal = authority.journal
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    let entered!: () => void
+    let release!: () => void
+    const preflightEntered = new Promise<void>((resolve) => { entered = resolve })
+    const preflightRelease = new Promise<void>((resolve) => { release = resolve })
+    let reads = 0
+    journal.recoverySource = async (investigationId: string) => {
+      reads += 1
+      if (reads === 1) {
+        entered()
+        await preflightRelease
+      }
+      return originalRecoverySource(investigationId)
+    }
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(operation).toMatchObject({ status: "running", investigation_id: authority.investigation_id, approval_id: authority.transaction_input.approval_id })
+    await preflightEntered
+    const duplicate = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(duplicate.operation_id).toBe(operation.operation_id)
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true, provider_outcome_known: false, durable_state_changed: false })
+    const duplicateCancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(duplicateCancellation.status).toBe("already_requested")
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    release()
+    await activeEntry.promise
+
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const source = await originalRecoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
+    const settledDuplicate = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(settledDuplicate.operation_id).toBe(operation.operation_id)
+    expect(settledDuplicate.status).toBe("blocked")
+    expect(transport.requests).toHaveLength(0)
+  })
+
+  test("public cancellation after durable model boundary forwards abort and preserves uncertainty", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-transport-"))
+    await writeApprovedSpec(projectDir)
+    const transport = delayedAbortTransport(Promise.resolve())
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_transport")
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    await waitFor(() => transport.requests === 1)
+    const shown = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    const attemptId = shown.active_operation?.recovery_attempt_id
+    expect(attemptId).toBeTruthy()
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: attemptId,
+    }) as any
+    expect(cancellation.status).toBe("cancellation_requested")
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    await activeEntry.promise
+    const duplicate = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: attemptId,
+    }) as any
+    expect(duplicate.status).toBe("already_requested")
+
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(1)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => event.kind === "external_api_request_failed")).toHaveLength(1)
+    expect(await authority.journal.recoverySource(authority.investigation_id)).toMatchObject({
+      recovery_execution_in_progress: true,
+      recovery_execution_interrupted: true,
+      consumed_recovery_approval: { consumed: true },
+      pending_model_step: expect.any(Object),
+      terminal: undefined,
+    })
+  })
+
   test("recovery transaction resolves uncertain provider policy without inferring or replaying the old request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-uncertain-"))
     await writeApprovedSpec(projectDir)
