@@ -16,7 +16,7 @@ import type {
   CommanderInvestigationRecoveryTransactionResult,
 } from "./commander-investigation-recovery-transaction-types"
 
-type NormalizedTransactionInput = Readonly<CommanderInvestigationRecoveryTransactionInput>
+export type NormalizedCommanderInvestigationRecoveryTransactionInput = Readonly<CommanderInvestigationRecoveryTransactionInput>
 type RecoveryExecutionFacts = {
   providerRequestCount: number
   externalApiAuditEventsAppended: number
@@ -58,7 +58,7 @@ export class CommanderInvestigationRecoveryTransactionService {
 
   async run(input: CommanderInvestigationRecoveryTransactionInput, operational: CommanderInvestigationRecoveryTransactionOperationalOptions = {}): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const generatedAt = this.now().toISOString()
-    const validated = normalizeTransactionInput(input)
+    const validated = normalizeCommanderInvestigationRecoveryTransactionInput(input)
     if (validated.blockers.length) return transactionResult({ status: "blocked", investigationId: validated.input.investigation_id || "invalid", generatedAt, blockers: validated.blockers })
     return this.serialized(validated.input.investigation_id, () => this.runSerialized(validated.input, generatedAt, operational))
   }
@@ -78,7 +78,7 @@ export class CommanderInvestigationRecoveryTransactionService {
     }
   }
 
-  private async runSerialized(input: NormalizedTransactionInput, generatedAt: string, operational: CommanderInvestigationRecoveryTransactionOperationalOptions): Promise<CommanderInvestigationRecoveryTransactionResult> {
+  private async runSerialized(input: NormalizedCommanderInvestigationRecoveryTransactionInput, generatedAt: string, operational: CommanderInvestigationRecoveryTransactionOperationalOptions): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const abortSignal = operational.abort_signal
     const initialSource = await this.options.recoverySource(input.investigation_id)
     const existing = initialSource?.latest_recovery_attempt
@@ -237,7 +237,7 @@ export function commanderRecoveryTransactionBlockedResult(
   })
 }
 
-function normalizeTransactionInput(input: CommanderInvestigationRecoveryTransactionInput): { input: NormalizedTransactionInput; blockers: string[] } {
+export function normalizeCommanderInvestigationRecoveryTransactionInput(input: CommanderInvestigationRecoveryTransactionInput): { input: NormalizedCommanderInvestigationRecoveryTransactionInput; blockers: string[] } {
   const source = typeof input === "object" && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : {}
   const allowed = new Set(["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash"])
   const blockers = Object.keys(source).filter((key) => !allowed.has(key)).map((key) => `unknown recovery transaction input key ${key}`)

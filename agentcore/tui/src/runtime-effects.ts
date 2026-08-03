@@ -18964,8 +18964,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       ? safeOptionalRecord(selected.active_operation)
       : cachedOperationMatches ? current.operation : null
     const selectionChanged = selectedInvestigationId !== undefined
-      && typeof current.selected?.investigation_id === "string"
-      && current.selected.investigation_id !== selectedInvestigationId
+      && commanderRecoveryTargetChanged(current, selectedInvestigationId)
     return {
       ...state,
       commanderRecovery: selectionChanged

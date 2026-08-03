@@ -10488,6 +10488,21 @@ describe("Commander in-memory investigation controller", () => {
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: false },
     })).rejects.toThrow("tool_execution_replay_forbidden acknowledgement must be true")
     await expect(server.command("runtime.execute_commander_investigation_recovery", { ...authority.transaction_input, force: true })).rejects.toThrow("unknown fields")
+    const operationCountBeforeInvalidAuthority = (server as any).publicCommanderRecoveryOperations.size
+    const recentCountBeforeInvalidAuthority = (server as any).recentPublicCommanderRecoveryOperations.size
+    await expect(server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_hash: "x".repeat(241),
+    })).rejects.toThrow("approval_hash is required and bounded")
+    await expect(server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      execution_preparation_hash: "Bearer accidentally-pasted-credential",
+    })).rejects.toThrow("execution_preparation_hash contains forbidden URL or credential material")
+    expect((server as any).publicCommanderRecoveryOperations.size).toBe(operationCountBeforeInvalidAuthority)
+    expect((server as any).recentPublicCommanderRecoveryOperations.size).toBe(recentCountBeforeInvalidAuthority)
+    const shownAfterInvalidAuthority = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(shownAfterInvalidAuthority).not.toHaveProperty("active_operation")
+    expect(JSON.stringify(shownAfterInvalidAuthority)).not.toContain("accidentally-pasted-credential")
   })
 
   test("public execute registers before preflight so command cancellation is reachable and preserves approval", async () => {

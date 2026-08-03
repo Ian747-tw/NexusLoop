@@ -194,6 +194,7 @@ import {
   ConnectorBackedCommanderModelStepAdapter,
   commanderInvestigationModelCapability,
   connectorChatCompletionsUrl,
+  normalizeCommanderInvestigationRecoveryTransactionInput,
   stableHash,
   commanderRecoveryTransactionBlockedResult,
   validateCommanderInvestigationProviderConfig,
@@ -2928,6 +2929,9 @@ export class RuntimeServer {
   }
 
   startCommanderInvestigationRecoveryOperation(input: CommanderInvestigationRecoveryTransactionInput): CommanderRecoveryOperation {
+    const validated = normalizeCommanderInvestigationRecoveryTransactionInput(input)
+    if (validated.blockers.length > 0) throw new Error(validated.blockers.join("; "))
+    input = validated.input
     const existing = Array.from(this.publicCommanderRecoveryOperations.values()).find((entry) => entry.record.investigation_id === input.investigation_id && entry.record.status === "running")
     if (existing) {
       if (sameRecoveryAuthority(existing.record, input)) return cloneRecoveryOperation(existing.record)

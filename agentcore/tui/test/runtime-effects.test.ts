@@ -6941,6 +6941,22 @@ describe("runtime UI effects", () => {
     })
     expect(cancelled.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, preview: null, approval: null, cancellation: { status: "cancellation_requested" } })
     expect(cancelled.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const shown = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a" } },
+        operation: null,
+        cancellation: { status: "already_requested" },
+        pendingConfirmation: "execution",
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(shown.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, preview: null, approval: null, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, cancellation: null })
+    expect(shown.commanderRecovery?.pendingConfirmation).toBeUndefined()
   })
 
   test("Commander recovery cancellation refreshes attempt identity and clears cross-investigation operations", async () => {
