@@ -127,7 +127,7 @@ export class CommanderInvestigationRecoveryTransactionService {
           throw new CommanderInvestigationJournalConflictError("recovery attempt authority changed at the transaction append boundary")
         }
         return { recovery_attempt: currentAttempt }
-      })
+      }, { abort_signal: abortSignal })
       recoveryStartEventId = appended.event_id
     } catch (error) {
       const reconciled = await this.options.recoverySource(input.investigation_id).catch(() => undefined)

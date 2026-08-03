@@ -87,6 +87,12 @@ export class CommanderInvestigationPersistenceError extends Error {
   }
 }
 
+function assertRecoveryStartNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new CommanderInvestigationJournalConflictError("Commander recovery was cancelled before the durable recovery-start boundary")
+  }
+}
+
 export type CommanderInvestigationJournalServiceOptions = {
   eventStore: EventStore
   now?: () => Date
@@ -394,6 +400,7 @@ export class CommanderInvestigationJournalService {
   async recordRecoveryStartAfterRevalidation(
     investigationId: string,
     revalidate: () => Promise<CommanderInvestigationRecoveryStartAppendInput>,
+    operational: { abort_signal?: AbortSignal } = {},
   ): Promise<{ recovery_attempt: CommanderInvestigationRecoveryAttempt; event_id: string; events_appended: true }> {
     const previous = this.activeRecoveryStarts.get(investigationId) ?? Promise.resolve()
     let release!: () => void
@@ -402,14 +409,18 @@ export class CommanderInvestigationJournalService {
     this.activeRecoveryStarts.set(investigationId, chain)
     await previous.catch(() => undefined)
     try {
+      assertRecoveryStartNotAborted(operational.abort_signal)
       if (this.active.has(investigationId)) throw new CommanderInvestigationJournalConflictError("Commander recovery transaction requires inactive durable investigation")
       const expectedLatestEventId = await this.options.eventStore.latestEventId()
+      assertRecoveryStartNotAborted(operational.abort_signal)
       const input = await revalidate()
+      assertRecoveryStartNotAborted(operational.abort_signal)
       const attempt = input.recovery_attempt
       if (!isCommanderInvestigationRecoveryAttempt(attempt) || stableHash({ ...attempt, started_at: "", attempt_hash: "" }) !== attempt.attempt_hash) {
         throw new CommanderInvestigationPersistenceError("Commander recovery attempt failed durable schema validation")
       }
       const source = await this.recoverySource(investigationId)
+      assertRecoveryStartNotAborted(operational.abort_signal)
       const approval = source?.recovery_approvals?.find((candidate) => candidate.approval_id === attempt.approval_id)
       if (!source || source.projection_status !== "ready" || source.record?.status !== "running" || !source.latest_checkpoint || !source.recovery_basis || source.current_recovery_attempt || source.recovery_attempts?.length) {
         throw new CommanderInvestigationJournalConflictError("Commander recovery start requires a ready nonterminal journal without an existing attempt")
@@ -425,6 +436,7 @@ export class CommanderInvestigationJournalService {
         recovery_attempt: attempt,
         event_payload_hash: "",
       } satisfies CommanderInvestigationRecoveryStartedPayload)
+      assertRecoveryStartNotAborted(operational.abort_signal)
       const eventId = await this.appendCapped("runtime_commander_investigation_recovery_started", payload, RECOVERY_START_CAP, expectedLatestEventId)
       return { recovery_attempt: attempt, event_id: eventId, events_appended: true }
     } finally {
