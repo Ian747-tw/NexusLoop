@@ -18980,7 +18980,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     if (previewInvestigationId && current.selected?.investigation_id !== previewInvestigationId) {
       const detail = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: previewInvestigationId }))
       const operation = detail && isRecord(detail.active_operation) ? safeOptionalRecord(detail.active_operation) : null
-      return { ...state, commanderRecovery: { ...current, preview, selected: detail, operation, commandError: undefined } }
+      return { ...state, commanderRecovery: { ...current, preview, selected: detail, approval: null, pendingConfirmation: undefined, operation, cancellation: null, commandError: undefined } }
     }
     return { ...state, commanderRecovery: { ...current, preview, commandError: undefined } }
   }

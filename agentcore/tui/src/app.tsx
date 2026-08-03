@@ -330,14 +330,10 @@ function ApprovalPanel(props: { state: UiState }) {
             <Show when={value().pendingConfirmation === "execution"}>
               <text fg={color.warning}>execution confirmation required: approval and execution are separate actions</text>
             </Show>
-            <Show when={value().approval}>
-              {(approval) => (
-                <>
-                  <text fg={color.accent}>approval result={operatorField(approval(), "status")}</text>
-                  <text fg={color.text}>approval_id={recoveryAuthority().approval_id}</text>
-                  <text fg={color.text}>approval_hash={recoveryAuthority().approval_hash}</text>
-                </>
-              )}
+            <Show when={recoveryAuthority().approval_id !== "none"}>
+              <text fg={color.accent}>approval authority=current</text>
+              <text fg={color.text}>approval_id={recoveryAuthority().approval_id}</text>
+              <text fg={color.text}>approval_hash={recoveryAuthority().approval_hash}</text>
             </Show>
             <Show when={value().operation}>
               {(operation) => <text fg={color.accent}>operation {operatorField(operation(), "operation_id")} [{operatorField(operation(), "status")}]</text>}

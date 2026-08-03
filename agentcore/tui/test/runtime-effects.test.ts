@@ -6933,6 +6933,17 @@ describe("runtime UI effects", () => {
     expect(state.commanderRecovery?.selected).toMatchObject({ investigation_id: "inv_b" })
     expect(state.commanderRecovery?.preview).toMatchObject({ investigation_id: "inv_b" })
     expect(state.commanderRecovery?.operation).toBeNull()
+
+    state.commanderRecovery = {
+      ...state.commanderRecovery!,
+      selected: { investigation_id: "inv_a" },
+      approval: { approval: { approval_id: "approval_a" } },
+      pendingConfirmation: "approval",
+      cancellation: { status: "cancellation_requested" },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
+    expect(state.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, approval: null, cancellation: null })
+    expect(state.commanderRecovery?.pendingConfirmation).toBeUndefined()
   })
 
   test("Commander recovery interactive authority values remain complete and copyable", () => {
@@ -6952,6 +6963,16 @@ describe("runtime UI effects", () => {
       approval_id: approvalId,
       approval_hash: approvalHash,
     })
+    expect(commanderRecoveryAuthorityValues({
+      records: [],
+      preview: {
+        recovery_plan_hash: plan,
+        execution_preparation_hash: preparation,
+        recovery_packet_hash: packet,
+        current_approval: { approval_id: approvalId, approval_hash: approvalHash },
+      },
+      approval: null,
+    })).toMatchObject({ approval_id: approvalId, approval_hash: approvalHash })
   })
 
   test("Commander recovery snapshot does not claim cancellation for rejected requests", () => {
