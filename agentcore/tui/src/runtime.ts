@@ -82,6 +82,7 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
   private readonly commanderRecoveryOperations = new Map<string, Record<string, unknown>>()
+  private commanderRecoveryApproval: Record<string, unknown> | null = null
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
   private commanderToolServiceInstance: CommanderToolService | null = null
   private readonly continuationPlans: ContinuationPlanSummary[] = []
@@ -274,18 +275,31 @@ export class FakeRuntimeClient implements RuntimeClient {
         }, "runtime_authoritative", false)
       case "runtime.list_commander_investigation_recoveries":
         return {
-          items: [fakeCommanderRecoverySummary()],
+          items: [fakeCommanderRecoverySummary(this.commanderRecoveryApproval)],
           count: 1,
           limit: readLimit(payload.limit, 20),
           current_compatibility_checked: false,
           observed_at: new Date(0).toISOString(),
         }
       case "runtime.get_commander_investigation_recovery":
-        return { ...fakeCommanderRecoverySummary(), found: true, recommended_next_operator_action: "preview_checkpoint_recovery", blockers: [], warnings: [], observed_at: new Date(0).toISOString() }
+        return { ...fakeCommanderRecoverySummary(this.commanderRecoveryApproval), found: true, recommended_next_operator_action: "preview_checkpoint_recovery", blockers: [], warnings: [], observed_at: new Date(0).toISOString() }
       case "runtime.preview_commander_investigation_recovery":
-        return fakeCommanderRecoveryPreview(String(payload.investigation_id ?? "fake_commander_recovery"))
-      case "runtime.approve_commander_investigation_recovery":
-        return { status: "recorded", investigation_id: payload.investigation_id, events_appended: true, provider_called: false, network_called: false }
+        return fakeCommanderRecoveryPreview(String(payload.investigation_id ?? "fake_commander_recovery"), this.commanderRecoveryApproval)
+      case "runtime.approve_commander_investigation_recovery": {
+        const approval = {
+          approval_id: "fake_approval",
+          approval_hash: "fake_approval_hash",
+          approval_sequence: 0,
+          investigation_id: String(payload.investigation_id ?? "fake_commander_recovery"),
+          decision: String(payload.decision ?? "approve_resume_from_checkpoint"),
+          approved_by: String(payload.approved_by ?? "fake_operator"),
+          recovery_plan_hash: String(payload.recovery_plan_hash ?? "fake_recovery_plan_hash"),
+          recovery_basis_hash: "fake_recovery_basis_hash",
+          approved_at: new Date(0).toISOString(),
+        }
+        this.commanderRecoveryApproval = approval
+        return { status: "recorded", investigation_id: approval.investigation_id, approval, approval_state: "current", events_appended: true, provider_called: false, network_called: false }
+      }
       case "runtime.execute_commander_investigation_recovery": {
         const operation = {
           operation_id: `fake_recovery_operation_${this.commanderRecoveryOperations.size}`,
@@ -11199,7 +11213,8 @@ function fakeApplyReadinessStatusSummary(status: string): string {
   return "Apply readiness target is unknown."
 }
 
-function fakeCommanderRecoverySummary(): Record<string, unknown> {
+function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null = null): Record<string, unknown> {
+  const currentApproval = approval?.investigation_id === "fake_commander_recovery" ? approval : null
   return {
     investigation_id: "fake_commander_recovery",
     projection_status: "ready",
@@ -11212,8 +11227,9 @@ function fakeCommanderRecoverySummary(): Record<string, unknown> {
     record_hash: "fake_record_hash",
     checkpoint_id: "fake_checkpoint",
     terminal: false,
-    approval_state: "none",
-    recovery_approval_count: 0,
+    approval_state: currentApproval ? "current" : "none",
+    recovery_approval_count: currentApproval ? 1 : 0,
+    ...(currentApproval ? { latest_approval: structuredClone(currentApproval) } : {}),
     recovery_attempt_count: 0,
     recovery_execution_in_progress: false,
     human_review_required: false,
@@ -11221,9 +11237,10 @@ function fakeCommanderRecoverySummary(): Record<string, unknown> {
   }
 }
 
-function fakeCommanderRecoveryPreview(investigationId: string): Record<string, unknown> {
+function fakeCommanderRecoveryPreview(investigationId: string, approval: Record<string, unknown> | null = null): Record<string, unknown> {
+  const currentApproval = approval?.investigation_id === investigationId ? structuredClone(approval) : undefined
   return {
-    status: "ready_for_approval",
+    status: currentApproval ? "approved_waiting_for_execution" : "ready_for_approval",
     investigation_id: investigationId,
     recovery_kind: "checkpoint",
     recovery_plan_hash: "fake_recovery_plan_hash",
@@ -11232,6 +11249,8 @@ function fakeCommanderRecoveryPreview(investigationId: string): Record<string, u
     exact_replay_supported: false,
     fresh_context_required: true,
     current_continuity_required: true,
+    approval_state: currentApproval ? "current" : "none",
+    ...(currentApproval ? { current_approval: currentApproval, recommended_action: "await_recovery_execution" } : {}),
     blockers: [],
     warnings: [],
   }

@@ -6882,14 +6882,27 @@ describe("runtime UI effects", () => {
 
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
+      command: "commander-recovery-preview",
+      args: ["fake_commander_recovery"],
+    })
+    expect(state.commanderRecovery?.preview).toMatchObject({
+      status: "approved_waiting_for_execution",
+      approval_state: "current",
+      current_approval: { approval_id: "fake_approval", approval_hash: "fake_approval_hash" },
+    })
+    const fakeAuthority = commanderRecoveryAuthorityValues(state.commanderRecovery!)
+    expect(fakeAuthority).toMatchObject({ approval_id: "fake_approval", approval_hash: "fake_approval_hash" })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
       command: "commander-recovery-execute",
-      args: ["investigation_id=fake_commander_recovery", "approval_id=fake_approval", "approval_hash=fake_approval_hash", "recovery_plan_hash=fake_recovery_plan_hash", "execution_preparation_hash=fake_execution_preparation_hash"],
+      args: ["investigation_id=fake_commander_recovery", `approval_id=${fakeAuthority.approval_id}`, `approval_hash=${fakeAuthority.approval_hash}`, `recovery_plan_hash=${fakeAuthority.recovery_plan_hash}`, `execution_preparation_hash=${fakeAuthority.execution_preparation_hash}`],
     })
     expect(state.commanderRecovery?.pendingConfirmation).toBe("execution")
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-execute",
-      args: ["investigation_id=fake_commander_recovery", "approval_id=fake_approval", "approval_hash=fake_approval_hash", "recovery_plan_hash=fake_recovery_plan_hash", "execution_preparation_hash=fake_execution_preparation_hash", "confirm=EXECUTE"],
+      args: ["investigation_id=fake_commander_recovery", `approval_id=${fakeAuthority.approval_id}`, `approval_hash=${fakeAuthority.approval_hash}`, `recovery_plan_hash=${fakeAuthority.recovery_plan_hash}`, `execution_preparation_hash=${fakeAuthority.execution_preparation_hash}`, "confirm=EXECUTE"],
     })
     expect(state.commanderRecovery?.operation).toMatchObject({ status: "running", operation_id: "fake_recovery_operation_0" })
     state = await applyRuntimeUiEffect(state, runtime, {
