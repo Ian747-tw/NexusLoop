@@ -18982,7 +18982,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       const operation = detail && isRecord(detail.active_operation) ? safeOptionalRecord(detail.active_operation) : null
       return { ...state, commanderRecovery: { ...current, preview, selected: detail, approval: null, pendingConfirmation: undefined, operation, cancellation: null, commandError: undefined } }
     }
-    return { ...state, commanderRecovery: { ...current, preview, commandError: undefined } }
+    return { ...state, commanderRecovery: { ...current, preview, approval: null, pendingConfirmation: undefined, commandError: undefined } }
   }
   if (command === "commander-recovery-approve") {
     const fields = recoveryKeyValues(args, new Set(["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome", "confirm"]))

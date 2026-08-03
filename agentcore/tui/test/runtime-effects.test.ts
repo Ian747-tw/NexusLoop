@@ -6934,6 +6934,12 @@ describe("runtime UI effects", () => {
     expect(state.commanderRecovery?.preview).toMatchObject({ investigation_id: "inv_b" })
     expect(state.commanderRecovery?.operation).toBeNull()
 
+    state.commanderRecovery!.approval = { approval: { approval_id: "stale_same_investigation_approval" } }
+    state.commanderRecovery!.pendingConfirmation = "execution"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
+    expect(state.commanderRecovery?.approval).toBeNull()
+    expect(state.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
     state.commanderRecovery = {
       ...state.commanderRecovery!,
       selected: { investigation_id: "inv_a" },
@@ -6973,6 +6979,17 @@ describe("runtime UI effects", () => {
       },
       approval: null,
     })).toMatchObject({ approval_id: approvalId, approval_hash: approvalHash })
+
+    expect(commanderRecoveryAuthorityValues({
+      records: [],
+      preview: {
+        recovery_plan_hash: plan,
+        execution_preparation_hash: preparation,
+        recovery_packet_hash: packet,
+        current_approval: { approval_id: "current_approval", approval_hash: "current_approval_hash" },
+      },
+      approval: { approval: { approval_id: "stale_transient_approval", approval_hash: "stale_transient_hash" } },
+    })).toMatchObject({ approval_id: "current_approval", approval_hash: "current_approval_hash" })
   })
 
   test("Commander recovery snapshot does not claim cancellation for rejected requests", () => {

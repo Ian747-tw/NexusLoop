@@ -25,6 +25,11 @@ type RecoveryExecutionFacts = {
   networkCalled: boolean
 }
 
+export type CommanderInvestigationRecoveryTransactionOperationalOptions = {
+  abort_signal?: AbortSignal
+  on_recovery_attempt_prepared?(recoveryAttemptId: string): void
+}
+
 export type CommanderInvestigationRecoveryTransactionServiceOptions = {
   recoveryPreview(input: { investigation_id: string; include_current_continuity?: boolean }): Promise<CommanderInvestigationRecoveryPreview>
   recoveryExecutionService: CommanderInvestigationRecoveryExecutionService
@@ -51,11 +56,11 @@ export class CommanderInvestigationRecoveryTransactionService {
     }
   }
 
-  async run(input: CommanderInvestigationRecoveryTransactionInput, operational: { abort_signal?: AbortSignal } = {}): Promise<CommanderInvestigationRecoveryTransactionResult> {
+  async run(input: CommanderInvestigationRecoveryTransactionInput, operational: CommanderInvestigationRecoveryTransactionOperationalOptions = {}): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const generatedAt = this.now().toISOString()
     const validated = normalizeTransactionInput(input)
     if (validated.blockers.length) return transactionResult({ status: "blocked", investigationId: validated.input.investigation_id || "invalid", generatedAt, blockers: validated.blockers })
-    return this.serialized(validated.input.investigation_id, () => this.runSerialized(validated.input, generatedAt, operational.abort_signal))
+    return this.serialized(validated.input.investigation_id, () => this.runSerialized(validated.input, generatedAt, operational))
   }
 
   private async serialized(investigationId: string, operation: () => Promise<CommanderInvestigationRecoveryTransactionResult>): Promise<CommanderInvestigationRecoveryTransactionResult> {
@@ -73,7 +78,8 @@ export class CommanderInvestigationRecoveryTransactionService {
     }
   }
 
-  private async runSerialized(input: NormalizedTransactionInput, generatedAt: string, abortSignal?: AbortSignal): Promise<CommanderInvestigationRecoveryTransactionResult> {
+  private async runSerialized(input: NormalizedTransactionInput, generatedAt: string, operational: CommanderInvestigationRecoveryTransactionOperationalOptions): Promise<CommanderInvestigationRecoveryTransactionResult> {
+    const abortSignal = operational.abort_signal
     const initialSource = await this.options.recoverySource(input.investigation_id)
     const existing = initialSource?.latest_recovery_attempt
     if (existing) {
@@ -126,6 +132,7 @@ export class CommanderInvestigationRecoveryTransactionService {
         if (currentAttempt.attempt_hash !== attempt.attempt_hash || currentAttempt.recovery_attempt_id !== attempt.recovery_attempt_id) {
           throw new CommanderInvestigationJournalConflictError("recovery attempt authority changed at the transaction append boundary")
         }
+        operational.on_recovery_attempt_prepared?.(currentAttempt.recovery_attempt_id)
         return { recovery_attempt: currentAttempt }
       }, { abort_signal: abortSignal })
       recoveryStartEventId = appended.event_id

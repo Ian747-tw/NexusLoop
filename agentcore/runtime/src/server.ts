@@ -2968,7 +2968,12 @@ export class RuntimeServer {
     const controller = new AbortController()
     const entry = { record, controller, promise: Promise.resolve() }
     this.publicCommanderRecoveryOperations.set(operationId, entry)
-    entry.promise = this.runCommanderInvestigationRecoveryConfigured(input, { abort_signal: controller.signal })
+    entry.promise = this.runCommanderInvestigationRecoveryConfigured(input, {
+      abort_signal: controller.signal,
+      on_recovery_attempt_prepared: (recoveryAttemptId) => {
+        record.recovery_attempt_id = recoveryAttemptId
+      },
+    })
       .then((result) => {
         record.recovery_attempt_id = result.recovery_attempt_id
         if (result.status === "blocked" && !result.approval_consumed && !result.recovery_attempt_id && !record.cancellation_requested) {
@@ -2987,6 +2992,10 @@ export class RuntimeServer {
         record.error = redactText(error instanceof Error ? error.message : String(error)).slice(0, 300)
         try {
           const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+          const durableAttemptId = source?.current_recovery_attempt?.recovery_attempt_id
+            ?? source?.latest_recovery_attempt?.recovery_attempt_id
+          if (durableAttemptId) record.recovery_attempt_id = durableAttemptId
+          else delete record.recovery_attempt_id
           const approval = source?.latest_recovery_approval
           if (source?.projection_status === "ready"
             && !source.terminal
@@ -3031,10 +3040,16 @@ export class RuntimeServer {
     if (entry.record.investigation_id !== input.investigation_id || entry.record.approval_id !== input.approval_id) {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt)
     }
-    const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-    const attemptId = source?.current_recovery_attempt?.recovery_attempt_id
-      ?? source?.latest_recovery_attempt?.recovery_attempt_id
-      ?? entry.record.recovery_attempt_id
+    let attemptId = entry.record.recovery_attempt_id
+    if (attemptId && input.recovery_attempt_id !== attemptId) {
+      return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
+    }
+    if (!attemptId) {
+      const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+      attemptId = source?.current_recovery_attempt?.recovery_attempt_id
+        ?? source?.latest_recovery_attempt?.recovery_attempt_id
+        ?? entry.record.recovery_attempt_id
+    }
     if (attemptId) entry.record.recovery_attempt_id = attemptId
     if (attemptId && input.recovery_attempt_id !== attemptId) {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
@@ -3050,7 +3065,10 @@ export class RuntimeServer {
 
   async runCommanderInvestigationRecoveryConfigured(
     input: CommanderInvestigationRecoveryTransactionInput,
-    operational: { abort_signal?: AbortSignal } = {},
+    operational: {
+      abort_signal?: AbortSignal
+      on_recovery_attempt_prepared?(recoveryAttemptId: string): void
+    } = {},
   ): Promise<CommanderInvestigationRecoveryTransactionResult> {
     const now = this.researchSynthesisNow?.() ?? new Date()
     if (!this.configuredCommanderRecoveryRuntimeAuthorityReady()) {
@@ -3086,7 +3104,10 @@ export class RuntimeServer {
         if (!this.configuredCommanderRecoveryRuntimeAuthorityReady()) {
           return commanderRecoveryTransactionBlockedResult(input, "configured Commander recovery authority changed during preflight", this.researchSynthesisNow?.() ?? new Date())
         }
-        return await this.commanderInvestigationRecoveryTransactionService().run(input, { abort_signal: combined.signal })
+        return await this.commanderInvestigationRecoveryTransactionService().run(input, {
+          abort_signal: combined.signal,
+          on_recovery_attempt_prepared: operational.on_recovery_attempt_prepared,
+        })
       } finally {
         combined.cleanup()
         this.activeConfiguredCommanderRecoveries.delete(active)

@@ -10549,6 +10549,60 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(0)
   })
 
+  test("public cancellation requires the prepared attempt identity while recovery start is committing", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-committing-start-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch while recovery start is committing") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_committing_start")
+    const originalAppendIfLatest = server.eventStore.appendIfLatest.bind(server.eventStore)
+    let appendEntered!: () => void
+    let releaseAppend!: () => void
+    const entered = new Promise<void>((resolve) => { appendEntered = resolve })
+    const release = new Promise<void>((resolve) => { releaseAppend = resolve })
+    server.eventStore.appendIfLatest = async (...args: Parameters<typeof originalAppendIfLatest>) => {
+      if (args[0].kind === "runtime_commander_investigation_recovery_started") {
+        appendEntered()
+        await release
+      }
+      return originalAppendIfLatest(...args)
+    }
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    await entered
+
+    const missingAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(missingAttempt).toMatchObject({ status: "operation_identity_mismatch", cancellation_requested: false })
+    expect(typeof missingAttempt.recovery_attempt_id).toBe("string")
+    expect(activeEntry.record.cancellation_requested).toBe(false)
+
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: missingAttempt.recovery_attempt_id,
+    }) as any
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true, recovery_attempt_id: missingAttempt.recovery_attempt_id })
+    releaseAppend()
+    await activeEntry.promise
+
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
+  })
+
   test("blocked public preflight does not poison a corrected recovery execution", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-corrected-preflight-"))
     await writeApprovedSpec(projectDir)
