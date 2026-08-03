@@ -84,6 +84,11 @@ package-internal persistence observer. Injected scripted tests continue the
 existing model-step/checkpoint/finished journal sequence; RuntimeServer still
 does not expose or execute recovery, and no configured provider or network path
 is activated.
+Branch 9W3B2B2B composes that same one-shot transaction under RuntimeServer
+active/ready/run-lock authority. A configured connector-backed continuation now
+uses the existing external API audit service and real bound safe-read executor,
+while remaining an internal TypeScript method with no command, client, or TUI
+surface.
 
 ```text
 NexusLoop domain control plane
@@ -175,6 +180,23 @@ current approved recovery plan
 -> no configured-provider execution in 9W3B2B2A
 ```
 
+Configured live recovery adds RuntimeServer lifecycle ownership around that
+same durable transaction:
+
+```text
+current approved recovery plan
+-> RuntimeServer active/ready/run-lock/configured-provider gate
+-> fresh plan and execution-preparation revalidation
+-> runtime_commander_investigation_recovery_started
+   (approval consumed atomically)
+-> fresh model-step boundary
+-> connector-backed provider request
+-> external API audit event
+-> current bound safe-read tools when requested
+-> existing checkpoint before another provider request
+-> existing finished event, or consumed interrupted-attempt state
+```
+
 Continuity comparison is structured: a current bootstrap that reports degraded
 continuity cannot authorize recovery, while ordinary nonfatal continuity
 warnings remain warnings. Recovery recommendations also separate corrupt
@@ -248,9 +270,11 @@ connector transport, provider failover, GitHub/MCP gateway, or external read
 gateway. 9W3B2B1 exposes only an internal read-only preparation preview and
 scripted controller continuation tests. 9W3B2B2A owns atomic approval
 consumption, recovery-start persistence, and scripted lifecycle continuation;
-RuntimeServer still has no recovery execution method. 9W3B2B2B owns configured
-provider activation, external API audit, real bound safe-read tools, and
-lifecycle/shutdown drain. SDK session memory is not
+9W3B2B2B owns the package-internal RuntimeServer configured-provider method,
+external API audit, real bound safe-read tools, conservative post-boundary
+uncertainty, and lifecycle/shutdown drain. It adds no public command, client,
+TUI state, authority entry, automatic recovery, second attempt, provider replay,
+or tool replay. SDK session memory is not
 research or operational memory, and SDK
 tracing is disabled or non-authoritative. OpenCode remains the tactical
 executor.
@@ -389,3 +413,8 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-023-commander-connector-model-transport.md`
 - `agentcore/adr/ADR-024-commander-provider-activation-and-audit-gate.md`
 - `agentcore/adr/ADR-025-commander-durable-investigation-journal.md`
+- `agentcore/adr/ADR-026-commander-investigation-recovery-readiness.md`
+- `agentcore/adr/ADR-027-commander-recovery-approval-gate.md`
+- `agentcore/adr/ADR-028-commander-recovery-continuation-kernel.md`
+- `agentcore/adr/ADR-029-commander-recovery-transaction.md`
+- `agentcore/adr/ADR-030-commander-configured-live-recovery-execution.md`

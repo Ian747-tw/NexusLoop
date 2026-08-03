@@ -125,6 +125,12 @@ connector invocation, RuntimeServer execution method, or public capability.
 Public `provider_tool_loop_enabled` remains false; configured-provider recovery
 belongs to 9W3B2B2B.
 
+9W3B2B2B activates approved recovery only through RuntimeServer's internal
+configured-provider boundary. It reuses the same current registry, fixed binding
+allowlist, phase/namespace predicate, safe-read executor, and actual schema
+verification. It adds no tool, binding, public command, TUI state, or authority
+record, and public `provider_tool_loop_enabled` remains false.
+
 9W3B2B1 adds read-only recovery preparation. It reuses the exact current
 capability, phase, authority, and binding envelopes to build a deterministic
 continuation seed, summary-only replay relationship, mandatory recovery notice,
