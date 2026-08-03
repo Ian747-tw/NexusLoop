@@ -19033,7 +19033,16 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       recovery_attempt_id: cancellation.recovery_attempt_id,
     })
   }
-  return { ...state, commanderRecovery: { ...current, selected: shown ?? current.selected, operation: operation ?? current.operation, cancellation: safeOptionalRecord(result), commandError: undefined } }
+  const finalCancellation = safeOptionalRecord(result)
+  const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
+  const updatedOperation = cancellationAccepted && operation
+    ? {
+        ...operation,
+        cancellation_requested: true,
+        ...(typeof finalCancellation.recovery_attempt_id === "string" ? { recovery_attempt_id: finalCancellation.recovery_attempt_id } : {}),
+      }
+    : operation ?? current.operation
+  return { ...state, commanderRecovery: { ...current, selected: shown ?? current.selected, operation: updatedOperation, cancellation: finalCancellation, commandError: undefined } }
 }
 
 function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>): Record<string, string> {

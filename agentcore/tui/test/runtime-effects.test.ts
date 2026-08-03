@@ -6919,6 +6919,7 @@ describe("runtime UI effects", () => {
       payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a" },
     }])
     expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", recovery_attempt_id: "attempt_a" })
+    expect(state.commanderRecovery?.operation).toMatchObject({ cancellation_requested: true, recovery_attempt_id: "attempt_a" })
 
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
     expect(state.commanderRecovery?.selected).toMatchObject({ investigation_id: "inv_b" })

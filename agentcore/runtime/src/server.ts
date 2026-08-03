@@ -3005,7 +3005,7 @@ export class RuntimeServer {
     const entry = this.publicCommanderRecoveryOperations.get(input.operation_id)
     if (!entry || entry.record.status !== "running") {
       const recent = this.recentPublicCommanderRecoveryOperations.get(input.operation_id)
-      if (recent && (recent.investigation_id !== input.investigation_id || recent.approval_id !== input.approval_id || (input.recovery_attempt_id !== undefined && recent.recovery_attempt_id !== input.recovery_attempt_id))) {
+      if (recent && (recent.investigation_id !== input.investigation_id || recent.approval_id !== input.approval_id || (recent.recovery_attempt_id !== undefined && recent.recovery_attempt_id !== input.recovery_attempt_id))) {
         return recoveryCancellationResult(input, "operation_identity_mismatch", recent.cancellation_requested, generatedAt, recent.recovery_attempt_id)
       }
       if (recent?.cancellation_requested) return recoveryCancellationResult(input, "already_requested", true, generatedAt, recent.recovery_attempt_id)

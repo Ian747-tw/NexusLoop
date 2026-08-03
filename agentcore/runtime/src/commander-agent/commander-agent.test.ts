@@ -10609,6 +10609,12 @@ describe("Commander in-memory investigation controller", () => {
     expect(typeof attemptId).toBe("string")
     const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
     await activeEntry.promise
+    const settledWithoutAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(settledWithoutAttempt).toMatchObject({ status: "operation_identity_mismatch", recovery_attempt_id: attemptId })
     const duplicate = await server.command("runtime.cancel_commander_investigation_recovery", {
       investigation_id: authority.investigation_id,
       operation_id: operation.operation_id,
