@@ -19021,14 +19021,21 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   if (command === "commander-recovery-execute") {
     const fields = recoveryKeyValues(args, new Set(["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash", "confirm"]))
     if (fields.confirm !== "EXECUTE") return { ...state, commanderRecovery: { ...current, pendingConfirmation: "execution", commandError: undefined } }
+    const investigationId = requiredRecoveryField(fields, "investigation_id")
     const result = await runtime.command("runtime.execute_commander_investigation_recovery", {
-      investigation_id: requiredRecoveryField(fields, "investigation_id"),
+      investigation_id: investigationId,
       approval_id: requiredRecoveryField(fields, "approval_id"),
       approval_hash: requiredRecoveryField(fields, "approval_hash"),
       recovery_plan_hash: requiredRecoveryField(fields, "recovery_plan_hash"),
       execution_preparation_hash: requiredRecoveryField(fields, "execution_preparation_hash"),
     })
-    return { ...state, commanderRecovery: { ...current, operation: safeOptionalRecord(result), pendingConfirmation: undefined, commandError: undefined } }
+    const operation = safeOptionalRecord(result)
+    return {
+      ...state,
+      commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
+        ? { ...current, selected: null, preview: null, approval: null, operation, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
+        : { ...current, operation, pendingConfirmation: undefined, commandError: undefined },
+    }
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
   const investigationId = requiredRecoveryField(fields, "investigation_id")
@@ -19062,7 +19069,22 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
         ...(typeof finalCancellation.recovery_attempt_id === "string" ? { recovery_attempt_id: finalCancellation.recovery_attempt_id } : {}),
       }
     : operation ?? current.operation
-  return { ...state, commanderRecovery: { ...current, selected: shown ?? current.selected, operation: updatedOperation, cancellation: finalCancellation, commandError: undefined } }
+  return {
+    ...state,
+    commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
+      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined }
+      : { ...current, selected: shown ?? current.selected, operation: updatedOperation, cancellation: finalCancellation, commandError: undefined },
+  }
+}
+
+function commanderRecoveryTargetChanged(current: CommanderRecoveryUiState, investigationId: string): boolean {
+  const identities = [
+    current.selected?.investigation_id,
+    current.preview?.investigation_id,
+    current.approval?.investigation_id,
+    current.operation?.investigation_id,
+  ].filter((value): value is string => typeof value === "string")
+  return identities.some((value) => value !== investigationId)
 }
 
 function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>): Record<string, string> {

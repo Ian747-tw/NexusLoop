@@ -6876,6 +6876,55 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("connector_url")
   })
 
+  test("Commander recovery execute and cancel clear authority from another investigation", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        if (name === "runtime.execute_commander_investigation_recovery") {
+          return { operation_id: "operation_b", investigation_id: payload?.investigation_id, approval_id: payload?.approval_id, status: "running" }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return { found: true, investigation_id: payload?.investigation_id, active_operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" } }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return { status: "cancellation_requested", cancellation_requested: true, investigation_id: "inv_b", operation_id: "operation_b", approval_id: "approval_b" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const authorityA = (): UiState => ({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_a" },
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a" } },
+        operation: { operation_id: "operation_a", investigation_id: "inv_a", approval_id: "approval_a", status: "running" },
+        cancellation: { status: "already_requested" },
+        pendingConfirmation: "approval",
+      },
+    })
+
+    const executed = await applyRuntimeUiEffect(authorityA(), runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
+    })
+    expect(executed.commanderRecovery).toMatchObject({ operation: { investigation_id: "inv_b", operation_id: "operation_b" }, selected: null, preview: null, approval: null, cancellation: null })
+    expect(executed.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const cancelled = await applyRuntimeUiEffect(authorityA(), runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_b", "operation_id=operation_b", "approval_id=approval_b"],
+    })
+    expect(cancelled.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, preview: null, approval: null, cancellation: { status: "cancellation_requested" } })
+    expect(cancelled.commanderRecovery?.pendingConfirmation).toBeUndefined()
+  })
+
   test("Commander recovery cancellation refreshes attempt identity and clears cross-investigation operations", async () => {
     const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
     const runtime: RuntimeClient = {
