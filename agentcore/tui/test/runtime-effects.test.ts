@@ -7708,6 +7708,66 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("Commander recovery failed approval clears cached authority when reconciliation fails", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "failed",
+            investigation_id: "inv_failed_approval",
+            events_appended: false,
+            blockers: ["approval append outcome is uncertain"],
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          throw new Error("approval reconciliation unavailable with Authorization: Bearer stale-secret")
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_failed_approval" },
+        preview: {
+          investigation_id: "inv_failed_approval",
+          recovery_plan_hash: "plan_stale",
+          execution_preparation_hash: "preparation_stale",
+          approval_state: "current",
+          current_approval: { approval_id: "approval_stale", approval_hash: "approval_hash_stale" },
+        },
+        approval: { approval: { approval_id: "approval_stale", approval_hash: "approval_hash_stale" } },
+        operation: null,
+        cancellation: null,
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_failed_approval", "recovery_plan_hash=plan_stale", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      preview: null,
+      approval: { status: "failed", approval: undefined },
+    })
+    expect(approved.commanderRecovery?.commandError).toContain("approval reconciliation unavailable")
+    expect(approved.commanderRecovery?.commandError).not.toContain("stale-secret")
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toEqual({
+      recovery_plan_hash: "none",
+      execution_preparation_hash: "none",
+      recovery_packet_hash: "none",
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
   test("fake Commander recovery approval includes note identity in idempotence", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     const input = {

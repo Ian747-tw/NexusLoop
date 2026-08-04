@@ -19020,6 +19020,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     const approvalResult = safeOptionalRecord(result)
     const refreshRequired = approvalResult?.status === "recorded"
       || approvalResult?.status === "blocked"
+      || approvalResult?.status === "failed"
       || (approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval))
     let refreshedPreview: Record<string, unknown> | null = null
     let refreshError: string | undefined
