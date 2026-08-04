@@ -25416,7 +25416,7 @@ test("EventStore reads complete snapshots during queued appends and retries part
   const completeText = await readFile(store.eventsPath, "utf8")
   let release!: () => void
   const inFlight = new Promise<void>((resolve) => { release = resolve })
-  const internals = store as unknown as { appendQueue: Promise<unknown>; pendingAppends: number; readTextSnapshot(): Promise<string> }
+  const internals = store as unknown as { appendQueue: Promise<unknown>; appendGeneration: number; pendingAppends: number; readTextSnapshot(): Promise<string> }
   internals.appendQueue = inFlight
   internals.pendingAppends = 1
   expect(await store.readAll()).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
@@ -25482,4 +25482,35 @@ test("EventStore reads complete snapshots during queued appends and retries part
     expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
     expect.objectContaining({ kind: "runtime_test_event", value: "completed-during-read" }),
   ])
+
+  const completedAfterTwoOverlaps = `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "completed-after-two-overlaps" })}\n`
+  let overlappingSnapshots = 0
+  internals.pendingAppends = 1
+  internals.appendQueue = Promise.resolve()
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial_one`)
+  internals.readTextSnapshot = async () => {
+    if (overlappingSnapshots === 0) {
+      overlappingSnapshots += 1
+      const partial = await readTextSnapshot()
+      await writeFile(store.eventsPath, completedAfterTwoOverlaps)
+      internals.pendingAppends = 0
+      return partial
+    }
+    if (overlappingSnapshots === 1) {
+      overlappingSnapshots += 1
+      internals.appendGeneration += 1
+      internals.pendingAppends = 1
+      await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial_two`)
+      const partial = await readTextSnapshot()
+      await writeFile(store.eventsPath, completedAfterTwoOverlaps)
+      internals.pendingAppends = 0
+      return partial
+    }
+    return readTextSnapshot()
+  }
+  expect(await store.readAll()).toEqual([
+    expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
+    expect.objectContaining({ kind: "runtime_test_event", value: "completed-after-two-overlaps" }),
+  ])
+  expect(overlappingSnapshots).toBe(2)
 })

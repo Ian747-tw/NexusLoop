@@ -73,32 +73,32 @@ export class EventStore {
   }
 
   async readAll(): Promise<JsonlEvent[]> {
-    const generationBefore = this.appendGeneration
-    const appendPendingBefore = this.pendingAppends > 0
-    try {
-      return await this.readAllSnapshot()
-    } catch (error) {
-      const appendOverlapped = appendPendingBefore
-        || this.pendingAppends > 0
-        || this.appendGeneration !== generationBefore
-      if (!(error instanceof SyntaxError) || !appendOverlapped) throw error
-      await this.appendQueue
-      return this.readAllSnapshot()
+    while (true) {
+      const generationBefore = this.appendGeneration
+      const appendPendingBefore = this.pendingAppends > 0
+      try {
+        return await this.readAllSnapshot()
+      } catch (error) {
+        const appendOverlapped = appendPendingBefore
+          || this.pendingAppends > 0
+          || this.appendGeneration !== generationBefore
+        if (!(error instanceof SyntaxError) || !appendOverlapped) throw error
+        await this.appendQueue
+      }
     }
   }
 
   async readText(): Promise<string> {
-    const generationBefore = this.appendGeneration
-    const appendPendingBefore = this.pendingAppends > 0
-    let text = await this.readTextSnapshot()
-    const appendOverlapped = appendPendingBefore
-      || this.pendingAppends > 0
-      || this.appendGeneration !== generationBefore
-    if (appendOverlapped && text.length > 0 && !/\r?\n$/.test(text)) {
+    while (true) {
+      const generationBefore = this.appendGeneration
+      const appendPendingBefore = this.pendingAppends > 0
+      const text = await this.readTextSnapshot()
+      const appendOverlapped = appendPendingBefore
+        || this.pendingAppends > 0
+        || this.appendGeneration !== generationBefore
+      if (!(appendOverlapped && text.length > 0 && !/\r?\n$/.test(text))) return text
       await this.appendQueue
-      text = await this.readTextSnapshot()
     }
-    return text
   }
 
   private async readAllSnapshot(): Promise<JsonlEvent[]> {
