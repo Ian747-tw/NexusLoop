@@ -330,6 +330,9 @@ export class FakeRuntimeClient implements RuntimeClient {
         if (!approvalReady) {
           return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["current exact recovery plan, decision, human identity, and acknowledgements are required"], events_appended: false, provider_called: false, network_called: false }
         }
+        if (this.commanderRecoveryApproval?.consumed === true || this.commanderRecoveryOperations.size > 0) {
+          return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["recovery approval was consumed by the existing one-shot attempt"], events_appended: false, provider_called: false, network_called: false }
+        }
         const approval = {
           approval_id: "fake_approval",
           approval_hash: "fake_approval_hash",
@@ -11303,7 +11306,7 @@ function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null =
     investigation_id: "fake_commander_recovery",
     projection_status: "ready",
     record_status: "running",
-    recovery_state: "checkpoint_available_resume_not_implemented",
+    recovery_state: approvalConsumed ? "recovery_execution_in_progress" : "checkpoint_available_resume_not_implemented",
     recovery_kind: "checkpoint",
     objective_preview: "Inspect durable recovery state",
     phase: "implementation",
@@ -11314,9 +11317,9 @@ function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null =
     approval_state: approvalConsumed ? "consumed" : currentApproval ? "current" : "none",
     recovery_approval_count: currentApproval ? 1 : 0,
     ...(currentApproval ? { latest_approval: structuredClone(currentApproval) } : {}),
-    recovery_attempt_count: 0,
+    recovery_attempt_count: approvalConsumed ? 1 : 0,
     recovery_execution_in_progress: approvalConsumed,
-    human_review_required: false,
+    human_review_required: approvalConsumed,
     current_compatibility_checked: false,
   }
 }

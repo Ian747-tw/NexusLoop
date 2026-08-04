@@ -6946,14 +6946,25 @@ describe("runtime UI effects", () => {
       args: ["investigation_id=fake_commander_recovery", `approval_id=${fakeAuthority.approval_id}`, `approval_hash=${fakeAuthority.approval_hash}`, `recovery_plan_hash=${fakeAuthority.recovery_plan_hash}`, `execution_preparation_hash=${fakeAuthority.execution_preparation_hash}`, "confirm=EXECUTE"],
     })
     expect(state.commanderRecovery?.operation).toMatchObject({ status: "running", operation_id: "fake_recovery_operation_0" })
-    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { approval_state: "consumed" })).toMatchObject({
-      items: [{ investigation_id: "fake_commander_recovery", recovery_execution_in_progress: true }],
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { approval_state: "consumed", recovery_state: "recovery_execution_in_progress" })).toMatchObject({
+      items: [{ investigation_id: "fake_commander_recovery", recovery_attempt_count: 1, recovery_execution_in_progress: true, human_review_required: true }],
       count: 1,
     })
     expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).toMatchObject({
       approval_state: "consumed",
       recovery_execution_in_progress: true,
       recommended_next_operator_action: "await_recovery_completion",
+    })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).toMatchObject({ status: "blocked", events_appended: false, blockers: ["recovery approval was consumed by the existing one-shot attempt"] })
+    expect(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).toMatchObject({
+      status: "recovery_in_progress",
+      approval_state: "consumed",
     })
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
