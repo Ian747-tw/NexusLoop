@@ -1,4 +1,4 @@
-import { redactText, redactValue } from "../security/redaction"
+import { containsConcreteCredentialPayload, redactText, redactValue } from "../security/redaction"
 import { stableHash } from "./commander-model-schema"
 import type {
   CommanderInvestigationRecoveryApprovalAcknowledgements,
@@ -495,10 +495,6 @@ function result(input: {
   }
   out.result_hash = stableHash({ ...out, result_id: "", event_id: "", generated_at: "", result_hash: "" })
   return redactValue(out) as CommanderInvestigationRecoveryApprovalResult
-}
-
-export function containsConcreteCredentialPayload(value: string): boolean {
-  return /https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|\b(?:api[_-]?key|token|secret|password|aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|aws[_-]?security[_-]?token|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|client[_-]?key[_-]?data|private[_-]?key|authorization|auth)["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^"',\s}]+)/i.test(value)
 }
 
 function bound(value: unknown, max: number): string {
