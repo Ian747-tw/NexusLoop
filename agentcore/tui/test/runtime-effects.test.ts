@@ -6834,6 +6834,8 @@ describe("runtime UI effects", () => {
 
   test("Commander recovery UI keeps approval execution and reachable cancellation separate", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "unknown_recovery" })).toMatchObject({ found: false, investigation_id: "unknown_recovery", projection_status: "missing" })
+    expect(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: "unknown_recovery" })).toMatchObject({ status: "not_applicable", investigation_id: "unknown_recovery", approval_state: "none" })
     const unauthorizedOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
       investigation_id: "fake_commander_recovery",
       approval_id: "unapproved",
@@ -6851,6 +6853,13 @@ describe("runtime UI effects", () => {
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
     }) as Record<string, unknown>
     expect(staleApproval).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "unknown_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).toMatchObject({ status: "blocked", events_appended: false })
     const missingAcknowledgement = await runtime.command("runtime.approve_commander_investigation_recovery", {
       investigation_id: "fake_commander_recovery",
       recovery_plan_hash: "fake_recovery_plan_hash",

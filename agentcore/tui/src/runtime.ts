@@ -282,8 +282,12 @@ export class FakeRuntimeClient implements RuntimeClient {
           observed_at: new Date(0).toISOString(),
         }
       case "runtime.get_commander_investigation_recovery": {
+        const investigationId = String(payload.investigation_id ?? "")
+        if (investigationId !== "fake_commander_recovery") {
+          return { found: false, investigation_id: investigationId, projection_status: "missing", recommended_next_operator_action: "none", blockers: [], warnings: ["Commander investigation recovery record was not found"], observed_at: new Date(0).toISOString() }
+        }
         const activeOperation = [...this.commanderRecoveryOperations.values()]
-          .find((item) => item.investigation_id === payload.investigation_id)
+          .find((item) => item.investigation_id === investigationId)
         return {
           ...fakeCommanderRecoverySummary(this.commanderRecoveryApproval),
           found: true,
@@ -294,11 +298,17 @@ export class FakeRuntimeClient implements RuntimeClient {
           ...(activeOperation ? { active_operation: structuredClone(activeOperation) } : {}),
         }
       }
-      case "runtime.preview_commander_investigation_recovery":
-        return fakeCommanderRecoveryPreview(String(payload.investigation_id ?? "fake_commander_recovery"), this.commanderRecoveryApproval)
+      case "runtime.preview_commander_investigation_recovery": {
+        const investigationId = String(payload.investigation_id ?? "")
+        if (investigationId !== "fake_commander_recovery") {
+          return { status: "not_applicable", investigation_id: investigationId, approval_state: "none", blockers: ["Commander investigation recovery record was not found"], warnings: [], provider_called: false, tool_executed: false, network_called: false, events_appended: false }
+        }
+        return fakeCommanderRecoveryPreview(investigationId, this.commanderRecoveryApproval)
+      }
       case "runtime.approve_commander_investigation_recovery": {
         const acknowledgements = isRecord(payload.acknowledgements) ? payload.acknowledgements : {}
-        const approvalReady = payload.recovery_plan_hash === "fake_recovery_plan_hash"
+        const approvalReady = payload.investigation_id === "fake_commander_recovery"
+          && payload.recovery_plan_hash === "fake_recovery_plan_hash"
           && payload.decision === "approve_resume_from_checkpoint"
           && typeof payload.approved_by === "string"
           && payload.approved_by.trim().length > 0
