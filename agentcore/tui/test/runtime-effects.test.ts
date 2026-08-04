@@ -7228,7 +7228,7 @@ describe("runtime UI effects", () => {
     expect(noOperation.commanderRecovery?.operation).toBeNull()
   })
 
-  test("Commander recovery idempotent approval preserves exact execution authority", async () => {
+  test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
       async sendUserMessage(): Promise<void> {},
@@ -7236,6 +7236,14 @@ describe("runtime UI effects", () => {
       async command(name: string): Promise<unknown> {
         if (name === "runtime.approve_commander_investigation_recovery") {
           return { status: "already_recorded", investigation_id: "inv_a", approval_state: "current", events_appended: false }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "approved_waiting_for_execution",
+            investigation_id: "inv_a",
+            recovery_plan_hash: "plan_a",
+            current_approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
+          }
         }
         throw new Error(`unexpected command ${name}`)
       },
@@ -7250,7 +7258,7 @@ describe("runtime UI effects", () => {
         approval: {
           status: "recorded",
           investigation_id: "inv_a",
-          approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" },
+          approval: { approval_id: "stale_approval", approval_hash: "stale_approval_hash" },
         },
         operation: null,
         cancellation: null,
@@ -7263,11 +7271,15 @@ describe("runtime UI effects", () => {
     expect(state.commanderRecovery?.approval).toMatchObject({
       status: "already_recorded",
       events_appended: false,
-      approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" },
+      approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
+    })
+    expect(state.commanderRecovery?.preview).toMatchObject({
+      recovery_plan_hash: "plan_a",
+      current_approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
     })
     expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toMatchObject({
-      approval_id: "approval_a",
-      approval_hash: "approval_hash_a",
+      approval_id: "approval_replacement",
+      approval_hash: "approval_hash_replacement",
     })
   })
 

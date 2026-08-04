@@ -19014,17 +19014,20 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     })
     const targetChanged = commanderRecoveryTargetChanged(current, investigationId)
     const approvalResult = safeOptionalRecord(result)
-    const previousApproval = !targetChanged && current.approval && isRecord(current.approval.approval)
-      ? structuredClone(current.approval.approval)
+    const refreshedPreview = approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval)
+      ? safeOptionalRecord(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: investigationId }))
+      : null
+    const refreshedApproval = refreshedPreview && isRecord(refreshedPreview.current_approval)
+      ? structuredClone(refreshedPreview.current_approval)
       : undefined
-    const approval = approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval) && previousApproval
-      ? { ...approvalResult, approval: previousApproval }
+    const approval = approvalResult && refreshedApproval
+      ? { ...approvalResult, approval: refreshedApproval }
       : approvalResult
     return {
       ...state,
       commanderRecovery: targetChanged
         ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
-        : { ...current, approval, pendingConfirmation: undefined, commandError: undefined },
+        : { ...current, preview: refreshedPreview ?? current.preview, approval, pendingConfirmation: undefined, commandError: undefined },
     }
   }
   if (command === "commander-recovery-execute") {
