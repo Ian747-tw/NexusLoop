@@ -19056,7 +19056,10 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       execution_preparation_hash: requiredRecoveryField(fields, "execution_preparation_hash"),
     })
     const operation = safeOptionalRecord(result)
-    const operationAccepted = operation?.status === "running" || operation?.status === "completed" || operation?.status === "already_started"
+    const operationAccepted = operation?.status === "running"
+      || operation?.status === "completed"
+      || operation?.status === "already_started"
+      || (operation?.status === "failed" && typeof operation.recovery_attempt_id === "string")
     const operationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
     const currentOperationId = typeof current.operation?.operation_id === "string" ? current.operation.operation_id : undefined
     const operationChanged = operationId !== undefined && operationId !== currentOperationId
