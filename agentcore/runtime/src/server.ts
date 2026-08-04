@@ -2877,7 +2877,18 @@ export class RuntimeServer {
       if (!detail.found) return detail
       active = Array.from(this.publicCommanderRecoveryOperations.values()).find((entry) => entry.record.investigation_id === investigationId)
     }
-    if (active && detail.latest_recovery_attempt) active.record.recovery_attempt_id = detail.latest_recovery_attempt.recovery_attempt_id
+    const matchingActiveAttempt = active?.record.status === "running"
+      && detail.latest_recovery_attempt !== undefined
+      && active.record.approval_id === detail.latest_recovery_attempt.approval_id
+      && (active.record.recovery_attempt_id === undefined || active.record.recovery_attempt_id === detail.latest_recovery_attempt.recovery_attempt_id)
+    if (matchingActiveAttempt && active) {
+      active.record.recovery_attempt_id = detail.latest_recovery_attempt!.recovery_attempt_id
+      detail = {
+        ...detail,
+        human_review_required: false,
+        recommended_next_operator_action: "await_recovery_completion",
+      }
+    }
     const recent = Array.from(this.recentPublicCommanderRecoveryOperations.values()).reverse().find((record) => record.investigation_id === investigationId)
     const operation = active?.record ?? recent
     return operation ? { ...detail, active_operation: cloneRecoveryOperation(operation) } : detail
@@ -2983,14 +2994,7 @@ export class RuntimeServer {
         if (!result.approval_consumed && !result.recovery_attempt_id) {
           try {
             const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-            const approval = source?.latest_recovery_approval
-            if (source?.projection_status === "ready"
-              && !source.terminal
-              && !source.current_recovery_attempt
-              && !source.latest_recovery_attempt
-              && (source.recovery_attempts?.length ?? 0) === 0
-              && approval
-              && !approval.consumed) {
+            if (recoveryOperationMayBeReplaced(source)) {
               this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
             }
           } catch {
@@ -3019,14 +3023,7 @@ export class RuntimeServer {
             ?? source?.latest_recovery_attempt?.recovery_attempt_id
           if (durableAttemptId) record.recovery_attempt_id = durableAttemptId
           else delete record.recovery_attempt_id
-          const approval = source?.latest_recovery_approval
-          if (source?.projection_status === "ready"
-            && !source.terminal
-            && !source.current_recovery_attempt
-            && !source.latest_recovery_attempt
-            && (source.recovery_attempts?.length ?? 0) === 0
-            && approval
-            && !approval.consumed) {
+          if (recoveryOperationMayBeReplaced(source)) {
             this.replaceablePublicCommanderRecoveryOperationIds.add(record.operation_id)
           }
         } catch {
@@ -6350,6 +6347,16 @@ function sameRecoveryAuthority(operation: CommanderRecoveryOperation, input: Com
     && operation.approval_hash === input.approval_hash
     && operation.recovery_plan_hash === input.recovery_plan_hash
     && operation.execution_preparation_hash === input.execution_preparation_hash
+}
+
+function recoveryOperationMayBeReplaced(source: CommanderInvestigationRecoverySource | undefined): boolean {
+  return source?.projection_status === "ready"
+    && source.record?.status === "running"
+    && source.latest_checkpoint !== undefined
+    && !source.terminal
+    && !source.current_recovery_attempt
+    && !source.latest_recovery_attempt
+    && (source.recovery_attempts?.length ?? 0) === 0
 }
 
 function cloneRecoveryOperation(operation: CommanderRecoveryOperation): CommanderRecoveryOperation {

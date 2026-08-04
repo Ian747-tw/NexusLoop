@@ -128,7 +128,8 @@ function detailFromSource(source: CommanderInvestigationRecoverySource, observed
 function recommendedAction(source: CommanderInvestigationRecoverySource): string {
   if (source.projection_status !== "ready") return "inspect_corrupt_record"
   if (source.terminal) return "none"
-  if (source.current_recovery_attempt) return "await_recovery_completion"
+  // Journal state cannot prove that RuntimeServer still owns live execution.
+  if (source.current_recovery_attempt) return "human_review_required"
   if (source.consumed_recovery_approval) return "human_review_required"
   if (source.pending_model_step) return "preview_uncertain_provider_recovery"
   if (source.latest_checkpoint) return "preview_checkpoint_recovery"
