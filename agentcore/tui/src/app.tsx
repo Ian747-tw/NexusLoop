@@ -52,6 +52,11 @@ function operatorField(value: Record<string, unknown>, key: string): string {
     : "none"
 }
 
+function operatorDiagnostics(value: Record<string, unknown>, key: "blockers" | "warnings"): string[] {
+  const items = value[key]
+  return Array.isArray(items) ? items.slice(0, 4).map((item) => redactText(String(item)).slice(0, 240)) : []
+}
+
 function Panel(props: {
   title: string
   focus: FocusTarget
@@ -310,7 +315,13 @@ function ApprovalPanel(props: { state: UiState }) {
               {(record) => <text fg={color.text}>{operatorField(record, "investigation_id")} [{operatorField(record, "recovery_state")}] approval={operatorField(record, "approval_state")}</text>}
             </For>
             <Show when={value().selected}>
-              {(selected) => <text fg={color.text}>selected {operatorField(selected(), "investigation_id")} next={operatorField(selected(), "recommended_next_operator_action")}</text>}
+              {(selected) => (
+                <>
+                  <text fg={color.text}>selected {operatorField(selected(), "investigation_id")} found={operatorField(selected(), "found")} projection={operatorField(selected(), "projection_status")} status={operatorField(selected(), "record_status")} next={operatorField(selected(), "recommended_next_operator_action")}</text>
+                  <For each={operatorDiagnostics(selected(), "blockers")}>{(item) => <text fg={color.warning}>blocker: {item}</text>}</For>
+                  <For each={operatorDiagnostics(selected(), "warnings")}>{(item) => <text fg={color.muted}>warning: {item}</text>}</For>
+                </>
+              )}
             </Show>
             <Show when={value().preview}>
               {(preview) => (

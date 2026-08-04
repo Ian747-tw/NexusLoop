@@ -298,6 +298,7 @@ export class FakeRuntimeClient implements RuntimeClient {
         return {
           ...summary,
           found: true,
+          human_review_required: activeOperation ? false : summary.human_review_required,
           recommended_next_operator_action: summary.recovery_execution_in_progress
             ? "await_recovery_completion"
             : summary.approval_state === "current"

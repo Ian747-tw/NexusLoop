@@ -6953,6 +6953,7 @@ describe("runtime UI effects", () => {
     expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).toMatchObject({
       approval_state: "consumed",
       recovery_execution_in_progress: true,
+      human_review_required: false,
       recommended_next_operator_action: "await_recovery_completion",
     })
     expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
@@ -7376,6 +7377,55 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("operation=blocked_operation status=blocked")
     expect(snapshot).toContain("operation_error=provider readiness changed")
     expect(snapshot).not.toContain("operator-secret-value")
+  })
+
+  test("Commander recovery detail renders missing and terminal diagnostics", () => {
+    const missingState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: {
+          found: false,
+          investigation_id: "missing_recovery",
+          projection_status: "missing",
+          recommended_next_operator_action: "none",
+          blockers: ["missing blocker Authorization: Bearer hidden-blocker"],
+          warnings: ["record was not found token=hidden-warning"],
+        },
+        preview: null,
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }
+    const missingSnapshot = layoutSnapshot(missingState)
+    expect(missingSnapshot).toContain("selected=missing_recovery found=false projection=missing status=none next=none")
+    expect(missingSnapshot).toContain("detail_blocker=missing blocker")
+    expect(missingSnapshot).toContain("detail_warning=record was not found")
+    expect(missingSnapshot).not.toContain("hidden-blocker")
+    expect(missingSnapshot).not.toContain("hidden-warning")
+
+    const terminalState: UiState = {
+      ...missingState,
+      commanderRecovery: {
+        ...missingState.commanderRecovery!,
+        selected: {
+          found: true,
+          investigation_id: "failed_recovery",
+          projection_status: "ready",
+          record_status: "failed",
+          terminal: true,
+          recommended_next_operator_action: "none",
+          blockers: ["terminal persistence failed"],
+          warnings: ["approval consumed; human review required"],
+        },
+      },
+    }
+    const terminalSnapshot = layoutSnapshot(terminalState)
+    expect(terminalSnapshot).toContain("selected=failed_recovery found=true projection=ready status=failed next=none")
+    expect(terminalSnapshot).toContain("detail_blocker=terminal persistence failed")
+    expect(terminalSnapshot).toContain("detail_warning=approval consumed; human review required")
   })
 
   test("Commander recovery slash parsing rejects generic confirmation and implicit acknowledgements", async () => {

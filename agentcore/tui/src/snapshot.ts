@@ -134,7 +134,11 @@ function commanderRecoveryLines(state: UiState): string[] {
     out.push(`    - ${safeField(item, "investigation_id")} status=${safeField(item, "record_status")} recovery=${safeField(item, "recovery_state")} approval=${safeField(item, "approval_state")}`)
   }
   if (recovery.selected) {
-    out.push(`  selected=${safeField(recovery.selected, "investigation_id")} projection=${safeField(recovery.selected, "projection_status")} next=${safeField(recovery.selected, "recommended_next_operator_action")}`)
+    out.push(`  selected=${safeField(recovery.selected, "investigation_id")} found=${safeField(recovery.selected, "found")} projection=${safeField(recovery.selected, "projection_status")} status=${safeField(recovery.selected, "record_status")} next=${safeField(recovery.selected, "recommended_next_operator_action")}`)
+    const blockers = recovery.selected.blockers
+    if (Array.isArray(blockers)) out.push(...blockers.slice(0, 4).map((item) => `  detail_blocker=${preview(redactText(String(item)))}`))
+    const warnings = recovery.selected.warnings
+    if (Array.isArray(warnings)) out.push(...warnings.slice(0, 4).map((item) => `  detail_warning=${preview(redactText(String(item)))}`))
   }
   if (recovery.preview) {
     out.push(`  preview=${safeField(recovery.preview, "status")} kind=${safeField(recovery.preview, "recovery_kind")} plan=${abbreviatedField(recovery.preview, "recovery_plan_hash")}`)
