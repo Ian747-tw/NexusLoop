@@ -335,15 +335,17 @@ export class FakeRuntimeClient implements RuntimeClient {
           return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["recovery approval was consumed by the existing one-shot attempt"], events_appended: false, provider_called: false, network_called: false }
         }
         const existingApproval = this.commanderRecoveryApproval
-        const humanNotePreview = typeof payload.human_note === "string" && payload.human_note.trim().length > 0
-          ? redactText(payload.human_note.trim()).slice(0, 500)
+        const normalizedHumanNote = typeof payload.human_note === "string" && payload.human_note.trim().length > 0
+          ? redactText(payload.human_note.trim())
           : undefined
+        const humanNotePreview = normalizedHumanNote?.slice(0, 500)
+        const humanNoteHash = createHash("sha256").update(normalizedHumanNote ?? "").digest("hex")
         if (existingApproval
           && existingApproval.investigation_id === payload.investigation_id
           && existingApproval.recovery_plan_hash === payload.recovery_plan_hash
           && existingApproval.decision === payload.decision
           && existingApproval.approved_by === payload.approved_by
-          && existingApproval.human_note_preview === humanNotePreview) {
+          && existingApproval.human_note_hash === humanNoteHash) {
           return {
             status: "already_recorded",
             investigation_id: payload.investigation_id,
@@ -367,6 +369,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           approved_by: String(payload.approved_by ?? "fake_operator"),
           recovery_plan_hash: String(payload.recovery_plan_hash ?? "fake_recovery_plan_hash"),
           recovery_basis_hash: "fake_recovery_basis_hash",
+          human_note_hash: humanNoteHash,
           ...(humanNotePreview ? { human_note_preview: humanNotePreview } : {}),
           approved_at: new Date(0).toISOString(),
         }

@@ -7316,6 +7316,15 @@ describe("runtime UI effects", () => {
       events_appended: true,
       approval: { approval_id: "fake_approval_1", approval_sequence: 1, human_note_preview: "reviewed changed checkpoint" },
     })
+    const sharedPreview = "x".repeat(500)
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: `${sharedPreview}A`,
+    })).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_2", approval_sequence: 2, human_note_preview: sharedPreview } })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: `${sharedPreview}B`,
+    })).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_3", approval_sequence: 3, human_note_preview: sharedPreview } })
   })
 
   test("Commander recovery approval display exposes bounded blocked outcomes", () => {
@@ -7600,17 +7609,17 @@ describe("runtime UI effects", () => {
     const noted = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
       type: "send-command",
       command: "commander-recovery-approve",
-      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "checkpoint", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "ticket=OPS-12", "before", "retry", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
     })
     expect(noted.commanderRecovery?.approval).toMatchObject({
       status: "recorded",
-      approval: { human_note_preview: "reviewed checkpoint" },
+      approval: { human_note_preview: "reviewed ticket=OPS-12 before retry" },
     })
 
     const unknownAfterNote = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
       type: "send-command",
       command: "commander-recovery-approve",
-      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "unknown_field=value", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+      args: ["unknown_field=value", "investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
     })
     expect(unknownAfterNote.commanderRecovery?.commandError).toContain("unknown_field")
   })

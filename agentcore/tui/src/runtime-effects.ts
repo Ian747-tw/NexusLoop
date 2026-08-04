@@ -19108,6 +19108,7 @@ function commanderRecoveryTargetChanged(current: CommanderRecoveryUiState, inves
 
 function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>, freeText = new Set<string>()): Record<string, string> {
   const result: Record<string, string> = {}
+  const knownKeys = new Set(allowed)
   for (let argIndex = 0; argIndex < args.length; argIndex += 1) {
     const arg = args[argIndex] ?? ""
     const index = arg.indexOf("=")
@@ -19115,7 +19116,7 @@ function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>, freeTex
     const key = arg.slice(0, index)
     const parts = [arg.slice(index + 1)]
     if (freeText.has(key)) {
-      while (argIndex + 1 < args.length && !(args[argIndex + 1] ?? "").includes("=")) {
+      while (argIndex + 1 < args.length && !looksLikeAnyKeyValueArg(args[argIndex + 1] ?? "", knownKeys)) {
         argIndex += 1
         parts.push(args[argIndex] ?? "")
       }
