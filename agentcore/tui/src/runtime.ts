@@ -324,6 +324,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           && payload.decision === "approve_resume_from_checkpoint"
           && typeof payload.approved_by === "string"
           && payload.approved_by.trim().length > 0
+          && (payload.human_note === undefined || (typeof payload.human_note === "string" && payload.human_note.length <= 1000))
           && acknowledgements.fresh_context_required === true
           && acknowledgements.exact_replay_unavailable === true
           && acknowledgements.provider_request_replay_forbidden === true

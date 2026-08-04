@@ -10792,7 +10792,7 @@ describe("Commander in-memory investigation controller", () => {
     })
   })
 
-  test("public cancellation requires the prepared attempt identity while recovery start is committing", async () => {
+  test("public cancellation withholds attempt identity until recovery start is durable", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-committing-start-"))
     await writeApprovedSpec(projectDir)
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch while recovery start is committing") }])
@@ -10816,22 +10816,14 @@ describe("Commander in-memory investigation controller", () => {
     const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
     await entered
 
-    const missingAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
-      investigation_id: authority.investigation_id,
-      operation_id: operation.operation_id,
-      approval_id: authority.transaction_input.approval_id,
-    }) as any
-    expect(missingAttempt).toMatchObject({ status: "operation_identity_mismatch", cancellation_requested: false })
-    expect(typeof missingAttempt.recovery_attempt_id).toBe("string")
-    expect(activeEntry.record.cancellation_requested).toBe(false)
-
     const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
       investigation_id: authority.investigation_id,
       operation_id: operation.operation_id,
       approval_id: authority.transaction_input.approval_id,
-      recovery_attempt_id: missingAttempt.recovery_attempt_id,
     }) as any
-    expect(cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true, recovery_attempt_id: missingAttempt.recovery_attempt_id })
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true })
+    expect(cancellation.recovery_attempt_id).toBeUndefined()
+    expect(activeEntry.record.recovery_attempt_id).toBeUndefined()
     releaseAppend()
     await activeEntry.promise
 

@@ -7927,6 +7927,10 @@ describe("runtime UI effects", () => {
       human_note: "reviewed original checkpoint",
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
     }
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: "x".repeat(1001),
+    })).toMatchObject({ status: "blocked", events_appended: false })
     expect(await runtime.command("runtime.approve_commander_investigation_recovery", input)).toMatchObject({
       status: "recorded",
       events_appended: true,

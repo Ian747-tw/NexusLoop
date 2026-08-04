@@ -132,7 +132,6 @@ export class CommanderInvestigationRecoveryTransactionService {
         if (currentAttempt.attempt_hash !== attempt.attempt_hash || currentAttempt.recovery_attempt_id !== attempt.recovery_attempt_id) {
           throw new CommanderInvestigationJournalConflictError("recovery attempt authority changed at the transaction append boundary")
         }
-        operational.on_recovery_attempt_prepared?.(currentAttempt.recovery_attempt_id)
         return { recovery_attempt: currentAttempt }
       }, { abort_signal: abortSignal })
       recoveryStartEventId = appended.event_id
@@ -149,6 +148,7 @@ export class CommanderInvestigationRecoveryTransactionService {
         })
       }
     }
+    operational.on_recovery_attempt_prepared?.(attempt.recovery_attempt_id)
 
     let run: CommanderInvestigationJournalRun | undefined
     let controllerResult: CommanderInvestigationResult | undefined
