@@ -19096,11 +19096,15 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
         ...(typeof finalCancellation.recovery_attempt_id === "string" ? { recovery_attempt_id: finalCancellation.recovery_attempt_id } : {}),
       }
     : operation
+  const durableAttemptObserved = shown?.approval_state === "consumed"
+    || isRecord(shown?.latest_recovery_attempt)
+    || typeof activeAttemptId === "string"
+    || typeof finalCancellation?.recovery_attempt_id === "string"
   return {
     ...state,
     commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
       ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined }
-      : { ...current, selected: shown ?? current.selected, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined },
+      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined },
   }
 }
 

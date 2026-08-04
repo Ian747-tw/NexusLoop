@@ -7439,6 +7439,59 @@ describe("runtime UI effects", () => {
     expect(state.commanderRecovery).toMatchObject({ operation: null, cancellation: { status: "not_active" } })
   })
 
+  test("Commander recovery cancellation clears authority consumed by another client", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_a",
+            approval_state: "consumed",
+            latest_recovery_attempt: { recovery_attempt_id: "attempt_a", approval_id: "approval_a" },
+            active_operation: { operation_id: "operation_a", investigation_id: "inv_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a", status: "running" },
+          }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return { status: "cancellation_requested", cancellation_requested: true, recovery_attempt_id: "attempt_a" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a", approval_state: "current" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_a", execution_preparation_hash: "preparation_a" },
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_a", "operation_id=operation_a", "approval_id=approval_a", "recovery_attempt_id=attempt_a"],
+    })
+    expect(state.commanderRecovery).toMatchObject({
+      selected: { approval_state: "consumed" },
+      preview: null,
+      approval: null,
+      operation: { recovery_attempt_id: "attempt_a", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested" },
+    })
+    expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toEqual({
+      recovery_plan_hash: "none",
+      execution_preparation_hash: "none",
+      recovery_packet_hash: "none",
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
   test("Commander recovery cancellation refreshes attempt identity and clears cross-investigation operations", async () => {
     const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
     const runtime: RuntimeClient = {
