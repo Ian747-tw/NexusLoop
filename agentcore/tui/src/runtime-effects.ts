@@ -19074,7 +19074,11 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
   }
   const shownOperation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
-  const cachedOperation = current.operation?.investigation_id === investigationId ? current.operation : null
+  const cachedOperation = current.operation?.investigation_id === investigationId
+    && (!completeIdentitySupplied
+      || (current.operation.operation_id === fields.operation_id && current.operation.approval_id === fields.approval_id))
+    ? current.operation
+    : null
   let operation = completeIdentitySupplied ? cachedOperation : shownOperation
   const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
   const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined

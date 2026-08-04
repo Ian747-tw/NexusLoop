@@ -7301,6 +7301,39 @@ describe("runtime UI effects", () => {
       commandError: "projection [REDACTED]",
     })
     expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
+
+    const staleCachedOperation = await applyRuntimeUiEffect({
+      ...state,
+      commanderRecovery: {
+        ...state.commanderRecovery!,
+        operation: {
+          investigation_id: "inv_cancel_without_show",
+          operation_id: "stale_operation",
+          approval_id: "stale_approval",
+          recovery_attempt_id: "stale_attempt",
+          status: "running",
+        },
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_without_show",
+        "operation_id=operation_cancel_without_show",
+        "approval_id=approval_cancel_without_show",
+        "recovery_attempt_id=attempt_cancel_without_show",
+      ],
+    })
+    expect(staleCachedOperation.commanderRecovery).toMatchObject({
+      operation: null,
+      cancellation: {
+        status: "cancellation_requested",
+        operation_id: "operation_cancel_without_show",
+        approval_id: "approval_cancel_without_show",
+        recovery_attempt_id: "attempt_cancel_without_show",
+      },
+    })
+    expect(JSON.stringify(staleCachedOperation.commanderRecovery)).not.toContain("stale_attempt")
   })
 
   test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
