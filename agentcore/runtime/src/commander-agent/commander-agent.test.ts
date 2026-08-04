@@ -5774,6 +5774,17 @@ describe("Commander in-memory investigation controller", () => {
     expect(interiorMalformedSource?.record?.integrity_errors.join("\n")).toContain("unassignable Commander journal event")
     const interiorMalformedPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_interior_malformed", include_current_continuity: false })
     expect(interiorMalformedPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
+    const interiorMalformedList = await server.listCommanderInvestigationRecoveries({ limit: 100 })
+    expect(interiorMalformedList.items).toContainEqual(expect.objectContaining({
+      investigation_id: "inv_recovery_interior_malformed",
+      projection_status: "corrupt",
+      recovery_state: "no_checkpoint_resume_not_implemented",
+      human_review_required: true,
+    }))
+    expect(interiorMalformedList.items).not.toContainEqual(expect.objectContaining({
+      investigation_id: "inv_recovery_interior_malformed",
+      projection_status: "ready",
+    }))
 
     await startOnly("inv_recovery_indeterminate_malformed", 8)
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_command\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_indeterminate_malformed","timestamp":"2026-01-01T00:04:30.000Z"}\n', { flag: "a" })

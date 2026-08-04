@@ -317,9 +317,16 @@ export class CommanderInvestigationJournalService {
   }
 
   private async listProjected(options: CommanderInvestigationJournalListOptions, maxLimit: number, defaultLimit: number): Promise<CommanderInvestigationRecord[]> {
-    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
+    const journal = await this.readJournalEventsWithDiagnostics()
+    const projection = projectCommanderInvestigationJournal(journal.events)
     const limit = Math.max(1, Math.min(maxLimit, Number.isInteger(options.limit) ? Number(options.limit) : defaultLimit))
     return projection.records
+      .map((record) => {
+        const reason = journal.unassignable_dropped_commander_event
+          ? "unassignable Commander journal event prevents authoritative recovery"
+          : journal.dropped_commander_events_by_investigation_id.get(record.investigation_id)?.[0]
+        return reason ? recoveryRecordBlockedByDroppedCommanderEvent(record, reason) : record
+      })
       .filter((record) => !options.status || record.status === options.status)
       .filter((record) => !options.statuses?.length || options.statuses.includes(record.status))
       .filter((record) => !options.recovery_state || record.recovery_state === options.recovery_state)
@@ -1199,17 +1206,7 @@ function recoverySourceBlockedByDroppedCommanderEvent(source: CommanderInvestiga
     })
     return blocked
   }
-  const record: CommanderInvestigationRecord = {
-    ...source.record,
-    projection_status: "corrupt" as const,
-    checkpoint_available: false,
-    uncertain_provider_outcome: false,
-    recovery_state: "no_checkpoint_resume_not_implemented" as const,
-    integrity_errors: [...source.record.integrity_errors, integrityError].slice(0, 24),
-    warnings: [...source.record.warnings, "Commander recovery preview blocked by a dropped Commander journal event"].slice(0, 12),
-    record_hash: "",
-  }
-  record.record_hash = stableHash({ ...record, record_hash: "" })
+  const record = recoveryRecordBlockedByDroppedCommanderEvent(source.record, integrityError)
   const blocked = {
     ...source,
     projection_status: "corrupt" as const,
@@ -1228,6 +1225,21 @@ function recoverySourceBlockedByDroppedCommanderEvent(source: CommanderInvestiga
     source_event_count: blocked.source_event_count,
     dropped_commander_journal_event: true,
   })
+  return blocked
+}
+
+function recoveryRecordBlockedByDroppedCommanderEvent(record: CommanderInvestigationRecord, reason: string): CommanderInvestigationRecord {
+  const blocked: CommanderInvestigationRecord = {
+    ...record,
+    projection_status: "corrupt",
+    checkpoint_available: false,
+    uncertain_provider_outcome: false,
+    recovery_state: "no_checkpoint_resume_not_implemented",
+    integrity_errors: [...record.integrity_errors, bound(reason, 240)].slice(0, 24),
+    warnings: [...record.warnings, "Commander recovery preview blocked by a dropped Commander journal event"].slice(0, 12),
+    record_hash: "",
+  }
+  blocked.record_hash = stableHash({ ...blocked, record_hash: "" })
   return blocked
 }
 
