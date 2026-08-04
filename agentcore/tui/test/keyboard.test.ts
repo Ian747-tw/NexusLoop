@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test"
-import { applyKeyCommand, applyKeyCommandWithEffects } from "../src/keyboard"
+import { applyKeyCommand, applyKeyCommandWithEffects, parseRuntimeCommand } from "../src/keyboard"
 import { initialState, type UiState } from "../src/state"
 
 describe("TUI keyboard command model", () => {
+  test("recovery approval slash parsing preserves the terminal raw note suffix", () => {
+    expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv", "confirm=APPROVE", "human_note=a  b  "],
+    })
+    expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=")).toEqual({
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv", "confirm=APPROVE", "human_note="],
+    })
+  })
   test("select Initialize enters onboarding shell", () => {
     const state = { ...initialState("/tmp/demo"), screen: "init" as const, focus: "init-choice" as const }
     const next = applyKeyCommand(state, { type: "submit" })

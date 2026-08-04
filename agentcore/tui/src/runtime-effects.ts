@@ -19007,7 +19007,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       recovery_plan_hash: requiredRecoveryField(fields, "recovery_plan_hash"),
       decision,
       approved_by: requiredRecoveryField(fields, "approved_by"),
-      ...(fields.human_note ? { human_note: fields.human_note } : {}),
+      ...(Object.hasOwn(fields, "human_note") ? { human_note: fields.human_note } : {}),
       acknowledgements: {
         fresh_context_required: requiredTrueField(fields, "fresh_context_required"),
         exact_replay_unavailable: requiredTrueField(fields, "exact_replay_unavailable"),
@@ -19160,8 +19160,8 @@ function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>, freeTex
         parts.push(args[argIndex] ?? "")
       }
     }
-    const value = parts.join(" ").trim()
-    if (!allowed.has(key) || !value || result[key] !== undefined) throw new Error(`invalid Commander recovery argument: ${redactText(key)}`)
+    const value = freeText.has(key) ? parts.join(" ") : parts.join(" ").trim()
+    if (!allowed.has(key) || (!freeText.has(key) && !value) || result[key] !== undefined) throw new Error(`invalid Commander recovery argument: ${redactText(key)}`)
     result[key] = value
   }
   return result

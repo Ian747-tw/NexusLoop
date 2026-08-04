@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "../src/commander-recovery-view"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
+import { parseRuntimeCommand } from "../src/keyboard"
 import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
 import { snapshotUiState } from "../src/state-snapshot"
@@ -8401,5 +8402,17 @@ describe("runtime UI effects", () => {
       args: ["unknown_field=value", "investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
     })
     expect(unknownAfterNote.commanderRecovery?.commandError).toContain("unknown_field")
+
+    const rawNoteRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const rawBase = "/commander-recovery-approve investigation_id=fake_commander_recovery recovery_plan_hash=fake_recovery_plan_hash decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true confirm=APPROVE"
+    const spacedNote = parseRuntimeCommand(`${rawBase} human_note=a  b`)!
+    const spacedState = await applyRuntimeUiEffect(state, rawNoteRuntime, { type: "send-command", command: spacedNote.command, args: spacedNote.args })
+    expect(spacedState.commanderRecovery?.approval).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval", human_note_preview: "a b" } })
+    const collapsedNote = parseRuntimeCommand(`${rawBase} human_note=a b`)!
+    const collapsedState = await applyRuntimeUiEffect(state, rawNoteRuntime, { type: "send-command", command: collapsedNote.command, args: collapsedNote.args })
+    expect(collapsedState.commanderRecovery?.approval).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_1", human_note_preview: "a b" } })
+    const emptyNote = parseRuntimeCommand(`${rawBase} human_note=`)!
+    const emptyState = await applyRuntimeUiEffect(state, rawNoteRuntime, { type: "send-command", command: emptyNote.command, args: emptyNote.args })
+    expect(emptyState.commanderRecovery?.approval).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_2" } })
   })
 })

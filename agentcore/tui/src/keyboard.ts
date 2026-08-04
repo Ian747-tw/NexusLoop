@@ -149,6 +149,22 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
 }
 
 export function parseRuntimeCommand(value: string): { command: string; args: string[] } | undefined {
+  const leadingTrimmed = value.trimStart()
+  const commandPrefix = /^\/([a-z][a-z-]*)/i.exec(leadingTrimmed)
+  if (commandPrefix?.[1]?.toLowerCase() === "commander-recovery-approve") {
+    const command = commandPrefix[1].toLowerCase()
+    const remainder = leadingTrimmed.slice(commandPrefix[0].length)
+    if (remainder && !/^\s/.test(remainder)) return undefined
+    const rawRest = remainder.replace(/^\s+/, "")
+    const noteMatch = /(^|\s)human_note=/.exec(rawRest)
+    if (!noteMatch) return { command, args: rawRest.trim() ? rawRest.trim().split(/\s+/) : [] }
+    const noteStart = noteMatch.index + noteMatch[1].length
+    const prefix = rawRest.slice(0, noteMatch.index).trim()
+    return {
+      command,
+      args: [...(prefix ? prefix.split(/\s+/) : []), rawRest.slice(noteStart)],
+    }
+  }
   const trimmed = value.trim()
   const match = /^\/([a-z][a-z-]*)(?:\s+(.+))?$/i.exec(trimmed)
   const command = match?.[1]?.toLowerCase()
