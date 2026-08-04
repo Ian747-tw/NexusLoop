@@ -19109,7 +19109,13 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   const finalCancellation = safeOptionalRecord(result)
   const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
-  const updatedOperation = cancellationAccepted && operation
+  const cancellationMatchesOperation = cancellationAccepted
+    && operation
+    && typeof finalCancellation.operation_id === "string"
+    && typeof finalCancellation.approval_id === "string"
+    && finalCancellation.operation_id === operation.operation_id
+    && finalCancellation.approval_id === operation.approval_id
+  const updatedOperation = cancellationMatchesOperation
     ? {
         ...operation,
         cancellation_requested: true,

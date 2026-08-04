@@ -7455,6 +7455,89 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
   })
 
+  test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {
+    const calls: string[] = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_replaced",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            recovery_attempt_id: "attempt_a",
+            cancellation_requested: true,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_cancel_replaced",
+            active_operation: {
+              investigation_id: "inv_cancel_replaced",
+              operation_id: "operation_b",
+              approval_id: "approval_b",
+              recovery_attempt_id: "attempt_b",
+              status: "running",
+              cancellation_requested: false,
+            },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_replaced" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_replaced",
+          operation_id: "operation_a",
+          approval_id: "approval_a",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_replaced",
+        "operation_id=operation_a",
+        "approval_id=approval_a",
+      ],
+    })
+
+    expect(calls).toEqual([
+      "runtime.cancel_commander_investigation_recovery",
+      "runtime.get_commander_investigation_recovery",
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: {
+        operation_id: "operation_b",
+        approval_id: "approval_b",
+        recovery_attempt_id: "attempt_b",
+        cancellation_requested: false,
+      },
+      cancellation: {
+        status: "cancellation_requested",
+        operation_id: "operation_a",
+        approval_id: "approval_a",
+        recovery_attempt_id: "attempt_a",
+      },
+    })
+  })
+
   test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
@@ -7933,7 +8016,14 @@ describe("runtime UI effects", () => {
           }
         }
         if (name === "runtime.cancel_commander_investigation_recovery") {
-          return { status: "cancellation_requested", cancellation_requested: true, recovery_attempt_id: "attempt_a" }
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_a",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: true,
+            recovery_attempt_id: "attempt_a",
+          }
         }
         throw new Error(`unexpected command ${name}`)
       },
@@ -7993,8 +8083,24 @@ describe("runtime UI effects", () => {
         }
         if (name === "runtime.preview_commander_investigation_recovery") return { investigation_id: payload?.investigation_id, recovery_plan_hash: "plan_b" }
         if (name === "runtime.cancel_commander_investigation_recovery") {
-          if (payload?.recovery_attempt_id !== "attempt_a") return { status: "operation_identity_mismatch", cancellation_requested: false, recovery_attempt_id: "attempt_a" }
-          return { status: "cancellation_requested", cancellation_requested: true, recovery_attempt_id: "attempt_a" }
+          if (payload?.recovery_attempt_id !== "attempt_a") {
+            return {
+              status: "operation_identity_mismatch",
+              investigation_id: "inv_a",
+              operation_id: "operation_a",
+              approval_id: "approval_a",
+              cancellation_requested: false,
+              recovery_attempt_id: "attempt_a",
+            }
+          }
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_a",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: true,
+            recovery_attempt_id: "attempt_a",
+          }
         }
         throw new Error(`unexpected command ${name}`)
       },
