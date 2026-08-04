@@ -11338,6 +11338,7 @@ function fakeCommanderRecoveryPreview(investigationId: string, approval: Record<
     investigation_id: investigationId,
     recovery_kind: "checkpoint",
     recovery_plan_hash: "fake_recovery_plan_hash",
+    recovery_packet: { packet_hash: "fake_recovery_packet_hash" },
     execution_preparation_hash: "fake_execution_preparation_hash",
     checkpoint: { checkpoint_id: "fake_checkpoint", checkpoint_hash: "fake_checkpoint_hash" },
     exact_replay_supported: false,

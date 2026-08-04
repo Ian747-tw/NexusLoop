@@ -16,6 +16,9 @@ export function commanderRecoveryAuthorityValues(recovery: CommanderRecoveryUiSt
   approval_hash: string
 } {
   const preview = recovery.preview ?? {}
+  const recoveryPacket = typeof preview.recovery_packet === "object" && preview.recovery_packet !== null && !Array.isArray(preview.recovery_packet)
+    ? preview.recovery_packet as Record<string, unknown>
+    : {}
   const approvalResult = recovery.approval ?? {}
   const recordedApproval = typeof approvalResult.approval === "object" && approvalResult.approval !== null && !Array.isArray(approvalResult.approval)
     ? approvalResult.approval as Record<string, unknown>
@@ -27,7 +30,7 @@ export function commanderRecoveryAuthorityValues(recovery: CommanderRecoveryUiSt
   return {
     recovery_plan_hash: authorityField(preview, "recovery_plan_hash"),
     execution_preparation_hash: authorityField(preview, "execution_preparation_hash"),
-    recovery_packet_hash: authorityField(preview, "recovery_packet_hash"),
+    recovery_packet_hash: authorityField(recoveryPacket, "packet_hash"),
     approval_id: authorityField(approval, "approval_id"),
     approval_hash: authorityField(approval, "approval_hash"),
   }

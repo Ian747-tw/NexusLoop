@@ -7344,7 +7344,12 @@ describe("runtime UI effects", () => {
     const approvalHash = "approval_hash_" + "e".repeat(64)
     expect(commanderRecoveryAuthorityValues({
       records: [],
-      preview: { recovery_plan_hash: plan, execution_preparation_hash: preparation, recovery_packet_hash: packet },
+      preview: {
+        recovery_plan_hash: plan,
+        execution_preparation_hash: preparation,
+        recovery_packet: { packet_hash: packet },
+        recovery_packet_hash: "top_level_packet_hash_is_not_authority",
+      },
       approval: { approval: { approval_id: approvalId, approval_hash: approvalHash } },
     })).toEqual({
       recovery_plan_hash: plan,
@@ -7358,7 +7363,7 @@ describe("runtime UI effects", () => {
       preview: {
         recovery_plan_hash: plan,
         execution_preparation_hash: preparation,
-        recovery_packet_hash: packet,
+        recovery_packet: { packet_hash: packet },
         current_approval: { approval_id: approvalId, approval_hash: approvalHash },
       },
       approval: null,
@@ -7369,7 +7374,7 @@ describe("runtime UI effects", () => {
       preview: {
         recovery_plan_hash: plan,
         execution_preparation_hash: preparation,
-        recovery_packet_hash: packet,
+        recovery_packet: { packet_hash: packet },
         current_approval: { approval_id: "current_approval", approval_hash: "current_approval_hash" },
       },
       approval: { approval: { approval_id: "stale_transient_approval", approval_hash: "stale_transient_hash" } },
