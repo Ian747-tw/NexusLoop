@@ -273,14 +273,20 @@ export class FakeRuntimeClient implements RuntimeClient {
           scan_limit: 800,
           returned_count: 1,
         }, "runtime_authoritative", false)
-      case "runtime.list_commander_investigation_recoveries":
+      case "runtime.list_commander_investigation_recoveries": {
+        const summary = fakeCommanderRecoverySummary(this.commanderRecoveryApproval)
+        const matches = (typeof payload.status !== "string" || summary.record_status === payload.status)
+          && (typeof payload.recovery_state !== "string" || summary.recovery_state === payload.recovery_state)
+          && (typeof payload.approval_state !== "string" || summary.approval_state === payload.approval_state)
+        const items = matches ? [summary] : []
         return {
-          items: [fakeCommanderRecoverySummary(this.commanderRecoveryApproval)],
-          count: 1,
+          items,
+          count: items.length,
           limit: readLimit(payload.limit, 20),
           current_compatibility_checked: false,
           observed_at: new Date(0).toISOString(),
         }
+      }
       case "runtime.get_commander_investigation_recovery": {
         const investigationId = String(payload.investigation_id ?? "")
         if (investigationId !== "fake_commander_recovery") {
@@ -288,10 +294,15 @@ export class FakeRuntimeClient implements RuntimeClient {
         }
         const activeOperation = [...this.commanderRecoveryOperations.values()]
           .find((item) => item.investigation_id === investigationId)
+        const summary = fakeCommanderRecoverySummary(this.commanderRecoveryApproval)
         return {
-          ...fakeCommanderRecoverySummary(this.commanderRecoveryApproval),
+          ...summary,
           found: true,
-          recommended_next_operator_action: "preview_checkpoint_recovery",
+          recommended_next_operator_action: summary.recovery_execution_in_progress
+            ? "await_recovery_completion"
+            : summary.approval_state === "current"
+              ? "await_recovery_execution"
+              : "preview_checkpoint_recovery",
           blockers: [],
           warnings: [],
           observed_at: new Date(0).toISOString(),
