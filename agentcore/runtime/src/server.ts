@@ -3065,10 +3065,14 @@ export class RuntimeServer {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
     }
     if (!attemptId) {
-      const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-      attemptId = source?.current_recovery_attempt?.recovery_attempt_id
-        ?? source?.latest_recovery_attempt?.recovery_attempt_id
-        ?? entry.record.recovery_attempt_id
+      try {
+        const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+        attemptId = source?.current_recovery_attempt?.recovery_attempt_id
+          ?? source?.latest_recovery_attempt?.recovery_attempt_id
+          ?? entry.record.recovery_attempt_id
+      } catch {
+        // The exact in-memory pre-start operation remains cancellable when journal reconciliation is unavailable.
+      }
     }
     if (attemptId) entry.record.recovery_attempt_id = attemptId
     if (attemptId && input.recovery_attempt_id !== attemptId) {

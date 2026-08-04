@@ -10653,6 +10653,54 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(1)
   })
 
+  test("public pre-start cancellation remains reachable when journal reconciliation fails", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-journal-failure-"))
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const operationId = "commander_recovery_operation_cancel_journal_failure"
+    const record = {
+      operation_id: operationId,
+      operation_version: 1,
+      investigation_id: "inv_public_cancel_journal_failure",
+      approval_id: "approval_public_cancel_journal_failure",
+      approval_hash: "approval_hash_public_cancel_journal_failure",
+      recovery_plan_hash: "plan_public_cancel_journal_failure",
+      execution_preparation_hash: "preparation_public_cancel_journal_failure",
+      status: "running",
+      cancellation_requested: false,
+      started_at: new Date(0).toISOString(),
+    }
+    const controller = new AbortController()
+    ;(server as any).publicCommanderRecoveryOperations.set(operationId, {
+      record,
+      controller,
+      promise: Promise.resolve(),
+    })
+    const journal = (server as any).commanderInvestigationJournalService()
+    journal.recoverySource = async () => {
+      throw new Error("journal projection unavailable")
+    }
+
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: record.investigation_id,
+      operation_id: operationId,
+      approval_id: record.approval_id,
+    }) as any
+
+    expect(cancellation).toMatchObject({
+      status: "cancellation_requested",
+      cancellation_requested: true,
+      investigation_id: record.investigation_id,
+      operation_id: operationId,
+      approval_id: record.approval_id,
+      provider_outcome_known: false,
+      durable_state_changed: false,
+    })
+    expect(cancellation.recovery_attempt_id).toBeUndefined()
+    expect(record.cancellation_requested).toBe(true)
+    expect(controller.signal.aborted).toBe(true)
+  })
+
   test("different authority cannot overwrite a settled recovery operation status", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-settled-authority-"))
     const server = configuredProviderRuntimeServer(projectDir)

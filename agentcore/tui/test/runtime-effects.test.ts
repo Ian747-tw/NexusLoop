@@ -7384,6 +7384,77 @@ describe("runtime UI effects", () => {
     expect(JSON.stringify(staleCachedOperation.commanderRecovery)).not.toContain("stale_attempt")
   })
 
+  test("Commander recovery sends pre-start cancellation before a fallible detail refresh", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_prestart_without_show",
+            operation_id: "operation_cancel_prestart_without_show",
+            approval_id: "approval_cancel_prestart_without_show",
+            cancellation_requested: true,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") throw new Error("projection token=refresh-secret")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_prestart_without_show" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_prestart_without_show",
+          operation_id: "operation_cancel_prestart_without_show",
+          approval_id: "approval_cancel_prestart_without_show",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_prestart_without_show",
+        "operation_id=operation_cancel_prestart_without_show",
+        "approval_id=approval_cancel_prestart_without_show",
+      ],
+    })
+
+    expect(calls).toEqual([
+      {
+        name: "runtime.cancel_commander_investigation_recovery",
+        payload: {
+          investigation_id: "inv_cancel_prestart_without_show",
+          operation_id: "operation_cancel_prestart_without_show",
+          approval_id: "approval_cancel_prestart_without_show",
+        },
+      },
+      {
+        name: "runtime.get_commander_investigation_recovery",
+        payload: { investigation_id: "inv_cancel_prestart_without_show" },
+      },
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_cancel_prestart_without_show", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested", cancellation_requested: true },
+      commandError: "projection [REDACTED]",
+    })
+    expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
+  })
+
   test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},

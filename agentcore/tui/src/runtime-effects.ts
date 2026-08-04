@@ -19069,7 +19069,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
   const investigationId = requiredRecoveryField(fields, "investigation_id")
-  const completeIdentitySupplied = Boolean(fields.operation_id && fields.approval_id && fields.recovery_attempt_id)
+  const completeIdentitySupplied = Boolean(fields.operation_id && fields.approval_id)
   let shown: Record<string, unknown> | null = null
   let refreshError: string | undefined
   if (!completeIdentitySupplied) {
