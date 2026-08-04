@@ -11307,7 +11307,11 @@ function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null =
     investigation_id: "fake_commander_recovery",
     projection_status: "ready",
     record_status: "running",
-    recovery_state: approvalConsumed ? "recovery_execution_in_progress" : "checkpoint_available_resume_not_implemented",
+    recovery_state: approvalConsumed
+      ? "recovery_execution_in_progress"
+      : currentApproval
+        ? "checkpoint_approval_recorded_execution_not_implemented"
+        : "checkpoint_available_resume_not_implemented",
     recovery_kind: "checkpoint",
     objective_preview: "Inspect durable recovery state",
     phase: "implementation",
