@@ -13,4 +13,3 @@
 - [ ] Candidate-SHA runtime, TUI, CLI, targeted E2E, diff, and clean-worktree gates pass.
 - [ ] Exact-head CI and Codex review are clean with no live actionable unresolved threads.
 - [ ] Historical user E2E runs once on the clean-reviewed exact SHA and passes.
-

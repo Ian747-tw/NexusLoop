@@ -11,4 +11,3 @@
 - Report an operation as cancelled merely because an abort was requested.
 - Serialize execute and cancel so cancellation cannot reach an active operation.
 - Skip, xfail, deselect, rename, weaken, or hide a failing test.
-
