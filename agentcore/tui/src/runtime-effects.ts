@@ -19109,19 +19109,20 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   const finalCancellation = safeOptionalRecord(result)
   const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
-  const cancellationMatchesOperation = cancellationAccepted
-    && operation
+  const cancellationTargetsOperation = Boolean(operation
+    && finalCancellation
     && typeof finalCancellation.operation_id === "string"
     && typeof finalCancellation.approval_id === "string"
     && finalCancellation.operation_id === operation.operation_id
-    && finalCancellation.approval_id === operation.approval_id
-  const updatedOperation = cancellationMatchesOperation
+    && finalCancellation.approval_id === operation.approval_id)
+  const updatedOperation = cancellationAccepted && cancellationTargetsOperation && operation
     ? {
         ...operation,
         cancellation_requested: true,
         ...(typeof finalCancellation.recovery_attempt_id === "string" ? { recovery_attempt_id: finalCancellation.recovery_attempt_id } : {}),
       }
     : operation
+  const displayedCancellation = operation && !cancellationTargetsOperation ? null : finalCancellation
   const durableAttemptObserved = shown?.approval_state === "consumed"
     || isRecord(shown?.latest_recovery_attempt)
     || typeof activeAttemptId === "string"
@@ -19129,8 +19130,8 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   return {
     ...state,
     commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
-      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: refreshError }
-      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: refreshError },
+      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError: refreshError }
+      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError: refreshError },
   }
 }
 

@@ -7529,12 +7529,7 @@ describe("runtime UI effects", () => {
         recovery_attempt_id: "attempt_b",
         cancellation_requested: false,
       },
-      cancellation: {
-        status: "cancellation_requested",
-        operation_id: "operation_a",
-        approval_id: "approval_a",
-        recovery_attempt_id: "attempt_a",
-      },
+      cancellation: null,
     })
   })
 
