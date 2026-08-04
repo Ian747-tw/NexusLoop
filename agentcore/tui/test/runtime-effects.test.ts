@@ -7931,6 +7931,10 @@ describe("runtime UI effects", () => {
       ...input,
       human_note: "x".repeat(1001),
     })).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: "api_key=sk-realCredentialPayload123",
+    })).toMatchObject({ status: "blocked", events_appended: false })
     expect(await runtime.command("runtime.approve_commander_investigation_recovery", input)).toMatchObject({
       status: "recorded",
       events_appended: true,

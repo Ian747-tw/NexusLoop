@@ -6301,7 +6301,7 @@ function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): C
     recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
     decision,
     approved_by: requiredString(payload.approved_by, "approved_by"),
-    human_note: optionalString(payload.human_note, "human_note"),
+    human_note: optionalRawString(payload.human_note, "human_note"),
     acknowledgements: {
       fresh_context_required: requiredTrue("fresh_context_required"),
       exact_replay_unavailable: requiredTrue("exact_replay_unavailable"),
