@@ -81,7 +81,7 @@ function summaryFromRecord(record: CommanderInvestigationRecord): CommanderRecov
     recovery_approval_count: record.recovery_approval_count,
     recovery_attempt_count: record.recovery_attempt_count,
     recovery_execution_in_progress: record.recovery_execution_in_progress,
-    human_review_required: record.projection_status !== "ready" || (record.status === "running" && (record.uncertain_provider_outcome || record.recovery_execution_in_progress || record.recovery_approval_consumed)),
+    human_review_required: record.projection_status !== "ready" || record.status === "needs_human_review" || (record.status === "running" && (record.uncertain_provider_outcome || record.recovery_execution_in_progress || record.recovery_approval_consumed)),
     current_compatibility_checked: false,
   }
 }
@@ -127,6 +127,7 @@ function detailFromSource(source: CommanderInvestigationRecoverySource, observed
 
 function recommendedAction(source: CommanderInvestigationRecoverySource): string {
   if (source.projection_status !== "ready") return "inspect_corrupt_record"
+  if (source.record?.status === "needs_human_review") return "human_review_required"
   if (source.terminal) return "none"
   // Journal state cannot prove that RuntimeServer still owns live execution.
   if (source.current_recovery_attempt) return "human_review_required"

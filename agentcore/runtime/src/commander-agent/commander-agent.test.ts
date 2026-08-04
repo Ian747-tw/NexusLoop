@@ -10514,6 +10514,24 @@ describe("Commander in-memory investigation controller", () => {
     })
     const missing = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: "inv_missing_public_recovery" }) as any
     expect(missing).toMatchObject({ found: false, projection_status: "missing" })
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    const humanReviewRecord = {
+      ...source!.record!,
+      status: "needs_human_review" as const,
+      recovery_state: "not_required" as const,
+    }
+    const humanReviewOperator = new CommanderInvestigationRecoveryOperatorService({
+      list: async () => [humanReviewRecord],
+      recoverySource: async () => ({ ...source!, record: humanReviewRecord, terminal: {} as any }),
+    } as unknown as CommanderInvestigationJournalService)
+    expect(await humanReviewOperator.list()).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, terminal: true, human_review_required: true }],
+    })
+    expect(await humanReviewOperator.show(authority.investigation_id)).toMatchObject({
+      terminal: true,
+      human_review_required: true,
+      recommended_next_operator_action: "human_review_required",
+    })
     const preview = await server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
     expect(preview).toMatchObject({ status: "approved_waiting_for_execution", current_continuity_required: true, provider_called: false, tool_executed: false, network_called: false, events_appended: false })
     expect(transport.requests).toHaveLength(0)

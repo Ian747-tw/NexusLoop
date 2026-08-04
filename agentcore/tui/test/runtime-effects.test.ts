@@ -7291,6 +7291,7 @@ describe("runtime UI effects", () => {
 
   test("Commander recovery blocked approval refreshes stale preview authority", async () => {
     const calls: string[] = []
+    let previewFails = false
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
       async sendUserMessage(): Promise<void> {},
@@ -7301,6 +7302,7 @@ describe("runtime UI effects", () => {
           return { status: "blocked", investigation_id: "inv_a", recovery_plan_hash: "plan_current", events_appended: false }
         }
         if (name === "runtime.preview_commander_investigation_recovery") {
+          if (previewFails) throw new Error("continuity refresh failed with Authorization: Bearer stale-secret")
           return { status: "ready_for_approval", investigation_id: "inv_a", recovery_plan_hash: "plan_current", execution_preparation_hash: "preparation_current" }
         }
         throw new Error(`unexpected command ${name}`)
@@ -7331,6 +7333,31 @@ describe("runtime UI effects", () => {
     expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toMatchObject({
       recovery_plan_hash: "plan_current",
       execution_preparation_hash: "preparation_current",
+    })
+
+    previewFails = true
+    const failedRefresh = await applyRuntimeUiEffect({
+      ...state,
+      commanderRecovery: {
+        ...state.commanderRecovery!,
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_rejected", execution_preparation_hash: "preparation_rejected" },
+        approval: { approval: { approval_id: "approval_rejected", approval_hash: "approval_hash_rejected" } },
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_a", "recovery_plan_hash=plan_rejected", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(failedRefresh.commanderRecovery?.approval).toMatchObject({ status: "blocked", recovery_plan_hash: "plan_current" })
+    expect(failedRefresh.commanderRecovery?.preview).toBeNull()
+    expect(failedRefresh.commanderRecovery?.commandError).toContain("continuity refresh failed")
+    expect(failedRefresh.commanderRecovery?.commandError).not.toContain("stale-secret")
+    expect(commanderRecoveryAuthorityValues(failedRefresh.commanderRecovery!)).toEqual({
+      recovery_plan_hash: "none",
+      execution_preparation_hash: "none",
+      recovery_packet_hash: "none",
+      approval_id: "none",
+      approval_hash: "none",
     })
   })
 

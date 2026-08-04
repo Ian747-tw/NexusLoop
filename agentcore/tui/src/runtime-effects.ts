@@ -19018,10 +19018,17 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     })
     const targetChanged = commanderRecoveryTargetChanged(current, investigationId)
     const approvalResult = safeOptionalRecord(result)
-    const refreshedPreview = (approvalResult?.status === "blocked"
-      || (approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval)))
-      ? safeOptionalRecord(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: investigationId }))
-      : null
+    const refreshRequired = approvalResult?.status === "blocked"
+      || (approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval))
+    let refreshedPreview: Record<string, unknown> | null = null
+    let refreshError: string | undefined
+    if (refreshRequired) {
+      try {
+        refreshedPreview = safeOptionalRecord(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: investigationId }))
+      } catch (error) {
+        refreshError = redactText(error instanceof Error ? error.message : String(error))
+      }
+    }
     const refreshedApproval = refreshedPreview && isRecord(refreshedPreview.current_approval)
       ? structuredClone(refreshedPreview.current_approval)
       : undefined
@@ -19031,8 +19038,8 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     return {
       ...state,
       commanderRecovery: targetChanged
-        ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
-        : { ...current, preview: refreshedPreview ?? current.preview, approval, pendingConfirmation: undefined, commandError: undefined },
+        ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: refreshError }
+        : { ...current, preview: refreshRequired ? refreshedPreview : current.preview, approval, pendingConfirmation: undefined, commandError: refreshError },
     }
   }
   if (command === "commander-recovery-execute") {
