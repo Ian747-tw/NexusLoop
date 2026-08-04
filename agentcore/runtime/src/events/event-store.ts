@@ -79,15 +79,28 @@ export class EventStore {
     }
   }
 
+  async readText(): Promise<string> {
+    let text = await this.readTextSnapshot()
+    if (this.pendingAppends > 0 && text.length > 0 && !/\r?\n$/.test(text)) {
+      await this.appendQueue
+      text = await this.readTextSnapshot()
+    }
+    return text
+  }
+
   private async readAllSnapshot(): Promise<JsonlEvent[]> {
+    const text = await this.readTextSnapshot()
+    return text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as JsonlEvent)
+  }
+
+  private async readTextSnapshot(): Promise<string> {
     try {
-      const text = await readFile(this.eventsPath, "utf8")
-      return text
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as JsonlEvent)
+      return await readFile(this.eventsPath, "utf8")
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""
       throw error
     }
   }

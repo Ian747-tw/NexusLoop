@@ -297,6 +297,18 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.preview_commander_investigation_recovery":
         return fakeCommanderRecoveryPreview(String(payload.investigation_id ?? "fake_commander_recovery"), this.commanderRecoveryApproval)
       case "runtime.approve_commander_investigation_recovery": {
+        const acknowledgements = isRecord(payload.acknowledgements) ? payload.acknowledgements : {}
+        const approvalReady = payload.recovery_plan_hash === "fake_recovery_plan_hash"
+          && payload.decision === "approve_resume_from_checkpoint"
+          && typeof payload.approved_by === "string"
+          && payload.approved_by.trim().length > 0
+          && acknowledgements.fresh_context_required === true
+          && acknowledgements.exact_replay_unavailable === true
+          && acknowledgements.provider_request_replay_forbidden === true
+          && acknowledgements.tool_execution_replay_forbidden === true
+        if (!approvalReady) {
+          return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["current exact recovery plan, decision, human identity, and acknowledgements are required"], events_appended: false, provider_called: false, network_called: false }
+        }
         const approval = {
           approval_id: "fake_approval",
           approval_hash: "fake_approval_hash",
@@ -343,6 +355,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           recovery_plan_hash: payload.recovery_plan_hash,
           execution_preparation_hash: payload.execution_preparation_hash,
           status: "running",
+          recovery_attempt_id: "fake_recovery_attempt_0",
           cancellation_requested: false,
           started_at: new Date(0).toISOString(),
         }
@@ -360,8 +373,16 @@ export class FakeRuntimeClient implements RuntimeClient {
       case "runtime.cancel_commander_investigation_recovery": {
         const operation = this.commanderRecoveryOperations.get(String(payload.operation_id ?? ""))
         if (!operation) return { status: "not_active", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, cancellation_requested: false }
+        if (operation.investigation_id !== payload.investigation_id
+          || operation.approval_id !== payload.approval_id
+          || operation.recovery_attempt_id !== payload.recovery_attempt_id) {
+          return { status: "operation_identity_mismatch", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, recovery_attempt_id: operation.recovery_attempt_id, cancellation_requested: false }
+        }
+        if (operation.cancellation_requested === true) {
+          return { status: "already_requested", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, recovery_attempt_id: operation.recovery_attempt_id, cancellation_requested: true }
+        }
         operation.cancellation_requested = true
-        return { status: "cancellation_requested", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, cancellation_requested: true, provider_outcome_known: false, durable_state_changed: false, generated_at: new Date(0).toISOString() }
+        return { status: "cancellation_requested", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, recovery_attempt_id: operation.recovery_attempt_id, cancellation_requested: true, provider_outcome_known: false, durable_state_changed: false, generated_at: new Date(0).toISOString() }
       }
       case "runtime.commander_repo_tree":
         return fakeInternalRead("repo.tree", { root: ".", path: String(payload.path ?? "."), depth: 2, entries: [{ path: "agentcore/runtime/src/commander-tools", kind: "directory", depth: 4, readable: true }, { path: "agentcore/runtime/src/commander-tools/commander-tool-service.ts", kind: "file", size_bytes: 1234, depth: 5, extension: ".ts", readable: true, content_hash: "fake-tree-hash" }], omitted_entries: 0 })

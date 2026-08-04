@@ -6843,6 +6843,22 @@ describe("runtime UI effects", () => {
     }) as Record<string, unknown>
     expect(unauthorizedOperation).toMatchObject({ status: "blocked", error: "current exact recovery approval authority is required" })
     expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).not.toHaveProperty("active_operation")
+    const staleApproval = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "stale_plan",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    }) as Record<string, unknown>
+    expect(staleApproval).toMatchObject({ status: "blocked", events_appended: false })
+    const missingAcknowledgement = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true },
+    }) as Record<string, unknown>
+    expect(missingAcknowledgement).toMatchObject({ status: "blocked", events_appended: false })
     let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recoveries", args: ["limit=5"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["fake_commander_recovery"] })
@@ -6937,12 +6953,26 @@ describe("runtime UI effects", () => {
       execution_preparation_hash: fakeAuthority.execution_preparation_hash,
     }) as Record<string, unknown>
     expect(differentOperation).toMatchObject({ status: "blocked", error: "a recovery attempt already exists with different authority" })
+    const wrongCancellation = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      operation_id: "fake_recovery_operation_0",
+      approval_id: "wrong_approval",
+      recovery_attempt_id: "fake_recovery_attempt_0",
+    }) as Record<string, unknown>
+    expect(wrongCancellation).toMatchObject({ status: "operation_identity_mismatch", cancellation_requested: false, recovery_attempt_id: "fake_recovery_attempt_0" })
     state = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-cancel",
       args: ["investigation_id=fake_commander_recovery", "operation_id=fake_recovery_operation_0", "approval_id=fake_approval"],
     })
     expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true })
+    const duplicateCancellation = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      operation_id: "fake_recovery_operation_0",
+      approval_id: "fake_approval",
+      recovery_attempt_id: "fake_recovery_attempt_0",
+    }) as Record<string, unknown>
+    expect(duplicateCancellation).toMatchObject({ status: "already_requested", cancellation_requested: true })
     const snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("Commander recovery")
     expect(snapshot).toContain("fresh recovery continuation")

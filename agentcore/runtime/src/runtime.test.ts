@@ -25441,8 +25441,16 @@ test("EventStore reads complete snapshots during queued appends and retries part
   })
   await observedPartialTail
   expect(settled).toBe(false)
+  let diagnosticSettled = false
+  const diagnosticRead = store.readText().then((text) => {
+    diagnosticSettled = true
+    return text
+  })
+  await Promise.resolve()
+  expect(diagnosticSettled).toBe(false)
   await writeFile(store.eventsPath, `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "after" })}\n`)
   release()
+  expect(await diagnosticRead).toBe(`${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "after" })}\n`)
   expect(await read).toEqual([
     expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
     expect.objectContaining({ kind: "runtime_test_event", value: "after" }),

@@ -1,4 +1,4 @@
-import { open, readFile, stat } from "node:fs/promises"
+import { open, stat } from "node:fs/promises"
 import { redactText, redactValue } from "../security/redaction"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
@@ -581,7 +581,7 @@ export class CommanderInvestigationJournalService {
 
   private async readJournalEventsWithDiagnostics(): Promise<{ events: JsonlEvent[]; unassignable_dropped_commander_event: boolean; dropped_commander_events_by_investigation_id: Map<string, string[]> }> {
     try {
-      const text = await readFile(this.options.eventStore.eventsPath, "utf8")
+      const text = await this.options.eventStore.readText()
       const events: JsonlEvent[] = []
       let unassignable = false
       const dropped = new Map<string, string[]>()
