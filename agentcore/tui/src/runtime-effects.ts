@@ -19067,9 +19067,15 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
   const investigationId = requiredRecoveryField(fields, "investigation_id")
-  const shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
+  const completeIdentitySupplied = Boolean(fields.operation_id && fields.approval_id && fields.recovery_attempt_id)
+  let shown: Record<string, unknown> | null = null
+  let refreshError: string | undefined
+  if (!completeIdentitySupplied) {
+    shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
+  }
   const shownOperation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
-  const operation = shownOperation
+  const cachedOperation = current.operation?.investigation_id === investigationId ? current.operation : null
+  let operation = shownOperation ?? cachedOperation
   const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
   const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined
   const activeApprovalId = typeof operation?.approval_id === "string" ? operation.approval_id : undefined
@@ -19087,6 +19093,14 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       recovery_attempt_id: cancellation.recovery_attempt_id,
     })
   }
+  if (completeIdentitySupplied) {
+    try {
+      shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
+      operation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
+    } catch (error) {
+      refreshError = redactText(error instanceof Error ? error.message : String(error))
+    }
+  }
   const finalCancellation = safeOptionalRecord(result)
   const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
   const updatedOperation = cancellationAccepted && operation
@@ -19103,8 +19117,8 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   return {
     ...state,
     commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
-      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined }
-      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined },
+      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: refreshError }
+      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: refreshError },
   }
 }
 

@@ -386,7 +386,7 @@ export class FakeRuntimeClient implements RuntimeClient {
             && existing.execution_preparation_hash === payload.execution_preparation_hash
           return exactDuplicate
             ? structuredClone(existing)
-            : { status: "blocked", investigation_id: payload.investigation_id, error: "a recovery attempt already exists with different authority" }
+            : { ...structuredClone(existing), request_rejected: true, error: "a recovery attempt already exists with different authority" }
         }
         const approval = this.commanderRecoveryApproval
         const approvalCurrent = approval

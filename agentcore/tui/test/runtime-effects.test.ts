@@ -7002,7 +7002,12 @@ describe("runtime UI effects", () => {
       recovery_plan_hash: fakeAuthority.recovery_plan_hash,
       execution_preparation_hash: fakeAuthority.execution_preparation_hash,
     }) as Record<string, unknown>
-    expect(differentOperation).toMatchObject({ status: "blocked", error: "a recovery attempt already exists with different authority" })
+    expect(differentOperation).toMatchObject({
+      operation_id: "fake_recovery_operation_0",
+      status: "running",
+      request_rejected: true,
+      error: "a recovery attempt already exists with different authority",
+    })
     const wrongCancellation = await runtime.command("runtime.cancel_commander_investigation_recovery", {
       investigation_id: "fake_commander_recovery",
       operation_id: "fake_recovery_operation_0",
@@ -7232,6 +7237,70 @@ describe("runtime UI effects", () => {
       },
     }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
     expect(noOperation.commanderRecovery?.operation).toBeNull()
+  })
+
+  test("Commander recovery sends complete cancellation authority before a fallible detail refresh", async () => {
+    const calls: string[] = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_without_show",
+            operation_id: "operation_cancel_without_show",
+            approval_id: "approval_cancel_without_show",
+            recovery_attempt_id: "attempt_cancel_without_show",
+            cancellation_requested: true,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") throw new Error("projection token=refresh-secret")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_without_show" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_without_show",
+          operation_id: "operation_cancel_without_show",
+          approval_id: "approval_cancel_without_show",
+          recovery_attempt_id: "attempt_cancel_without_show",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_without_show",
+        "operation_id=operation_cancel_without_show",
+        "approval_id=approval_cancel_without_show",
+        "recovery_attempt_id=attempt_cancel_without_show",
+      ],
+    })
+
+    expect(calls).toEqual([
+      "runtime.cancel_commander_investigation_recovery",
+      "runtime.get_commander_investigation_recovery",
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_cancel_without_show", status: "running", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested", cancellation_requested: true },
+      commandError: "projection [REDACTED]",
+    })
+    expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
   })
 
   test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
