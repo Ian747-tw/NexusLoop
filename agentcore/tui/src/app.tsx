@@ -6,7 +6,7 @@ import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
-import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues } from "./commander-recovery-view"
+import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "./commander-recovery-view"
 import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
@@ -304,6 +304,7 @@ function ApprovalPanel(props: { state: UiState }) {
   const recovery = () => props.state.commanderRecovery
   const recoveryAuthority = () => commanderRecoveryAuthorityValues(recovery() ?? { records: [] })
   const recoveryApproval = () => commanderRecoveryApprovalDisplay(recovery()?.approval)
+  const recoveryPreviewDiagnostics = () => commanderRecoveryPreviewDiagnostics(recovery()?.preview)
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
       <Show when={recovery()}>
@@ -330,6 +331,8 @@ function ApprovalPanel(props: { state: UiState }) {
                   <text fg={color.text}>recovery_plan_hash={recoveryAuthority().recovery_plan_hash}</text>
                   <text fg={color.text}>execution_preparation_hash={recoveryAuthority().execution_preparation_hash}</text>
                   <text fg={color.muted}>recovery_packet_hash={recoveryAuthority().recovery_packet_hash}</text>
+                  <For each={recoveryPreviewDiagnostics().blockers}>{(item) => <text fg={color.warning}>preview blocker: {item}</text>}</For>
+                  <For each={recoveryPreviewDiagnostics().warnings}>{(item) => <text fg={color.muted}>preview warning: {item}</text>}</For>
                   <Show when={operatorField(preview(), "recovery_kind") === "uncertain_provider_outcome"}>
                     <text fg={color.warning}>provider outcome unknown; previous request and tool execution will not be replayed</text>
                   </Show>

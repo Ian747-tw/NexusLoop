@@ -48,3 +48,17 @@ export function commanderRecoveryApprovalDisplay(approval: Record<string, unknow
       : [],
   }
 }
+
+export function commanderRecoveryPreviewDiagnostics(preview: Record<string, unknown> | null | undefined): {
+  blockers: string[]
+  warnings: string[]
+} {
+  const value = preview ?? {}
+  const bounded = (key: "blockers" | "warnings") => Array.isArray(value[key])
+    ? value[key].slice(0, 4).map((item) => redactText(String(item)).slice(0, 240))
+    : []
+  return {
+    blockers: bounded("blockers"),
+    warnings: bounded("warnings"),
+  }
+}

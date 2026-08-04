@@ -10653,6 +10653,45 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(1)
   })
 
+  test("different authority cannot overwrite a settled recovery operation status", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-settled-authority-"))
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    for (const status of ["completed", "already_started", "failed"] as const) {
+      const input = {
+        investigation_id: `inv_public_settled_authority_${status}`,
+        approval_id: `approval_public_settled_authority_${status}`,
+        approval_hash: `approval_hash_public_settled_authority_${status}`,
+        recovery_plan_hash: `plan_public_settled_authority_${status}`,
+        execution_preparation_hash: `preparation_public_settled_authority_${status}`,
+      }
+      const settled = {
+        operation_id: `commander_recovery_operation_settled_authority_${status}`,
+        operation_version: 1 as const,
+        ...input,
+        status,
+        cancellation_requested: false,
+        started_at: new Date(0).toISOString(),
+        completed_at: new Date(1).toISOString(),
+      }
+      ;(server as any).recentPublicCommanderRecoveryOperations.set(settled.operation_id, settled)
+
+      const rejected = server.startCommanderInvestigationRecoveryOperation({
+        ...input,
+        approval_hash: `${input.approval_hash}_different`,
+      })
+
+      expect(rejected).toMatchObject({
+        operation_id: settled.operation_id,
+        status,
+        request_rejected: true,
+        error: "a recovery attempt already exists for this investigation and different authority cannot start another",
+      })
+      expect((server as any).recentPublicCommanderRecoveryOperations.get(settled.operation_id)).toEqual(settled)
+    }
+    expect((server as any).publicCommanderRecoveryOperations.size).toBe(0)
+  })
+
   test("duplicate public cancellation remains idempotent when the operation settles during authority refresh", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-settle-race-"))
     const server = configuredProviderRuntimeServer(projectDir)

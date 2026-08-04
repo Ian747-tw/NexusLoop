@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues } from "../src/commander-recovery-view"
+import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "../src/commander-recovery-view"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
@@ -7639,6 +7639,37 @@ describe("runtime UI effects", () => {
     const snapshot = layoutSnapshot(state)
     expect(snapshot).toContain("wording=operation identity mismatch")
     expect(snapshot).not.toContain("wording=cancellation requested")
+  })
+
+  test("Commander recovery renders bounded redacted preview diagnostics", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        approval: null,
+        operation: null,
+        cancellation: null,
+        preview: {
+          status: "blocked",
+          recovery_kind: "checkpoint",
+          blockers: ["continuity token=preview-blocker-secret", ...Array.from({ length: 6 }, (_, index) => `extra blocker ${index}`)],
+          warnings: ["provider warning token=preview-warning-secret", "x".repeat(400)],
+        },
+      },
+    }
+
+    const diagnostics = commanderRecoveryPreviewDiagnostics(state.commanderRecovery!.preview)
+    expect(diagnostics.blockers).toHaveLength(4)
+    expect(diagnostics.blockers[0]).toBe("continuity [REDACTED]")
+    expect(diagnostics.warnings[0]).toBe("provider warning [REDACTED]")
+    expect(diagnostics.warnings[1]!.length).toBe(240)
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("preview_blocker=continuity [REDACTED]")
+    expect(snapshot).toContain("preview_warning=provider warning [REDACTED]")
+    expect(snapshot).not.toContain("preview-blocker-secret")
+    expect(snapshot).not.toContain("preview-warning-secret")
   })
 
   test("Commander recovery snapshot renders bounded redacted operation failures", () => {

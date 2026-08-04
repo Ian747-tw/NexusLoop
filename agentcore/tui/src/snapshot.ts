@@ -1,5 +1,6 @@
 import type { CommanderContinuityBudgetSummary, CommanderContinuityCommandSummary, CommanderContinuityOpenLoopSummary, CommanderContinuitySectionSummary, CommanderContinuitySourceRefSummary, UiState, StreamLine } from "./state"
 import { redactText } from "./redaction"
+import { commanderRecoveryPreviewDiagnostics } from "./commander-recovery-view"
 
 function lines(items: StreamLine[]): string[] {
   if (items.length === 0) return ["  - empty"]
@@ -145,6 +146,9 @@ function commanderRecoveryLines(state: UiState): string[] {
     out.push(`  checkpoint=${abbreviatedNestedField(recovery.preview, "checkpoint", "checkpoint_hash")} preparation=${abbreviatedField(recovery.preview, "execution_preparation_hash")}`)
     out.push(`  recovery_plan_hash=${safeField(recovery.preview, "recovery_plan_hash")}`)
     out.push(`  execution_preparation_hash=${safeField(recovery.preview, "execution_preparation_hash")}`)
+    const diagnostics = commanderRecoveryPreviewDiagnostics(recovery.preview)
+    out.push(...diagnostics.blockers.map((item) => `  preview_blocker=${preview(item)}`))
+    out.push(...diagnostics.warnings.map((item) => `  preview_warning=${preview(item)}`))
     const approval = recovery.preview.current_approval
     if (typeof approval === "object" && approval !== null && !Array.isArray(approval)) {
       out.push(`  approval_id=${safeField(approval as Record<string, unknown>, "approval_id")}`)

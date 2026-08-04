@@ -2963,7 +2963,7 @@ export class RuntimeServer {
         if (sameRecoveryAuthority(settled, input)) return cloneRecoveryOperation(settled)
         return {
           ...cloneRecoveryOperation(settled),
-          status: "blocked",
+          request_rejected: true,
           error: "a recovery attempt already exists for this investigation and different authority cannot start another",
         }
       }
