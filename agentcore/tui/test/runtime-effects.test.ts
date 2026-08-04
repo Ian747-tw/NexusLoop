@@ -7390,6 +7390,7 @@ describe("runtime UI effects", () => {
         if (name === "runtime.preview_commander_investigation_recovery") {
           return {
             status: "approved_waiting_for_execution",
+            approval_state: "current",
             investigation_id: "inv_a",
             recovery_plan_hash: "plan_a",
             current_approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
@@ -7451,6 +7452,7 @@ describe("runtime UI effects", () => {
         if (name === "runtime.preview_commander_investigation_recovery") {
           return {
             status: "approved_waiting_for_execution",
+            approval_state: "current",
             investigation_id: "inv_replacement_approval",
             recovery_plan_hash: "plan_replacement_approval",
             execution_preparation_hash: "preparation_replacement_approval",
@@ -7503,6 +7505,128 @@ describe("runtime UI effects", () => {
       approval_id: "approval_b",
       approval_hash: "approval_hash_b",
       execution_preparation_hash: "preparation_replacement_approval",
+    })
+  })
+
+  test("Commander recovery recorded approval clears authority consumed during refresh", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "recorded",
+            investigation_id: "inv_consumed_approval",
+            approval_state: "current",
+            events_appended: true,
+            approval: { approval_id: "approval_consumed", approval_hash: "approval_hash_consumed" },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "recovery_in_progress",
+            approval_state: "consumed",
+            investigation_id: "inv_consumed_approval",
+            recovery_plan_hash: "plan_consumed_approval",
+            execution_preparation_hash: "preparation_consumed_approval",
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_consumed_approval" },
+        preview: {
+          investigation_id: "inv_consumed_approval",
+          recovery_plan_hash: "plan_consumed_approval",
+          execution_preparation_hash: "preparation_consumed_approval",
+        },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_consumed_approval", "recovery_plan_hash=plan_consumed_approval", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      preview: { approval_state: "consumed" },
+      approval: { status: "recorded", approval: undefined },
+    })
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toMatchObject({
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
+  test("Commander recovery cross-target approval keeps refreshed target authority", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "recorded",
+            investigation_id: "inv_target_b",
+            approval_state: "current",
+            events_appended: true,
+            approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "approved_waiting_for_execution",
+            approval_state: "current",
+            investigation_id: "inv_target_b",
+            recovery_plan_hash: "plan_b",
+            execution_preparation_hash: "preparation_b",
+            current_approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_target_a" },
+        preview: { investigation_id: "inv_target_a", recovery_plan_hash: "plan_a" },
+        approval: { investigation_id: "inv_target_a", approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" } },
+        operation: { operation_id: "operation_a", investigation_id: "inv_target_a", approval_id: "approval_a", status: "running" },
+        cancellation: { status: "already_requested" },
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_target_b", "recovery_plan_hash=plan_b", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      selected: null,
+      preview: { investigation_id: "inv_target_b", execution_preparation_hash: "preparation_b" },
+      approval: { approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" } },
+      operation: null,
+      cancellation: null,
+    })
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toMatchObject({
+      approval_id: "approval_b",
+      approval_hash: "approval_hash_b",
+      recovery_plan_hash: "plan_b",
+      execution_preparation_hash: "preparation_b",
     })
   })
 

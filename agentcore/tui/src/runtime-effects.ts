@@ -19030,16 +19030,16 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
         refreshError = redactText(error instanceof Error ? error.message : String(error))
       }
     }
-    const refreshedApproval = refreshedPreview && isRecord(refreshedPreview.current_approval)
+    const refreshedApproval = refreshedPreview?.approval_state === "current" && isRecord(refreshedPreview.current_approval)
       ? structuredClone(refreshedPreview.current_approval)
       : undefined
-    const approval = approvalResult && refreshedApproval
+    const approval = approvalResult && refreshRequired
       ? { ...approvalResult, approval: refreshedApproval }
       : approvalResult
     return {
       ...state,
       commanderRecovery: targetChanged
-        ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: refreshError }
+        ? { ...current, selected: null, preview: refreshRequired ? refreshedPreview : null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: refreshError }
         : { ...current, preview: refreshRequired ? refreshedPreview : current.preview, approval, pendingConfirmation: undefined, commandError: refreshError },
     }
   }
