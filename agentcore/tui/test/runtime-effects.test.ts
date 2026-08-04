@@ -6907,7 +6907,13 @@ describe("runtime UI effects", () => {
       count: 1,
     })
     expect(state.commanderRecovery?.selected).toBeNull()
-    expect(state.commanderRecovery?.preview).toBeNull()
+    expect(state.commanderRecovery?.preview).toMatchObject({
+      investigation_id: "fake_commander_recovery",
+      approval_state: "current",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      execution_preparation_hash: "fake_execution_preparation_hash",
+      current_approval: { approval_id: "fake_approval", approval_hash: "fake_approval_hash" },
+    })
     expect(state.commanderRecovery?.operation).toBeNull()
     expect(state.commanderRecovery?.cancellation).toBeNull()
 
