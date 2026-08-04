@@ -6378,7 +6378,7 @@ function recoveryCancellationResult(input: CommanderRecoveryCancelInput, status:
     investigation_id: input.investigation_id,
     operation_id: input.operation_id,
     approval_id: input.approval_id,
-    recovery_attempt_id: attemptId ?? input.recovery_attempt_id,
+    recovery_attempt_id: attemptId,
     cancellation_requested: requested,
     provider_outcome_known: false,
     durable_state_changed: false,

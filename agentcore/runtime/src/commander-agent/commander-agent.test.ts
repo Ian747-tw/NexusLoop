@@ -10685,6 +10685,7 @@ describe("Commander in-memory investigation controller", () => {
       investigation_id: record.investigation_id,
       operation_id: operationId,
       approval_id: record.approval_id,
+      recovery_attempt_id: "caller_supplied_unverified_attempt",
     }) as any
 
     expect(cancellation).toMatchObject({
