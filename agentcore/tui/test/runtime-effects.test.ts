@@ -7355,6 +7355,29 @@ describe("runtime UI effects", () => {
     expect(snapshot).not.toContain("wording=cancellation requested")
   })
 
+  test("Commander recovery snapshot renders bounded redacted operation failures", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: {
+          operation_id: "blocked_operation",
+          status: "blocked",
+          error: "provider readiness changed; Authorization: Bearer operator-secret-value",
+        },
+        cancellation: null,
+      },
+    }
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("operation=blocked_operation status=blocked")
+    expect(snapshot).toContain("operation_error=provider readiness changed")
+    expect(snapshot).not.toContain("operator-secret-value")
+  })
+
   test("Commander recovery slash parsing rejects generic confirmation and implicit acknowledgements", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }

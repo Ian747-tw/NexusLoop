@@ -343,7 +343,14 @@ function ApprovalPanel(props: { state: UiState }) {
               <text fg={color.text}>approval_hash={recoveryAuthority().approval_hash}</text>
             </Show>
             <Show when={value().operation}>
-              {(operation) => <text fg={color.accent}>operation {operatorField(operation(), "operation_id")} [{operatorField(operation(), "status")}]</text>}
+              {(operation) => (
+                <>
+                  <text fg={color.accent}>operation {operatorField(operation(), "operation_id")} [{operatorField(operation(), "status")}]</text>
+                  <Show when={operatorField(operation(), "error") !== "none"}>
+                    <text fg={color.warning}>operation error: {operatorField(operation(), "error")}</text>
+                  </Show>
+                </>
+              )}
             </Show>
             <Show when={value().cancellation}>
               {(cancellation) => <text fg={color.warning}>{operatorField(cancellation(), "status").replaceAll("_", " ")}</text>}

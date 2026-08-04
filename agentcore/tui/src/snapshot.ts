@@ -160,7 +160,10 @@ function commanderRecoveryLines(state: UiState): string[] {
       out.push(`  approval_hash=${safeField(record as Record<string, unknown>, "approval_hash")}`)
     }
   }
-  if (recovery.operation) out.push(`  operation=${safeField(recovery.operation, "operation_id")} status=${safeField(recovery.operation, "status")} cancellation_requested=${safeField(recovery.operation, "cancellation_requested")}`)
+  if (recovery.operation) {
+    out.push(`  operation=${safeField(recovery.operation, "operation_id")} status=${safeField(recovery.operation, "status")} cancellation_requested=${safeField(recovery.operation, "cancellation_requested")}`)
+    if (safeField(recovery.operation, "error") !== "none") out.push(`  operation_error=${safeField(recovery.operation, "error")}`)
+  }
   if (recovery.cancellation) {
     const status = safeField(recovery.cancellation, "status")
     const wording = status === "cancellation_requested" || status === "already_requested"
