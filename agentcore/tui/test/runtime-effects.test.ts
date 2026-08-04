@@ -7969,6 +7969,27 @@ describe("runtime UI effects", () => {
       ...input,
       human_note: `${sharedPreview}B`,
     })).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_3", approval_sequence: 3, human_note_preview: sharedPreview } })
+
+    const identityRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const { human_note: _humanNote, ...withoutHumanNote } = input
+    expect(await identityRuntime.command("runtime.approve_commander_investigation_recovery", withoutHumanNote)).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval", human_note_hash: undefined },
+    })
+    const emptyNoteApproval = await identityRuntime.command("runtime.approve_commander_investigation_recovery", { ...withoutHumanNote, human_note: "" }) as any
+    expect(emptyNoteApproval).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval_1" },
+    })
+    expect(emptyNoteApproval.approval).not.toHaveProperty("human_note_preview")
+    expect(await identityRuntime.command("runtime.approve_commander_investigation_recovery", { ...withoutHumanNote, human_note: " reviewed " })).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval_2", human_note_preview: "reviewed" },
+    })
+    expect(await identityRuntime.command("runtime.approve_commander_investigation_recovery", { ...withoutHumanNote, human_note: "reviewed" })).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval_3", human_note_preview: "reviewed" },
+    })
   })
 
   test("Commander recovery approval display exposes bounded blocked outcomes", () => {

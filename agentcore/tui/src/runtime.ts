@@ -339,11 +339,14 @@ export class FakeRuntimeClient implements RuntimeClient {
           return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["recovery approval was consumed by the existing one-shot attempt"], events_appended: false, provider_called: false, network_called: false }
         }
         const existingApproval = this.commanderRecoveryApproval
-        const normalizedHumanNote = typeof payload.human_note === "string" && payload.human_note.trim().length > 0
-          ? redactText(payload.human_note.trim())
+        const normalizedHumanNote = typeof payload.human_note === "string"
+          ? redactText(payload.human_note)
           : undefined
-        const humanNotePreview = normalizedHumanNote?.slice(0, 500)
-        const humanNoteHash = createHash("sha256").update(normalizedHumanNote ?? "").digest("hex")
+        const boundedHumanNotePreview = normalizedHumanNote?.replace(/\s+/g, " ").trim().slice(0, 500)
+        const humanNotePreview = boundedHumanNotePreview ? boundedHumanNotePreview : undefined
+        const humanNoteHash = normalizedHumanNote === undefined
+          ? undefined
+          : createHash("sha256").update(normalizedHumanNote).digest("hex")
         if (existingApproval
           && existingApproval.investigation_id === payload.investigation_id
           && existingApproval.recovery_plan_hash === payload.recovery_plan_hash
