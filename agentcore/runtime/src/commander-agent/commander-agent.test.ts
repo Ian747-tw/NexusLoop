@@ -11479,6 +11479,25 @@ describe("Commander in-memory investigation controller", () => {
     expect(corruptSearch.result?.candidates).toEqual([])
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
 
+    await writeFile((server as unknown as { eventStore: EventStore }).eventStore.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_search_line\",\"journal_sequence\":0', { flag: "a" })
+    const afterTornSearch = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(afterTornSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true }))
+  })
+
+  test("durable Commander operational memory search includes records beyond the public journal cap", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-operational-memory-cap-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "bulk setup conclusion" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const resultInput = baseInvestigation({ investigation_id: "inv_bulk_result_fixture", objective: "Build bulk search result fixture" })
+    const baseResult = await server.runCommanderInvestigationInMemory(resultInput)
+
     for (let index = 1; index <= 101; index += 1) {
       const investigationId = `inv_bulk_${String(index).padStart(3, "0")}`
       const input = baseInvestigation({
@@ -11502,10 +11521,6 @@ describe("Commander in-memory investigation controller", () => {
     expect(projectedBulk.map((record) => record.investigation_id)).toContain("inv_bulk_001")
     const oldestSearch = await server.searchCommanderOperationalMemory({ query: "inv_bulk_001", source_kinds: ["commander_investigation"], session_id: "session_bulk_search" })
     expect(oldestSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_bulk_001", pointer_only: true }))
-
-    await writeFile((server as unknown as { eventStore: EventStore }).eventStore.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_search_line\",\"journal_sequence\":0', { flag: "a" })
-    const afterTornSearch = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
-    expect(afterTornSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true }))
   })
 
   test("operational memory search finds Commander investigations under scan cap pressure", async () => {
