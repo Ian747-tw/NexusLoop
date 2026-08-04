@@ -2950,7 +2950,7 @@ export class RuntimeServer {
       if (sameRecoveryAuthority(existing.record, input)) return cloneRecoveryOperation(existing.record)
       return {
         ...cloneRecoveryOperation(existing.record),
-        status: "blocked",
+        request_rejected: true,
         error: "a different Commander recovery operation is already active for this investigation",
       }
     }

@@ -18991,7 +18991,11 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     return { ...state, commanderRecovery: { ...current, preview, approval: null, pendingConfirmation: undefined, commandError: undefined } }
   }
   if (command === "commander-recovery-approve") {
-    const fields = recoveryKeyValues(args, new Set(["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome", "confirm"]))
+    const fields = recoveryKeyValues(
+      args,
+      new Set(["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome", "confirm"]),
+      new Set(["human_note"]),
+    )
     if (fields.confirm !== "APPROVE") return { ...state, commanderRecovery: { ...current, pendingConfirmation: "approval", commandError: undefined } }
     const investigationId = requiredRecoveryField(fields, "investigation_id")
     const decision = requiredRecoveryDecision(fields.decision)
@@ -19102,13 +19106,21 @@ function commanderRecoveryTargetChanged(current: CommanderRecoveryUiState, inves
   return identities.some((value) => value !== investigationId)
 }
 
-function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>): Record<string, string> {
+function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>, freeText = new Set<string>()): Record<string, string> {
   const result: Record<string, string> = {}
-  for (const arg of args) {
+  for (let argIndex = 0; argIndex < args.length; argIndex += 1) {
+    const arg = args[argIndex] ?? ""
     const index = arg.indexOf("=")
     if (index <= 0) throw new Error("Commander recovery arguments must use key=value")
     const key = arg.slice(0, index)
-    const value = arg.slice(index + 1)
+    const parts = [arg.slice(index + 1)]
+    if (freeText.has(key)) {
+      while (argIndex + 1 < args.length && !(args[argIndex + 1] ?? "").includes("=")) {
+        argIndex += 1
+        parts.push(args[argIndex] ?? "")
+      }
+    }
+    const value = parts.join(" ").trim()
     if (!allowed.has(key) || !value || result[key] !== undefined) throw new Error(`invalid Commander recovery argument: ${redactText(key)}`)
     result[key] = value
   }

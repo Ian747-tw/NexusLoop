@@ -335,11 +335,15 @@ export class FakeRuntimeClient implements RuntimeClient {
           return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["recovery approval was consumed by the existing one-shot attempt"], events_appended: false, provider_called: false, network_called: false }
         }
         const existingApproval = this.commanderRecoveryApproval
+        const humanNotePreview = typeof payload.human_note === "string" && payload.human_note.trim().length > 0
+          ? redactText(payload.human_note.trim()).slice(0, 500)
+          : undefined
         if (existingApproval
           && existingApproval.investigation_id === payload.investigation_id
           && existingApproval.recovery_plan_hash === payload.recovery_plan_hash
           && existingApproval.decision === payload.decision
-          && existingApproval.approved_by === payload.approved_by) {
+          && existingApproval.approved_by === payload.approved_by
+          && existingApproval.human_note_preview === humanNotePreview) {
           return {
             status: "already_recorded",
             investigation_id: payload.investigation_id,
@@ -351,15 +355,19 @@ export class FakeRuntimeClient implements RuntimeClient {
             network_called: false,
           }
         }
+        const approvalSequence = existingApproval && typeof existingApproval.approval_sequence === "number"
+          ? existingApproval.approval_sequence + 1
+          : 0
         const approval = {
-          approval_id: "fake_approval",
-          approval_hash: "fake_approval_hash",
-          approval_sequence: 0,
+          approval_id: approvalSequence === 0 ? "fake_approval" : `fake_approval_${approvalSequence}`,
+          approval_hash: approvalSequence === 0 ? "fake_approval_hash" : `fake_approval_hash_${approvalSequence}`,
+          approval_sequence: approvalSequence,
           investigation_id: String(payload.investigation_id ?? "fake_commander_recovery"),
           decision: String(payload.decision ?? "approve_resume_from_checkpoint"),
           approved_by: String(payload.approved_by ?? "fake_operator"),
           recovery_plan_hash: String(payload.recovery_plan_hash ?? "fake_recovery_plan_hash"),
           recovery_basis_hash: "fake_recovery_basis_hash",
+          ...(humanNotePreview ? { human_note_preview: humanNotePreview } : {}),
           approved_at: new Date(0).toISOString(),
         }
         this.commanderRecoveryApproval = approval

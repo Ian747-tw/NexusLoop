@@ -7289,6 +7289,35 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("fake Commander recovery approval includes note identity in idempotence", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const input = {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      human_note: "reviewed original checkpoint",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    }
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", input)).toMatchObject({
+      status: "recorded",
+      events_appended: true,
+      approval: { approval_id: "fake_approval", approval_sequence: 0, human_note_preview: "reviewed original checkpoint" },
+    })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", input)).toMatchObject({
+      status: "already_recorded",
+      events_appended: false,
+    })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: "reviewed changed checkpoint",
+    })).toMatchObject({
+      status: "recorded",
+      events_appended: true,
+      approval: { approval_id: "fake_approval_1", approval_sequence: 1, human_note_preview: "reviewed changed checkpoint" },
+    })
+  })
+
   test("Commander recovery approval display exposes bounded blocked outcomes", () => {
     expect(commanderRecoveryApprovalDisplay({
       status: "blocked",
@@ -7567,5 +7596,22 @@ describe("runtime UI effects", () => {
       args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_continue_after_uncertain_provider_outcome", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
     })
     expect(uncertain.commanderRecovery?.commandError).toContain("uncertain_provider_outcome")
+
+    const noted = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "checkpoint", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(noted.commanderRecovery?.approval).toMatchObject({
+      status: "recorded",
+      approval: { human_note_preview: "reviewed checkpoint" },
+    })
+
+    const unknownAfterNote = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "unknown_field=value", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(unknownAfterNote.commanderRecovery?.commandError).toContain("unknown_field")
   })
 })

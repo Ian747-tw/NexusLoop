@@ -89,6 +89,7 @@ export type CommanderRecoveryOperation = {
   status: CommanderRecoveryOperationStatus
   cancellation_requested: boolean
   recovery_attempt_id?: string
+  request_rejected?: true
   error?: string
   started_at: string
   settled_at?: string

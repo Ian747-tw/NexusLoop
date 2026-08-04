@@ -10559,6 +10559,16 @@ describe("Commander in-memory investigation controller", () => {
     expect(preflightShow.active_operation).not.toHaveProperty("recovery_attempt_id")
     const duplicate = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
     expect(duplicate.operation_id).toBe(operation.operation_id)
+    const rejectedDifferentAuthority = await server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_hash: `${authority.transaction_input.approval_hash}_different`,
+    }) as any
+    expect(rejectedDifferentAuthority).toMatchObject({
+      operation_id: operation.operation_id,
+      status: "running",
+      request_rejected: true,
+      error: "a different Commander recovery operation is already active for this investigation",
+    })
     const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
       investigation_id: authority.investigation_id,
       operation_id: operation.operation_id,
