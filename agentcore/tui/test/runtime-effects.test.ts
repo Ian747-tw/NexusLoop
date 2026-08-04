@@ -7433,6 +7433,79 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("Commander recovery recorded replacement approval refreshes cached preview authority", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "recorded",
+            investigation_id: "inv_replacement_approval",
+            approval_state: "current",
+            events_appended: true,
+            approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "approved_waiting_for_execution",
+            investigation_id: "inv_replacement_approval",
+            recovery_plan_hash: "plan_replacement_approval",
+            execution_preparation_hash: "preparation_replacement_approval",
+            current_approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_replacement_approval" },
+        preview: {
+          investigation_id: "inv_replacement_approval",
+          recovery_plan_hash: "plan_replacement_approval",
+          execution_preparation_hash: "preparation_replacement_approval",
+          current_approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" },
+        },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: [
+        "investigation_id=inv_replacement_approval",
+        "recovery_plan_hash=plan_replacement_approval",
+        "decision=approve_resume_from_checkpoint",
+        "approved_by=human_operator",
+        "fresh_context_required=true",
+        "exact_replay_unavailable=true",
+        "provider_request_replay_forbidden=true",
+        "tool_execution_replay_forbidden=true",
+        "confirm=APPROVE",
+        "human_note=replacement_approval",
+      ],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      preview: { current_approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" } },
+      approval: { status: "recorded", approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" } },
+    })
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toMatchObject({
+      approval_id: "approval_b",
+      approval_hash: "approval_hash_b",
+      execution_preparation_hash: "preparation_replacement_approval",
+    })
+  })
+
   test("Commander recovery blocked approval refreshes stale preview authority", async () => {
     const calls: string[] = []
     let previewFails = false
