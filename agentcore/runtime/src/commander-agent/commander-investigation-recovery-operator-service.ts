@@ -131,6 +131,10 @@ function recommendedAction(source: CommanderInvestigationRecoverySource): string
   // Journal state cannot prove that RuntimeServer still owns live execution.
   if (source.current_recovery_attempt) return "human_review_required"
   if (source.consumed_recovery_approval) return "human_review_required"
+  if (source.latest_recovery_approval?.consumed === false
+    && source.latest_recovery_approval.recovery_basis_hash === source.recovery_basis_hash) {
+    return "await_recovery_execution"
+  }
   if (source.pending_model_step) return "preview_uncertain_provider_recovery"
   if (source.latest_checkpoint) return "preview_checkpoint_recovery"
   return "none"

@@ -10473,7 +10473,12 @@ describe("Commander in-memory investigation controller", () => {
     expect(listed).toMatchObject({ count: 1, limit: 10, current_compatibility_checked: false })
     expect(listed.items[0]).toMatchObject({ investigation_id: authority.investigation_id, approval_state: "current", current_compatibility_checked: false })
     const shown = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
-    expect(shown).toMatchObject({ found: true, investigation_id: authority.investigation_id, approval_state: "current" })
+    expect(shown).toMatchObject({
+      found: true,
+      investigation_id: authority.investigation_id,
+      approval_state: "current",
+      recommended_next_operator_action: "await_recovery_execution",
+    })
     const missing = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: "inv_missing_public_recovery" }) as any
     expect(missing).toMatchObject({ found: false, projection_status: "missing" })
     const preview = await server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
