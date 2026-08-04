@@ -25416,7 +25416,7 @@ test("EventStore reads complete snapshots during queued appends and retries part
   const completeText = await readFile(store.eventsPath, "utf8")
   let release!: () => void
   const inFlight = new Promise<void>((resolve) => { release = resolve })
-  const internals = store as unknown as { appendQueue: Promise<unknown>; pendingAppends: number }
+  const internals = store as unknown as { appendQueue: Promise<unknown>; pendingAppends: number; readTextSnapshot(): Promise<string> }
   internals.appendQueue = inFlight
   internals.pendingAppends = 1
   expect(await store.readAll()).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
@@ -25454,5 +25454,32 @@ test("EventStore reads complete snapshots during queued appends and retries part
   expect(await read).toEqual([
     expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
     expect.objectContaining({ kind: "runtime_test_event", value: "after" }),
+  ])
+
+  const completedDuringRead = `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "completed-during-read" })}\n`
+  const readTextSnapshot = internals.readTextSnapshot.bind(store)
+  const completeAppendDuringNextSnapshot = () => {
+    let first = true
+    internals.pendingAppends = 1
+    internals.appendQueue = Promise.resolve()
+    internals.readTextSnapshot = async () => {
+      if (!first) return readTextSnapshot()
+      first = false
+      const partial = await readTextSnapshot()
+      await writeFile(store.eventsPath, completedDuringRead)
+      internals.pendingAppends = 0
+      return partial
+    }
+  }
+
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
+  completeAppendDuringNextSnapshot()
+  expect(await store.readText()).toBe(completedDuringRead)
+
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
+  completeAppendDuringNextSnapshot()
+  expect(await store.readAll()).toEqual([
+    expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
+    expect.objectContaining({ kind: "runtime_test_event", value: "completed-during-read" }),
   ])
 })

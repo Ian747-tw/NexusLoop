@@ -12,10 +12,12 @@ function makeEventId(): string {
 export class EventStore {
   private appendQueue: Promise<unknown> = Promise.resolve()
   private pendingAppends = 0
+  private appendGeneration = 0
 
   constructor(readonly eventsPath: string) {}
 
   async append(event: JsonlEvent): Promise<string> {
+    this.appendGeneration += 1
     this.pendingAppends += 1
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
@@ -42,6 +44,7 @@ export class EventStore {
     expectedLatestEventId: string | null,
     operational: { before_write?: () => void } = {},
   ): Promise<string> {
+    this.appendGeneration += 1
     this.pendingAppends += 1
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
@@ -70,18 +73,28 @@ export class EventStore {
   }
 
   async readAll(): Promise<JsonlEvent[]> {
+    const generationBefore = this.appendGeneration
+    const appendPendingBefore = this.pendingAppends > 0
     try {
       return await this.readAllSnapshot()
     } catch (error) {
-      if (!(error instanceof SyntaxError) || this.pendingAppends === 0) throw error
+      const appendOverlapped = appendPendingBefore
+        || this.pendingAppends > 0
+        || this.appendGeneration !== generationBefore
+      if (!(error instanceof SyntaxError) || !appendOverlapped) throw error
       await this.appendQueue
       return this.readAllSnapshot()
     }
   }
 
   async readText(): Promise<string> {
+    const generationBefore = this.appendGeneration
+    const appendPendingBefore = this.pendingAppends > 0
     let text = await this.readTextSnapshot()
-    if (this.pendingAppends > 0 && text.length > 0 && !/\r?\n$/.test(text)) {
+    const appendOverlapped = appendPendingBefore
+      || this.pendingAppends > 0
+      || this.appendGeneration !== generationBefore
+    if (appendOverlapped && text.length > 0 && !/\r?\n$/.test(text)) {
       await this.appendQueue
       text = await this.readTextSnapshot()
     }
