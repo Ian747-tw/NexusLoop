@@ -19012,10 +19012,17 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
         ...(fields.uncertain_provider_outcome === "true" ? { uncertain_provider_outcome: true as const } : {}),
       },
     })
-    const approval = safeOptionalRecord(result)
+    const targetChanged = commanderRecoveryTargetChanged(current, investigationId)
+    const approvalResult = safeOptionalRecord(result)
+    const previousApproval = !targetChanged && current.approval && isRecord(current.approval.approval)
+      ? structuredClone(current.approval.approval)
+      : undefined
+    const approval = approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval) && previousApproval
+      ? { ...approvalResult, approval: previousApproval }
+      : approvalResult
     return {
       ...state,
-      commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
+      commanderRecovery: targetChanged
         ? { ...current, selected: null, preview: null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
         : { ...current, approval, pendingConfirmation: undefined, commandError: undefined },
     }
@@ -19033,8 +19040,9 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     })
     const operation = safeOptionalRecord(result)
     const operationAccepted = operation?.status === "running" || operation?.status === "completed" || operation?.status === "already_started"
-    const operationChanged = typeof current.operation?.operation_id === "string"
-      && current.operation.operation_id !== operation?.operation_id
+    const operationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
+    const currentOperationId = typeof current.operation?.operation_id === "string" ? current.operation.operation_id : undefined
+    const operationChanged = operationId !== undefined && operationId !== currentOperationId
     return {
       ...state,
       commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
