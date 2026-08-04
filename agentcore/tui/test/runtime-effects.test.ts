@@ -7092,6 +7092,24 @@ describe("runtime UI effects", () => {
     })
     expect(replaced.commanderRecovery).toMatchObject({ operation: { operation_id: "operation_b", investigation_id: "inv_b" }, cancellation: null })
 
+    const acceptedSameTarget = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: { investigation_id: "inv_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
+    })
+    expect(acceptedSameTarget.commanderRecovery).toMatchObject({ operation: { status: "running" }, preview: null, approval: null })
+
     const cancelled = await applyRuntimeUiEffect(authorityA(), runtime, {
       type: "send-command",
       command: "commander-recovery-cancel",
@@ -7099,6 +7117,19 @@ describe("runtime UI effects", () => {
     })
     expect(cancelled.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, preview: null, approval: null, cancellation: { status: "cancellation_requested" } })
     expect(cancelled.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const sameTargetCancelled = await applyRuntimeUiEffect({
+      ...cancelled,
+      commanderRecovery: {
+        ...cancelled.commanderRecovery!,
+        pendingConfirmation: "execution",
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_b", "operation_id=operation_b", "approval_id=approval_b"],
+    })
+    expect(sameTargetCancelled.commanderRecovery?.pendingConfirmation).toBeUndefined()
 
     const shown = await applyRuntimeUiEffect({
       ...initialState("/tmp/demo"),

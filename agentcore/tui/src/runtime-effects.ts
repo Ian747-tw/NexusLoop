@@ -19032,13 +19032,14 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       execution_preparation_hash: requiredRecoveryField(fields, "execution_preparation_hash"),
     })
     const operation = safeOptionalRecord(result)
+    const operationAccepted = operation?.status === "running" || operation?.status === "completed" || operation?.status === "already_started"
     const operationChanged = typeof current.operation?.operation_id === "string"
       && current.operation.operation_id !== operation?.operation_id
     return {
       ...state,
       commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
         ? { ...current, selected: null, preview: null, approval: null, operation, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
-        : { ...current, operation, cancellation: operationChanged ? null : current.cancellation, pendingConfirmation: undefined, commandError: undefined },
+        : { ...current, preview: operationAccepted ? null : current.preview, approval: operationAccepted ? null : current.approval, operation, cancellation: operationChanged ? null : current.cancellation, pendingConfirmation: undefined, commandError: undefined },
     }
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
@@ -19076,7 +19077,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     ...state,
     commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
       ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined }
-      : { ...current, selected: shown ?? current.selected, operation: updatedOperation, cancellation: finalCancellation, commandError: undefined },
+      : { ...current, selected: shown ?? current.selected, operation: updatedOperation, cancellation: finalCancellation, pendingConfirmation: undefined, commandError: undefined },
   }
 }
 
