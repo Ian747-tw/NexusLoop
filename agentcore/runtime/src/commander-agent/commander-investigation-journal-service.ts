@@ -1149,11 +1149,13 @@ function nestedCommanderInvestigationId(event: JsonlEvent): string | undefined {
     checkpoint?: { investigation_id?: unknown }
     terminal?: { investigation_id?: unknown }
     approval?: { investigation_id?: unknown }
+    recovery_attempt?: { investigation_id?: unknown }
   }).normalized_input?.investigation_id
     ?? (event as { initial_checkpoint?: { investigation_id?: unknown } }).initial_checkpoint?.investigation_id
     ?? (event as { checkpoint?: { investigation_id?: unknown } }).checkpoint?.investigation_id
     ?? (event as { terminal?: { investigation_id?: unknown } }).terminal?.investigation_id
     ?? (event as { approval?: { investigation_id?: unknown } }).approval?.investigation_id
+    ?? (event as { recovery_attempt?: { investigation_id?: unknown } }).recovery_attempt?.investigation_id
   return typeof candidate === "string" && candidate ? bound(candidate, 200) : undefined
 }
 

@@ -7289,6 +7289,51 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("Commander recovery blocked approval refreshes stale preview authority", async () => {
+    const calls: string[] = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return { status: "blocked", investigation_id: "inv_a", recovery_plan_hash: "plan_current", events_appended: false }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return { status: "ready_for_approval", investigation_id: "inv_a", recovery_plan_hash: "plan_current", execution_preparation_hash: "preparation_current" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_stale", execution_preparation_hash: "preparation_stale" },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_a", "recovery_plan_hash=plan_stale", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(calls).toEqual([
+      "runtime.approve_commander_investigation_recovery",
+      "runtime.preview_commander_investigation_recovery",
+    ])
+    expect(state.commanderRecovery?.approval).toMatchObject({ status: "blocked", recovery_plan_hash: "plan_current" })
+    expect(state.commanderRecovery?.preview).toMatchObject({ recovery_plan_hash: "plan_current", execution_preparation_hash: "preparation_current" })
+    expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toMatchObject({
+      recovery_plan_hash: "plan_current",
+      execution_preparation_hash: "preparation_current",
+    })
+  })
+
   test("fake Commander recovery approval includes note identity in idempotence", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     const input = {

@@ -19018,7 +19018,8 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
     })
     const targetChanged = commanderRecoveryTargetChanged(current, investigationId)
     const approvalResult = safeOptionalRecord(result)
-    const refreshedPreview = approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval)
+    const refreshedPreview = (approvalResult?.status === "blocked"
+      || (approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval)))
       ? safeOptionalRecord(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: investigationId }))
       : null
     const refreshedApproval = refreshedPreview && isRecord(refreshedPreview.current_approval)

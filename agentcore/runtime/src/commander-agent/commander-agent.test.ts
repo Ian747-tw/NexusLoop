@@ -5767,6 +5767,28 @@ describe("Commander in-memory investigation controller", () => {
     expect(malformedApprovalUnrelatedSource).toMatchObject({ projection_status: "ready" })
     expect(malformedApprovalUnrelatedSource?.record?.integrity_errors.join("\n")).not.toContain("unassignable Commander journal event")
 
+    await startOnly("inv_recovery_malformed_start_owner", 11)
+    await startOnly("inv_recovery_malformed_start_unrelated", 12)
+    const missingStartTopLevelEvent = {
+      kind: "runtime_commander_investigation_recovery_started",
+      schema_version: 1,
+      journal_sequence: 1,
+      requested_by: "human_operator",
+      occurred_at: "2026-01-01T00:06:30.000Z",
+      recovery_attempt: { investigation_id: "inv_recovery_malformed_start_owner" },
+      event_payload_hash: "",
+    }
+    missingStartTopLevelEvent.event_payload_hash = journalPayloadHash(missingStartTopLevelEvent)
+    await server.eventStore.append(missingStartTopLevelEvent as Parameters<EventStore["append"]>[0])
+    const malformedStartOwnerSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_malformed_start_owner")
+    expect(malformedStartOwnerSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(malformedStartOwnerSource?.record?.integrity_errors.join("\n")).toContain("without top-level investigation_id")
+    const malformedStartUnrelatedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_malformed_start_unrelated")
+    expect(malformedStartUnrelatedSource).toMatchObject({ projection_status: "ready" })
+    const malformedStartList = await server.listCommanderInvestigationRecoveries({ limit: 100 })
+    expect(malformedStartList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_recovery_malformed_start_owner", projection_status: "corrupt" }))
+    expect(malformedStartList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_recovery_malformed_start_unrelated", projection_status: "ready" }))
+
     await startOnly("inv_recovery_interior_malformed", 7)
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_malformed","timestamp":"2026-01-01T00:04:00.000Z"}\n', { flag: "a" })
     const interiorMalformedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_interior_malformed")
