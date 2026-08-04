@@ -2877,12 +2877,14 @@ export class RuntimeServer {
       if (!detail.found) return detail
       active = Array.from(this.publicCommanderRecoveryOperations.values()).find((entry) => entry.record.investigation_id === investigationId)
     }
-    const matchingActiveAttempt = active?.record.status === "running"
+    const activeRunning = active?.record.status === "running"
+    const matchingActiveAttempt = activeRunning
+      && active !== undefined
       && detail.latest_recovery_attempt !== undefined
       && active.record.approval_id === detail.latest_recovery_attempt.approval_id
       && (active.record.recovery_attempt_id === undefined || active.record.recovery_attempt_id === detail.latest_recovery_attempt.recovery_attempt_id)
-    if (matchingActiveAttempt && active) {
-      active.record.recovery_attempt_id = detail.latest_recovery_attempt!.recovery_attempt_id
+    if (activeRunning && active) {
+      if (matchingActiveAttempt) active.record.recovery_attempt_id = detail.latest_recovery_attempt!.recovery_attempt_id
       detail = {
         ...detail,
         human_review_required: false,

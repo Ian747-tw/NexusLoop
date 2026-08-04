@@ -10550,6 +10550,13 @@ describe("Commander in-memory investigation controller", () => {
     const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
     expect(operation).toMatchObject({ status: "running", investigation_id: authority.investigation_id, approval_id: authority.transaction_input.approval_id })
     await preflightEntered
+    const preflightShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(preflightShow).toMatchObject({
+      human_review_required: false,
+      recommended_next_operator_action: "await_recovery_completion",
+      active_operation: { operation_id: operation.operation_id, status: "running" },
+    })
+    expect(preflightShow.active_operation).not.toHaveProperty("recovery_attempt_id")
     const duplicate = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
     expect(duplicate.operation_id).toBe(operation.operation_id)
     const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
