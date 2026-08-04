@@ -6924,7 +6924,13 @@ describe("runtime UI effects", () => {
       command: "commander-recovery-approve",
       args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
     })
-    expect(state.commanderRecovery?.approval).toMatchObject({ status: "recorded", investigation_id: "fake_commander_recovery" })
+    expect(state.commanderRecovery?.approval).toMatchObject({
+      status: "already_recorded",
+      investigation_id: "fake_commander_recovery",
+      approval_state: "current",
+      events_appended: false,
+      approval: { approval_id: "fake_approval", approval_hash: "fake_approval_hash" },
+    })
     expect(state.commanderRecovery?.operation).toBeNull()
     expect(state.commanderRecovery?.cancellation).toBeNull()
 

@@ -3075,6 +3075,9 @@ export class RuntimeServer {
       return recoveryCancellationResult(input, "operation_identity_mismatch", entry.record.cancellation_requested, generatedAt, attemptId)
     }
     if (!this.publicCommanderRecoveryOperations.has(input.operation_id) || entry.record.status !== "running") {
+      if (entry.record.cancellation_requested) {
+        return recoveryCancellationResult(input, "already_requested", true, generatedAt, attemptId)
+      }
       return recoveryCancellationResult(input, "not_active", entry.record.cancellation_requested, generatedAt, attemptId)
     }
     if (entry.record.cancellation_requested) return recoveryCancellationResult(input, "already_requested", true, generatedAt, entry.record.recovery_attempt_id)

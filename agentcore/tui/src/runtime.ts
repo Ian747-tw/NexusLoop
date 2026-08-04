@@ -334,6 +334,23 @@ export class FakeRuntimeClient implements RuntimeClient {
         if (this.commanderRecoveryApproval?.consumed === true || this.commanderRecoveryOperations.size > 0) {
           return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["recovery approval was consumed by the existing one-shot attempt"], events_appended: false, provider_called: false, network_called: false }
         }
+        const existingApproval = this.commanderRecoveryApproval
+        if (existingApproval
+          && existingApproval.investigation_id === payload.investigation_id
+          && existingApproval.recovery_plan_hash === payload.recovery_plan_hash
+          && existingApproval.decision === payload.decision
+          && existingApproval.approved_by === payload.approved_by) {
+          return {
+            status: "already_recorded",
+            investigation_id: payload.investigation_id,
+            approval_state: "current",
+            recovery_basis_hash: existingApproval.recovery_basis_hash,
+            recovery_plan_hash: existingApproval.recovery_plan_hash,
+            events_appended: false,
+            provider_called: false,
+            network_called: false,
+          }
+        }
         const approval = {
           approval_id: "fake_approval",
           approval_hash: "fake_approval_hash",

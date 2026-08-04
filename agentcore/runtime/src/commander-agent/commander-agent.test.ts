@@ -10592,6 +10592,57 @@ describe("Commander in-memory investigation controller", () => {
     expect(transport.requests).toHaveLength(1)
   })
 
+  test("duplicate public cancellation remains idempotent when the operation settles during authority refresh", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-settle-race-"))
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const operationId = "commander_recovery_operation_cancel_settle_race"
+    const record = {
+      operation_id: operationId,
+      operation_version: 1,
+      investigation_id: "inv_public_cancel_settle_race",
+      approval_id: "approval_public_cancel_settle_race",
+      approval_hash: "approval_hash_public_cancel_settle_race",
+      recovery_plan_hash: "plan_public_cancel_settle_race",
+      execution_preparation_hash: "preparation_public_cancel_settle_race",
+      status: "running",
+      cancellation_requested: true,
+      started_at: new Date(0).toISOString(),
+    }
+    const entry = {
+      record,
+      controller: new AbortController(),
+      promise: Promise.resolve(),
+    }
+    ;(server as any).publicCommanderRecoveryOperations.set(operationId, entry)
+    const journal = (server as any).commanderInvestigationJournalService()
+    let entered!: () => void
+    let release!: () => void
+    const readEntered = new Promise<void>((resolve) => { entered = resolve })
+    const readRelease = new Promise<void>((resolve) => { release = resolve })
+    journal.recoverySource = async () => {
+      entered()
+      await readRelease
+      return null
+    }
+
+    const cancellationPromise = server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: record.investigation_id,
+      operation_id: operationId,
+      approval_id: record.approval_id,
+    }) as Promise<any>
+    await readEntered
+    record.status = "blocked"
+    ;(server as any).publicCommanderRecoveryOperations.delete(operationId)
+    release()
+
+    expect(await cancellationPromise).toMatchObject({
+      status: "already_requested",
+      cancellation_requested: true,
+      operation_id: operationId,
+    })
+  })
+
   test("public cancellation requires the prepared attempt identity while recovery start is committing", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-committing-start-"))
     await writeApprovedSpec(projectDir)
