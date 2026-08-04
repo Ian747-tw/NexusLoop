@@ -19132,6 +19132,7 @@ function commanderRecoveryTargetChanged(current: CommanderRecoveryUiState, inves
     current.preview?.investigation_id,
     current.approval?.investigation_id,
     current.operation?.investigation_id,
+    current.cancellation?.investigation_id,
   ].filter((value): value is string => typeof value === "string")
   return identities.some((value) => value !== investigationId)
 }

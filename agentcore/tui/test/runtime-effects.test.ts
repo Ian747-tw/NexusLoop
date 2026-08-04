@@ -7239,6 +7239,48 @@ describe("runtime UI effects", () => {
     expect(noOperation.commanderRecovery?.operation).toBeNull()
   })
 
+  test("Commander recovery show clears a different investigation's standalone cancellation", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return { found: true, investigation_id: "inv_after_cancellation", projection_status: "ready" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: null,
+        cancellation: {
+          investigation_id: "inv_stale_cancellation",
+          operation_id: "operation_stale_cancellation",
+          status: "cancellation_requested",
+        },
+      },
+    }
+
+    const shown = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-show",
+      args: ["inv_after_cancellation"],
+    })
+
+    expect(shown.commanderRecovery).toMatchObject({
+      selected: { investigation_id: "inv_after_cancellation" },
+      operation: null,
+      cancellation: null,
+    })
+  })
+
   test("Commander recovery sends complete cancellation authority before a fallible detail refresh", async () => {
     const calls: string[] = []
     const runtime: RuntimeClient = {
