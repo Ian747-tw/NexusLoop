@@ -2882,7 +2882,7 @@ export class RuntimeServer {
     const matchingActiveAttempt = activeRunning
       && active !== undefined
       && recoveryAttemptMatchesOperation(detail.latest_recovery_attempt, active.record)
-    if (activeRunning && active && (detail.latest_recovery_attempt === undefined || matchingActiveAttempt)) {
+    if (detail.projection_status === "ready" && activeRunning && active && (detail.latest_recovery_attempt === undefined || matchingActiveAttempt)) {
       if (matchingActiveAttempt) active.record.recovery_attempt_id = detail.latest_recovery_attempt!.recovery_attempt_id
       detail = {
         ...detail,

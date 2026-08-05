@@ -5804,7 +5804,9 @@ function stageSuggestedOperatorCommand(state: UiState, args: string[]): UiState 
 }
 
 function stageExplicitOperatorCommand(state: UiState, args: string[]): UiState {
-  const staged = stageExplicitCommand(requiredRest(args, 0, "command"))
+  const command = args.slice(0).join(" ")
+  if (!command.trim()) throw new Error("command is required")
+  const staged = stageExplicitCommand(command)
   return applyStagedOperatorCommand(state, staged, "operator command staged")
 }
 

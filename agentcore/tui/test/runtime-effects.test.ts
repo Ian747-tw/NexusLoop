@@ -7642,14 +7642,14 @@ describe("runtime UI effects", () => {
     })
     expect(unconfirmed.commanderRecovery).toMatchObject({ pendingConfirmation: "approval", commandError: undefined })
 
-    const stagedWithRawNote = parseRuntimeCommand(`/stage-command ${command} human_note=a  b`)!
+    const stagedWithRawNote = parseRuntimeCommand(`/stage-command ${command} human_note=a  b  `)!
     const stagedWithRawNoteState = await applyRuntimeUiEffect({
       ...initialState("/tmp/demo"),
       screen: "main",
     }, runtime, { type: "send-command", command: stagedWithRawNote.command, args: stagedWithRawNote.args })
-    expect(stagedWithRawNoteState.operatorActions?.staged?.command).toContain("human_note=a  b")
+    expect(stagedWithRawNoteState.operatorActions?.staged?.command).toContain("human_note=a  b  ")
     await applyRuntimeUiEffect(stagedWithRawNoteState, runtime, { type: "send-command", command: "run-staged" })
-    expect(approvalPayload).toMatchObject({ human_note: "a  b" })
+    expect(approvalPayload).toMatchObject({ human_note: "a  b  " })
   })
 
   test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {

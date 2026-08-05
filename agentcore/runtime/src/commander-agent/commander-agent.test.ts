@@ -10656,6 +10656,22 @@ describe("Commander in-memory investigation controller", () => {
     const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
     expect(operation).toMatchObject({ status: "running", investigation_id: authority.investigation_id, approval_id: authority.transaction_input.approval_id })
     await preflightEntered
+    const operatorService = (server as any).commanderInvestigationRecoveryOperatorService()
+    const originalShow = operatorService.show.bind(operatorService)
+    operatorService.show = async (investigationId: string) => ({
+      ...await originalShow(investigationId),
+      projection_status: "corrupt",
+      human_review_required: true,
+      recommended_next_operator_action: "inspect_corrupt_record",
+    })
+    const corruptPreflightShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(corruptPreflightShow).toMatchObject({
+      projection_status: "corrupt",
+      human_review_required: true,
+      recommended_next_operator_action: "inspect_corrupt_record",
+      active_operation: { operation_id: operation.operation_id, status: "running" },
+    })
+    operatorService.show = originalShow
     const preflightShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
     expect(preflightShow).toMatchObject({
       human_review_required: false,
