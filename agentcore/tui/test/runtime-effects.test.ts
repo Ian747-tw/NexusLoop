@@ -7062,8 +7062,9 @@ describe("runtime UI effects", () => {
   })
 
   test("Commander recovery execute and cancel clear authority from another investigation", async () => {
+    let shownFound = true
     let shownApprovalState = "consumed"
-    let shownApprovalId = "approval_b"
+    let shownApprovalId: string | undefined = "approval_b"
     let showActiveOperation = true
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
@@ -7075,10 +7076,10 @@ describe("runtime UI effects", () => {
         }
         if (name === "runtime.get_commander_investigation_recovery") {
           return {
-            found: true,
+            found: shownFound,
             investigation_id: payload?.investigation_id,
             approval_state: shownApprovalState,
-            latest_approval: { approval_id: shownApprovalId },
+            ...(shownApprovalId ? { latest_approval: { approval_id: shownApprovalId } } : {}),
             ...(showActiveOperation ? { active_operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" } } : {}),
           }
         }
@@ -7274,6 +7275,38 @@ describe("runtime UI effects", () => {
     }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
     expect(replacement.commanderRecovery).toMatchObject({ selected: { approval_state: "current", latest_approval: { approval_id: "approval_b_replacement" } }, preview: null, approval: null })
     expect(replacement.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    shownFound = false
+    shownApprovalState = "none"
+    shownApprovalId = undefined
+    const missing = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(missing.commanderRecovery).toMatchObject({ selected: { found: false, approval_state: "none" }, preview: null, approval: null })
+
+    shownFound = true
+    const noApproval = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(noApproval.commanderRecovery).toMatchObject({ selected: { found: true, approval_state: "none" }, preview: null, approval: null })
 
     showActiveOperation = false
     const noOperation = await applyRuntimeUiEffect({

@@ -18979,10 +18979,12 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       : typeof cachedPreviewApproval?.approval_id === "string"
         ? cachedPreviewApproval.approval_id
         : undefined
+    const cachedApprovalStillCurrent = cachedApprovalId === undefined
+      || (selected?.found === true
+        && selectedApprovalState === "current"
+        && selectedApprovalId === cachedApprovalId)
     const approvalAuthorityInvalid = selectionChanged
-      || selectedApprovalState === "consumed"
-      || selectedApprovalState === "stale"
-      || (selectedApprovalId !== undefined && cachedApprovalId !== undefined && selectedApprovalId !== cachedApprovalId)
+      || !cachedApprovalStillCurrent
     const operationChanged = current.operation?.operation_id !== activeOperation?.operation_id
     return {
       ...state,
