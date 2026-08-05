@@ -11032,6 +11032,53 @@ describe("Commander in-memory investigation controller", () => {
     })
   })
 
+  test("public cancellation never binds an unrelated journal attempt to a pre-start operation", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-unrelated-attempt-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("first recovery completed") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_unrelated_attempt")
+
+    const completed = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const completedEntry = (server as any).publicCommanderRecoveryOperations.get(completed.operation_id)
+    await completedEntry.promise
+    const priorAttemptId = completedEntry.record.recovery_attempt_id
+    expect(typeof priorAttemptId).toBe("string")
+    expect(transport.requests).toHaveLength(1)
+
+    ;(server as any).recentPublicCommanderRecoveryOperations.clear()
+    const configuredRun = server.runCommanderInvestigationRecoveryConfigured.bind(server)
+    let settlePrestart!: (result: any) => void
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = async () => new Promise((resolve) => {
+      settlePrestart = resolve
+    })
+    const unrelatedAuthority = {
+      ...authority.transaction_input,
+      approval_id: "commander_recovery_approval_unrelated",
+      approval_hash: "approval_hash_unrelated",
+      recovery_plan_hash: "recovery_plan_hash_unrelated",
+      execution_preparation_hash: "execution_preparation_hash_unrelated",
+    }
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", unrelatedAuthority) as any
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: unrelatedAuthority.approval_id,
+    }) as any
+
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", recovery_attempt_id: undefined })
+    expect(cancellation.recovery_attempt_id).not.toBe(priorAttemptId)
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    expect(activeEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(activeEntry.record.cancellation_requested).toBe(true)
+    expect(transport.requests).toHaveLength(1)
+
+    settlePrestart({ status: "blocked", approval_consumed: false, blockers: ["operator cancellation requested"], warnings: [] })
+    await activeEntry.promise
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = configuredRun
+  })
+
   test("public execute before approval does not poison later approved recovery", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-execute-before-approval-"))
     await writeApprovedSpec(projectDir)

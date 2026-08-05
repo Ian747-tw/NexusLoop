@@ -216,6 +216,7 @@ import {
   type CommanderInvestigationRecoveryExecutionEnvelope,
   type CommanderInvestigationRecoveryTransactionInput,
   type CommanderInvestigationRecoveryTransactionResult,
+  type CommanderInvestigationRecoveryAttemptSummary,
   type CommanderRecoveryOperatorList,
   type CommanderRecoveryOperatorDetail,
   type CommanderRecoveryOperatorMissing,
@@ -2880,9 +2881,7 @@ export class RuntimeServer {
     const activeRunning = active?.record.status === "running"
     const matchingActiveAttempt = activeRunning
       && active !== undefined
-      && detail.latest_recovery_attempt !== undefined
-      && active.record.approval_id === detail.latest_recovery_attempt.approval_id
-      && (active.record.recovery_attempt_id === undefined || active.record.recovery_attempt_id === detail.latest_recovery_attempt.recovery_attempt_id)
+      && recoveryAttemptMatchesOperation(detail.latest_recovery_attempt, active.record)
     if (activeRunning && active) {
       if (matchingActiveAttempt) active.record.recovery_attempt_id = detail.latest_recovery_attempt!.recovery_attempt_id
       detail = {
@@ -3021,8 +3020,7 @@ export class RuntimeServer {
         record.error = redactText(error instanceof Error ? error.message : String(error)).slice(0, 300)
         try {
           const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-          const durableAttemptId = source?.current_recovery_attempt?.recovery_attempt_id
-            ?? source?.latest_recovery_attempt?.recovery_attempt_id
+          const durableAttemptId = recoveryAttemptForOperation(source, record)?.recovery_attempt_id
           if (durableAttemptId) record.recovery_attempt_id = durableAttemptId
           else delete record.recovery_attempt_id
           if (recoveryOperationMayBeReplaced(source)) {
@@ -3067,8 +3065,7 @@ export class RuntimeServer {
     if (!attemptId) {
       try {
         const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
-        attemptId = source?.current_recovery_attempt?.recovery_attempt_id
-          ?? source?.latest_recovery_attempt?.recovery_attempt_id
+        attemptId = recoveryAttemptForOperation(source, entry.record)?.recovery_attempt_id
           ?? entry.record.recovery_attempt_id
       } catch {
         // The exact in-memory pre-start operation remains cancellable when journal reconciliation is unavailable.
@@ -6356,6 +6353,27 @@ function sameRecoveryAuthority(operation: CommanderRecoveryOperation, input: Com
     && operation.approval_hash === input.approval_hash
     && operation.recovery_plan_hash === input.recovery_plan_hash
     && operation.execution_preparation_hash === input.execution_preparation_hash
+}
+
+function recoveryAttemptMatchesOperation(
+  attempt: CommanderInvestigationRecoveryAttemptSummary | undefined,
+  operation: CommanderRecoveryOperation,
+): attempt is CommanderInvestigationRecoveryAttemptSummary {
+  return attempt !== undefined
+    && attempt.approval_id === operation.approval_id
+    && attempt.approval_hash === operation.approval_hash
+    && attempt.recovery_plan_hash === operation.recovery_plan_hash
+    && attempt.execution_preparation_hash === operation.execution_preparation_hash
+    && (operation.recovery_attempt_id === undefined || attempt.recovery_attempt_id === operation.recovery_attempt_id)
+}
+
+function recoveryAttemptForOperation(
+  source: CommanderInvestigationRecoverySource | undefined,
+  operation: CommanderRecoveryOperation,
+): CommanderInvestigationRecoveryAttemptSummary | undefined {
+  if (source?.investigation_id !== operation.investigation_id) return undefined
+  const candidates = [source.current_recovery_attempt, source.latest_recovery_attempt]
+  return candidates.find((attempt) => recoveryAttemptMatchesOperation(attempt, operation))
 }
 
 function recoveryOperationMayBeReplaced(source: CommanderInvestigationRecoverySource | undefined): boolean {
