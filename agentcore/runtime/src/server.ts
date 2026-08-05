@@ -2985,19 +2985,26 @@ export class RuntimeServer {
       started_at: startedAt,
     }
     const controller = new AbortController()
+    const combined = this.commanderInvestigationAbortSignal(controller.signal)
     const entry = { record, controller, promise: Promise.resolve() }
     this.publicCommanderRecoveryOperations.set(operationId, entry)
     entry.promise = (async () => {
       if (settledRequiringAuthoritativeRecheck) {
         const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+        if (combined.signal.aborted) {
+          throw new Error("Commander recovery operation cancelled during replacement authority recheck")
+        }
         if (!recoveryOperationMayBeReplaced(source)) {
           throw new Error("a recovery attempt already exists for this investigation and different authority cannot start another")
         }
         this.recentPublicCommanderRecoveryOperations.delete(settledRequiringAuthoritativeRecheck.operation_id)
         this.replaceablePublicCommanderRecoveryOperationIds.delete(settledRequiringAuthoritativeRecheck.operation_id)
       }
+      if (combined.signal.aborted) {
+        throw new Error("Commander recovery operation cancelled before configured recovery")
+      }
       return this.runCommanderInvestigationRecoveryConfigured(input, {
-        abort_signal: controller.signal,
+        abort_signal: combined.signal,
         on_recovery_attempt_prepared: (recoveryAttemptId) => {
           record.recovery_attempt_id = recoveryAttemptId
         },
@@ -3054,6 +3061,7 @@ export class RuntimeServer {
         }
       })
       .finally(() => {
+        combined.cleanup()
         record.settled_at = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
         this.publicCommanderRecoveryOperations.delete(operationId)
         this.recentPublicCommanderRecoveryOperations.set(operationId, cloneRecoveryOperation(record))
@@ -3210,7 +3218,8 @@ export class RuntimeServer {
   private async drainConfiguredCommanderInvestigations(): Promise<void> {
     const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
     const activeRecoveries = Array.from(this.activeConfiguredCommanderRecoveries)
-    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
+    const publicRecoveries = Array.from(this.publicCommanderRecoveryOperations.values())
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...publicRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null

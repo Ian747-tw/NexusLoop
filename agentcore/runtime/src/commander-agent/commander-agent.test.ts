@@ -11258,6 +11258,78 @@ describe("Commander in-memory investigation controller", () => {
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
   })
 
+  test("shutdown drains public replacement-authority recheck before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-replacement-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch after shutdown") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_replacement_shutdown")
+    const settledOperation = {
+      operation_id: "commander_recovery_operation_blocked_before_replacement_shutdown",
+      operation_version: 1 as const,
+      ...authority.transaction_input,
+      approval_id: "commander_recovery_approval_blocked_before_shutdown",
+      approval_hash: "approval_hash_blocked_before_shutdown",
+      status: "blocked" as const,
+      cancellation_requested: false,
+      started_at: new Date(0).toISOString(),
+      settled_at: new Date(1).toISOString(),
+    }
+    ;(server as any).recentPublicCommanderRecoveryOperations.set(settledOperation.operation_id, settledOperation)
+
+    const originalRecoverySource = authority.journal.recoverySource.bind(authority.journal)
+    let entered!: () => void
+    let release!: () => void
+    const recheckEntered = new Promise<void>((resolve) => { entered = resolve })
+    const recheckRelease = new Promise<void>((resolve) => { release = resolve })
+    let delayed = true
+    authority.journal.recoverySource = async (investigationId: string) => {
+      if (delayed) {
+        delayed = false
+        entered()
+        await recheckRelease
+      }
+      return originalRecoverySource(investigationId)
+    }
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    await recheckEntered
+    let shutdownSettled = false
+    const shutdown = server.shutdown("public recovery replacement authority shutdown").then(() => {
+      shutdownSettled = true
+    })
+    await waitFor(() => (server as any).lifecycleState === "stopping")
+    expect((server as any).runLock.isHeld()).toBe(true)
+    expect(activeEntry.record.status).toBe("running")
+    expect(shutdownSettled).toBe(false)
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+
+    release()
+    await activeEntry.promise
+    await shutdown
+
+    expect(activeEntry.record.status).toBe("failed")
+    expect(activeEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(activeEntry.record.error).toContain("cancelled during replacement authority recheck")
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    expect(events[events.length - 1]?.kind).toBe("runtime_shutdown")
+    const source = await originalRecoverySource(authority.investigation_id)
+    expect(source).toMatchObject({
+      latest_recovery_approval: { consumed: false },
+      consumed_recovery_approval: undefined,
+      current_recovery_attempt: undefined,
+      terminal: undefined,
+    })
+  })
+
   test("recovery transaction resolves uncertain provider policy without inferring or replaying the old request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-uncertain-"))
     await writeApprovedSpec(projectDir)
