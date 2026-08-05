@@ -5991,6 +5991,8 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
     if (state.commanderRecovery?.commandError) return state.commanderRecovery.commandError
     if (command === "commander-recovery-approve" && state.commanderRecovery?.pendingConfirmation === "approval") return "explicit recovery approval confirmation is required"
     if (command === "commander-recovery-execute" && state.commanderRecovery?.pendingConfirmation === "execution") return "explicit recovery execution confirmation is required"
+    const domainError = commanderRecoveryMutationError(command, state.commanderRecovery)
+    if (domainError) return domainError
   }
   if (opencodeContinuityCommands.has(command)) return state.opencodeContinuity?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
@@ -6011,6 +6013,29 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
+}
+
+function commanderRecoveryMutationError(command: string, recovery: CommanderRecoveryUiState | undefined): string | undefined {
+  if (command === "commander-recovery-approve") {
+    const approval = recovery?.approval
+    const status = approval?.status
+    if (status === "blocked" || status === "failed") {
+      const blocker = Array.isArray(approval?.blockers) ? approval.blockers.find((item): item is string => typeof item === "string") : undefined
+      return blocker ?? `recovery approval ${status}`
+    }
+  }
+  if (command === "commander-recovery-execute") {
+    const operation = recovery?.operation
+    const status = operation?.status
+    if (operation?.request_rejected === true || status === "blocked" || status === "failed") {
+      return typeof operation?.error === "string" ? operation.error : `recovery execution ${String(status ?? "rejected")}`
+    }
+  }
+  if (command === "commander-recovery-cancel") {
+    const status = recovery?.cancellation?.status
+    if (status === "not_active" || status === "operation_identity_mismatch") return `recovery cancellation ${status}`
+  }
+  return undefined
 }
 
 function clearCommandErrorFor(command: string, state: UiState): UiState {

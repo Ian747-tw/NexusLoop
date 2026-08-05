@@ -7661,6 +7661,50 @@ describe("runtime UI effects", () => {
     expect(approvalPayload).toMatchObject({ human_note: "a  b  " })
   })
 
+  test("staged Commander recovery retains commands after negative domain results", async () => {
+    const commands = [
+      {
+        command: "/commander-recovery-approve investigation_id=inv_domain recovery_plan_hash=plan_domain decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true confirm=APPROVE",
+        expected: "stale recovery plan",
+        runtimeResult: { status: "blocked", investigation_id: "inv_domain", blockers: ["stale recovery plan"], events_appended: false },
+      },
+      {
+        command: "/commander-recovery-execute investigation_id=inv_domain approval_id=approval_domain approval_hash=approval_hash_domain recovery_plan_hash=plan_domain execution_preparation_hash=preparation_domain confirm=EXECUTE",
+        expected: "different recovery authority",
+        runtimeResult: { status: "blocked", investigation_id: "inv_domain", operation_id: "operation_domain", approval_id: "approval_domain", request_rejected: true, error: "different recovery authority" },
+      },
+      {
+        command: "/commander-recovery-cancel investigation_id=inv_domain operation_id=operation_domain approval_id=approval_domain",
+        expected: "recovery cancellation not_active",
+        runtimeResult: { status: "not_active", investigation_id: "inv_domain", operation_id: "operation_domain", approval_id: "approval_domain", cancellation_requested: false },
+      },
+    ]
+
+    for (const fixture of commands) {
+      const runtime: RuntimeClient = {
+        async *stream(): AsyncIterable<RuntimeEvent> {},
+        async sendUserMessage(): Promise<void> {},
+        async sendCommand(): Promise<unknown> { return undefined },
+        async command(name: string): Promise<unknown> {
+          if (name === "runtime.preview_commander_investigation_recovery") return { status: "blocked", investigation_id: "inv_domain", approval_state: "none" }
+          if (name === "runtime.get_commander_investigation_recovery") return { found: false, investigation_id: "inv_domain", projection_status: "missing" }
+          return fixture.runtimeResult
+        },
+      }
+      const staged = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "main" }, runtime, {
+        type: "send-command",
+        command: "stage-command",
+        args: [fixture.command],
+      })
+      const executed = await applyRuntimeUiEffect(staged, runtime, { type: "send-command", command: "run-staged" })
+      expect(executed.operatorActions).toMatchObject({
+        staged: { command: fixture.command },
+        lastResult: { ok: false, command: fixture.command, summary: fixture.expected },
+        commandError: fixture.expected,
+      })
+    }
+  })
+
   test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {
     const calls: string[] = []
     const runtime: RuntimeClient = {
