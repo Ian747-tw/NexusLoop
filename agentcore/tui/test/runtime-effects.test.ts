@@ -3,6 +3,7 @@ import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, com
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 import { parseRuntimeCommand } from "../src/keyboard"
+import { commandTypeFromSlash } from "../src/operator-actions"
 import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
 import { snapshotUiState } from "../src/state-snapshot"
@@ -975,6 +976,23 @@ class FailingMissionExecutionRuntime extends MissionExecutionRuntime {
 }
 
 describe("runtime UI effects", () => {
+  test("Commander recovery staged commands classify mutations as writes", () => {
+    for (const command of [
+      "/commander-recovery-approve",
+      "/commander-recovery-execute",
+      "/commander-recovery-cancel",
+    ]) {
+      expect(commandTypeFromSlash(command)).toBe("write")
+    }
+    for (const command of [
+      "/commander-recoveries",
+      "/commander-recovery-show",
+      "/commander-recovery-preview",
+    ]) {
+      expect(commandTypeFromSlash(command)).toBe("read")
+    }
+  })
+
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
       ...initialState("/tmp/demo"),

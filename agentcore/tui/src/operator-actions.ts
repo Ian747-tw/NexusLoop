@@ -140,6 +140,9 @@ const WRITE_COMMANDS = new Set([
   "opencode-context-refresh-write",
   "opencode-refresh-write",
   "context-refresh-write",
+  "commander-recovery-approve",
+  "commander-recovery-execute",
+  "commander-recovery-cancel",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
