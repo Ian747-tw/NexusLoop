@@ -11265,6 +11265,7 @@ describe("Commander in-memory investigation controller", () => {
     const server = configuredProviderRuntimeServer(projectDir, { transport })
     servers.push({ stop: () => server.shutdown() })
     const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_replacement_shutdown")
+    const lateAuthority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_late_replacement_shutdown")
     const settledOperation = {
       operation_id: "commander_recovery_operation_blocked_before_replacement_shutdown",
       operation_version: 1 as const,
@@ -11277,6 +11278,18 @@ describe("Commander in-memory investigation controller", () => {
       settled_at: new Date(1).toISOString(),
     }
     ;(server as any).recentPublicCommanderRecoveryOperations.set(settledOperation.operation_id, settledOperation)
+    const lateSettledOperation = {
+      operation_id: "commander_recovery_operation_blocked_late_replacement_shutdown",
+      operation_version: 1 as const,
+      ...lateAuthority.transaction_input,
+      approval_id: "commander_recovery_approval_blocked_late_shutdown",
+      approval_hash: "approval_hash_blocked_late_shutdown",
+      status: "blocked" as const,
+      cancellation_requested: false,
+      started_at: new Date(0).toISOString(),
+      settled_at: new Date(1).toISOString(),
+    }
+    ;(server as any).recentPublicCommanderRecoveryOperations.set(lateSettledOperation.operation_id, lateSettledOperation)
 
     const originalRecoverySource = authority.journal.recoverySource.bind(authority.journal)
     let entered!: () => void
@@ -11284,12 +11297,14 @@ describe("Commander in-memory investigation controller", () => {
     const recheckEntered = new Promise<void>((resolve) => { entered = resolve })
     const recheckRelease = new Promise<void>((resolve) => { release = resolve })
     let delayed = true
+    let lateReplacementReads = 0
     authority.journal.recoverySource = async (investigationId: string) => {
-      if (delayed) {
+      if (investigationId === authority.investigation_id && delayed) {
         delayed = false
         entered()
         await recheckRelease
       }
+      if (investigationId === lateAuthority.investigation_id) lateReplacementReads += 1
       return originalRecoverySource(investigationId)
     }
 
@@ -11305,6 +11320,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(activeEntry.record.status).toBe("running")
     expect(shutdownSettled).toBe(false)
     expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+    const operationCountDuringDrain = (server as any).publicCommanderRecoveryOperations.size
+    await expect(server.command("runtime.execute_commander_investigation_recovery", lateAuthority.transaction_input)).rejects.toThrow("shutdown is in progress")
+    expect(lateReplacementReads).toBe(0)
+    expect((server as any).publicCommanderRecoveryOperations.size).toBe(operationCountDuringDrain)
 
     release()
     await activeEntry.promise
@@ -11323,6 +11342,13 @@ describe("Commander in-memory investigation controller", () => {
     expect(events[events.length - 1]?.kind).toBe("runtime_shutdown")
     const source = await originalRecoverySource(authority.investigation_id)
     expect(source).toMatchObject({
+      latest_recovery_approval: { consumed: false },
+      consumed_recovery_approval: undefined,
+      current_recovery_attempt: undefined,
+      terminal: undefined,
+    })
+    const lateSource = await originalRecoverySource(lateAuthority.investigation_id)
+    expect(lateSource).toMatchObject({
       latest_recovery_approval: { consumed: false },
       consumed_recovery_approval: undefined,
       current_recovery_attempt: undefined,
@@ -12861,7 +12887,7 @@ async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investig
   snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
   await durableRun.observer.onStarted(snapshot)
   journal.release(durableRun)
-  await server.start()
+  if (!(server as any).started) await server.start()
   const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
   expect(recovery.blockers).toEqual([])
   expect(recovery.status).toBe("ready_for_approval")
