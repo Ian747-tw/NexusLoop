@@ -25,6 +25,7 @@ export class CommanderInvestigationRecoveryOperatorService {
       limit: MAX_LIMIT,
       status: input.status as never,
       recovery_state: input.recovery_state,
+      recovery_approval_state: input.approval_state,
     })
     const items = records
       .map(summaryFromRecord)

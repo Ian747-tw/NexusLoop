@@ -144,6 +144,7 @@ export type CommanderInvestigationJournalRunState = {
 }
 
 function recoveryApprovalState(record: CommanderInvestigationRecord): "none" | "current" | "stale" | "consumed" {
+  if (record.projection_status !== "ready") return "none"
   if (record.recovery_approval_consumed) return "consumed"
   if (record.recovery_approval_recorded) return "current"
   return record.recovery_approval_count > 0 ? "stale" : "none"

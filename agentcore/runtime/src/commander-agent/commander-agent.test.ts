@@ -10516,6 +10516,18 @@ describe("Commander in-memory investigation controller", () => {
     const missing = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: "inv_missing_public_recovery" }) as any
     expect(missing).toMatchObject({ found: false, projection_status: "missing" })
     const source = await authority.journal.recoverySource(authority.investigation_id)
+    const approvalFilterCalls: Array<Parameters<CommanderInvestigationJournalService["list"]>[0]> = []
+    const preCapApprovalFilterOperator = new CommanderInvestigationRecoveryOperatorService({
+      list: async (options: NonNullable<Parameters<CommanderInvestigationJournalService["list"]>[0]> = {}) => {
+        approvalFilterCalls.push(options)
+        return options.recovery_approval_state === "current" ? [source!.record!] : []
+      },
+    } as unknown as CommanderInvestigationJournalService)
+    expect(await preCapApprovalFilterOperator.list({ approval_state: "current" })).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, approval_state: "current" }],
+      count: 1,
+    })
+    expect(approvalFilterCalls).toEqual([{ limit: 100, status: undefined, recovery_state: undefined, recovery_approval_state: "current" }])
     const humanReviewRecord = {
       ...source!.record!,
       status: "needs_human_review" as const,
