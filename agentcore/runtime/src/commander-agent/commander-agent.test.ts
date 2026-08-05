@@ -10589,6 +10589,15 @@ describe("Commander in-memory investigation controller", () => {
       human_note: `${" ".repeat(1001)}ok`,
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
     })).resolves.toMatchObject({ status: "blocked", events_appended: false, blockers: ["human_note must be a bounded string"] })
+    const approvalEventCountBeforeOversizedApprover = (await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved").length
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: ` ${"a".repeat(199)} `,
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).resolves.toMatchObject({ status: "blocked", events_appended: false, blockers: ["approved_by is required and bounded"] })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(approvalEventCountBeforeOversizedApprover)
     await expect(server.command("runtime.approve_commander_investigation_recovery", {
       investigation_id: "x".repeat(201),
       recovery_plan_hash: preview.recovery_plan_hash,

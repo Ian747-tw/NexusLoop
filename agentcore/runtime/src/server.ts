@@ -6062,6 +6062,11 @@ function requiredString(value: unknown, field: string): string {
   return value.trim()
 }
 
+function requiredRawString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required`)
+  return value
+}
+
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined
   if (typeof value !== "string") throw new Error(`${field} must be a string`)
@@ -6332,7 +6337,7 @@ function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): C
     investigation_id: requiredRecoveryAuthorityId(payload.investigation_id, "investigation_id", 200),
     recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
     decision,
-    approved_by: requiredString(payload.approved_by, "approved_by"),
+    approved_by: requiredRawString(payload.approved_by, "approved_by"),
     human_note: optionalRawString(payload.human_note, "human_note"),
     acknowledgements: {
       fresh_context_required: requiredTrue("fresh_context_required"),
