@@ -7240,6 +7240,24 @@ describe("runtime UI effects", () => {
     expect(refreshed.commanderRecovery?.pendingConfirmation).toBeUndefined()
 
     shownApprovalState = "current"
+    const preserved = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(preserved.commanderRecovery).toMatchObject({
+      selected: { approval_state: "current", latest_approval: { approval_id: "approval_b" } },
+      preview: { recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+      approval: { approval: { approval_id: "approval_b" } },
+    })
+
     shownApprovalId = "approval_b_replacement"
     const replacement = await applyRuntimeUiEffect({
       ...initialState("/tmp/demo"),
@@ -7668,6 +7686,7 @@ describe("runtime UI effects", () => {
 
   test("Commander recovery refreshes settled cached operations before cancellation", async () => {
     const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    let showCount = 0
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
       async sendUserMessage(): Promise<void> {},
@@ -7675,13 +7694,14 @@ describe("runtime UI effects", () => {
       async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
         calls.push({ name, payload })
         if (name === "runtime.get_commander_investigation_recovery") {
+          showCount += 1
           return {
             found: true,
             investigation_id: "inv_cancel_settled",
             active_operation: {
               investigation_id: "inv_cancel_settled",
-              operation_id: "operation_current",
-              approval_id: "approval_current",
+              operation_id: showCount === 1 ? "operation_current" : "operation_replacement",
+              approval_id: showCount === 1 ? "approval_current" : "approval_replacement",
               status: "running",
               cancellation_requested: false,
             },
@@ -7733,10 +7753,11 @@ describe("runtime UI effects", () => {
           approval_id: "approval_current",
         },
       },
+      { name: "runtime.get_commander_investigation_recovery", payload: { investigation_id: "inv_cancel_settled" } },
     ])
     expect(cancelled.commanderRecovery).toMatchObject({
-      operation: { operation_id: "operation_current", approval_id: "approval_current", cancellation_requested: true },
-      cancellation: { status: "cancellation_requested" },
+      operation: { operation_id: "operation_replacement", approval_id: "approval_replacement", cancellation_requested: false },
+      cancellation: null,
     })
   })
 

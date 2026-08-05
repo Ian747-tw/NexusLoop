@@ -18969,14 +18969,28 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       : null
     const selectionChanged = selectedInvestigationId !== undefined
       && commanderRecoveryTargetChanged(current, selectedInvestigationId)
+    const selectedApprovalState = typeof selected?.approval_state === "string" ? selected.approval_state : undefined
+    const selectedApproval = selected && isRecord(selected.latest_approval) ? selected.latest_approval : undefined
+    const selectedApprovalId = typeof selectedApproval?.approval_id === "string" ? selectedApproval.approval_id : undefined
+    const cachedApproval = current.approval && isRecord(current.approval.approval) ? current.approval.approval : undefined
+    const cachedPreviewApproval = current.preview && isRecord(current.preview.current_approval) ? current.preview.current_approval : undefined
+    const cachedApprovalId = typeof cachedApproval?.approval_id === "string"
+      ? cachedApproval.approval_id
+      : typeof cachedPreviewApproval?.approval_id === "string"
+        ? cachedPreviewApproval.approval_id
+        : undefined
+    const approvalAuthorityInvalid = selectionChanged
+      || selectedApprovalState === "consumed"
+      || selectedApprovalState === "stale"
+      || (selectedApprovalId !== undefined && cachedApprovalId !== undefined && selectedApprovalId !== cachedApprovalId)
     const operationChanged = current.operation?.operation_id !== activeOperation?.operation_id
     return {
       ...state,
       commanderRecovery: {
         ...current,
         selected,
-        preview: null,
-        approval: null,
+        preview: approvalAuthorityInvalid ? null : current.preview,
+        approval: approvalAuthorityInvalid ? null : current.approval,
         pendingConfirmation: undefined,
         operation: activeOperation,
         cancellation: selectionChanged || operationChanged ? null : current.cancellation,
@@ -19108,7 +19122,9 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       recovery_attempt_id: cancellation.recovery_attempt_id,
     })
   }
-  if (completeIdentityAvailable) {
+  const finalCancellation = safeOptionalRecord(result)
+  const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
+  if (completeIdentityAvailable || cancellationAccepted) {
     try {
       shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
       operation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
@@ -19116,8 +19132,6 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       refreshError = redactText(error instanceof Error ? error.message : String(error))
     }
   }
-  const finalCancellation = safeOptionalRecord(result)
-  const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
   const cancellationTargetsOperation = Boolean(operation
     && finalCancellation
     && typeof finalCancellation.operation_id === "string"
