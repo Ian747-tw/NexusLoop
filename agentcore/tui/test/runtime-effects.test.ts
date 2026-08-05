@@ -7126,7 +7126,11 @@ describe("runtime UI effects", () => {
       command: "commander-recovery-execute",
       args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
     })
-    expect(acceptedSameTarget.commanderRecovery).toMatchObject({ operation: { status: "running" }, preview: null, approval: null })
+    expect(acceptedSameTarget.commanderRecovery).toMatchObject({
+      operation: { status: "running" },
+      preview: { current_approval: { approval_id: "approval_b" } },
+      approval: { approval: { approval_id: "approval_b" } },
+    })
 
     const acceptedAfterNotActive = await applyRuntimeUiEffect({
       ...initialState("/tmp/demo"),
@@ -7246,8 +7250,9 @@ describe("runtime UI effects", () => {
     expect(noOperation.commanderRecovery?.operation).toBeNull()
   })
 
-  test("Commander recovery clears cached authority only for failed executions with durable attempt identity", async () => {
+  test("Commander recovery clears cached authority only after durable attempt identity is observed", async () => {
     let durableAttempt = false
+    let operationStatus: "running" | "failed" = "running"
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
       async sendUserMessage(): Promise<void> {},
@@ -7258,7 +7263,7 @@ describe("runtime UI effects", () => {
           operation_id: durableAttempt ? "operation_durable" : "operation_prestart",
           investigation_id: payload?.investigation_id,
           approval_id: payload?.approval_id,
-          status: "failed",
+          status: operationStatus,
           ...(durableAttempt ? { recovery_attempt_id: "attempt_durable" } : {}),
         }
       },
@@ -7281,6 +7286,14 @@ describe("runtime UI effects", () => {
       args: ["investigation_id=inv_a", "approval_id=approval_a", "approval_hash=approval_hash_a", "recovery_plan_hash=plan_a", "execution_preparation_hash=preparation_a", "confirm=EXECUTE"],
     })
 
+    const prestartRunning = await execute(authorityState())
+    expect(prestartRunning.commanderRecovery).toMatchObject({
+      operation: { status: "running", operation_id: "operation_prestart" },
+      preview: { recovery_plan_hash: "plan_a" },
+      approval: { approval: { approval_id: "approval_a" } },
+    })
+
+    operationStatus = "failed"
     const prestartFailed = await execute(authorityState())
     expect(prestartFailed.commanderRecovery).toMatchObject({
       operation: { status: "failed", operation_id: "operation_prestart" },
