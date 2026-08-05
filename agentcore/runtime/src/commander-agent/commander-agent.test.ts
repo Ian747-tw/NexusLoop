@@ -10547,6 +10547,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(await corruptApprovalOperator.list()).toMatchObject({
       items: [{ investigation_id: authority.investigation_id, projection_status: "corrupt", approval_state: "none", human_review_required: true }],
     })
+    expect(await corruptApprovalOperator.list({ approval_state: "none" })).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, projection_status: "corrupt", approval_state: "none" }],
+      count: 1,
+    })
     expect(await corruptApprovalOperator.list({ approval_state: "current" })).toMatchObject({ items: [], count: 0 })
     expect(await corruptApprovalOperator.show(authority.investigation_id)).toMatchObject({
       projection_status: "corrupt",

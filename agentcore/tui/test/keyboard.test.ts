@@ -12,6 +12,10 @@ describe("TUI keyboard command model", () => {
       command: "commander-recovery-approve",
       args: ["investigation_id=inv", "confirm=APPROVE", "human_note="],
     })
+    expect(parseRuntimeCommand("/stage-command /commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
+      command: "stage-command",
+      args: ["/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  "],
+    })
   })
   test("select Initialize enters onboarding shell", () => {
     const state = { ...initialState("/tmp/demo"), screen: "init" as const, focus: "init-choice" as const }

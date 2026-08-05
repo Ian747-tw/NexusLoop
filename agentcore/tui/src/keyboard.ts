@@ -165,6 +165,13 @@ export function parseRuntimeCommand(value: string): { command: string; args: str
       args: [...(prefix ? prefix.split(/\s+/) : []), rawRest.slice(noteStart)],
     }
   }
+  if (commandPrefix?.[1]?.toLowerCase() === "stage-command") {
+    const command = commandPrefix[1].toLowerCase()
+    const remainder = leadingTrimmed.slice(commandPrefix[0].length)
+    if (remainder && !/^\s/.test(remainder)) return undefined
+    const rawRest = remainder.replace(/^\s+/, "")
+    return { command, args: rawRest ? [rawRest] : [] }
+  }
   const trimmed = value.trim()
   const match = /^\/([a-z][a-z-]*)(?:\s+(.+))?$/i.exec(trimmed)
   const command = match?.[1]?.toLowerCase()

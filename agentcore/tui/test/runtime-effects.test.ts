@@ -7587,13 +7587,17 @@ describe("runtime UI effects", () => {
 
   test("staged Commander recovery reports follow-up authority refresh failures", async () => {
     const calls: string[] = []
+    let approvalPayload: Record<string, unknown> | undefined
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
       async sendUserMessage(): Promise<void> {},
       async sendCommand(): Promise<unknown> { return undefined },
-      async command(name: string): Promise<unknown> {
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
         calls.push(name)
-        if (name === "runtime.approve_commander_investigation_recovery") return { status: "recorded", investigation_id: "inv_staged_recovery" }
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          approvalPayload = payload
+          return { status: "recorded", investigation_id: "inv_staged_recovery" }
+        }
         if (name === "runtime.preview_commander_investigation_recovery") throw new Error("preview token=staged-refresh-secret")
         throw new Error(`unexpected command ${name}`)
       },
@@ -7637,6 +7641,15 @@ describe("runtime UI effects", () => {
       commandError: "explicit recovery approval confirmation is required",
     })
     expect(unconfirmed.commanderRecovery).toMatchObject({ pendingConfirmation: "approval", commandError: undefined })
+
+    const stagedWithRawNote = parseRuntimeCommand(`/stage-command ${command} human_note=a  b`)!
+    const stagedWithRawNoteState = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+    }, runtime, { type: "send-command", command: stagedWithRawNote.command, args: stagedWithRawNote.args })
+    expect(stagedWithRawNoteState.operatorActions?.staged?.command).toContain("human_note=a  b")
+    await applyRuntimeUiEffect(stagedWithRawNoteState, runtime, { type: "send-command", command: "run-staged" })
+    expect(approvalPayload).toMatchObject({ human_note: "a  b" })
   })
 
   test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {
