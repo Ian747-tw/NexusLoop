@@ -328,6 +328,7 @@ export class FakeRuntimeClient implements RuntimeClient {
           && payload.approved_by.length <= 200
           && !containsConcreteCredentialPayload(payload.approved_by)
           && (payload.human_note === undefined || (typeof payload.human_note === "string" && payload.human_note.length <= 1000 && !containsConcreteCredentialPayload(payload.human_note)))
+          && Object.keys(acknowledgements).length === 4
           && acknowledgements.fresh_context_required === true
           && acknowledgements.exact_replay_unavailable === true
           && acknowledgements.provider_request_replay_forbidden === true

@@ -6894,6 +6894,15 @@ describe("runtime UI effects", () => {
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true },
     }) as Record<string, unknown>
     expect(missingAcknowledgement).toMatchObject({ status: "blocked", events_appended: false })
+    const checkpointWithUncertainAcknowledgement = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true, uncertain_provider_outcome: true },
+    }) as Record<string, unknown>
+    expect(checkpointWithUncertainAcknowledgement).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { approval_state: "current" })).toMatchObject({ items: [], count: 0 })
     let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recoveries", args: ["limit=5"] })
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["fake_commander_recovery"] })
