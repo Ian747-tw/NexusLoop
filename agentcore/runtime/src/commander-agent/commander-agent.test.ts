@@ -11782,7 +11782,8 @@ describe("Commander in-memory investigation controller", () => {
     const resultInput = baseInvestigation({ investigation_id: "inv_bulk_result_fixture", objective: "Build bulk search result fixture" })
     const baseResult = await server.runCommanderInvestigationInMemory(resultInput)
 
-    for (let index = 1; index <= 101; index += 1) {
+    const fixtures = await Promise.all(Array.from({ length: 101 }, async (_, offset) => {
+      const index = offset + 1
       const investigationId = `inv_bulk_${String(index).padStart(3, "0")}`
       const input = baseInvestigation({
         investigation_id: investigationId,
@@ -11790,7 +11791,12 @@ describe("Commander in-memory investigation controller", () => {
         session_id: "session_bulk_search",
       })
       const run = await service.createObserver(input)
+      return { index, investigationId, input, run }
+    }))
+    await Promise.all(fixtures.map(async ({ index, investigationId, input, run }) => {
       await run.observer.onStarted(durableStartedSnapshot(input, index + 20, investigationId) as Parameters<typeof run.observer.onStarted>[0])
+    }))
+    await Promise.all(fixtures.map(async ({ index, investigationId, run }) => {
       await service.finish(run, {
         ...baseResult,
         investigation_id: investigationId,
@@ -11799,7 +11805,7 @@ describe("Commander in-memory investigation controller", () => {
         evidence: [],
       })
       service.release(run)
-    }
+    }))
     const projectedBulk = await service.listForOperationalMemorySearch({ limit: 800, session_id: "session_bulk_search" })
     expect(projectedBulk).toHaveLength(101)
     expect(projectedBulk.map((record) => record.investigation_id)).toContain("inv_bulk_001")
