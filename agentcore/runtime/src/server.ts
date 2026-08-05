@@ -2954,10 +2954,13 @@ export class RuntimeServer {
       }
     }
     const settled = Array.from(this.recentPublicCommanderRecoveryOperations.values()).find((record) => record.investigation_id === input.investigation_id)
+    let settledRequiringAuthoritativeRecheck: CommanderRecoveryOperation | undefined
     if (settled) {
       if (this.replaceablePublicCommanderRecoveryOperationIds.has(settled.operation_id)) {
         this.recentPublicCommanderRecoveryOperations.delete(settled.operation_id)
         this.replaceablePublicCommanderRecoveryOperationIds.delete(settled.operation_id)
+      } else if ((settled.status === "blocked" || settled.status === "failed") && settled.recovery_attempt_id === undefined) {
+        settledRequiringAuthoritativeRecheck = settled
       } else {
         if (sameRecoveryAuthority(settled, input)) return cloneRecoveryOperation(settled)
         return {
@@ -2984,12 +2987,22 @@ export class RuntimeServer {
     const controller = new AbortController()
     const entry = { record, controller, promise: Promise.resolve() }
     this.publicCommanderRecoveryOperations.set(operationId, entry)
-    entry.promise = this.runCommanderInvestigationRecoveryConfigured(input, {
-      abort_signal: controller.signal,
-      on_recovery_attempt_prepared: (recoveryAttemptId) => {
-        record.recovery_attempt_id = recoveryAttemptId
-      },
-    })
+    entry.promise = (async () => {
+      if (settledRequiringAuthoritativeRecheck) {
+        const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+        if (!recoveryOperationMayBeReplaced(source)) {
+          throw new Error("a recovery attempt already exists for this investigation and different authority cannot start another")
+        }
+        this.recentPublicCommanderRecoveryOperations.delete(settledRequiringAuthoritativeRecheck.operation_id)
+        this.replaceablePublicCommanderRecoveryOperationIds.delete(settledRequiringAuthoritativeRecheck.operation_id)
+      }
+      return this.runCommanderInvestigationRecoveryConfigured(input, {
+        abort_signal: controller.signal,
+        on_recovery_attempt_prepared: (recoveryAttemptId) => {
+          record.recovery_attempt_id = recoveryAttemptId
+        },
+      })
+    })()
       .then(async (result) => {
         if (result.recovery_attempt_id && record.recovery_attempt_id !== result.recovery_attempt_id) {
           try {

@@ -10748,6 +10748,7 @@ describe("Commander in-memory investigation controller", () => {
         operation_id: `commander_recovery_operation_settled_authority_${status}`,
         operation_version: 1 as const,
         ...input,
+        ...(status === "failed" ? { recovery_attempt_id: `commander_recovery_attempt_settled_authority_${status}` } : {}),
         status,
         cancellation_requested: false,
         started_at: new Date(0).toISOString(),
@@ -11146,6 +11147,10 @@ describe("Commander in-memory investigation controller", () => {
 
     const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
     expect(recovery).toMatchObject({ status: "ready_for_approval", blockers: [] })
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    journal.recoverySource = async () => {
+      throw new Error("transient journal projection failure")
+    }
     const placeholder = {
       investigation_id: investigationId,
       approval_id: "commander_recovery_approval_placeholder",
@@ -11156,10 +11161,12 @@ describe("Commander in-memory investigation controller", () => {
     const prematureOperation = await server.command("runtime.execute_commander_investigation_recovery", placeholder) as any
     const prematureEntry = (server as any).publicCommanderRecoveryOperations.get(prematureOperation.operation_id)
     await prematureEntry.promise
-    expect(prematureEntry.record).toMatchObject({ status: "blocked" })
+    expect(prematureEntry.record).toMatchObject({ status: "failed", error: "transient journal projection failure" })
     expect(prematureEntry.record).not.toHaveProperty("recovery_attempt_id")
     expect(transport.requests).toHaveLength(0)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect((server as any).replaceablePublicCommanderRecoveryOperationIds.has(prematureOperation.operation_id)).toBe(false)
+    journal.recoverySource = originalRecoverySource
 
     const approval = await server.recordCommanderInvestigationRecoveryApproval({
       investigation_id: investigationId,
