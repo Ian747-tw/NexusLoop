@@ -29,6 +29,7 @@ export class CommanderInvestigationRecoveryOperatorService {
     })
     const items = records
       .map(summaryFromRecord)
+      .filter((record) => !input.approval_state || record.approval_state === input.approval_state)
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.investigation_id.localeCompare(b.investigation_id))
       .slice(0, limit)
     return { items, count: items.length, limit, current_compatibility_checked: false, observed_at: this.now().toISOString() }
@@ -59,11 +60,13 @@ function boundedLimit(value: number | undefined): number {
 }
 
 function summaryFromRecord(record: CommanderInvestigationRecord): CommanderRecoveryOperatorSummary {
-  const approvalState = record.recovery_approval_consumed
-    ? "consumed"
-    : record.recovery_approval_recorded
-      ? "current"
-      : record.recovery_approval_count > 0 ? "stale" : "none"
+  const approvalState = record.projection_status !== "ready"
+    ? "none"
+    : record.recovery_approval_consumed
+      ? "consumed"
+      : record.recovery_approval_recorded
+        ? "current"
+        : record.recovery_approval_count > 0 ? "stale" : "none"
   return {
     investigation_id: record.investigation_id,
     projection_status: record.projection_status,
@@ -89,12 +92,14 @@ function summaryFromRecord(record: CommanderInvestigationRecord): CommanderRecov
 function detailFromSource(source: CommanderInvestigationRecoverySource, observedAt: string): CommanderRecoveryOperatorDetail {
   const record = source.record!
   const summary = summaryFromRecord(record)
-  const latestApproval = source.latest_recovery_approval
-  const approvalState = source.consumed_recovery_approval
-    ? "consumed"
-    : latestApproval
-      ? latestApproval.recovery_basis_hash === source.recovery_basis_hash ? "current" : "stale"
-      : "none"
+  const latestApproval = source.projection_status === "ready" ? source.latest_recovery_approval : undefined
+  const approvalState = source.projection_status !== "ready"
+    ? "none"
+    : source.consumed_recovery_approval
+      ? "consumed"
+      : latestApproval
+        ? latestApproval.recovery_basis_hash === source.recovery_basis_hash ? "current" : "stale"
+        : "none"
   return {
     ...summary,
     found: true,
