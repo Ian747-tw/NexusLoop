@@ -11844,12 +11844,12 @@ describe("RuntimeServer core", () => {
     await service.start({ intervalMs: 10, maxTicksPerRun: 2, requestedBy: "operator" })
 
     timers.shift()?.()
-    await timeout(20)
+    await waitForCondition(() => service.status().tick_count === 1, "first failed scheduler tick did not settle")
     expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
     expect(timers).toHaveLength(1)
 
     timers.shift()?.()
-    await timeout(20)
+    await waitForCondition(() => service.status().status === "failed" && service.status().tick_count === 2, "second failed scheduler tick did not stop the run")
     expect(executeCount).toBe(2)
     expect(service.status()).toMatchObject({ status: "failed", tick_count: 2 })
     expect(timers).toHaveLength(0)
