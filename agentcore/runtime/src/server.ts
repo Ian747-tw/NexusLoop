@@ -2991,7 +2991,17 @@ export class RuntimeServer {
       },
     })
       .then(async (result) => {
-        record.recovery_attempt_id = result.recovery_attempt_id
+        if (result.recovery_attempt_id && record.recovery_attempt_id !== result.recovery_attempt_id) {
+          try {
+            const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)
+            const matchingAttempt = recoveryAttemptForOperation(source, record)
+            if (matchingAttempt?.recovery_attempt_id === result.recovery_attempt_id) {
+              record.recovery_attempt_id = result.recovery_attempt_id
+            }
+          } catch {
+            // Result metadata cannot establish attempt ownership without matching journal authority.
+          }
+        }
         if (!result.approval_consumed && !result.recovery_attempt_id) {
           try {
             const source = await this.commanderInvestigationJournalService().recoverySource(input.investigation_id)

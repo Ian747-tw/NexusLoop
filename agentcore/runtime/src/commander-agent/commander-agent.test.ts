@@ -10887,7 +10887,8 @@ describe("Commander in-memory investigation controller", () => {
     const staleOperation = await server.command("runtime.execute_commander_investigation_recovery", staleInput) as any
     const staleEntry = (server as any).publicCommanderRecoveryOperations.get(staleOperation.operation_id)
     await staleEntry.promise
-    expect(staleEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined, cancellation_requested: false })
+    expect(staleEntry.record).toMatchObject({ status: "blocked", cancellation_requested: false })
+    expect(staleEntry.record).not.toHaveProperty("recovery_attempt_id")
     expect(typeof staleEntry.record.error).toBe("string")
     expect(staleEntry.record.error.length).toBeGreaterThan(0)
     expect(staleEntry.record.error.length).toBeLessThanOrEqual(300)
@@ -10901,7 +10902,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(wrongApprovalOperation.operation_id).not.toBe(staleOperation.operation_id)
     const wrongApprovalEntry = (server as any).publicCommanderRecoveryOperations.get(wrongApprovalOperation.operation_id)
     await wrongApprovalEntry.promise
-    expect(wrongApprovalEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined })
+    expect(wrongApprovalEntry.record).toMatchObject({ status: "blocked" })
+    expect(wrongApprovalEntry.record).not.toHaveProperty("recovery_attempt_id")
 
     const wrongApprovalHashOperation = await server.command("runtime.execute_commander_investigation_recovery", {
       ...authority.transaction_input,
@@ -10910,7 +10912,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(wrongApprovalHashOperation.operation_id).not.toBe(wrongApprovalOperation.operation_id)
     const wrongApprovalHashEntry = (server as any).publicCommanderRecoveryOperations.get(wrongApprovalHashOperation.operation_id)
     await wrongApprovalHashEntry.promise
-    expect(wrongApprovalHashEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined })
+    expect(wrongApprovalHashEntry.record).toMatchObject({ status: "blocked" })
+    expect(wrongApprovalHashEntry.record).not.toHaveProperty("recovery_attempt_id")
 
     const correctedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
     expect(correctedOperation.operation_id).not.toBe(wrongApprovalHashOperation.operation_id)
@@ -11074,8 +11077,19 @@ describe("Commander in-memory investigation controller", () => {
     expect(activeEntry.record.cancellation_requested).toBe(true)
     expect(transport.requests).toHaveLength(1)
 
-    settlePrestart({ status: "blocked", approval_consumed: false, blockers: ["operator cancellation requested"], warnings: [] })
+    settlePrestart({
+      status: "blocked",
+      investigation_id: authority.investigation_id,
+      recovery_attempt_id: priorAttemptId,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_plan_hash: authority.transaction_input.recovery_plan_hash,
+      execution_preparation_hash: authority.transaction_input.execution_preparation_hash,
+      approval_consumed: true,
+      blockers: ["a different recovery attempt already exists"],
+      warnings: [],
+    })
     await activeEntry.promise
+    expect(activeEntry.record).not.toHaveProperty("recovery_attempt_id")
     ;(server as any).runCommanderInvestigationRecoveryConfigured = configuredRun
   })
 
@@ -11116,7 +11130,8 @@ describe("Commander in-memory investigation controller", () => {
     const prematureOperation = await server.command("runtime.execute_commander_investigation_recovery", placeholder) as any
     const prematureEntry = (server as any).publicCommanderRecoveryOperations.get(prematureOperation.operation_id)
     await prematureEntry.promise
-    expect(prematureEntry.record).toMatchObject({ status: "blocked", recovery_attempt_id: undefined })
+    expect(prematureEntry.record).toMatchObject({ status: "blocked" })
+    expect(prematureEntry.record).not.toHaveProperty("recovery_attempt_id")
     expect(transport.requests).toHaveLength(0)
     expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
 
