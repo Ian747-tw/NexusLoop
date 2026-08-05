@@ -61,6 +61,7 @@ export type CommanderRecoveryOperatorDetail = CommanderRecoveryOperatorSummary &
   provider_kind: string
   model_id: string
   tool_protocol: string
+  recovery_basis_hash?: string
   checkpoint_ref?: { checkpoint_id: string; checkpoint_sequence: number; checkpoint_hash: string }
   pending_model_step_ref?: { model_request_id: string; turn_index: number }
   latest_approval?: CommanderInvestigationRecoveryApprovalSummary

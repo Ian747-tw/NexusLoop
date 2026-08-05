@@ -19006,11 +19006,19 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       : typeof cachedPreviewApproval?.approval_id === "string"
         ? cachedPreviewApproval.approval_id
         : undefined
+    const cachedPreviewBasisHash = typeof current.preview?.recovery_basis_hash === "string" ? current.preview.recovery_basis_hash : undefined
+    const selectedBasisHash = typeof selected?.recovery_basis_hash === "string" ? selected.recovery_basis_hash : undefined
+    const cachedPreviewStillCurrent = current.preview === null || current.preview === undefined
+      || (selected?.found === true
+        && selected.projection_status === "ready"
+        && cachedPreviewBasisHash !== undefined
+        && selectedBasisHash === cachedPreviewBasisHash)
     const cachedApprovalStillCurrent = cachedApprovalId === undefined
       || (selected?.found === true
         && selectedApprovalState === "current"
         && selectedApprovalId === cachedApprovalId)
     const approvalAuthorityInvalid = selectionChanged
+      || !cachedPreviewStillCurrent
       || !cachedApprovalStillCurrent
     const operationChanged = current.operation?.operation_id !== activeOperation?.operation_id
     return {

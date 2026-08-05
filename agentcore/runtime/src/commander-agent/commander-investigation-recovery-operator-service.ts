@@ -112,6 +112,7 @@ function detailFromSource(source: CommanderInvestigationRecoverySource, observed
     provider_kind: record.provider_kind,
     model_id: record.model_id,
     tool_protocol: record.tool_protocol,
+    recovery_basis_hash: source.projection_status === "ready" ? source.recovery_basis_hash : undefined,
     checkpoint_ref: source.latest_checkpoint ? {
       checkpoint_id: source.latest_checkpoint.checkpoint_id,
       checkpoint_sequence: source.latest_checkpoint.checkpoint_sequence,

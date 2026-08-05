@@ -11349,6 +11349,7 @@ function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null =
         ? "checkpoint_approval_recorded_execution_not_implemented"
         : "checkpoint_available_resume_not_implemented",
     recovery_kind: "checkpoint",
+    recovery_basis_hash: "fake_recovery_basis_hash",
     objective_preview: "Inspect durable recovery state",
     phase: "implementation",
     updated_at: new Date(0).toISOString(),
@@ -11373,6 +11374,7 @@ function fakeCommanderRecoveryPreview(investigationId: string, approval: Record<
     status: approvalConsumed ? "recovery_in_progress" : currentApproval ? "approved_waiting_for_execution" : "ready_for_approval",
     investigation_id: investigationId,
     recovery_kind: "checkpoint",
+    recovery_basis_hash: "fake_recovery_basis_hash",
     recovery_plan_hash: "fake_recovery_plan_hash",
     recovery_packet: { packet_hash: "fake_recovery_packet_hash" },
     execution_preparation_hash: "fake_execution_preparation_hash",

@@ -7074,6 +7074,8 @@ describe("runtime UI effects", () => {
     let shownFound = true
     let shownApprovalState = "consumed"
     let shownApprovalId: string | undefined = "approval_b"
+    let shownProjectionStatus = "ready"
+    let shownBasisHash: string | undefined = "basis_b"
     let showActiveOperation = true
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
@@ -7087,6 +7089,8 @@ describe("runtime UI effects", () => {
           return {
             found: shownFound,
             investigation_id: payload?.investigation_id,
+            projection_status: shownProjectionStatus,
+            ...(shownBasisHash ? { recovery_basis_hash: shownBasisHash } : {}),
             approval_state: shownApprovalState,
             ...(shownApprovalId ? { latest_approval: { approval_id: shownApprovalId } } : {}),
             ...(showActiveOperation ? { active_operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" } } : {}),
@@ -7256,7 +7260,7 @@ describe("runtime UI effects", () => {
       commanderRecovery: {
         records: [],
         selected: { investigation_id: "inv_b", approval_state: "current" },
-        preview: { investigation_id: "inv_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
         approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
         operation: null,
         cancellation: null,
@@ -7267,6 +7271,46 @@ describe("runtime UI effects", () => {
       preview: { recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
       approval: { approval: { approval_id: "approval_b" } },
     })
+
+    shownApprovalState = "none"
+    shownApprovalId = undefined
+    const matchingPreview = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b", execution_preparation_hash: "preparation_b" },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(matchingPreview.commanderRecovery?.preview).toMatchObject({ recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b" })
+
+    shownBasisHash = "basis_replaced"
+    const stalePreview = await applyRuntimeUiEffect(matchingPreview, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(stalePreview.commanderRecovery?.preview).toBeNull()
+
+    shownProjectionStatus = "corrupt"
+    shownBasisHash = undefined
+    const corruptPreview = await applyRuntimeUiEffect({
+      ...matchingPreview,
+      commanderRecovery: { ...matchingPreview.commanderRecovery!, preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b" } },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(corruptPreview.commanderRecovery?.preview).toBeNull()
+
+    shownFound = false
+    const missingPreview = await applyRuntimeUiEffect({
+      ...matchingPreview,
+      commanderRecovery: { ...matchingPreview.commanderRecovery!, preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b" } },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(missingPreview.commanderRecovery?.preview).toBeNull()
+
+    shownFound = true
+    shownProjectionStatus = "ready"
+    shownBasisHash = "basis_b"
+    shownApprovalState = "current"
 
     shownApprovalId = "approval_b_replacement"
     const replacement = await applyRuntimeUiEffect({
