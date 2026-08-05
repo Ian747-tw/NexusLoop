@@ -5985,6 +5985,7 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
   if (researchIngestionCommands.has(command)) return state.researchIngestions?.commandError
   if (commanderContinuityCommands.has(command)) return state.commanderContinuity?.commandError
+  if (commanderRecoveryCommands.has(command)) return state.commanderRecovery?.commandError
   if (opencodeContinuityCommands.has(command)) return state.opencodeContinuity?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
@@ -19072,19 +19073,22 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
   const investigationId = requiredRecoveryField(fields, "investigation_id")
-  const completeIdentitySupplied = Boolean(fields.operation_id && fields.approval_id)
+  const cachedOperation = current.operation?.investigation_id === investigationId
+    && (!fields.operation_id || current.operation.operation_id === fields.operation_id)
+    && (!fields.approval_id || current.operation.approval_id === fields.approval_id)
+    ? current.operation
+    : null
+  const completeIdentityAvailable = Boolean(
+    (fields.operation_id && fields.approval_id)
+    || (typeof cachedOperation?.operation_id === "string" && typeof cachedOperation.approval_id === "string"),
+  )
   let shown: Record<string, unknown> | null = null
   let refreshError: string | undefined
-  if (!completeIdentitySupplied) {
+  if (!completeIdentityAvailable) {
     shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
   }
   const shownOperation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
-  const cachedOperation = current.operation?.investigation_id === investigationId
-    && (!completeIdentitySupplied
-      || (current.operation.operation_id === fields.operation_id && current.operation.approval_id === fields.approval_id))
-    ? current.operation
-    : null
-  let operation = completeIdentitySupplied ? cachedOperation : shownOperation
+  let operation = cachedOperation ?? shownOperation
   const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
   const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined
   const activeApprovalId = typeof operation?.approval_id === "string" ? operation.approval_id : undefined
@@ -19102,7 +19106,7 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
       recovery_attempt_id: cancellation.recovery_attempt_id,
     })
   }
-  if (completeIdentitySupplied) {
+  if (completeIdentityAvailable) {
     try {
       shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
       operation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null

@@ -7478,11 +7478,7 @@ describe("runtime UI effects", () => {
     const cancelled = await applyRuntimeUiEffect(state, runtime, {
       type: "send-command",
       command: "commander-recovery-cancel",
-      args: [
-        "investigation_id=inv_cancel_prestart_without_show",
-        "operation_id=operation_cancel_prestart_without_show",
-        "approval_id=approval_cancel_prestart_without_show",
-      ],
+      args: ["investigation_id=inv_cancel_prestart_without_show"],
     })
 
     expect(calls).toEqual([
@@ -7505,6 +7501,44 @@ describe("runtime UI effects", () => {
       commandError: "projection [REDACTED]",
     })
     expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
+  })
+
+  test("staged Commander recovery reports follow-up authority refresh failures", async () => {
+    const calls: string[] = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.approve_commander_investigation_recovery") return { status: "recorded", investigation_id: "inv_staged_recovery" }
+        if (name === "runtime.preview_commander_investigation_recovery") throw new Error("preview token=staged-refresh-secret")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const command = "/commander-recovery-approve investigation_id=inv_staged_recovery recovery_plan_hash=plan_staged_recovery decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true confirm=APPROVE"
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      operatorActions: {
+        staged: { label: "recovery approval", command, command_type: "write" },
+        lastResult: null,
+      },
+    }
+
+    const executed = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+
+    expect(calls).toEqual([
+      "runtime.approve_commander_investigation_recovery",
+      "runtime.preview_commander_investigation_recovery",
+    ])
+    expect(executed.operatorActions).toMatchObject({
+      staged: { command },
+      lastResult: { ok: false, command, summary: "preview [REDACTED]" },
+      commandError: "preview [REDACTED]",
+    })
+    expect(executed.commanderRecovery).toMatchObject({ commandError: "preview [REDACTED]" })
+    expect(JSON.stringify(executed)).not.toContain("staged-refresh-secret")
   })
 
   test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {
@@ -8206,12 +8240,15 @@ describe("runtime UI effects", () => {
       command: "commander-recovery-cancel",
       args: ["investigation_id=inv_a", "operation_id=operation_a"],
     })
-    expect(calls.slice(-2)).toEqual([{
+    expect(calls).toEqual([{
       name: "runtime.cancel_commander_investigation_recovery",
       payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a" },
     }, {
       name: "runtime.cancel_commander_investigation_recovery",
       payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a" },
+    }, {
+      name: "runtime.get_commander_investigation_recovery",
+      payload: { investigation_id: "inv_a" },
     }])
     expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", recovery_attempt_id: "attempt_a" })
     expect(state.commanderRecovery?.operation).toMatchObject({ cancellation_requested: true, recovery_attempt_id: "attempt_a" })
