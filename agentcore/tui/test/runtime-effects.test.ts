@@ -7539,6 +7539,22 @@ describe("runtime UI effects", () => {
     })
     expect(executed.commanderRecovery).toMatchObject({ commandError: "preview [REDACTED]" })
     expect(JSON.stringify(executed)).not.toContain("staged-refresh-secret")
+
+    const unconfirmedCommand = "/commander-recovery-approve investigation_id=inv_staged_recovery recovery_plan_hash=plan_staged_recovery decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true"
+    const unconfirmed = await applyRuntimeUiEffect({
+      ...state,
+      operatorActions: {
+        staged: { label: "unconfirmed recovery approval", command: unconfirmedCommand, command_type: "write" },
+        lastResult: null,
+      },
+    }, runtime, { type: "send-command", command: "run-staged" })
+    expect(calls).toHaveLength(2)
+    expect(unconfirmed.operatorActions).toMatchObject({
+      staged: { command: unconfirmedCommand },
+      lastResult: { ok: false, command: unconfirmedCommand, summary: "explicit recovery approval confirmation is required" },
+      commandError: "explicit recovery approval confirmation is required",
+    })
+    expect(unconfirmed.commanderRecovery).toMatchObject({ pendingConfirmation: "approval", commandError: undefined })
   })
 
   test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {

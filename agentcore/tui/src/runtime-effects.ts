@@ -5985,7 +5985,11 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
   if (researchIngestionCommands.has(command)) return state.researchIngestions?.commandError
   if (commanderContinuityCommands.has(command)) return state.commanderContinuity?.commandError
-  if (commanderRecoveryCommands.has(command)) return state.commanderRecovery?.commandError
+  if (commanderRecoveryCommands.has(command)) {
+    if (state.commanderRecovery?.commandError) return state.commanderRecovery.commandError
+    if (command === "commander-recovery-approve" && state.commanderRecovery?.pendingConfirmation === "approval") return "explicit recovery approval confirmation is required"
+    if (command === "commander-recovery-execute" && state.commanderRecovery?.pendingConfirmation === "execution") return "explicit recovery execution confirmation is required"
+  }
   if (opencodeContinuityCommands.has(command)) return state.opencodeContinuity?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
