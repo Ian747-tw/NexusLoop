@@ -19074,7 +19074,8 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   }
   const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
   const investigationId = requiredRecoveryField(fields, "investigation_id")
-  const cachedOperation = current.operation?.investigation_id === investigationId
+  const cachedOperation = current.operation?.status === "running"
+    && current.operation.investigation_id === investigationId
     && (!fields.operation_id || current.operation.operation_id === fields.operation_id)
     && (!fields.approval_id || current.operation.approval_id === fields.approval_id)
     ? current.operation

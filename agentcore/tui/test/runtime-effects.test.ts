@@ -7666,6 +7666,80 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("Commander recovery refreshes settled cached operations before cancellation", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_cancel_settled",
+            active_operation: {
+              investigation_id: "inv_cancel_settled",
+              operation_id: "operation_current",
+              approval_id: "approval_current",
+              status: "running",
+              cancellation_requested: false,
+            },
+          }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_settled",
+            operation_id: "operation_current",
+            approval_id: "approval_current",
+            cancellation_requested: true,
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_settled" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_settled",
+          operation_id: "operation_settled",
+          approval_id: "approval_settled",
+          status: "failed",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_cancel_settled"],
+    })
+
+    expect(calls).toEqual([
+      { name: "runtime.get_commander_investigation_recovery", payload: { investigation_id: "inv_cancel_settled" } },
+      {
+        name: "runtime.cancel_commander_investigation_recovery",
+        payload: {
+          investigation_id: "inv_cancel_settled",
+          operation_id: "operation_current",
+          approval_id: "approval_current",
+        },
+      },
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_current", approval_id: "approval_current", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested" },
+    })
+  })
+
   test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
     const runtime: RuntimeClient = {
       async *stream(): AsyncIterable<RuntimeEvent> {},
