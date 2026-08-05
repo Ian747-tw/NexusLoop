@@ -6325,7 +6325,7 @@ function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): C
   if (!isRecord(payload.acknowledgements)) throw new Error("acknowledgements must be an object")
   const acknowledgements = payload.acknowledgements
   assertExactKeys(acknowledgements, ["fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome"])
-  const decision = requiredString(payload.decision, "decision")
+  const decision = requiredRawString(payload.decision, "decision")
   if (decision !== "approve_resume_from_checkpoint" && decision !== "approve_continue_after_uncertain_provider_outcome") throw new Error("decision is invalid")
   const requiredTrue = (key: string): true => {
     if (acknowledgements[key] !== true) throw new Error(`${key} acknowledgement must be true`)
@@ -6335,7 +6335,7 @@ function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): C
   if (uncertain !== undefined && uncertain !== true) throw new Error("uncertain_provider_outcome acknowledgement must be true when present")
   return {
     investigation_id: requiredRecoveryAuthorityId(payload.investigation_id, "investigation_id", 200),
-    recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
+    recovery_plan_hash: requiredRawString(payload.recovery_plan_hash, "recovery_plan_hash"),
     decision,
     approved_by: requiredRawString(payload.approved_by, "approved_by"),
     human_note: optionalRawString(payload.human_note, "human_note"),
@@ -6352,11 +6352,11 @@ function readCommanderRecoveryApprovalInput(payload: Record<string, unknown>): C
 function readCommanderRecoveryExecuteInput(payload: Record<string, unknown>): CommanderInvestigationRecoveryTransactionInput {
   assertExactKeys(payload, ["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash"])
   return {
-    investigation_id: requiredString(payload.investigation_id, "investigation_id"),
+    investigation_id: requiredRecoveryAuthorityId(payload.investigation_id, "investigation_id", 200),
     approval_id: requiredRecoveryAuthorityId(payload.approval_id, "approval_id", 160),
-    approval_hash: requiredString(payload.approval_hash, "approval_hash"),
-    recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
-    execution_preparation_hash: requiredString(payload.execution_preparation_hash, "execution_preparation_hash"),
+    approval_hash: requiredRawString(payload.approval_hash, "approval_hash"),
+    recovery_plan_hash: requiredRawString(payload.recovery_plan_hash, "recovery_plan_hash"),
+    execution_preparation_hash: requiredRawString(payload.execution_preparation_hash, "execution_preparation_hash"),
   }
 }
 
@@ -6382,7 +6382,7 @@ function requiredInteger(value: unknown, field: string): number {
 }
 
 function requiredRecoveryAuthorityId(value: unknown, field: string, max: number): string {
-  const result = requiredString(value, field).trim()
+  const result = requiredRawString(value, field)
   if (result.length > max || !/^[A-Za-z0-9_.:-]+$/.test(result)) throw new Error(`${field} must use bounded durable ID characters`)
   return result
 }

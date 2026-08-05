@@ -10574,6 +10574,22 @@ describe("Commander in-memory investigation controller", () => {
     expect(preview).toMatchObject({ status: "approved_waiting_for_execution", current_continuity_required: true, provider_called: false, tool_executed: false, network_called: false, events_appended: false })
     expect(transport.requests).toHaveLength(0)
     await expect(server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id, include_current_continuity: false })).rejects.toThrow("unknown fields")
+    const approvalEventsBeforePaddedAuthority = (await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved").length
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: ` ${preview.recovery_plan_hash} `,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).resolves.toMatchObject({ status: "blocked", events_appended: false })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(approvalEventsBeforePaddedAuthority)
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: " approve_resume_from_checkpoint ",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).rejects.toThrow("decision is invalid")
     await expect(server.command("runtime.approve_commander_investigation_recovery", {
       investigation_id: authority.investigation_id,
       recovery_plan_hash: preview.recovery_plan_hash,
@@ -10613,8 +10629,6 @@ describe("Commander in-memory investigation controller", () => {
       acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
     })).rejects.toThrow("investigation_id must use bounded durable ID characters")
     await expect(server.command("runtime.execute_commander_investigation_recovery", { ...authority.transaction_input, force: true })).rejects.toThrow("unknown fields")
-    const operationCountBeforeInvalidAuthority = (server as any).publicCommanderRecoveryOperations.size
-    const recentCountBeforeInvalidAuthority = (server as any).recentPublicCommanderRecoveryOperations.size
     await expect(server.command("runtime.execute_commander_investigation_recovery", {
       ...authority.transaction_input,
       approval_hash: "x".repeat(241),
@@ -10623,6 +10637,23 @@ describe("Commander in-memory investigation controller", () => {
       ...authority.transaction_input,
       execution_preparation_hash: "Bearer accidentally-pasted-credential",
     })).rejects.toThrow("execution_preparation_hash contains forbidden URL or credential material")
+    const paddedTransactionInput = {
+      ...authority.transaction_input,
+      approval_hash: ` ${authority.transaction_input.approval_hash} `,
+      recovery_plan_hash: ` ${authority.transaction_input.recovery_plan_hash} `,
+      execution_preparation_hash: ` ${authority.transaction_input.execution_preparation_hash} `,
+    }
+    expect(normalizeCommanderInvestigationRecoveryTransactionInput(paddedTransactionInput).input).toEqual(paddedTransactionInput)
+    const recoveryStartCountBeforePaddedExecution = (await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started").length
+    const paddedExecution = await server.command("runtime.execute_commander_investigation_recovery", paddedTransactionInput) as any
+    const paddedExecutionEntry = (server as any).publicCommanderRecoveryOperations.get(paddedExecution.operation_id)
+    await paddedExecutionEntry.promise
+    expect(paddedExecutionEntry.record.status).toBe("blocked")
+    expect(paddedExecutionEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(recoveryStartCountBeforePaddedExecution)
+    expect(transport.requests).toHaveLength(0)
+    const operationCountBeforeInvalidAuthority = (server as any).publicCommanderRecoveryOperations.size
+    const recentCountBeforeInvalidAuthority = (server as any).recentPublicCommanderRecoveryOperations.size
     const journal = authority.journal
     const originalRecoverySource = journal.recoverySource.bind(journal)
     let delayedPreflightReads = 0
@@ -10647,7 +10678,7 @@ describe("Commander in-memory investigation controller", () => {
     expect((server as any).publicCommanderRecoveryOperations.size).toBe(operationCountBeforeInvalidAuthority)
     expect((server as any).recentPublicCommanderRecoveryOperations.size).toBe(recentCountBeforeInvalidAuthority)
     const shownAfterInvalidAuthority = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
-    expect(shownAfterInvalidAuthority).not.toHaveProperty("active_operation")
+    expect(shownAfterInvalidAuthority.active_operation).toMatchObject({ operation_id: paddedExecution.operation_id, status: "blocked" })
     expect(JSON.stringify(shownAfterInvalidAuthority)).not.toContain("accidentally-pasted-credential")
   })
 
