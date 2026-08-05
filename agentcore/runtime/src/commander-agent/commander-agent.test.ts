@@ -36,6 +36,7 @@ import {
   CommanderInvestigationRecoveryExecutionService,
   CommanderInvestigationRecoveryOperatorService,
   CommanderInvestigationRecoveryTransactionService,
+  normalizeCommanderInvestigationRecoveryTransactionInput,
   buildCommanderInvestigationRecoveryNotice,
   reconstructCommanderRecoveryReplayExchange,
 	  CommanderInvestigationRecoveryApprovalService,
@@ -10576,6 +10577,27 @@ describe("Commander in-memory investigation controller", () => {
       ...authority.transaction_input,
       execution_preparation_hash: "Bearer accidentally-pasted-credential",
     })).rejects.toThrow("execution_preparation_hash contains forbidden URL or credential material")
+    const journal = authority.journal
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    let delayedPreflightReads = 0
+    let releaseDelayedPreflight!: () => void
+    const delayedPreflight = new Promise<void>((resolve) => { releaseDelayedPreflight = resolve })
+    journal.recoverySource = async (investigationId: string) => {
+      delayedPreflightReads += 1
+      await delayedPreflight
+      return originalRecoverySource(investigationId)
+    }
+    await expect(server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_id: "approval id",
+    })).rejects.toThrow("approval_id must use bounded durable ID characters")
+    expect(delayedPreflightReads).toBe(0)
+    expect(normalizeCommanderInvestigationRecoveryTransactionInput({
+      ...authority.transaction_input,
+      approval_id: "approval id",
+    }).blockers).toContain("approval_id must use bounded durable ID characters")
+    releaseDelayedPreflight()
+    journal.recoverySource = originalRecoverySource
     expect((server as any).publicCommanderRecoveryOperations.size).toBe(operationCountBeforeInvalidAuthority)
     expect((server as any).recentPublicCommanderRecoveryOperations.size).toBe(recentCountBeforeInvalidAuthority)
     const shownAfterInvalidAuthority = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any

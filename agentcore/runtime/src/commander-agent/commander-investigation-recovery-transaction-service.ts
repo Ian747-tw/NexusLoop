@@ -254,6 +254,7 @@ export function normalizeCommanderInvestigationRecoveryTransactionInput(input: C
     if (!value || value.length > max) blockers.push(`${key} is required and bounded`)
     if (/https?:\/\/|(?:^|\s)Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}/i.test(value)) blockers.push(`${key} contains forbidden URL or credential material`)
   }
+  if (normalized.approval_id && !/^[A-Za-z0-9_.:-]+$/.test(normalized.approval_id)) blockers.push("approval_id must use bounded durable ID characters")
   return { input: normalized, blockers: blockers.slice(0, 16) }
 }
 

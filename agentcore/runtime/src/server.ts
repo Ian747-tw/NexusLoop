@@ -6316,7 +6316,7 @@ function readCommanderRecoveryExecuteInput(payload: Record<string, unknown>): Co
   assertExactKeys(payload, ["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash"])
   return {
     investigation_id: requiredString(payload.investigation_id, "investigation_id"),
-    approval_id: requiredString(payload.approval_id, "approval_id"),
+    approval_id: requiredRecoveryAuthorityId(payload.approval_id, "approval_id", 160),
     approval_hash: requiredString(payload.approval_hash, "approval_hash"),
     recovery_plan_hash: requiredString(payload.recovery_plan_hash, "recovery_plan_hash"),
     execution_preparation_hash: requiredString(payload.execution_preparation_hash, "execution_preparation_hash"),
