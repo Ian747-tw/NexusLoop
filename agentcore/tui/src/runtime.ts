@@ -6,6 +6,8 @@ import { redactText, redactUnknown } from "./redaction"
 import { CommanderToolService } from "../../runtime/src/commander-tools/commander-tool-service"
 import { ModelCapabilityRegistry } from "../../runtime/src/context/model-capability-registry"
 import { ContextBudgetService } from "../../runtime/src/context/context-budget-service"
+import { COMMAND_AUTHORITY_REGISTRY } from "../../runtime/src/authority/command-authority-registry"
+import { containsConcreteCredentialPayload } from "../../runtime/src/security/redaction"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchIngestionCommandSummary, ResearchIngestionPreviewSummary, ResearchIngestionProvenanceRefSummary, ResearchIngestionRecordSummary, ResearchIngestionResultSummary, ResearchIngestionSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryInspectionPreviewSummary, ResearchMemoryNearDuplicatePreviewSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySearchProfileState, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 import type { CommanderContinuityCommandSummary, CommanderContinuityOpenLoopSummary, CommanderContinuitySectionSummary, CommanderContinuitySourceRefSummary, CommanderContinuitySummaryState, CommanderContinuityThreadCardSummary, CommanderMidMissionContinuityPacketSummary, CommanderProposalContinuityPacketSummary } from "./state"
@@ -80,6 +82,8 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly minimaxLiveValidations: MiniMaxLiveValidationResultSummary[] = []
   private readonly runtimeCheckpoints: RuntimeCheckpointSummary[] = []
   private readonly runtimeResumeAnchors: RuntimeResumeAnchorSummary[] = []
+  private readonly commanderRecoveryOperations = new Map<string, Record<string, unknown>>()
+  private commanderRecoveryApproval: Record<string, unknown> | null = null
   private readonly wakeAssessments: WakeAssessmentSummary[] = []
   private commanderToolServiceInstance: CommanderToolService | null = null
   private readonly continuationPlans: ContinuationPlanSummary[] = []
@@ -270,6 +274,177 @@ export class FakeRuntimeClient implements RuntimeClient {
           scan_limit: 800,
           returned_count: 1,
         }, "runtime_authoritative", false)
+      case "runtime.list_commander_investigation_recoveries": {
+        const summary = fakeCommanderRecoverySummary(this.commanderRecoveryApproval)
+        const matches = (typeof payload.status !== "string" || summary.record_status === payload.status)
+          && (typeof payload.recovery_state !== "string" || summary.recovery_state === payload.recovery_state)
+          && (typeof payload.approval_state !== "string" || summary.approval_state === payload.approval_state)
+        const items = matches ? [summary] : []
+        return {
+          items,
+          count: items.length,
+          limit: readLimit(payload.limit, 20),
+          current_compatibility_checked: false,
+          observed_at: new Date(0).toISOString(),
+        }
+      }
+      case "runtime.get_commander_investigation_recovery": {
+        const investigationId = String(payload.investigation_id ?? "")
+        if (investigationId !== "fake_commander_recovery") {
+          return { found: false, investigation_id: investigationId, projection_status: "missing", recommended_next_operator_action: "none", blockers: [], warnings: ["Commander investigation recovery record was not found"], observed_at: new Date(0).toISOString() }
+        }
+        const activeOperation = [...this.commanderRecoveryOperations.values()]
+          .find((item) => item.investigation_id === investigationId)
+        const summary = fakeCommanderRecoverySummary(this.commanderRecoveryApproval)
+        return {
+          ...summary,
+          found: true,
+          human_review_required: activeOperation ? false : summary.human_review_required,
+          recommended_next_operator_action: summary.recovery_execution_in_progress
+            ? "await_recovery_completion"
+            : summary.approval_state === "current"
+              ? "await_recovery_execution"
+              : "preview_checkpoint_recovery",
+          blockers: [],
+          warnings: [],
+          observed_at: new Date(0).toISOString(),
+          ...(activeOperation ? { active_operation: structuredClone(activeOperation) } : {}),
+        }
+      }
+      case "runtime.preview_commander_investigation_recovery": {
+        const investigationId = String(payload.investigation_id ?? "")
+        if (investigationId !== "fake_commander_recovery") {
+          return { status: "not_applicable", investigation_id: investigationId, approval_state: "none", blockers: ["Commander investigation recovery record was not found"], warnings: [], provider_called: false, tool_executed: false, network_called: false, events_appended: false }
+        }
+        return fakeCommanderRecoveryPreview(investigationId, this.commanderRecoveryApproval)
+      }
+      case "runtime.approve_commander_investigation_recovery": {
+        const acknowledgements = isRecord(payload.acknowledgements) ? payload.acknowledgements : {}
+        const approvalReady = payload.investigation_id === "fake_commander_recovery"
+          && payload.recovery_plan_hash === "fake_recovery_plan_hash"
+          && payload.decision === "approve_resume_from_checkpoint"
+          && typeof payload.approved_by === "string"
+          && payload.approved_by.trim().length > 0
+          && payload.approved_by.length <= 200
+          && !containsConcreteCredentialPayload(payload.approved_by)
+          && (payload.human_note === undefined || (typeof payload.human_note === "string" && payload.human_note.length <= 1000 && !containsConcreteCredentialPayload(payload.human_note)))
+          && Object.keys(acknowledgements).length === 4
+          && acknowledgements.fresh_context_required === true
+          && acknowledgements.exact_replay_unavailable === true
+          && acknowledgements.provider_request_replay_forbidden === true
+          && acknowledgements.tool_execution_replay_forbidden === true
+        if (!approvalReady) {
+          return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["current exact recovery plan, decision, human identity, and acknowledgements are required"], events_appended: false, provider_called: false, network_called: false }
+        }
+        if (this.commanderRecoveryApproval?.consumed === true || this.commanderRecoveryOperations.size > 0) {
+          return { status: "blocked", investigation_id: payload.investigation_id, blockers: ["recovery approval was consumed by the existing one-shot attempt"], events_appended: false, provider_called: false, network_called: false }
+        }
+        const existingApproval = this.commanderRecoveryApproval
+        const normalizedHumanNote = typeof payload.human_note === "string"
+          ? redactText(payload.human_note)
+          : undefined
+        const boundedHumanNotePreview = normalizedHumanNote?.replace(/\s+/g, " ").trim().slice(0, 500)
+        const humanNotePreview = boundedHumanNotePreview ? boundedHumanNotePreview : undefined
+        const humanNoteHash = normalizedHumanNote === undefined
+          ? undefined
+          : createHash("sha256").update(normalizedHumanNote).digest("hex")
+        if (existingApproval
+          && existingApproval.investigation_id === payload.investigation_id
+          && existingApproval.recovery_plan_hash === payload.recovery_plan_hash
+          && existingApproval.decision === payload.decision
+          && existingApproval.approved_by === payload.approved_by
+          && existingApproval.human_note_hash === humanNoteHash) {
+          return {
+            status: "already_recorded",
+            investigation_id: payload.investigation_id,
+            approval_state: "current",
+            recovery_basis_hash: existingApproval.recovery_basis_hash,
+            recovery_plan_hash: existingApproval.recovery_plan_hash,
+            events_appended: false,
+            provider_called: false,
+            network_called: false,
+          }
+        }
+        const approvalSequence = existingApproval && typeof existingApproval.approval_sequence === "number"
+          ? existingApproval.approval_sequence + 1
+          : 0
+        const approval = {
+          approval_id: approvalSequence === 0 ? "fake_approval" : `fake_approval_${approvalSequence}`,
+          approval_hash: approvalSequence === 0 ? "fake_approval_hash" : `fake_approval_hash_${approvalSequence}`,
+          approval_sequence: approvalSequence,
+          investigation_id: String(payload.investigation_id ?? "fake_commander_recovery"),
+          decision: String(payload.decision ?? "approve_resume_from_checkpoint"),
+          approved_by: String(payload.approved_by ?? "fake_operator"),
+          recovery_plan_hash: String(payload.recovery_plan_hash ?? "fake_recovery_plan_hash"),
+          recovery_basis_hash: "fake_recovery_basis_hash",
+          human_note_hash: humanNoteHash,
+          ...(humanNotePreview ? { human_note_preview: humanNotePreview } : {}),
+          approved_at: new Date(0).toISOString(),
+        }
+        this.commanderRecoveryApproval = approval
+        return { status: "recorded", investigation_id: approval.investigation_id, approval, approval_state: "current", events_appended: true, provider_called: false, network_called: false }
+      }
+      case "runtime.execute_commander_investigation_recovery": {
+        const existing = [...this.commanderRecoveryOperations.values()]
+          .find((item) => item.investigation_id === payload.investigation_id)
+        if (existing) {
+          const exactDuplicate = existing.approval_id === payload.approval_id
+            && existing.approval_hash === payload.approval_hash
+            && existing.recovery_plan_hash === payload.recovery_plan_hash
+            && existing.execution_preparation_hash === payload.execution_preparation_hash
+          return exactDuplicate
+            ? structuredClone(existing)
+            : { ...structuredClone(existing), request_rejected: true, error: "a recovery attempt already exists with different authority" }
+        }
+        const approval = this.commanderRecoveryApproval
+        const approvalCurrent = approval
+          && approval.consumed !== true
+          && approval.investigation_id === payload.investigation_id
+          && approval.approval_id === payload.approval_id
+          && approval.approval_hash === payload.approval_hash
+          && approval.recovery_plan_hash === payload.recovery_plan_hash
+          && payload.execution_preparation_hash === "fake_execution_preparation_hash"
+        if (!approvalCurrent) {
+          return { status: "blocked", investigation_id: payload.investigation_id, error: "current exact recovery approval authority is required" }
+        }
+        const operation = {
+          operation_id: `fake_recovery_operation_${this.commanderRecoveryOperations.size}`,
+          operation_version: 1,
+          investigation_id: payload.investigation_id,
+          approval_id: payload.approval_id,
+          approval_hash: payload.approval_hash,
+          recovery_plan_hash: payload.recovery_plan_hash,
+          execution_preparation_hash: payload.execution_preparation_hash,
+          status: "running",
+          recovery_attempt_id: "fake_recovery_attempt_0",
+          cancellation_requested: false,
+          started_at: new Date(0).toISOString(),
+        }
+        this.commanderRecoveryOperations.set(String(operation.operation_id), operation)
+        if (approval.approval_id === payload.approval_id) {
+          this.commanderRecoveryApproval = {
+            ...approval,
+            consumed: true,
+            consumed_at: new Date(0).toISOString(),
+            consumed_by_recovery_attempt_id: "fake_recovery_attempt_0",
+          }
+        }
+        return operation
+      }
+      case "runtime.cancel_commander_investigation_recovery": {
+        const operation = this.commanderRecoveryOperations.get(String(payload.operation_id ?? ""))
+        if (!operation) return { status: "not_active", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, cancellation_requested: false }
+        if (operation.investigation_id !== payload.investigation_id
+          || operation.approval_id !== payload.approval_id
+          || operation.recovery_attempt_id !== payload.recovery_attempt_id) {
+          return { status: "operation_identity_mismatch", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, recovery_attempt_id: operation.recovery_attempt_id, cancellation_requested: false }
+        }
+        if (operation.cancellation_requested === true) {
+          return { status: "already_requested", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, recovery_attempt_id: operation.recovery_attempt_id, cancellation_requested: true }
+        }
+        operation.cancellation_requested = true
+        return { status: "cancellation_requested", investigation_id: payload.investigation_id, operation_id: payload.operation_id, approval_id: payload.approval_id, recovery_attempt_id: operation.recovery_attempt_id, cancellation_requested: true, provider_outcome_known: false, durable_state_changed: false, generated_at: new Date(0).toISOString() }
+      }
       case "runtime.commander_repo_tree":
         return fakeInternalRead("repo.tree", { root: ".", path: String(payload.path ?? "."), depth: 2, entries: [{ path: "agentcore/runtime/src/commander-tools", kind: "directory", depth: 4, readable: true }, { path: "agentcore/runtime/src/commander-tools/commander-tool-service.ts", kind: "file", size_bytes: 1234, depth: 5, extension: ".ts", readable: true, content_hash: "fake-tree-hash" }], omitted_entries: 0 })
       case "runtime.commander_repo_search_text":
@@ -11161,9 +11336,66 @@ function fakeApplyReadinessStatusSummary(status: string): string {
   return "Apply readiness target is unknown."
 }
 
+function fakeCommanderRecoverySummary(approval: Record<string, unknown> | null = null): Record<string, unknown> {
+  const currentApproval = approval?.investigation_id === "fake_commander_recovery" ? approval : null
+  const approvalConsumed = currentApproval?.consumed === true
+  return {
+    investigation_id: "fake_commander_recovery",
+    projection_status: "ready",
+    record_status: "running",
+    recovery_state: approvalConsumed
+      ? "recovery_execution_in_progress"
+      : currentApproval
+        ? "checkpoint_approval_recorded_execution_not_implemented"
+        : "checkpoint_available_resume_not_implemented",
+    recovery_kind: "checkpoint",
+    recovery_basis_hash: "fake_recovery_basis_hash",
+    objective_preview: "Inspect durable recovery state",
+    phase: "implementation",
+    updated_at: new Date(0).toISOString(),
+    record_hash: "fake_record_hash",
+    checkpoint_id: "fake_checkpoint",
+    terminal: false,
+    approval_state: approvalConsumed ? "consumed" : currentApproval ? "current" : "none",
+    recovery_approval_count: currentApproval ? 1 : 0,
+    ...(currentApproval ? { latest_approval: structuredClone(currentApproval) } : {}),
+    recovery_attempt_count: approvalConsumed ? 1 : 0,
+    recovery_execution_in_progress: approvalConsumed,
+    human_review_required: approvalConsumed,
+    current_compatibility_checked: false,
+  }
+}
+
+function fakeCommanderRecoveryPreview(investigationId: string, approval: Record<string, unknown> | null = null): Record<string, unknown> {
+  const matchingApproval = approval?.investigation_id === investigationId ? structuredClone(approval) : undefined
+  const approvalConsumed = matchingApproval?.consumed === true
+  const currentApproval = approvalConsumed ? undefined : matchingApproval
+  return {
+    status: approvalConsumed ? "recovery_in_progress" : currentApproval ? "approved_waiting_for_execution" : "ready_for_approval",
+    investigation_id: investigationId,
+    recovery_kind: "checkpoint",
+    recovery_basis_hash: "fake_recovery_basis_hash",
+    recovery_plan_hash: "fake_recovery_plan_hash",
+    recovery_packet: { packet_hash: "fake_recovery_packet_hash" },
+    execution_preparation_hash: "fake_execution_preparation_hash",
+    checkpoint: { checkpoint_id: "fake_checkpoint", checkpoint_hash: "fake_checkpoint_hash" },
+    exact_replay_supported: false,
+    fresh_context_required: true,
+    current_continuity_required: true,
+    approval_state: approvalConsumed ? "consumed" : currentApproval ? "current" : "none",
+    ...(currentApproval ? { current_approval: currentApproval, recommended_action: "await_recovery_execution" } : {}),
+    ...(approvalConsumed ? { recommended_action: "await_recovery_completion", recovery_execution_in_progress: true } : {}),
+    blockers: [],
+    warnings: [],
+  }
+}
+
 function fakeCommandAuthorityRecords(): CommandAuthorityRecordSummary[] {
   return [
     fakeCommandAuthorityRecord("/authority", "runtime.command_authority_summary", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"] }),
+    ...COMMAND_AUTHORITY_REGISTRY
+      .filter((record) => record.owner === "commander_recovery")
+      .map((record) => structuredClone(record)),
     fakeCommandAuthorityRecord("/status", "runtime.status", "safe_read", "none", "runtime_status", { targeted: ["tests/e2e_user/scenarios/test_spec_onboarding_tui.py"] }),
     fakeCommandAuthorityRecord("/scheduler-nav-checkpoint-run", "runtime.execute_wake_scheduler_navigation_checkpoint_write_run", "medium_risk_write", "checkpoint_runtime", "scheduler_navigation_checkpoint_write", {
       mutates: true,

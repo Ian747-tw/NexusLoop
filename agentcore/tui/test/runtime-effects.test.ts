@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "../src/commander-recovery-view"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
+import { parseRuntimeCommand } from "../src/keyboard"
+import { commandTypeFromSlash } from "../src/operator-actions"
 import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
 import { snapshotUiState } from "../src/state-snapshot"
@@ -973,6 +976,23 @@ class FailingMissionExecutionRuntime extends MissionExecutionRuntime {
 }
 
 describe("runtime UI effects", () => {
+  test("Commander recovery staged commands classify mutations as writes", () => {
+    for (const command of [
+      "/commander-recovery-approve",
+      "/commander-recovery-execute",
+      "/commander-recovery-cancel",
+    ]) {
+      expect(commandTypeFromSlash(command)).toBe("write")
+    }
+    for (const command of [
+      "/commander-recoveries",
+      "/commander-recovery-show",
+      "/commander-recovery-preview",
+    ]) {
+      expect(commandTypeFromSlash(command)).toBe("read")
+    }
+  })
+
   test("recent mission refresh advances last and active mission to newest row", async () => {
     const state = {
       ...initialState("/tmp/demo"),
@@ -4817,6 +4837,18 @@ describe("runtime UI effects", () => {
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/opencode-smoke"] })
     expect(state.commandAuthority?.selected).toMatchObject({ slash_command: "/opencode-smoke", risk: "low_risk_write", blocked_by_default: true })
 
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-recovery-preview"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ risk: "safe_read", gate: "none", mutates_events: false, calls_provider: false })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-recovery-approve"] })
+    expect(state.commandAuthority?.selected).toMatchObject({ risk: "medium_risk_write", blocked_by_default: true, calls_provider: false, expected_event_kinds: ["runtime_commander_investigation_recovery_approved"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/commander-recovery-execute"] })
+    expect(state.commandAuthority?.selected).toMatchObject({
+      risk: "high_impact_write",
+      blocked_by_default: true,
+      calls_provider: true,
+      expected_event_kinds: expect.arrayContaining(["external_api_request_executed", "external_api_request_failed"]),
+    })
+
     state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "authority-show", args: ["/tmp/repro"] })
     expect(state.commandAuthority?.selected).toMatchObject({ risk: "unsupported", blocked_by_default: true })
 
@@ -6817,5 +6849,2049 @@ describe("runtime UI effects", () => {
     expect(calls[4]).toEqual({ name: "runtime.commander_repo_search_text", payload: { query: "needle", path: "src/a b.ts", context_lines: 0 } })
     await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-git-diff", args: ["scope=working_tree", "path=src/a", "b.ts", "context_lines=0"] })
     expect(calls[5]).toEqual({ name: "runtime.commander_repo_git_diff", payload: { scope: "working_tree", path: "src/a b.ts", context_lines: 0 } })
+  })
+
+  test("Commander recovery UI keeps approval execution and reachable cancellation separate", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { status: "failed" })).toMatchObject({ items: [], count: 0 })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { status: "running", recovery_state: "checkpoint_available_resume_not_implemented", approval_state: "none" })).toMatchObject({
+      items: [{ investigation_id: "fake_commander_recovery" }],
+      count: 1,
+    })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { recovery_state: "recovery_execution_in_progress" })).toMatchObject({ items: [], count: 0 })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { approval_state: "current" })).toMatchObject({ items: [], count: 0 })
+    expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "unknown_recovery" })).toMatchObject({ found: false, investigation_id: "unknown_recovery", projection_status: "missing" })
+    expect(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: "unknown_recovery" })).toMatchObject({ status: "not_applicable", investigation_id: "unknown_recovery", approval_state: "none" })
+    const unauthorizedOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      approval_id: "unapproved",
+      approval_hash: "unapproved_hash",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      execution_preparation_hash: "fake_execution_preparation_hash",
+    }) as Record<string, unknown>
+    expect(unauthorizedOperation).toMatchObject({ status: "blocked", error: "current exact recovery approval authority is required" })
+    expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).not.toHaveProperty("active_operation")
+    const staleApproval = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "stale_plan",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    }) as Record<string, unknown>
+    expect(staleApproval).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "unknown_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).toMatchObject({ status: "blocked", events_appended: false })
+    const missingAcknowledgement = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true },
+    }) as Record<string, unknown>
+    expect(missingAcknowledgement).toMatchObject({ status: "blocked", events_appended: false })
+    const checkpointWithUncertainAcknowledgement = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true, uncertain_provider_outcome: true },
+    }) as Record<string, unknown>
+    expect(checkpointWithUncertainAcknowledgement).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { approval_state: "current" })).toMatchObject({ items: [], count: 0 })
+    let state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recoveries", args: ["limit=5"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["fake_commander_recovery"] })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["fake_commander_recovery"] })
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true"],
+    })
+    expect(state.commanderRecovery?.pendingConfirmation).toBe("approval")
+    expect(state.commanderRecovery?.approval).toBeNull()
+    state.commanderRecovery = {
+      ...state.commanderRecovery!,
+      selected: { investigation_id: "different_recovery" },
+      preview: { investigation_id: "different_recovery", recovery_plan_hash: "different_plan" },
+      operation: { operation_id: "different_operation", investigation_id: "different_recovery", approval_id: "different_approval", status: "running" },
+      cancellation: { status: "cancellation_requested" },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(state.commanderRecovery?.approval).toMatchObject({ status: "recorded", events_appended: true })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", {
+      approval_state: "current",
+      recovery_state: "checkpoint_approval_recorded_execution_not_implemented",
+    })).toMatchObject({
+      items: [{ investigation_id: "fake_commander_recovery", approval_state: "current", recovery_state: "checkpoint_approval_recorded_execution_not_implemented" }],
+      count: 1,
+    })
+    expect(state.commanderRecovery?.selected).toBeNull()
+    expect(state.commanderRecovery?.preview).toMatchObject({
+      investigation_id: "fake_commander_recovery",
+      approval_state: "current",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      execution_preparation_hash: "fake_execution_preparation_hash",
+      current_approval: { approval_id: "fake_approval", approval_hash: "fake_approval_hash" },
+    })
+    expect(state.commanderRecovery?.operation).toBeNull()
+    expect(state.commanderRecovery?.cancellation).toBeNull()
+
+    state.commanderRecovery = {
+      ...state.commanderRecovery!,
+      selected: null,
+      preview: null,
+      approval: null,
+      operation: { operation_id: "operation_a", investigation_id: "different_recovery", approval_id: "approval_a", status: "running" },
+      cancellation: { status: "already_requested" },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(state.commanderRecovery?.approval).toMatchObject({
+      status: "already_recorded",
+      investigation_id: "fake_commander_recovery",
+      approval_state: "current",
+      events_appended: false,
+      approval: { approval_id: "fake_approval", approval_hash: "fake_approval_hash" },
+    })
+    expect(state.commanderRecovery?.operation).toBeNull()
+    expect(state.commanderRecovery?.cancellation).toBeNull()
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-preview",
+      args: ["fake_commander_recovery"],
+    })
+    expect(state.commanderRecovery?.preview).toMatchObject({
+      status: "approved_waiting_for_execution",
+      approval_state: "current",
+      current_approval: { approval_id: "fake_approval", approval_hash: "fake_approval_hash" },
+    })
+    const fakeAuthority = commanderRecoveryAuthorityValues(state.commanderRecovery!)
+    expect(fakeAuthority).toMatchObject({ approval_id: "fake_approval", approval_hash: "fake_approval_hash" })
+
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=fake_commander_recovery", `approval_id=${fakeAuthority.approval_id}`, `approval_hash=${fakeAuthority.approval_hash}`, `recovery_plan_hash=${fakeAuthority.recovery_plan_hash}`, `execution_preparation_hash=${fakeAuthority.execution_preparation_hash}`],
+    })
+    expect(state.commanderRecovery?.pendingConfirmation).toBe("execution")
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=fake_commander_recovery", `approval_id=${fakeAuthority.approval_id}`, `approval_hash=${fakeAuthority.approval_hash}`, `recovery_plan_hash=${fakeAuthority.recovery_plan_hash}`, `execution_preparation_hash=${fakeAuthority.execution_preparation_hash}`, "confirm=EXECUTE"],
+    })
+    expect(state.commanderRecovery?.operation).toMatchObject({ status: "running", operation_id: "fake_recovery_operation_0" })
+    expect(await runtime.command("runtime.list_commander_investigation_recoveries", { approval_state: "consumed", recovery_state: "recovery_execution_in_progress" })).toMatchObject({
+      items: [{ investigation_id: "fake_commander_recovery", recovery_attempt_count: 1, recovery_execution_in_progress: true, human_review_required: true }],
+      count: 1,
+    })
+    expect(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).toMatchObject({
+      approval_state: "consumed",
+      recovery_execution_in_progress: true,
+      human_review_required: false,
+      recommended_next_operator_action: "await_recovery_completion",
+    })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).toMatchObject({ status: "blocked", events_appended: false, blockers: ["recovery approval was consumed by the existing one-shot attempt"] })
+    expect(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: "fake_commander_recovery" })).toMatchObject({
+      status: "recovery_in_progress",
+      approval_state: "consumed",
+    })
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-preview",
+      args: ["fake_commander_recovery"],
+    })
+    expect(state.commanderRecovery?.preview).toMatchObject({ status: "recovery_in_progress", approval_state: "consumed" })
+    expect(state.commanderRecovery?.preview).not.toHaveProperty("current_approval")
+    const duplicateOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      approval_id: fakeAuthority.approval_id,
+      approval_hash: fakeAuthority.approval_hash,
+      recovery_plan_hash: fakeAuthority.recovery_plan_hash,
+      execution_preparation_hash: fakeAuthority.execution_preparation_hash,
+    }) as Record<string, unknown>
+    expect(duplicateOperation.operation_id).toBe("fake_recovery_operation_0")
+    const differentOperation = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      approval_id: "different_approval",
+      approval_hash: fakeAuthority.approval_hash,
+      recovery_plan_hash: fakeAuthority.recovery_plan_hash,
+      execution_preparation_hash: fakeAuthority.execution_preparation_hash,
+    }) as Record<string, unknown>
+    expect(differentOperation).toMatchObject({
+      operation_id: "fake_recovery_operation_0",
+      status: "running",
+      request_rejected: true,
+      error: "a recovery attempt already exists with different authority",
+    })
+    const wrongCancellation = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      operation_id: "fake_recovery_operation_0",
+      approval_id: "wrong_approval",
+      recovery_attempt_id: "fake_recovery_attempt_0",
+    }) as Record<string, unknown>
+    expect(wrongCancellation).toMatchObject({ status: "operation_identity_mismatch", cancellation_requested: false, recovery_attempt_id: "fake_recovery_attempt_0" })
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=fake_commander_recovery", "operation_id=fake_recovery_operation_0", "approval_id=fake_approval"],
+    })
+    expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true })
+    const duplicateCancellation = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: "fake_commander_recovery",
+      operation_id: "fake_recovery_operation_0",
+      approval_id: "fake_approval",
+      recovery_attempt_id: "fake_recovery_attempt_0",
+    }) as Record<string, unknown>
+    expect(duplicateCancellation).toMatchObject({ status: "already_requested", cancellation_requested: true })
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("Commander recovery")
+    expect(snapshot).toContain("fresh recovery continuation")
+    expect(snapshot).toContain("exact replay unavailable")
+    expect(snapshot).toContain("cancellation requested")
+    expect(snapshot).not.toContain("connector_url")
+  })
+
+  test("Commander recovery execute and cancel clear authority from another investigation", async () => {
+    let shownFound = true
+    let shownApprovalState = "consumed"
+    let shownApprovalId: string | undefined = "approval_b"
+    let shownProjectionStatus = "ready"
+    let shownBasisHash: string | undefined = "basis_b"
+    let showActiveOperation = true
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        if (name === "runtime.execute_commander_investigation_recovery") {
+          return { operation_id: "operation_b", investigation_id: payload?.investigation_id, approval_id: payload?.approval_id, status: "running" }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: shownFound,
+            investigation_id: payload?.investigation_id,
+            projection_status: shownProjectionStatus,
+            ...(shownBasisHash ? { recovery_basis_hash: shownBasisHash } : {}),
+            approval_state: shownApprovalState,
+            ...(shownApprovalId ? { latest_approval: { approval_id: shownApprovalId } } : {}),
+            ...(showActiveOperation ? { active_operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" } } : {}),
+          }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return { status: "cancellation_requested", cancellation_requested: true, investigation_id: "inv_b", operation_id: "operation_b", approval_id: "approval_b" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const authorityA = (): UiState => ({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_a" },
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a" } },
+        operation: { operation_id: "operation_a", investigation_id: "inv_a", approval_id: "approval_a", status: "running" },
+        cancellation: { status: "already_requested" },
+        pendingConfirmation: "approval",
+      },
+    })
+
+    const executed = await applyRuntimeUiEffect(authorityA(), runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
+    })
+    expect(executed.commanderRecovery).toMatchObject({ operation: { investigation_id: "inv_b", operation_id: "operation_b" }, selected: null, preview: null, approval: null, cancellation: null })
+    expect(executed.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const replaced = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: null,
+        approval: null,
+        operation: { operation_id: "operation_a", investigation_id: "inv_b", approval_id: "approval_b", status: "blocked" },
+        cancellation: { status: "not_active" },
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
+    })
+    expect(replaced.commanderRecovery).toMatchObject({ operation: { operation_id: "operation_b", investigation_id: "inv_b" }, cancellation: null })
+
+    const acceptedSameTarget = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: { investigation_id: "inv_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
+    })
+    expect(acceptedSameTarget.commanderRecovery).toMatchObject({
+      operation: { status: "running" },
+      preview: { current_approval: { approval_id: "approval_b" } },
+      approval: { approval: { approval_id: "approval_b" } },
+    })
+
+    const acceptedAfterNotActive = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: { investigation_id: "inv_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: { status: "not_active" },
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_b", "approval_id=approval_b", "approval_hash=approval_hash_b", "recovery_plan_hash=plan_b", "execution_preparation_hash=preparation_b", "confirm=EXECUTE"],
+    })
+    expect(acceptedAfterNotActive.commanderRecovery).toMatchObject({ operation: { operation_id: "operation_b" }, cancellation: null })
+
+    const cancelled = await applyRuntimeUiEffect(authorityA(), runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_b", "operation_id=operation_b", "approval_id=approval_b"],
+    })
+    expect(cancelled.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, preview: null, approval: null, cancellation: { status: "cancellation_requested" } })
+    expect(cancelled.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const sameTargetCancelled = await applyRuntimeUiEffect({
+      ...cancelled,
+      commanderRecovery: {
+        ...cancelled.commanderRecovery!,
+        pendingConfirmation: "execution",
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_b", "operation_id=operation_b", "approval_id=approval_b"],
+    })
+    expect(sameTargetCancelled.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const shown = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a" } },
+        operation: null,
+        cancellation: { status: "already_requested" },
+        pendingConfirmation: "execution",
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(shown.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, preview: null, approval: null, operation: { investigation_id: "inv_b", operation_id: "operation_b" }, cancellation: null })
+    expect(shown.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    const shownReplacement = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: null,
+        approval: null,
+        operation: { operation_id: "operation_a", investigation_id: "inv_b", approval_id: "approval_b", status: "blocked" },
+        cancellation: { status: "not_active", operation_id: "operation_a" },
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(shownReplacement.commanderRecovery).toMatchObject({
+      selected: { investigation_id: "inv_b" },
+      operation: { investigation_id: "inv_b", operation_id: "operation_b" },
+      cancellation: null,
+    })
+
+    const refreshed = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", approval_state: "current", recovery_plan_hash: "stale_plan_b" },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+        pendingConfirmation: "execution",
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(refreshed.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b", approval_state: "consumed" }, preview: null, approval: null, operation: { investigation_id: "inv_b" } })
+    expect(refreshed.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    shownApprovalState = "current"
+    const preserved = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(preserved.commanderRecovery).toMatchObject({
+      selected: { approval_state: "current", latest_approval: { approval_id: "approval_b" } },
+      preview: { recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+      approval: { approval: { approval_id: "approval_b" } },
+    })
+
+    shownApprovalState = "none"
+    shownApprovalId = undefined
+    const matchingPreview = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b" },
+        preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b", execution_preparation_hash: "preparation_b" },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(matchingPreview.commanderRecovery?.preview).toMatchObject({ recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b" })
+
+    shownBasisHash = "basis_replaced"
+    const stalePreview = await applyRuntimeUiEffect(matchingPreview, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(stalePreview.commanderRecovery?.preview).toBeNull()
+
+    shownProjectionStatus = "corrupt"
+    shownBasisHash = undefined
+    const corruptPreview = await applyRuntimeUiEffect({
+      ...matchingPreview,
+      commanderRecovery: { ...matchingPreview.commanderRecovery!, preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b" } },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(corruptPreview.commanderRecovery?.preview).toBeNull()
+
+    shownFound = false
+    const missingPreview = await applyRuntimeUiEffect({
+      ...matchingPreview,
+      commanderRecovery: { ...matchingPreview.commanderRecovery!, preview: { investigation_id: "inv_b", recovery_basis_hash: "basis_b", recovery_plan_hash: "plan_b" } },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(missingPreview.commanderRecovery?.preview).toBeNull()
+
+    shownFound = true
+    shownProjectionStatus = "ready"
+    shownBasisHash = "basis_b"
+    shownApprovalState = "current"
+
+    shownApprovalId = "approval_b_replacement"
+    const replacement = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "old_plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+        pendingConfirmation: "execution",
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(replacement.commanderRecovery).toMatchObject({ selected: { approval_state: "current", latest_approval: { approval_id: "approval_b_replacement" } }, preview: null, approval: null })
+    expect(replacement.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    shownFound = false
+    shownApprovalState = "none"
+    shownApprovalId = undefined
+    const missing = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(missing.commanderRecovery).toMatchObject({ selected: { found: false, approval_state: "none" }, preview: null, approval: null })
+
+    shownFound = true
+    const noApproval = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_b", approval_state: "current" },
+        preview: { investigation_id: "inv_b", recovery_plan_hash: "plan_b", current_approval: { approval_id: "approval_b" } },
+        approval: { investigation_id: "inv_b", status: "recorded", approval: { approval_id: "approval_b" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(noApproval.commanderRecovery).toMatchObject({ selected: { found: true, approval_state: "none" }, preview: null, approval: null })
+
+    showActiveOperation = false
+    const noOperation = await applyRuntimeUiEffect({
+      ...replacement,
+      commanderRecovery: {
+        ...replacement.commanderRecovery!,
+        operation: { operation_id: "operation_b", investigation_id: "inv_b", approval_id: "approval_b", status: "running" },
+      },
+    }, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(noOperation.commanderRecovery?.operation).toBeNull()
+  })
+
+  test("Commander recovery clears cached authority only after durable attempt identity is observed", async () => {
+    let durableAttempt = false
+    let operationStatus: "running" | "failed" = "running"
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        if (name !== "runtime.execute_commander_investigation_recovery") throw new Error(`unexpected command ${name}`)
+        return {
+          operation_id: durableAttempt ? "operation_durable" : "operation_prestart",
+          investigation_id: payload?.investigation_id,
+          approval_id: payload?.approval_id,
+          status: operationStatus,
+          ...(durableAttempt ? { recovery_attempt_id: "attempt_durable" } : {}),
+        }
+      },
+    }
+    const authorityState = (): UiState => ({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_a", execution_preparation_hash: "preparation_a" },
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" } },
+        operation: null,
+        cancellation: null,
+      },
+    })
+    const execute = (state: UiState) => applyRuntimeUiEffect(state, runtime, {
+      type: "send-command" as const,
+      command: "commander-recovery-execute",
+      args: ["investigation_id=inv_a", "approval_id=approval_a", "approval_hash=approval_hash_a", "recovery_plan_hash=plan_a", "execution_preparation_hash=preparation_a", "confirm=EXECUTE"],
+    })
+
+    const prestartRunning = await execute(authorityState())
+    expect(prestartRunning.commanderRecovery).toMatchObject({
+      operation: { status: "running", operation_id: "operation_prestart" },
+      preview: { recovery_plan_hash: "plan_a" },
+      approval: { approval: { approval_id: "approval_a" } },
+    })
+
+    operationStatus = "failed"
+    const prestartFailed = await execute(authorityState())
+    expect(prestartFailed.commanderRecovery).toMatchObject({
+      operation: { status: "failed", operation_id: "operation_prestart" },
+      preview: { recovery_plan_hash: "plan_a" },
+      approval: { approval: { approval_id: "approval_a" } },
+    })
+
+    durableAttempt = true
+    const durableFailed = await execute(authorityState())
+    expect(durableFailed.commanderRecovery).toMatchObject({
+      operation: { status: "failed", operation_id: "operation_durable", recovery_attempt_id: "attempt_durable" },
+      preview: null,
+      approval: null,
+    })
+  })
+
+  test("Commander recovery show clears a different investigation's standalone cancellation", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return { found: true, investigation_id: "inv_after_cancellation", projection_status: "ready" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: null,
+        cancellation: {
+          investigation_id: "inv_stale_cancellation",
+          operation_id: "operation_stale_cancellation",
+          status: "cancellation_requested",
+        },
+      },
+    }
+
+    const shown = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-show",
+      args: ["inv_after_cancellation"],
+    })
+
+    expect(shown.commanderRecovery).toMatchObject({
+      selected: { investigation_id: "inv_after_cancellation" },
+      operation: null,
+      cancellation: null,
+    })
+  })
+
+  test("Commander recovery sends complete cancellation authority before a fallible detail refresh", async () => {
+    const calls: string[] = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_without_show",
+            operation_id: "operation_cancel_without_show",
+            approval_id: "approval_cancel_without_show",
+            recovery_attempt_id: "attempt_cancel_without_show",
+            cancellation_requested: true,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") throw new Error("projection token=refresh-secret")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_without_show" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_without_show",
+          operation_id: "operation_cancel_without_show",
+          approval_id: "approval_cancel_without_show",
+          recovery_attempt_id: "attempt_cancel_without_show",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_without_show",
+        "operation_id=operation_cancel_without_show",
+        "approval_id=approval_cancel_without_show",
+        "recovery_attempt_id=attempt_cancel_without_show",
+      ],
+    })
+
+    expect(calls).toEqual([
+      "runtime.cancel_commander_investigation_recovery",
+      "runtime.get_commander_investigation_recovery",
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_cancel_without_show", status: "running", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested", cancellation_requested: true },
+      commandError: "projection [REDACTED]",
+    })
+    expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
+
+    const staleCachedOperation = await applyRuntimeUiEffect({
+      ...state,
+      commanderRecovery: {
+        ...state.commanderRecovery!,
+        operation: {
+          investigation_id: "inv_cancel_without_show",
+          operation_id: "stale_operation",
+          approval_id: "stale_approval",
+          recovery_attempt_id: "stale_attempt",
+          status: "running",
+        },
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_without_show",
+        "operation_id=operation_cancel_without_show",
+        "approval_id=approval_cancel_without_show",
+        "recovery_attempt_id=attempt_cancel_without_show",
+      ],
+    })
+    expect(staleCachedOperation.commanderRecovery).toMatchObject({
+      operation: null,
+      cancellation: {
+        status: "cancellation_requested",
+        operation_id: "operation_cancel_without_show",
+        approval_id: "approval_cancel_without_show",
+        recovery_attempt_id: "attempt_cancel_without_show",
+      },
+    })
+    expect(JSON.stringify(staleCachedOperation.commanderRecovery)).not.toContain("stale_attempt")
+  })
+
+  test("Commander recovery sends pre-start cancellation before a fallible detail refresh", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_prestart_without_show",
+            operation_id: "operation_cancel_prestart_without_show",
+            approval_id: "approval_cancel_prestart_without_show",
+            cancellation_requested: true,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") throw new Error("projection token=refresh-secret")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_prestart_without_show" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_prestart_without_show",
+          operation_id: "operation_cancel_prestart_without_show",
+          approval_id: "approval_cancel_prestart_without_show",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_cancel_prestart_without_show"],
+    })
+
+    expect(calls).toEqual([
+      {
+        name: "runtime.cancel_commander_investigation_recovery",
+        payload: {
+          investigation_id: "inv_cancel_prestart_without_show",
+          operation_id: "operation_cancel_prestart_without_show",
+          approval_id: "approval_cancel_prestart_without_show",
+        },
+      },
+      {
+        name: "runtime.get_commander_investigation_recovery",
+        payload: { investigation_id: "inv_cancel_prestart_without_show" },
+      },
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_cancel_prestart_without_show", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested", cancellation_requested: true },
+      commandError: "projection [REDACTED]",
+    })
+    expect(JSON.stringify(cancelled.commanderRecovery)).not.toContain("refresh-secret")
+  })
+
+  test("staged Commander recovery reports follow-up authority refresh failures", async () => {
+    const calls: string[] = []
+    let approvalPayload: Record<string, unknown> | undefined
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          approvalPayload = payload
+          return { status: "recorded", investigation_id: "inv_staged_recovery" }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") throw new Error("preview token=staged-refresh-secret")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const command = "/commander-recovery-approve investigation_id=inv_staged_recovery recovery_plan_hash=plan_staged_recovery decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true confirm=APPROVE"
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      operatorActions: {
+        staged: { label: "recovery approval", command, command_type: "write" },
+        lastResult: null,
+      },
+    }
+
+    const executed = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "run-staged" })
+
+    expect(calls).toEqual([
+      "runtime.approve_commander_investigation_recovery",
+      "runtime.preview_commander_investigation_recovery",
+    ])
+    expect(executed.operatorActions).toMatchObject({
+      staged: { command },
+      lastResult: { ok: false, command, summary: "preview [REDACTED]" },
+      commandError: "preview [REDACTED]",
+    })
+    expect(executed.commanderRecovery).toMatchObject({ commandError: "preview [REDACTED]" })
+    expect(JSON.stringify(executed)).not.toContain("staged-refresh-secret")
+
+    const unconfirmedCommand = "/commander-recovery-approve investigation_id=inv_staged_recovery recovery_plan_hash=plan_staged_recovery decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true"
+    const unconfirmed = await applyRuntimeUiEffect({
+      ...state,
+      operatorActions: {
+        staged: { label: "unconfirmed recovery approval", command: unconfirmedCommand, command_type: "write" },
+        lastResult: null,
+      },
+    }, runtime, { type: "send-command", command: "run-staged" })
+    expect(calls).toHaveLength(2)
+    expect(unconfirmed.operatorActions).toMatchObject({
+      staged: { command: unconfirmedCommand },
+      lastResult: { ok: false, command: unconfirmedCommand, summary: "explicit recovery approval confirmation is required" },
+      commandError: "explicit recovery approval confirmation is required",
+    })
+    expect(unconfirmed.commanderRecovery).toMatchObject({ pendingConfirmation: "approval", commandError: undefined })
+
+    const stagedWithRawNote = parseRuntimeCommand(`/stage-command ${command} human_note=a  b  `)!
+    const stagedWithRawNoteState = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+    }, runtime, { type: "send-command", command: stagedWithRawNote.command, args: stagedWithRawNote.args })
+    expect(stagedWithRawNoteState.operatorActions?.staged?.command).toContain("human_note=a  b  ")
+    await applyRuntimeUiEffect(stagedWithRawNoteState, runtime, { type: "send-command", command: "run-staged" })
+    expect(approvalPayload).toMatchObject({ human_note: "a  b  " })
+  })
+
+  test("staged Commander recovery retains commands after negative domain results", async () => {
+    const commands = [
+      {
+        command: "/commander-recovery-approve investigation_id=inv_domain recovery_plan_hash=plan_domain decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true confirm=APPROVE",
+        expected: "stale recovery plan",
+        runtimeResult: { status: "blocked", investigation_id: "inv_domain", blockers: ["stale recovery plan"], events_appended: false },
+      },
+      {
+        command: "/commander-recovery-execute investigation_id=inv_domain approval_id=approval_domain approval_hash=approval_hash_domain recovery_plan_hash=plan_domain execution_preparation_hash=preparation_domain confirm=EXECUTE",
+        expected: "different recovery authority",
+        runtimeResult: { status: "blocked", investigation_id: "inv_domain", operation_id: "operation_domain", approval_id: "approval_domain", request_rejected: true, error: "different recovery authority" },
+      },
+      {
+        command: "/commander-recovery-cancel investigation_id=inv_domain operation_id=operation_domain approval_id=approval_domain",
+        expected: "recovery cancellation not_active",
+        runtimeResult: { status: "not_active", investigation_id: "inv_domain", operation_id: "operation_domain", approval_id: "approval_domain", cancellation_requested: false },
+      },
+    ]
+
+    for (const fixture of commands) {
+      const runtime: RuntimeClient = {
+        async *stream(): AsyncIterable<RuntimeEvent> {},
+        async sendUserMessage(): Promise<void> {},
+        async sendCommand(): Promise<unknown> { return undefined },
+        async command(name: string): Promise<unknown> {
+          if (name === "runtime.preview_commander_investigation_recovery") return { status: "blocked", investigation_id: "inv_domain", approval_state: "none" }
+          if (name === "runtime.get_commander_investigation_recovery") return { found: false, investigation_id: "inv_domain", projection_status: "missing" }
+          return fixture.runtimeResult
+        },
+      }
+      const staged = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "main" }, runtime, {
+        type: "send-command",
+        command: "stage-command",
+        args: [fixture.command],
+      })
+      const executed = await applyRuntimeUiEffect(staged, runtime, { type: "send-command", command: "run-staged" })
+      expect(executed.operatorActions).toMatchObject({
+        staged: { command: fixture.command },
+        lastResult: { ok: false, command: fixture.command, summary: fixture.expected },
+        commandError: fixture.expected,
+      })
+    }
+  })
+
+  test("Commander recovery does not apply an accepted cancellation to a replacement operation", async () => {
+    const calls: string[] = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_replaced",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            recovery_attempt_id: "attempt_a",
+            cancellation_requested: true,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_cancel_replaced",
+            active_operation: {
+              investigation_id: "inv_cancel_replaced",
+              operation_id: "operation_b",
+              approval_id: "approval_b",
+              recovery_attempt_id: "attempt_b",
+              status: "running",
+              cancellation_requested: false,
+            },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_replaced" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_replaced",
+          operation_id: "operation_a",
+          approval_id: "approval_a",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: [
+        "investigation_id=inv_cancel_replaced",
+        "operation_id=operation_a",
+        "approval_id=approval_a",
+      ],
+    })
+
+    expect(calls).toEqual([
+      "runtime.cancel_commander_investigation_recovery",
+      "runtime.get_commander_investigation_recovery",
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: {
+        operation_id: "operation_b",
+        approval_id: "approval_b",
+        recovery_attempt_id: "attempt_b",
+        cancellation_requested: false,
+      },
+      cancellation: null,
+    })
+  })
+
+  test("staged Commander recovery retains rejected cancellation when refresh finds a replacement operation", async () => {
+    const command = "/commander-recovery-cancel investigation_id=inv_cancel_rejected operation_id=operation_a approval_id=approval_a"
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "operation_identity_mismatch",
+            investigation_id: "inv_cancel_rejected",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: false,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_cancel_rejected",
+            active_operation: {
+              investigation_id: "inv_cancel_rejected",
+              operation_id: "operation_b",
+              approval_id: "approval_b",
+              recovery_attempt_id: "attempt_b",
+              status: "running",
+              cancellation_requested: false,
+            },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const staged = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "main" }, runtime, {
+      type: "send-command",
+      command: "stage-command",
+      args: [command],
+    })
+
+    const executed = await applyRuntimeUiEffect(staged, runtime, { type: "send-command", command: "run-staged" })
+
+    expect(executed.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_b", approval_id: "approval_b" },
+      cancellation: null,
+      commandError: "recovery cancellation operation_identity_mismatch",
+    })
+    expect(executed.operatorActions).toMatchObject({
+      staged: { command },
+      lastResult: { ok: false, command, summary: "recovery cancellation operation_identity_mismatch" },
+      commandError: "recovery cancellation operation_identity_mismatch",
+    })
+  })
+
+  test("staged Commander recovery reports rejected cancellation and failed authoritative refresh", async () => {
+    const command = "/commander-recovery-cancel investigation_id=inv_cancel_refresh_failed operation_id=operation_a approval_id=approval_a"
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "not_active",
+            investigation_id: "inv_cancel_refresh_failed",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: false,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") throw new Error("authoritative recovery refresh unavailable")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const staged = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_refresh_failed" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_refresh_failed",
+          operation_id: "operation_a",
+          approval_id: "approval_a",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "stage-command", args: [command] })
+
+    const executed = await applyRuntimeUiEffect(staged, runtime, { type: "send-command", command: "run-staged" })
+
+    const error = "recovery cancellation not_active; recovery refresh failed: authoritative recovery refresh unavailable"
+    expect(executed.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_a", status: "running" },
+      cancellation: { status: "not_active", operation_id: "operation_a" },
+      commandError: error,
+    })
+    expect(executed.operatorActions).toMatchObject({
+      staged: { command },
+      lastResult: { ok: false, command, summary: error },
+      commandError: error,
+    })
+  })
+
+  test("Commander recovery refreshes settled cached operations before cancellation", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    let showCount = 0
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        if (name === "runtime.get_commander_investigation_recovery") {
+          showCount += 1
+          return {
+            found: true,
+            investigation_id: "inv_cancel_settled",
+            active_operation: {
+              investigation_id: "inv_cancel_settled",
+              operation_id: showCount === 1 ? "operation_current" : "operation_replacement",
+              approval_id: showCount === 1 ? "approval_current" : "approval_replacement",
+              status: "running",
+              cancellation_requested: false,
+            },
+          }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_cancel_settled",
+            operation_id: "operation_current",
+            approval_id: "approval_current",
+            cancellation_requested: true,
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_settled" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_settled",
+          operation_id: "operation_settled",
+          approval_id: "approval_settled",
+          status: "failed",
+        },
+        cancellation: null,
+      },
+    }
+
+    const cancelled = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_cancel_settled"],
+    })
+
+    expect(calls).toEqual([
+      { name: "runtime.get_commander_investigation_recovery", payload: { investigation_id: "inv_cancel_settled" } },
+      {
+        name: "runtime.cancel_commander_investigation_recovery",
+        payload: {
+          investigation_id: "inv_cancel_settled",
+          operation_id: "operation_current",
+          approval_id: "approval_current",
+        },
+      },
+      { name: "runtime.get_commander_investigation_recovery", payload: { investigation_id: "inv_cancel_settled" } },
+    ])
+    expect(cancelled.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_replacement", approval_id: "approval_replacement", cancellation_requested: false },
+      cancellation: null,
+    })
+  })
+
+  test("Commander recovery idempotent approval refreshes exact execution authority", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return { status: "already_recorded", investigation_id: "inv_a", approval_state: "current", events_appended: false }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "approved_waiting_for_execution",
+            approval_state: "current",
+            investigation_id: "inv_a",
+            recovery_plan_hash: "plan_a",
+            current_approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_a" },
+        approval: {
+          status: "recorded",
+          investigation_id: "inv_a",
+          approval: { approval_id: "stale_approval", approval_hash: "stale_approval_hash" },
+        },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_a", "recovery_plan_hash=plan_a", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(state.commanderRecovery?.approval).toMatchObject({
+      status: "already_recorded",
+      events_appended: false,
+      approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
+    })
+    expect(state.commanderRecovery?.preview).toMatchObject({
+      recovery_plan_hash: "plan_a",
+      current_approval: { approval_id: "approval_replacement", approval_hash: "approval_hash_replacement" },
+    })
+    expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toMatchObject({
+      approval_id: "approval_replacement",
+      approval_hash: "approval_hash_replacement",
+    })
+  })
+
+  test("Commander recovery recorded replacement approval refreshes cached preview authority", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "recorded",
+            investigation_id: "inv_replacement_approval",
+            approval_state: "current",
+            events_appended: true,
+            approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "approved_waiting_for_execution",
+            approval_state: "current",
+            investigation_id: "inv_replacement_approval",
+            recovery_plan_hash: "plan_replacement_approval",
+            execution_preparation_hash: "preparation_replacement_approval",
+            current_approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_replacement_approval" },
+        preview: {
+          investigation_id: "inv_replacement_approval",
+          recovery_plan_hash: "plan_replacement_approval",
+          execution_preparation_hash: "preparation_replacement_approval",
+          current_approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" },
+        },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: [
+        "investigation_id=inv_replacement_approval",
+        "recovery_plan_hash=plan_replacement_approval",
+        "decision=approve_resume_from_checkpoint",
+        "approved_by=human_operator",
+        "fresh_context_required=true",
+        "exact_replay_unavailable=true",
+        "provider_request_replay_forbidden=true",
+        "tool_execution_replay_forbidden=true",
+        "confirm=APPROVE",
+        "human_note=replacement_approval",
+      ],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      preview: { current_approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" } },
+      approval: { status: "recorded", approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" } },
+    })
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toMatchObject({
+      approval_id: "approval_b",
+      approval_hash: "approval_hash_b",
+      execution_preparation_hash: "preparation_replacement_approval",
+    })
+  })
+
+  test("Commander recovery recorded approval clears authority consumed during refresh", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "recorded",
+            investigation_id: "inv_consumed_approval",
+            approval_state: "current",
+            events_appended: true,
+            approval: { approval_id: "approval_consumed", approval_hash: "approval_hash_consumed" },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "recovery_in_progress",
+            approval_state: "consumed",
+            investigation_id: "inv_consumed_approval",
+            recovery_plan_hash: "plan_consumed_approval",
+            execution_preparation_hash: "preparation_consumed_approval",
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_consumed_approval" },
+        preview: {
+          investigation_id: "inv_consumed_approval",
+          recovery_plan_hash: "plan_consumed_approval",
+          execution_preparation_hash: "preparation_consumed_approval",
+        },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_consumed_approval", "recovery_plan_hash=plan_consumed_approval", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      preview: { approval_state: "consumed" },
+      approval: { status: "recorded", approval: undefined },
+    })
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toMatchObject({
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
+  test("Commander recovery cross-target approval keeps refreshed target authority", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "recorded",
+            investigation_id: "inv_target_b",
+            approval_state: "current",
+            events_appended: true,
+            approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          return {
+            status: "approved_waiting_for_execution",
+            approval_state: "current",
+            investigation_id: "inv_target_b",
+            recovery_plan_hash: "plan_b",
+            execution_preparation_hash: "preparation_b",
+            current_approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_target_a" },
+        preview: { investigation_id: "inv_target_a", recovery_plan_hash: "plan_a" },
+        approval: { investigation_id: "inv_target_a", approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" } },
+        operation: { operation_id: "operation_a", investigation_id: "inv_target_a", approval_id: "approval_a", status: "running" },
+        cancellation: { status: "already_requested" },
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_target_b", "recovery_plan_hash=plan_b", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      selected: null,
+      preview: { investigation_id: "inv_target_b", execution_preparation_hash: "preparation_b" },
+      approval: { approval: { approval_id: "approval_b", approval_hash: "approval_hash_b" } },
+      operation: null,
+      cancellation: null,
+    })
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toMatchObject({
+      approval_id: "approval_b",
+      approval_hash: "approval_hash_b",
+      recovery_plan_hash: "plan_b",
+      execution_preparation_hash: "preparation_b",
+    })
+  })
+
+  test("Commander recovery blocked approval refreshes stale preview authority", async () => {
+    const calls: string[] = []
+    let previewFails = false
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        calls.push(name)
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return { status: "blocked", investigation_id: "inv_a", recovery_plan_hash: "plan_current", events_appended: false }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          if (previewFails) throw new Error("continuity refresh failed with Authorization: Bearer stale-secret")
+          return { status: "ready_for_approval", investigation_id: "inv_a", recovery_plan_hash: "plan_current", execution_preparation_hash: "preparation_current" }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_stale", execution_preparation_hash: "preparation_stale" },
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_a", "recovery_plan_hash=plan_stale", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(calls).toEqual([
+      "runtime.approve_commander_investigation_recovery",
+      "runtime.preview_commander_investigation_recovery",
+    ])
+    expect(state.commanderRecovery?.approval).toMatchObject({ status: "blocked", recovery_plan_hash: "plan_current" })
+    expect(state.commanderRecovery?.preview).toMatchObject({ recovery_plan_hash: "plan_current", execution_preparation_hash: "preparation_current" })
+    expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toMatchObject({
+      recovery_plan_hash: "plan_current",
+      execution_preparation_hash: "preparation_current",
+    })
+
+    previewFails = true
+    const failedRefresh = await applyRuntimeUiEffect({
+      ...state,
+      commanderRecovery: {
+        ...state.commanderRecovery!,
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_rejected", execution_preparation_hash: "preparation_rejected" },
+        approval: { approval: { approval_id: "approval_rejected", approval_hash: "approval_hash_rejected" } },
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_a", "recovery_plan_hash=plan_rejected", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(failedRefresh.commanderRecovery?.approval).toMatchObject({ status: "blocked", recovery_plan_hash: "plan_current" })
+    expect(failedRefresh.commanderRecovery?.preview).toBeNull()
+    expect(failedRefresh.commanderRecovery?.commandError).toContain("continuity refresh failed")
+    expect(failedRefresh.commanderRecovery?.commandError).not.toContain("stale-secret")
+    expect(commanderRecoveryAuthorityValues(failedRefresh.commanderRecovery!)).toEqual({
+      recovery_plan_hash: "none",
+      execution_preparation_hash: "none",
+      recovery_packet_hash: "none",
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
+  test("Commander recovery failed approval clears cached authority when reconciliation fails", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.approve_commander_investigation_recovery") {
+          return {
+            status: "failed",
+            investigation_id: "inv_failed_approval",
+            events_appended: false,
+            blockers: ["approval append outcome is uncertain"],
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") {
+          throw new Error("approval reconciliation unavailable with Authorization: Bearer stale-secret")
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_failed_approval" },
+        preview: {
+          investigation_id: "inv_failed_approval",
+          recovery_plan_hash: "plan_stale",
+          execution_preparation_hash: "preparation_stale",
+          approval_state: "current",
+          current_approval: { approval_id: "approval_stale", approval_hash: "approval_hash_stale" },
+        },
+        approval: { approval: { approval_id: "approval_stale", approval_hash: "approval_hash_stale" } },
+        operation: null,
+        cancellation: null,
+      },
+    }
+
+    const approved = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv_failed_approval", "recovery_plan_hash=plan_stale", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+
+    expect(approved.commanderRecovery).toMatchObject({
+      preview: null,
+      approval: { status: "failed", approval: undefined },
+    })
+    expect(approved.commanderRecovery?.commandError).toContain("approval reconciliation unavailable")
+    expect(approved.commanderRecovery?.commandError).not.toContain("stale-secret")
+    expect(commanderRecoveryAuthorityValues(approved.commanderRecovery!)).toEqual({
+      recovery_plan_hash: "none",
+      execution_preparation_hash: "none",
+      recovery_packet_hash: "none",
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
+  test("fake Commander recovery approval includes note identity in idempotence", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const input = {
+      investigation_id: "fake_commander_recovery",
+      recovery_plan_hash: "fake_recovery_plan_hash",
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "human_operator",
+      human_note: "reviewed original checkpoint",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    }
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: "x".repeat(1001),
+    })).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: "api_key=sk-realCredentialPayload123",
+    })).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      approved_by: "api_key=sk-realCredentialPayload123",
+    })).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      approved_by: "x".repeat(201),
+    })).toMatchObject({ status: "blocked", events_appended: false })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", input)).toMatchObject({
+      status: "recorded",
+      events_appended: true,
+      approval: { approval_id: "fake_approval", approval_sequence: 0, human_note_preview: "reviewed original checkpoint" },
+    })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", input)).toMatchObject({
+      status: "already_recorded",
+      events_appended: false,
+    })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: "reviewed changed checkpoint",
+    })).toMatchObject({
+      status: "recorded",
+      events_appended: true,
+      approval: { approval_id: "fake_approval_1", approval_sequence: 1, human_note_preview: "reviewed changed checkpoint" },
+    })
+    const sharedPreview = "x".repeat(500)
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: `${sharedPreview}A`,
+    })).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_2", approval_sequence: 2, human_note_preview: sharedPreview } })
+    expect(await runtime.command("runtime.approve_commander_investigation_recovery", {
+      ...input,
+      human_note: `${sharedPreview}B`,
+    })).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_3", approval_sequence: 3, human_note_preview: sharedPreview } })
+
+    const identityRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const { human_note: _humanNote, ...withoutHumanNote } = input
+    expect(await identityRuntime.command("runtime.approve_commander_investigation_recovery", withoutHumanNote)).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval", human_note_hash: undefined },
+    })
+    const emptyNoteApproval = await identityRuntime.command("runtime.approve_commander_investigation_recovery", { ...withoutHumanNote, human_note: "" }) as any
+    expect(emptyNoteApproval).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval_1" },
+    })
+    expect(emptyNoteApproval.approval).not.toHaveProperty("human_note_preview")
+    expect(await identityRuntime.command("runtime.approve_commander_investigation_recovery", { ...withoutHumanNote, human_note: " reviewed " })).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval_2", human_note_preview: "reviewed" },
+    })
+    expect(await identityRuntime.command("runtime.approve_commander_investigation_recovery", { ...withoutHumanNote, human_note: "reviewed" })).toMatchObject({
+      status: "recorded",
+      approval: { approval_id: "fake_approval_3", human_note_preview: "reviewed" },
+    })
+  })
+
+  test("Commander recovery approval display exposes bounded blocked outcomes", () => {
+    expect(commanderRecoveryApprovalDisplay({
+      status: "blocked",
+      blockers: ["stale recovery plan", "x".repeat(300), "three", "four", "five", "six", "seven"],
+    })).toEqual({
+      status: "blocked",
+      blockers: ["stale recovery plan", "x".repeat(240), "three", "four", "five", "six"],
+    })
+  })
+
+  test("Commander recovery cancellation drops an operation absent from authoritative show", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.get_commander_investigation_recovery") return { found: true, investigation_id: "inv_a" }
+        if (name === "runtime.cancel_commander_investigation_recovery") return { status: "not_active", cancellation_requested: false }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a" },
+        preview: null,
+        approval: null,
+        operation: { operation_id: "evicted_operation", investigation_id: "inv_a", approval_id: "approval_a", status: "running" },
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_a", "operation_id=evicted_operation", "approval_id=approval_a"],
+    })
+    expect(state.commanderRecovery).toMatchObject({ operation: null, cancellation: { status: "not_active" } })
+  })
+
+  test("Commander recovery cancellation clears authority consumed by another client", async () => {
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_a",
+            approval_state: "consumed",
+            latest_recovery_attempt: { recovery_attempt_id: "attempt_a", approval_id: "approval_a" },
+            active_operation: { operation_id: "operation_a", investigation_id: "inv_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a", status: "running" },
+          }
+        }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_a",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: true,
+            recovery_attempt_id: "attempt_a",
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const state = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_a", approval_state: "current" },
+        preview: { investigation_id: "inv_a", recovery_plan_hash: "plan_a", execution_preparation_hash: "preparation_a" },
+        approval: { investigation_id: "inv_a", approval: { approval_id: "approval_a", approval_hash: "approval_hash_a" } },
+        operation: null,
+        cancellation: null,
+      },
+    }, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_a", "operation_id=operation_a", "approval_id=approval_a", "recovery_attempt_id=attempt_a"],
+    })
+    expect(state.commanderRecovery).toMatchObject({
+      selected: { approval_state: "consumed" },
+      preview: null,
+      approval: null,
+      operation: { recovery_attempt_id: "attempt_a", cancellation_requested: true },
+      cancellation: { status: "cancellation_requested" },
+    })
+    expect(commanderRecoveryAuthorityValues(state.commanderRecovery!)).toEqual({
+      recovery_plan_hash: "none",
+      execution_preparation_hash: "none",
+      recovery_packet_hash: "none",
+      approval_id: "none",
+      approval_hash: "none",
+    })
+  })
+
+  test("Commander recovery cancellation refreshes attempt identity and clears cross-investigation operations", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return { ok: true } },
+      async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
+        calls.push({ name, payload })
+        if (name === "runtime.get_commander_investigation_recovery") {
+          if (payload?.investigation_id === "inv_b") return { found: true, investigation_id: "inv_b" }
+          return {
+            found: true,
+            investigation_id: "inv_a",
+            active_operation: {
+              operation_id: "operation_a",
+              investigation_id: "inv_a",
+              approval_id: "approval_a",
+              status: "running",
+            },
+          }
+        }
+        if (name === "runtime.preview_commander_investigation_recovery") return { investigation_id: payload?.investigation_id, recovery_plan_hash: "plan_b" }
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          if (payload?.recovery_attempt_id !== "attempt_a") {
+            return {
+              status: "operation_identity_mismatch",
+              investigation_id: "inv_a",
+              operation_id: "operation_a",
+              approval_id: "approval_a",
+              cancellation_requested: false,
+              recovery_attempt_id: "attempt_a",
+            }
+          }
+          return {
+            status: "cancellation_requested",
+            investigation_id: "inv_a",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: true,
+            recovery_attempt_id: "attempt_a",
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: { operation_id: "operation_a", investigation_id: "inv_a", approval_id: "approval_a", status: "running" },
+        cancellation: null,
+      },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-cancel",
+      args: ["investigation_id=inv_a", "operation_id=operation_a"],
+    })
+    expect(calls).toEqual([{
+      name: "runtime.cancel_commander_investigation_recovery",
+      payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a" },
+    }, {
+      name: "runtime.cancel_commander_investigation_recovery",
+      payload: { investigation_id: "inv_a", operation_id: "operation_a", approval_id: "approval_a", recovery_attempt_id: "attempt_a" },
+    }, {
+      name: "runtime.get_commander_investigation_recovery",
+      payload: { investigation_id: "inv_a" },
+    }])
+    expect(state.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested", recovery_attempt_id: "attempt_a" })
+    expect(state.commanderRecovery?.operation).toMatchObject({ cancellation_requested: true, recovery_attempt_id: "attempt_a" })
+
+    state.commanderRecovery!.preview = { investigation_id: "inv_a", recovery_plan_hash: "plan_a" }
+    state.commanderRecovery!.approval = { approval: { approval_id: "approval_a" } }
+    state.commanderRecovery!.pendingConfirmation = "execution"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-show", args: ["inv_b"] })
+    expect(state.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, preview: null, approval: null, operation: null, cancellation: null })
+    expect(state.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
+    expect(state.commanderRecovery?.selected).toMatchObject({ investigation_id: "inv_b" })
+    expect(state.commanderRecovery?.preview).toMatchObject({ investigation_id: "inv_b" })
+    expect(state.commanderRecovery?.operation).toBeNull()
+
+    state.commanderRecovery!.approval = { approval: { approval_id: "stale_same_investigation_approval" } }
+    state.commanderRecovery!.pendingConfirmation = "execution"
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
+    expect(state.commanderRecovery?.approval).toBeNull()
+    expect(state.commanderRecovery?.pendingConfirmation).toBeUndefined()
+
+    state.commanderRecovery = {
+      ...state.commanderRecovery!,
+      selected: { investigation_id: "inv_a" },
+      approval: { approval: { approval_id: "approval_a" } },
+      pendingConfirmation: "approval",
+      cancellation: { status: "cancellation_requested" },
+    }
+    state = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-preview", args: ["inv_b"] })
+    expect(state.commanderRecovery).toMatchObject({ selected: { investigation_id: "inv_b" }, approval: null, cancellation: null })
+    expect(state.commanderRecovery?.pendingConfirmation).toBeUndefined()
+  })
+
+  test("Commander recovery interactive authority values remain complete and copyable", () => {
+    const plan = "plan_" + "a".repeat(64)
+    const preparation = "preparation_" + "b".repeat(64)
+    const packet = "packet_" + "c".repeat(64)
+    const approvalId = "approval_" + "d".repeat(48)
+    const approvalHash = "approval_hash_" + "e".repeat(64)
+    expect(commanderRecoveryAuthorityValues({
+      records: [],
+      preview: {
+        recovery_plan_hash: plan,
+        execution_preparation_hash: preparation,
+        recovery_packet: { packet_hash: packet },
+        recovery_packet_hash: "top_level_packet_hash_is_not_authority",
+      },
+      approval: { approval: { approval_id: approvalId, approval_hash: approvalHash } },
+    })).toEqual({
+      recovery_plan_hash: plan,
+      execution_preparation_hash: preparation,
+      recovery_packet_hash: packet,
+      approval_id: approvalId,
+      approval_hash: approvalHash,
+    })
+    expect(commanderRecoveryAuthorityValues({
+      records: [],
+      preview: {
+        recovery_plan_hash: plan,
+        execution_preparation_hash: preparation,
+        recovery_packet: { packet_hash: packet },
+        current_approval: { approval_id: approvalId, approval_hash: approvalHash },
+      },
+      approval: null,
+    })).toMatchObject({ approval_id: approvalId, approval_hash: approvalHash })
+
+    expect(commanderRecoveryAuthorityValues({
+      records: [],
+      preview: {
+        recovery_plan_hash: plan,
+        execution_preparation_hash: preparation,
+        recovery_packet: { packet_hash: packet },
+        current_approval: { approval_id: "current_approval", approval_hash: "current_approval_hash" },
+      },
+      approval: { approval: { approval_id: "stale_transient_approval", approval_hash: "stale_transient_hash" } },
+    })).toMatchObject({ approval_id: "current_approval", approval_hash: "current_approval_hash" })
+  })
+
+  test("Commander recovery snapshot does not claim cancellation for rejected requests", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: null,
+        cancellation: { status: "operation_identity_mismatch", cancellation_requested: false },
+      },
+    }
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("wording=operation identity mismatch")
+    expect(snapshot).not.toContain("wording=cancellation requested")
+  })
+
+  test("Commander recovery renders bounded redacted preview diagnostics", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        approval: null,
+        operation: null,
+        cancellation: null,
+        preview: {
+          status: "blocked",
+          recovery_kind: "checkpoint",
+          blockers: ["continuity token=preview-blocker-secret", ...Array.from({ length: 6 }, (_, index) => `extra blocker ${index}`)],
+          warnings: ["provider warning token=preview-warning-secret", "x".repeat(400)],
+        },
+      },
+    }
+
+    const diagnostics = commanderRecoveryPreviewDiagnostics(state.commanderRecovery!.preview)
+    expect(diagnostics.blockers).toHaveLength(4)
+    expect(diagnostics.blockers[0]).toBe("continuity [REDACTED]")
+    expect(diagnostics.warnings[0]).toBe("provider warning [REDACTED]")
+    expect(diagnostics.warnings[1]!.length).toBe(240)
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("preview_blocker=continuity [REDACTED]")
+    expect(snapshot).toContain("preview_warning=provider warning [REDACTED]")
+    expect(snapshot).not.toContain("preview-blocker-secret")
+    expect(snapshot).not.toContain("preview-warning-secret")
+  })
+
+  test("Commander recovery snapshot renders bounded redacted operation failures", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: null,
+        preview: null,
+        approval: null,
+        operation: {
+          operation_id: "blocked_operation",
+          status: "blocked",
+          error: "provider readiness changed; Authorization: Bearer operator-secret-value",
+        },
+        cancellation: null,
+      },
+    }
+    const snapshot = layoutSnapshot(state)
+    expect(snapshot).toContain("operation=blocked_operation status=blocked")
+    expect(snapshot).toContain("operation_error=provider readiness changed")
+    expect(snapshot).not.toContain("operator-secret-value")
+  })
+
+  test("Commander recovery detail renders missing and terminal diagnostics", () => {
+    const missingState: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: {
+          found: false,
+          investigation_id: "missing_recovery",
+          projection_status: "missing",
+          recommended_next_operator_action: "none",
+          blockers: ["missing blocker Authorization: Bearer hidden-blocker"],
+          warnings: ["record was not found token=hidden-warning"],
+        },
+        preview: null,
+        approval: null,
+        operation: null,
+        cancellation: null,
+      },
+    }
+    const missingSnapshot = layoutSnapshot(missingState)
+    expect(missingSnapshot).toContain("selected=missing_recovery found=false projection=missing status=none next=none")
+    expect(missingSnapshot).toContain("detail_blocker=missing blocker")
+    expect(missingSnapshot).toContain("detail_warning=record was not found")
+    expect(missingSnapshot).not.toContain("hidden-blocker")
+    expect(missingSnapshot).not.toContain("hidden-warning")
+
+    const terminalState: UiState = {
+      ...missingState,
+      commanderRecovery: {
+        ...missingState.commanderRecovery!,
+        selected: {
+          found: true,
+          investigation_id: "failed_recovery",
+          projection_status: "ready",
+          record_status: "failed",
+          terminal: true,
+          recommended_next_operator_action: "none",
+          blockers: ["terminal persistence failed"],
+          warnings: ["approval consumed; human review required"],
+        },
+      },
+    }
+    const terminalSnapshot = layoutSnapshot(terminalState)
+    expect(terminalSnapshot).toContain("selected=failed_recovery found=true projection=ready status=failed next=none")
+    expect(terminalSnapshot).toContain("detail_blocker=terminal persistence failed")
+    expect(terminalSnapshot).toContain("detail_warning=approval consumed; human review required")
+  })
+
+  test("Commander recovery slash parsing rejects generic confirmation and implicit acknowledgements", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const state: UiState = { ...initialState("/tmp/demo"), screen: "main" }
+    const generic = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-recovery-approve", args: ["yes"] })
+    expect(generic.commanderRecovery?.commandError).toContain("key=value")
+    const missing = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "confirm=APPROVE"],
+    })
+    expect(missing.commanderRecovery?.commandError).toContain("fresh_context_required must be explicitly true")
+    const uncertain = await applyRuntimeUiEffect(state, runtime, {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_continue_after_uncertain_provider_outcome", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(uncertain.commanderRecovery?.commandError).toContain("uncertain_provider_outcome")
+
+    const noted = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE", "human_note=reviewed", "confirm=APPROVE", "as", "prose"],
+    })
+    expect(noted.commanderRecovery?.approval).toMatchObject({
+      status: "recorded",
+      approval: { human_note_preview: "reviewed confirm=APPROVE as prose" },
+    })
+
+    const confirmationOnlyInNote = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "human_note=reviewed", "confirm=APPROVE"],
+    })
+    expect(confirmationOnlyInNote.commanderRecovery).toMatchObject({ pendingConfirmation: "approval", approval: null })
+
+    const unknownAfterNote = await applyRuntimeUiEffect(state, new FakeRuntimeClient("/tmp/demo", "demo"), {
+      type: "send-command",
+      command: "commander-recovery-approve",
+      args: ["unknown_field=value", "investigation_id=fake_commander_recovery", "recovery_plan_hash=fake_recovery_plan_hash", "decision=approve_resume_from_checkpoint", "approved_by=human_operator", "human_note=reviewed", "fresh_context_required=true", "exact_replay_unavailable=true", "provider_request_replay_forbidden=true", "tool_execution_replay_forbidden=true", "confirm=APPROVE"],
+    })
+    expect(unknownAfterNote.commanderRecovery?.commandError).toContain("unknown_field")
+
+    const rawNoteRuntime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const rawBase = "/commander-recovery-approve investigation_id=fake_commander_recovery recovery_plan_hash=fake_recovery_plan_hash decision=approve_resume_from_checkpoint approved_by=human_operator fresh_context_required=true exact_replay_unavailable=true provider_request_replay_forbidden=true tool_execution_replay_forbidden=true confirm=APPROVE"
+    const spacedNote = parseRuntimeCommand(`${rawBase} human_note=a  b`)!
+    const spacedState = await applyRuntimeUiEffect(state, rawNoteRuntime, { type: "send-command", command: spacedNote.command, args: spacedNote.args })
+    expect(spacedState.commanderRecovery?.approval).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval", human_note_preview: "a b" } })
+    const collapsedNote = parseRuntimeCommand(`${rawBase} human_note=a b`)!
+    const collapsedState = await applyRuntimeUiEffect(state, rawNoteRuntime, { type: "send-command", command: collapsedNote.command, args: collapsedNote.args })
+    expect(collapsedState.commanderRecovery?.approval).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_1", human_note_preview: "a b" } })
+    const emptyNote = parseRuntimeCommand(`${rawBase} human_note=`)!
+    const emptyState = await applyRuntimeUiEffect(state, rawNoteRuntime, { type: "send-command", command: emptyNote.command, args: emptyNote.args })
+    expect(emptyState.commanderRecovery?.approval).toMatchObject({ status: "recorded", approval: { approval_id: "fake_approval_2" } })
   })
 })

@@ -68,6 +68,7 @@ import type {
   OpenCodeContinuityState,
   CommanderContinuitySummaryState,
   CommanderContinuityThreadCardSummary,
+  CommanderRecoveryUiState,
   CommanderMidMissionContinuityPacketSummary,
   CommanderProposalContinuityPacketSummary,
   CommanderExecutorReviewCommandSummary,
@@ -2335,6 +2336,10 @@ export async function applyRuntimeUiEffect(
     if (isContinuationEffect(effect)) return recordContinuationCommandError(state, error)
     if (isWakeScheduleEffect(effect)) return recordWakeScheduleCommandError(state, error)
     if (isWakeSchedulerEffect(effect)) return recordWakeSchedulerCommandError(state, error)
+    if (effect.type === "send-command" && commanderRecoveryCommands.has(effect.command)) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ...state, commanderRecovery: { ...commanderRecoveryState(state), commandError: redactText(message) } }
+    }
     if (isCommandAuthorityEffect(effect)) return recordCommandAuthorityCommandError(state, error)
     if (isReasoningProviderEffect(effect)) return recordReasoningProviderCommandError(state, error)
     if (isResearchEffect(effect)) return recordResearchCommandError(state, error)
@@ -5799,7 +5804,9 @@ function stageSuggestedOperatorCommand(state: UiState, args: string[]): UiState 
 }
 
 function stageExplicitOperatorCommand(state: UiState, args: string[]): UiState {
-  const staged = stageExplicitCommand(requiredRest(args, 0, "command"))
+  const command = args.slice(0).join(" ")
+  if (!command.trim()) throw new Error("command is required")
+  const staged = stageExplicitCommand(command)
   return applyStagedOperatorCommand(state, staged, "operator command staged")
 }
 
@@ -5980,6 +5987,13 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (opencodeResultReviewGateCommands.has(command)) return state.opencodeResultReviews?.commandError
   if (researchIngestionCommands.has(command)) return state.researchIngestions?.commandError
   if (commanderContinuityCommands.has(command)) return state.commanderContinuity?.commandError
+  if (commanderRecoveryCommands.has(command)) {
+    if (state.commanderRecovery?.commandError) return state.commanderRecovery.commandError
+    if (command === "commander-recovery-approve" && state.commanderRecovery?.pendingConfirmation === "approval") return "explicit recovery approval confirmation is required"
+    if (command === "commander-recovery-execute" && state.commanderRecovery?.pendingConfirmation === "execution") return "explicit recovery execution confirmation is required"
+    const domainError = commanderRecoveryMutationError(command, state.commanderRecovery)
+    if (domainError) return domainError
+  }
   if (opencodeContinuityCommands.has(command)) return state.opencodeContinuity?.commandError
   if (researchMemoryCommands.has(command)) return state.researchMemory?.commandError
   if (commanderExecutorReviewCommands.has(command)) return state.commanderExecutorReview?.commandError
@@ -5999,6 +6013,29 @@ function commandErrorFor(command: string, state: UiState): string | undefined {
   if (reasoningProviderCommands.has(command)) return state.reasoningProvider?.commandError
   if (researchCommands.has(command)) return state.research?.commandError
   return state.runtimeCommandError
+}
+
+function commanderRecoveryMutationError(command: string, recovery: CommanderRecoveryUiState | undefined): string | undefined {
+  if (command === "commander-recovery-approve") {
+    const approval = recovery?.approval
+    const status = approval?.status
+    if (status === "blocked" || status === "failed") {
+      const blocker = Array.isArray(approval?.blockers) ? approval.blockers.find((item): item is string => typeof item === "string") : undefined
+      return blocker ?? `recovery approval ${status}`
+    }
+  }
+  if (command === "commander-recovery-execute") {
+    const operation = recovery?.operation
+    const status = operation?.status
+    if (operation?.request_rejected === true || status === "blocked" || status === "failed") {
+      return typeof operation?.error === "string" ? operation.error : `recovery execution ${String(status ?? "rejected")}`
+    }
+  }
+  if (command === "commander-recovery-cancel") {
+    const status = recovery?.cancellation?.status
+    if (status === "not_active" || status === "operation_identity_mismatch") return `recovery cancellation ${status}`
+  }
+  return undefined
 }
 
 function clearCommandErrorFor(command: string, state: UiState): UiState {
@@ -6039,6 +6076,7 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
   if (opencodeResultReviewGateCommands.has(command)) return { ...state, opencodeResultReviews: { ...opencodeResultReviewGateState(state), commandError: undefined } }
   if (researchIngestionCommands.has(command)) return { ...state, researchIngestions: { ...researchIngestionState(state), commandError: undefined } }
   if (commanderContinuityCommands.has(command)) return { ...state, commanderContinuity: { ...commanderContinuityState(state), commandError: undefined } }
+  if (commanderRecoveryCommands.has(command)) return { ...state, commanderRecovery: { ...commanderRecoveryState(state), commandError: undefined } }
   if (commanderToolCommands.has(command)) return { ...state, commanderTools: { ...commanderToolsState(state), commandError: undefined } }
   if (commanderInternalReadCommands.has(command)) return { ...state, commanderInternalReads: { ...commanderInternalReadsState(state), commandError: undefined } }
   if (opencodeContinuityCommands.has(command)) return { ...state, opencodeContinuity: { ...opencodeContinuityState(state), commandError: undefined } }
@@ -6088,6 +6126,13 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-record", command: requiredRest(args, 0, "slashCommand") })
     case "authority-profile":
       return applyRuntimeUiEffect(commandState, runtime, { type: "load-command-authority-validation-profile", command: requiredRest(args, 0, "slashCommand") })
+    case "commander-recoveries":
+    case "commander-recovery-show":
+    case "commander-recovery-preview":
+    case "commander-recovery-approve":
+    case "commander-recovery-execute":
+    case "commander-recovery-cancel":
+      return executeCommanderRecoveryCommand(commandState, runtime, command, args)
     case "commander-tool-summary":
     case "commander-capabilities":
       return executeCommanderToolCommand(commandState, runtime, "runtime.commander_tool_catalog_summary", {}, "summary")
@@ -7365,6 +7410,15 @@ const commandAuthorityCommands = new Set([
   "authority-profile",
   "command-authority",
   "command-map",
+])
+
+const commanderRecoveryCommands = new Set([
+  "commander-recoveries",
+  "commander-recovery-show",
+  "commander-recovery-preview",
+  "commander-recovery-approve",
+  "commander-recovery-execute",
+  "commander-recovery-cancel",
 ])
 
 function isResearchEffect(effect: RuntimeUiEffect): boolean {
@@ -16833,6 +16887,10 @@ function commanderContinuityState(state: UiState): CommanderContinuityState {
   return state.commanderContinuity ?? { proposalPacket: null, midMissionPacket: null, summary: null, openLoops: [], selectedThread: null }
 }
 
+function commanderRecoveryState(state: UiState): CommanderRecoveryUiState {
+  return state.commanderRecovery ?? { records: [], selected: null, preview: null, approval: null, operation: null, cancellation: null }
+}
+
 function commanderToolsState(state: UiState): CommanderToolsState {
   return state.commanderTools ?? { summary: null, records: [], selected: null, search: null, profile: null, bootstrap: null, validation: null }
 }
@@ -18914,6 +18972,300 @@ async function executeCommanderInternalReadCommand(state: UiState, runtime: Runt
     const message = error instanceof Error ? error.message : String(error)
     return { ...state, commanderInternalReads: { ...commanderInternalReadsState(state), commandError: redactText(message) } }
   }
+}
+
+async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
+  const current = commanderRecoveryState(state)
+  if (command === "commander-recoveries") {
+    const fields = recoveryKeyValues(args, new Set(["limit", "status", "recovery_state", "approval_state"]))
+    const result = await runtime.command("runtime.list_commander_investigation_recoveries", {
+      ...(fields.limit ? { limit: strictPositiveInteger(fields.limit, "limit") } : {}),
+      ...(fields.status ? { status: fields.status } : {}),
+      ...(fields.recovery_state ? { recovery_state: fields.recovery_state } : {}),
+      ...(fields.approval_state ? { approval_state: fields.approval_state } : {}),
+    })
+    const safeResult = safeOptionalRecord(result)
+    return { ...state, commanderRecovery: { ...current, records: safeRecordArray(safeResult?.items), commandError: undefined } }
+  }
+  if (command === "commander-recovery-show") {
+    const result = await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: requiredArg(args, 0, "investigation_id") })
+    const selected = safeOptionalRecord(result)
+    const selectedInvestigationId = typeof selected?.investigation_id === "string" ? selected.investigation_id : undefined
+    const activeOperation = selected && isRecord(selected.active_operation)
+      ? safeOptionalRecord(selected.active_operation)
+      : null
+    const selectionChanged = selectedInvestigationId !== undefined
+      && commanderRecoveryTargetChanged(current, selectedInvestigationId)
+    const selectedApprovalState = typeof selected?.approval_state === "string" ? selected.approval_state : undefined
+    const selectedApproval = selected && isRecord(selected.latest_approval) ? selected.latest_approval : undefined
+    const selectedApprovalId = typeof selectedApproval?.approval_id === "string" ? selectedApproval.approval_id : undefined
+    const cachedApproval = current.approval && isRecord(current.approval.approval) ? current.approval.approval : undefined
+    const cachedPreviewApproval = current.preview && isRecord(current.preview.current_approval) ? current.preview.current_approval : undefined
+    const cachedApprovalId = typeof cachedApproval?.approval_id === "string"
+      ? cachedApproval.approval_id
+      : typeof cachedPreviewApproval?.approval_id === "string"
+        ? cachedPreviewApproval.approval_id
+        : undefined
+    const cachedPreviewBasisHash = typeof current.preview?.recovery_basis_hash === "string" ? current.preview.recovery_basis_hash : undefined
+    const selectedBasisHash = typeof selected?.recovery_basis_hash === "string" ? selected.recovery_basis_hash : undefined
+    const cachedPreviewStillCurrent = current.preview === null || current.preview === undefined
+      || (selected?.found === true
+        && selected.projection_status === "ready"
+        && cachedPreviewBasisHash !== undefined
+        && selectedBasisHash === cachedPreviewBasisHash)
+    const cachedApprovalStillCurrent = cachedApprovalId === undefined
+      || (selected?.found === true
+        && selectedApprovalState === "current"
+        && selectedApprovalId === cachedApprovalId)
+    const approvalAuthorityInvalid = selectionChanged
+      || !cachedPreviewStillCurrent
+      || !cachedApprovalStillCurrent
+    const operationChanged = current.operation?.operation_id !== activeOperation?.operation_id
+    return {
+      ...state,
+      commanderRecovery: {
+        ...current,
+        selected,
+        preview: approvalAuthorityInvalid ? null : current.preview,
+        approval: approvalAuthorityInvalid ? null : current.approval,
+        pendingConfirmation: undefined,
+        operation: activeOperation,
+        cancellation: selectionChanged || operationChanged ? null : current.cancellation,
+        commandError: undefined,
+      },
+    }
+  }
+  if (command === "commander-recovery-preview") {
+    const result = await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: requiredArg(args, 0, "investigation_id") })
+    const preview = safeOptionalRecord(result)
+    const previewInvestigationId = typeof preview?.investigation_id === "string" ? preview.investigation_id : undefined
+    if (previewInvestigationId && current.selected?.investigation_id !== previewInvestigationId) {
+      const detail = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: previewInvestigationId }))
+      const operation = detail && isRecord(detail.active_operation) ? safeOptionalRecord(detail.active_operation) : null
+      return { ...state, commanderRecovery: { ...current, preview, selected: detail, approval: null, pendingConfirmation: undefined, operation, cancellation: null, commandError: undefined } }
+    }
+    return { ...state, commanderRecovery: { ...current, preview, approval: null, pendingConfirmation: undefined, commandError: undefined } }
+  }
+  if (command === "commander-recovery-approve") {
+    const fields = recoveryKeyValues(
+      args,
+      new Set(["investigation_id", "recovery_plan_hash", "decision", "approved_by", "human_note", "fresh_context_required", "exact_replay_unavailable", "provider_request_replay_forbidden", "tool_execution_replay_forbidden", "uncertain_provider_outcome", "confirm"]),
+      new Set(["human_note"]),
+    )
+    if (fields.confirm !== "APPROVE") return { ...state, commanderRecovery: { ...current, pendingConfirmation: "approval", commandError: undefined } }
+    const investigationId = requiredRecoveryField(fields, "investigation_id")
+    const decision = requiredRecoveryDecision(fields.decision)
+    if (decision === "approve_continue_after_uncertain_provider_outcome" && fields.uncertain_provider_outcome !== "true") {
+      throw new Error("uncertain_provider_outcome must be explicitly true")
+    }
+    const result = await runtime.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: investigationId,
+      recovery_plan_hash: requiredRecoveryField(fields, "recovery_plan_hash"),
+      decision,
+      approved_by: requiredRecoveryField(fields, "approved_by"),
+      ...(Object.hasOwn(fields, "human_note") ? { human_note: fields.human_note } : {}),
+      acknowledgements: {
+        fresh_context_required: requiredTrueField(fields, "fresh_context_required"),
+        exact_replay_unavailable: requiredTrueField(fields, "exact_replay_unavailable"),
+        provider_request_replay_forbidden: requiredTrueField(fields, "provider_request_replay_forbidden"),
+        tool_execution_replay_forbidden: requiredTrueField(fields, "tool_execution_replay_forbidden"),
+        ...(fields.uncertain_provider_outcome === "true" ? { uncertain_provider_outcome: true as const } : {}),
+      },
+    })
+    const targetChanged = commanderRecoveryTargetChanged(current, investigationId)
+    const approvalResult = safeOptionalRecord(result)
+    const refreshRequired = approvalResult?.status === "recorded"
+      || approvalResult?.status === "blocked"
+      || approvalResult?.status === "failed"
+      || (approvalResult?.status === "already_recorded" && !isRecord(approvalResult.approval))
+    let refreshedPreview: Record<string, unknown> | null = null
+    let refreshError: string | undefined
+    if (refreshRequired) {
+      try {
+        refreshedPreview = safeOptionalRecord(await runtime.command("runtime.preview_commander_investigation_recovery", { investigation_id: investigationId }))
+      } catch (error) {
+        refreshError = redactText(error instanceof Error ? error.message : String(error))
+      }
+    }
+    const refreshedApproval = refreshedPreview?.approval_state === "current" && isRecord(refreshedPreview.current_approval)
+      ? structuredClone(refreshedPreview.current_approval)
+      : undefined
+    const approval = approvalResult && refreshRequired
+      ? { ...approvalResult, approval: refreshedApproval }
+      : approvalResult
+    return {
+      ...state,
+      commanderRecovery: targetChanged
+        ? { ...current, selected: null, preview: refreshRequired ? refreshedPreview : null, approval, operation: null, cancellation: null, pendingConfirmation: undefined, commandError: refreshError }
+        : { ...current, preview: refreshRequired ? refreshedPreview : current.preview, approval, pendingConfirmation: undefined, commandError: refreshError },
+    }
+  }
+  if (command === "commander-recovery-execute") {
+    const fields = recoveryKeyValues(args, new Set(["investigation_id", "approval_id", "approval_hash", "recovery_plan_hash", "execution_preparation_hash", "confirm"]))
+    if (fields.confirm !== "EXECUTE") return { ...state, commanderRecovery: { ...current, pendingConfirmation: "execution", commandError: undefined } }
+    const investigationId = requiredRecoveryField(fields, "investigation_id")
+    const result = await runtime.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: investigationId,
+      approval_id: requiredRecoveryField(fields, "approval_id"),
+      approval_hash: requiredRecoveryField(fields, "approval_hash"),
+      recovery_plan_hash: requiredRecoveryField(fields, "recovery_plan_hash"),
+      execution_preparation_hash: requiredRecoveryField(fields, "execution_preparation_hash"),
+    })
+    const operation = safeOptionalRecord(result)
+    const durableAttemptObserved = typeof operation?.recovery_attempt_id === "string"
+    const operationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
+    const currentOperationId = typeof current.operation?.operation_id === "string" ? current.operation.operation_id : undefined
+    const operationChanged = operationId !== undefined && operationId !== currentOperationId
+    return {
+      ...state,
+      commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
+        ? { ...current, selected: null, preview: null, approval: null, operation, cancellation: null, pendingConfirmation: undefined, commandError: undefined }
+        : { ...current, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation, cancellation: operationChanged ? null : current.cancellation, pendingConfirmation: undefined, commandError: undefined },
+    }
+  }
+  const fields = recoveryKeyValues(args, new Set(["investigation_id", "operation_id", "approval_id", "recovery_attempt_id"]))
+  const investigationId = requiredRecoveryField(fields, "investigation_id")
+  const cachedOperation = current.operation?.status === "running"
+    && current.operation.investigation_id === investigationId
+    && (!fields.operation_id || current.operation.operation_id === fields.operation_id)
+    && (!fields.approval_id || current.operation.approval_id === fields.approval_id)
+    ? current.operation
+    : null
+  const completeIdentityAvailable = Boolean(
+    (fields.operation_id && fields.approval_id)
+    || (typeof cachedOperation?.operation_id === "string" && typeof cachedOperation.approval_id === "string"),
+  )
+  let shown: Record<string, unknown> | null = null
+  let refreshError: string | undefined
+  if (!completeIdentityAvailable) {
+    shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
+  }
+  const shownOperation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
+  let operation = cachedOperation ?? shownOperation
+  const activeOperationId = typeof operation?.operation_id === "string" ? operation.operation_id : undefined
+  const activeAttemptId = typeof operation?.recovery_attempt_id === "string" ? operation.recovery_attempt_id : undefined
+  const activeApprovalId = typeof operation?.approval_id === "string" ? operation.approval_id : undefined
+  const cancelInput = {
+    investigation_id: investigationId,
+    operation_id: fields.operation_id ?? activeOperationId ?? requiredRecoveryField(fields, "operation_id"),
+    approval_id: fields.approval_id ?? activeApprovalId ?? requiredRecoveryField(fields, "approval_id"),
+    ...(fields.recovery_attempt_id || activeAttemptId ? { recovery_attempt_id: fields.recovery_attempt_id ?? activeAttemptId } : {}),
+  }
+  let result = await runtime.command("runtime.cancel_commander_investigation_recovery", cancelInput)
+  const cancellation = safeOptionalRecord(result)
+  if (cancellation?.status === "operation_identity_mismatch" && !cancelInput.recovery_attempt_id && typeof cancellation.recovery_attempt_id === "string") {
+    result = await runtime.command("runtime.cancel_commander_investigation_recovery", {
+      ...cancelInput,
+      recovery_attempt_id: cancellation.recovery_attempt_id,
+    })
+  }
+  const finalCancellation = safeOptionalRecord(result)
+  const cancellationAccepted = finalCancellation?.status === "cancellation_requested" || finalCancellation?.status === "already_requested"
+  if (completeIdentityAvailable || cancellationAccepted) {
+    try {
+      shown = safeOptionalRecord(await runtime.command("runtime.get_commander_investigation_recovery", { investigation_id: investigationId }))
+      operation = shown && isRecord(shown.active_operation) ? safeOptionalRecord(shown.active_operation) : null
+    } catch (error) {
+      refreshError = redactText(error instanceof Error ? error.message : String(error))
+    }
+  }
+  const cancellationTargetsOperation = Boolean(operation
+    && finalCancellation
+    && typeof finalCancellation.operation_id === "string"
+    && typeof finalCancellation.approval_id === "string"
+    && finalCancellation.operation_id === operation.operation_id
+    && finalCancellation.approval_id === operation.approval_id)
+  const updatedOperation = cancellationAccepted && cancellationTargetsOperation && operation
+    ? {
+        ...operation,
+        cancellation_requested: true,
+        ...(typeof finalCancellation.recovery_attempt_id === "string" ? { recovery_attempt_id: finalCancellation.recovery_attempt_id } : {}),
+      }
+    : operation
+  const displayedCancellation = operation && !cancellationTargetsOperation ? null : finalCancellation
+  const cancellationStatus = finalCancellation?.status
+  const cancellationError = cancellationStatus === "not_active" || cancellationStatus === "operation_identity_mismatch"
+    ? `recovery cancellation ${cancellationStatus}`
+    : undefined
+  const commandError = cancellationError && refreshError
+    ? `${cancellationError}; recovery refresh failed: ${refreshError}`
+    : cancellationError ?? refreshError
+  const durableAttemptObserved = shown?.approval_state === "consumed"
+    || isRecord(shown?.latest_recovery_attempt)
+    || typeof activeAttemptId === "string"
+    || typeof finalCancellation?.recovery_attempt_id === "string"
+  return {
+    ...state,
+    commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
+      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError }
+      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError },
+  }
+}
+
+function commanderRecoveryTargetChanged(current: CommanderRecoveryUiState, investigationId: string): boolean {
+  const identities = [
+    current.selected?.investigation_id,
+    current.preview?.investigation_id,
+    current.approval?.investigation_id,
+    current.operation?.investigation_id,
+    current.cancellation?.investigation_id,
+  ].filter((value): value is string => typeof value === "string")
+  return identities.some((value) => value !== investigationId)
+}
+
+function recoveryKeyValues(args: string[], allowed: ReadonlySet<string>, freeText = new Set<string>()): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (let argIndex = 0; argIndex < args.length; argIndex += 1) {
+    const arg = args[argIndex] ?? ""
+    const index = arg.indexOf("=")
+    if (index <= 0) throw new Error("Commander recovery arguments must use key=value")
+    const key = arg.slice(0, index)
+    const parts = [arg.slice(index + 1)]
+    if (freeText.has(key)) {
+      while (argIndex + 1 < args.length) {
+        argIndex += 1
+        parts.push(args[argIndex] ?? "")
+      }
+    }
+    const value = freeText.has(key) ? parts.join(" ") : parts.join(" ").trim()
+    if (!allowed.has(key) || (!freeText.has(key) && !value) || result[key] !== undefined) throw new Error(`invalid Commander recovery argument: ${redactText(key)}`)
+    result[key] = value
+  }
+  return result
+}
+
+function requiredRecoveryField(fields: Record<string, string>, key: string): string {
+  const value = fields[key]
+  if (!value) throw new Error(`${key} is required`)
+  return value
+}
+
+function requiredTrueField(fields: Record<string, string>, key: string): true {
+  if (fields[key] !== "true") throw new Error(`${key} must be explicitly true`)
+  return true
+}
+
+function requiredRecoveryDecision(value: string | undefined): "approve_resume_from_checkpoint" | "approve_continue_after_uncertain_provider_outcome" {
+  if (value === "approve_resume_from_checkpoint" || value === "approve_continue_after_uncertain_provider_outcome") return value
+  throw new Error("decision is invalid")
+}
+
+function strictPositiveInteger(value: string, field: string): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${field} must be a positive integer`)
+  return parsed
+}
+
+function safeOptionalRecord(value: unknown): Record<string, unknown> | null {
+  if (value === undefined || value === null) return null
+  const safe = redactUnknown(value)
+  if (!isRecord(safe)) throw new Error("Commander recovery response must be an object")
+  return safe
+}
+
+function safeRecordArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) throw new Error("Commander recovery list must be an array")
+  return value.map((item) => safeOptionalRecord(item)).filter((item): item is Record<string, unknown> => item !== null)
 }
 
 async function executeOpenCodeContinuityCommand(

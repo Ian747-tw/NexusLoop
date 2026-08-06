@@ -1,8 +1,22 @@
 import { describe, expect, test } from "bun:test"
-import { applyKeyCommand, applyKeyCommandWithEffects } from "../src/keyboard"
+import { applyKeyCommand, applyKeyCommandWithEffects, parseRuntimeCommand } from "../src/keyboard"
 import { initialState, type UiState } from "../src/state"
 
 describe("TUI keyboard command model", () => {
+  test("recovery approval slash parsing preserves the terminal raw note suffix", () => {
+    expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv", "confirm=APPROVE", "human_note=a  b  "],
+    })
+    expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=")).toEqual({
+      command: "commander-recovery-approve",
+      args: ["investigation_id=inv", "confirm=APPROVE", "human_note="],
+    })
+    expect(parseRuntimeCommand("/stage-command /commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
+      command: "stage-command",
+      args: ["/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  "],
+    })
+  })
   test("select Initialize enters onboarding shell", () => {
     const state = { ...initialState("/tmp/demo"), screen: "init" as const, focus: "init-choice" as const }
     const next = applyKeyCommand(state, { type: "submit" })
@@ -81,6 +95,27 @@ describe("TUI keyboard command model", () => {
     expect(result.state.messageDraft).toBe("")
     expect(result.state.lastCommand).toBe("status")
     expect(result.effects).toEqual([{ type: "send-command", command: "status" }])
+  })
+
+  test("Commander recovery slash commands route only the six canonical surfaces", () => {
+    const commands = [
+      "/commander-recoveries limit=5",
+      "/commander-recovery-show inv_1",
+      "/commander-recovery-preview inv_1",
+      "/commander-recovery-approve investigation_id=inv_1",
+      "/commander-recovery-execute investigation_id=inv_1",
+      "/commander-recovery-cancel investigation_id=inv_1",
+    ]
+    for (const messageDraft of commands) {
+      const result = applyKeyCommandWithEffects({ ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft }, { type: "submit" })
+      expect(result.effects).toEqual([{
+        type: "send-command",
+        command: messageDraft.slice(1).split(" ")[0],
+        args: messageDraft.split(" ").slice(1),
+      }])
+    }
+    const forbidden = applyKeyCommandWithEffects({ ...initialState("/tmp/demo"), screen: "main", focus: "message-box", messageDraft: "/commander-recovery-resume inv_1" }, { type: "submit" })
+    expect(forbidden.effects).toEqual([{ type: "send-user-message", message: "/commander-recovery-resume inv_1" }])
   })
 
   test("research slash commands route through whitelisted runtime command effects with args", () => {

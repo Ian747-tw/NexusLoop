@@ -140,6 +140,9 @@ const WRITE_COMMANDS = new Set([
   "opencode-context-refresh-write",
   "opencode-refresh-write",
   "context-refresh-write",
+  "commander-recovery-approve",
+  "commander-recovery-execute",
+  "commander-recovery-cancel",
 ])
 
 const EXECUTION_COMMAND_FIELD = "__nxl_operator_execution_command"
@@ -154,7 +157,12 @@ export function stageSuggestedCommand(context: CommanderTargetContextSummary | n
 }
 
 export function stageExplicitCommand(commandText: string): OperatorStagedCommand {
-  const executionCommand = normalizeCommandText(commandText, { redact: false })
+  const leadingTrimmed = commandText.trimStart()
+  if (!leadingTrimmed.trim()) throw new Error("command is required")
+  const rawCommand = leadingTrimmed.startsWith("/") ? leadingTrimmed : `/${leadingTrimmed}`
+  const executionCommand = /^\/commander-recovery-approve(?:\s|$)/i.test(rawCommand)
+    ? rawCommand
+    : normalizeCommandText(rawCommand, { redact: false })
   const command = redactText(executionCommand)
   return withExecutionCommand({
     label: "Explicit command",

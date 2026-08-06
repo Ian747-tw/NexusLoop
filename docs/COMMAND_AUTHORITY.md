@@ -7,6 +7,21 @@ The registry is static by design: runtime commands do not parse source files dyn
 
 The inventory covers runtime/status reads, research and reasoning provider surfaces, checkpoint/restore, wake/scheduler, scheduler navigation staging/execution/approval/checkpoint comparison, continuation, OpenCode handoff, mission/proposal/review/apply commands, and external API request/research-ingestion commands.
 
+It also covers the exact Commander recovery surface:
+
+- `/commander-recoveries`, `/commander-recovery-show`, and
+  `/commander-recovery-preview` are safe reads. They append no events and call
+  no provider.
+- `/commander-recovery-approve` is a blocked-by-default human-only durable
+  approval write requiring active runtime and run lock. It calls no provider.
+- `/commander-recovery-execute` is a blocked-by-default high-impact,
+  approval-gated, event-mutating, provider/network-capable operation.
+- `/commander-recovery-cancel` is blocked-by-default active-operation control.
+  It appends no event and makes no provider call itself.
+
+These commands are operator surfaces only. Approve, execute, and cancel are not
+Commander tools and are not included in provider-visible schemas.
+
 ## Runtime Surface
 
 - `runtime.command_authority_summary`

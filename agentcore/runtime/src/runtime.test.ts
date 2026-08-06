@@ -1006,6 +1006,12 @@ describe("CommandAuthorityService", () => {
 
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    expect(service.get("/commander-recoveries")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_commander_investigation_recoveries", owner: "commander_recovery", mutates_events: false, calls_provider: false })
+    expect(service.get("/commander-recovery-show")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.get_commander_investigation_recovery", owner: "commander_recovery", mutates_events: false })
+    expect(service.get("/commander-recovery-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_commander_investigation_recovery", mutates_events: false, calls_provider: false })
+    expect(service.get("/commander-recovery-approve")).toMatchObject({ risk: "medium_risk_write", gate: "commander_recovery_runtime", owner: "commander_recovery", mutates_events: true, calls_provider: false, requires_approval: true, blocked_by_default: true, expected_event_kinds: ["runtime_commander_investigation_recovery_approved"] })
+    expect(service.get("/commander-recovery-execute")).toMatchObject({ risk: "high_impact_write", gate: "commander_recovery_runtime", owner: "commander_recovery", mutates_events: true, calls_provider: true, requires_approval: true, blocked_by_default: true })
+    expect(service.get("/commander-recovery-cancel")).toMatchObject({ risk: "medium_risk_write", gate: "commander_recovery_runtime", owner: "commander_recovery", mutates_events: false, calls_provider: false, blocked_by_default: true })
     expect(service.get("/scheduler-status")).toMatchObject({ risk: "safe_read", mutates_events: false })
     expect(service.get("/wake-tick-dry-run")).toMatchObject({ risk: "low_risk_write", gate: "wake_schedule_tick", mutates_events: false, expected_event_kinds: [] })
     expect(service.get("/wake-tick")).toMatchObject({ risk: "high_impact_write", gate: "wake_schedule_tick", mutates_events: true })
@@ -11838,12 +11844,12 @@ describe("RuntimeServer core", () => {
     await service.start({ intervalMs: 10, maxTicksPerRun: 2, requestedBy: "operator" })
 
     timers.shift()?.()
-    await timeout(20)
+    await waitForCondition(() => service.status().tick_count === 1, "first failed scheduler tick did not settle")
     expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
     expect(timers).toHaveLength(1)
 
     timers.shift()?.()
-    await timeout(20)
+    await waitForCondition(() => service.status().status === "failed" && service.status().tick_count === 2, "second failed scheduler tick did not stop the run")
     expect(executeCount).toBe(2)
     expect(service.status()).toMatchObject({ status: "failed", tick_count: 2 })
     expect(timers).toHaveLength(0)
@@ -16904,6 +16910,10 @@ describe("RuntimeServerClient", () => {
     await client.command("runtime.status")
     await client.shutdown()
 
+    await expect(client.command("runtime.list_commander_investigation_recoveries")).resolves.toMatchObject({
+      current_compatibility_checked: false,
+      items: [],
+    })
     await expect(client.command("runtime.status")).rejects.toThrow("runtime client has been shut down")
     await expect(client.command("runtime.command_authority_summary")).rejects.toThrow("runtime client has been shut down")
     await expect(client.submitUserMessage("after shutdown")).rejects.toThrow("runtime client has been shut down")
@@ -25398,4 +25408,109 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(adapter.startCalls).toBe(0)
     await client.shutdown()
   })
+})
+test("EventStore reads complete snapshots during queued appends and retries partial in-flight tails", async () => {
+  const dir = await tempProject()
+  const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+  await store.append({ kind: "runtime_test_event", value: "before" })
+  const completeText = await readFile(store.eventsPath, "utf8")
+  let release!: () => void
+  const inFlight = new Promise<void>((resolve) => { release = resolve })
+  const internals = store as unknown as { appendQueue: Promise<unknown>; appendGeneration: number; pendingAppends: number; readTextSnapshot(): Promise<string> }
+  internals.appendQueue = inFlight
+  internals.pendingAppends = 1
+  expect(await store.readAll()).toEqual([expect.objectContaining({ kind: "runtime_test_event", value: "before" })])
+
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
+  let partialObserved!: () => void
+  const observedPartialTail = new Promise<void>((resolve) => { partialObserved = resolve })
+  const snapshotInternals = store as unknown as { readAllSnapshot(): Promise<JsonlEvent[]> }
+  const readAllSnapshot = snapshotInternals.readAllSnapshot.bind(store)
+  snapshotInternals.readAllSnapshot = async () => {
+    try {
+      return await readAllSnapshot()
+    } catch (error) {
+      if (error instanceof SyntaxError) partialObserved()
+      throw error
+    }
+  }
+  let settled = false
+  const read = store.readAll().then((events) => {
+    settled = true
+    return events
+  })
+  await observedPartialTail
+  expect(settled).toBe(false)
+  let diagnosticSettled = false
+  const diagnosticRead = store.readText().then((text) => {
+    diagnosticSettled = true
+    return text
+  })
+  await Promise.resolve()
+  expect(diagnosticSettled).toBe(false)
+  await writeFile(store.eventsPath, `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "after" })}\n`)
+  release()
+  expect(await diagnosticRead).toBe(`${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "after" })}\n`)
+  expect(await read).toEqual([
+    expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
+    expect.objectContaining({ kind: "runtime_test_event", value: "after" }),
+  ])
+
+  const completedDuringRead = `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "completed-during-read" })}\n`
+  const readTextSnapshot = internals.readTextSnapshot.bind(store)
+  const completeAppendDuringNextSnapshot = () => {
+    let first = true
+    internals.pendingAppends = 1
+    internals.appendQueue = Promise.resolve()
+    internals.readTextSnapshot = async () => {
+      if (!first) return readTextSnapshot()
+      first = false
+      const partial = await readTextSnapshot()
+      await writeFile(store.eventsPath, completedDuringRead)
+      internals.pendingAppends = 0
+      return partial
+    }
+  }
+
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
+  completeAppendDuringNextSnapshot()
+  expect(await store.readText()).toBe(completedDuringRead)
+
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial`)
+  completeAppendDuringNextSnapshot()
+  expect(await store.readAll()).toEqual([
+    expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
+    expect.objectContaining({ kind: "runtime_test_event", value: "completed-during-read" }),
+  ])
+
+  const completedAfterTwoOverlaps = `${completeText}${JSON.stringify({ kind: "runtime_test_event", value: "completed-after-two-overlaps" })}\n`
+  let overlappingSnapshots = 0
+  internals.pendingAppends = 1
+  internals.appendQueue = Promise.resolve()
+  await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial_one`)
+  internals.readTextSnapshot = async () => {
+    if (overlappingSnapshots === 0) {
+      overlappingSnapshots += 1
+      const partial = await readTextSnapshot()
+      await writeFile(store.eventsPath, completedAfterTwoOverlaps)
+      internals.pendingAppends = 0
+      return partial
+    }
+    if (overlappingSnapshots === 1) {
+      overlappingSnapshots += 1
+      internals.appendGeneration += 1
+      internals.pendingAppends = 1
+      await writeFile(store.eventsPath, `${completeText}{"kind":"runtime_partial_two`)
+      const partial = await readTextSnapshot()
+      await writeFile(store.eventsPath, completedAfterTwoOverlaps)
+      internals.pendingAppends = 0
+      return partial
+    }
+    return readTextSnapshot()
+  }
+  expect(await store.readAll()).toEqual([
+    expect.objectContaining({ kind: "runtime_test_event", value: "before" }),
+    expect.objectContaining({ kind: "runtime_test_event", value: "completed-after-two-overlaps" }),
+  ])
+  expect(overlappingSnapshots).toBe(2)
 })

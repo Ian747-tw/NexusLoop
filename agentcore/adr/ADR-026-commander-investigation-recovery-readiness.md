@@ -158,4 +158,6 @@ controller continuation tests. It appends no event and consumes no approval.
 9W3B2B2A reports consumed approvals and in-progress attempts after atomically
 recording recovery start, while pending-provider outcome remains unknown.
 9W3B2B2B owns configured-provider execution and external API audit.
-9W3C owns public/operator controls.
+9W3C exposes this preview through the read-only public list/show/preview
+commands. Public preview always includes current continuity; list remains a
+single typed durable projection and does not fan out compatibility previews.

@@ -6,9 +6,11 @@ import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
+import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "./commander-recovery-view"
 import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
+import { redactText } from "./redaction"
 
 const color = {
   bg: "#0b0f14",
@@ -41,6 +43,18 @@ function borderFor(state: UiState, focus: FocusTarget) {
 
 function lineText(item: StreamLine) {
   return `${item.status ? `[${item.status}] ` : ""}${item.title}${item.detail ? ` - ${item.detail}` : ""}`
+}
+
+function operatorField(value: Record<string, unknown>, key: string): string {
+  const item = value[key]
+  return typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+    ? redactText(String(item)).slice(0, 240)
+    : "none"
+}
+
+function operatorDiagnostics(value: Record<string, unknown>, key: "blockers" | "warnings"): string[] {
+  const items = value[key]
+  return Array.isArray(items) ? items.slice(0, 4).map((item) => redactText(String(item)).slice(0, 240)) : []
 }
 
 function Panel(props: {
@@ -287,8 +301,80 @@ function ApprovalPanel(props: { state: UiState }) {
   const reviews = () => props.state.reviews
   const proposals = () => props.state.proposals
   const bundles = () => props.state.proposalBundles
+  const recovery = () => props.state.commanderRecovery
+  const recoveryAuthority = () => commanderRecoveryAuthorityValues(recovery() ?? { records: [] })
+  const recoveryApproval = () => commanderRecoveryApprovalDisplay(recovery()?.approval)
+  const recoveryPreviewDiagnostics = () => commanderRecoveryPreviewDiagnostics(recovery()?.preview)
   return (
     <Panel title="Approval / clarification" focus="approval" state={props.state}>
+      <Show when={recovery()}>
+        {(value) => (
+          <>
+            <text fg={color.accent}>Commander recovery: fresh recovery continuation</text>
+            <text fg={color.muted}>exact replay unavailable; fresh context required</text>
+            <For each={value().records.slice(0, 5)}>
+              {(record) => <text fg={color.text}>{operatorField(record, "investigation_id")} [{operatorField(record, "recovery_state")}] approval={operatorField(record, "approval_state")}</text>}
+            </For>
+            <Show when={value().selected}>
+              {(selected) => (
+                <>
+                  <text fg={color.text}>selected {operatorField(selected(), "investigation_id")} found={operatorField(selected(), "found")} projection={operatorField(selected(), "projection_status")} status={operatorField(selected(), "record_status")} next={operatorField(selected(), "recommended_next_operator_action")}</text>
+                  <For each={operatorDiagnostics(selected(), "blockers")}>{(item) => <text fg={color.warning}>blocker: {item}</text>}</For>
+                  <For each={operatorDiagnostics(selected(), "warnings")}>{(item) => <text fg={color.muted}>warning: {item}</text>}</For>
+                </>
+              )}
+            </Show>
+            <Show when={value().preview}>
+              {(preview) => (
+                <>
+                  <text fg={color.text}>preview {operatorField(preview(), "status")} kind={operatorField(preview(), "recovery_kind")}</text>
+                  <text fg={color.text}>recovery_plan_hash={recoveryAuthority().recovery_plan_hash}</text>
+                  <text fg={color.text}>execution_preparation_hash={recoveryAuthority().execution_preparation_hash}</text>
+                  <text fg={color.muted}>recovery_packet_hash={recoveryAuthority().recovery_packet_hash}</text>
+                  <For each={recoveryPreviewDiagnostics().blockers}>{(item) => <text fg={color.warning}>preview blocker: {item}</text>}</For>
+                  <For each={recoveryPreviewDiagnostics().warnings}>{(item) => <text fg={color.muted}>preview warning: {item}</text>}</For>
+                  <Show when={operatorField(preview(), "recovery_kind") === "uncertain_provider_outcome"}>
+                    <text fg={color.warning}>provider outcome unknown; previous request and tool execution will not be replayed</text>
+                  </Show>
+                </>
+              )}
+            </Show>
+            <Show when={value().pendingConfirmation === "approval"}>
+              <text fg={color.warning}>approval confirmation required: review plan and all fresh-context/no-replay acknowledgements</text>
+            </Show>
+            <Show when={value().pendingConfirmation === "execution"}>
+              <text fg={color.warning}>execution confirmation required: approval and execution are separate actions</text>
+            </Show>
+            <Show when={value().approval}>
+              <text fg={recoveryApproval().status === "blocked" ? color.warning : color.accent}>approval result={recoveryApproval().status}</text>
+            </Show>
+            <For each={recoveryApproval().blockers}>
+              {(blocker) => <text fg={color.warning}>approval blocker: {blocker}</text>}
+            </For>
+            <Show when={recoveryAuthority().approval_id !== "none"}>
+              <text fg={color.accent}>approval authority=current</text>
+              <text fg={color.text}>approval_id={recoveryAuthority().approval_id}</text>
+              <text fg={color.text}>approval_hash={recoveryAuthority().approval_hash}</text>
+            </Show>
+            <Show when={value().operation}>
+              {(operation) => (
+                <>
+                  <text fg={color.accent}>operation {operatorField(operation(), "operation_id")} [{operatorField(operation(), "status")}]</text>
+                  <Show when={operatorField(operation(), "error") !== "none"}>
+                    <text fg={color.warning}>operation error: {operatorField(operation(), "error")}</text>
+                  </Show>
+                </>
+              )}
+            </Show>
+            <Show when={value().cancellation}>
+              {(cancellation) => <text fg={color.warning}>{operatorField(cancellation(), "status").replaceAll("_", " ")}</text>}
+            </Show>
+            <Show when={value().commandError}>
+              {(error) => <text fg={color.warning}>recovery error: {error()}</text>}
+            </Show>
+          </>
+        )}
+      </Show>
       <For each={items()}>{(item) => <text fg={color.text}>{lineText(item)}</text>}</For>
       <Show when={reviews()?.summary}>
         {(summary) => (

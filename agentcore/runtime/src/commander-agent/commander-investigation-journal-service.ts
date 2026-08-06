@@ -1,4 +1,4 @@
-import { open, readFile, stat } from "node:fs/promises"
+import { open, stat } from "node:fs/promises"
 import { redactText, redactValue } from "../security/redaction"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
@@ -102,6 +102,8 @@ export type CommanderInvestigationJournalServiceOptions = {
 export type CommanderInvestigationJournalListOptions = {
   status?: string
   statuses?: string[]
+  recovery_state?: string
+  recovery_approval_state?: "none" | "current" | "stale" | "consumed"
   phase?: string
   provider_id?: string
   session_id?: string
@@ -139,6 +141,13 @@ export type CommanderInvestigationJournalRunState = {
   first_recovery_model_step_persisted?: boolean
   recovery_model_step_event_count?: number
   recovery_checkpoint_event_count?: number
+}
+
+function recoveryApprovalState(record: CommanderInvestigationRecord): "none" | "current" | "stale" | "consumed" {
+  if (record.projection_status !== "ready") return "none"
+  if (record.recovery_approval_consumed) return "consumed"
+  if (record.recovery_approval_recorded) return "current"
+  return record.recovery_approval_count > 0 ? "stale" : "none"
 }
 
 export class CommanderInvestigationJournalService {
@@ -309,11 +318,20 @@ export class CommanderInvestigationJournalService {
   }
 
   private async listProjected(options: CommanderInvestigationJournalListOptions, maxLimit: number, defaultLimit: number): Promise<CommanderInvestigationRecord[]> {
-    const projection = projectCommanderInvestigationJournal(await this.readJournalEvents())
+    const journal = await this.readJournalEventsWithDiagnostics()
+    const projection = projectCommanderInvestigationJournal(journal.events)
     const limit = Math.max(1, Math.min(maxLimit, Number.isInteger(options.limit) ? Number(options.limit) : defaultLimit))
     return projection.records
+      .map((record) => {
+        const reason = journal.unassignable_dropped_commander_event
+          ? "unassignable Commander journal event prevents authoritative recovery"
+          : journal.dropped_commander_events_by_investigation_id.get(record.investigation_id)?.[0]
+        return reason ? recoveryRecordBlockedByDroppedCommanderEvent(record, reason) : record
+      })
       .filter((record) => !options.status || record.status === options.status)
       .filter((record) => !options.statuses?.length || options.statuses.includes(record.status))
+      .filter((record) => !options.recovery_state || record.recovery_state === options.recovery_state)
+      .filter((record) => !options.recovery_approval_state || recoveryApprovalState(record) === options.recovery_approval_state)
       .filter((record) => !options.phase || record.phase === options.phase)
       .filter((record) => !options.provider_id || record.provider_id === options.provider_id)
       .filter((record) => !options.session_id || record.session_id === options.session_id)
@@ -571,7 +589,7 @@ export class CommanderInvestigationJournalService {
 
   private async readJournalEventsWithDiagnostics(): Promise<{ events: JsonlEvent[]; unassignable_dropped_commander_event: boolean; dropped_commander_events_by_investigation_id: Map<string, string[]> }> {
     try {
-      const text = await readFile(this.options.eventStore.eventsPath, "utf8")
+      const text = await this.options.eventStore.readText()
       const events: JsonlEvent[] = []
       let unassignable = false
       const dropped = new Map<string, string[]>()
@@ -1132,11 +1150,13 @@ function nestedCommanderInvestigationId(event: JsonlEvent): string | undefined {
     checkpoint?: { investigation_id?: unknown }
     terminal?: { investigation_id?: unknown }
     approval?: { investigation_id?: unknown }
+    recovery_attempt?: { investigation_id?: unknown }
   }).normalized_input?.investigation_id
     ?? (event as { initial_checkpoint?: { investigation_id?: unknown } }).initial_checkpoint?.investigation_id
     ?? (event as { checkpoint?: { investigation_id?: unknown } }).checkpoint?.investigation_id
     ?? (event as { terminal?: { investigation_id?: unknown } }).terminal?.investigation_id
     ?? (event as { approval?: { investigation_id?: unknown } }).approval?.investigation_id
+    ?? (event as { recovery_attempt?: { investigation_id?: unknown } }).recovery_attempt?.investigation_id
   return typeof candidate === "string" && candidate ? bound(candidate, 200) : undefined
 }
 
@@ -1189,17 +1209,7 @@ function recoverySourceBlockedByDroppedCommanderEvent(source: CommanderInvestiga
     })
     return blocked
   }
-  const record: CommanderInvestigationRecord = {
-    ...source.record,
-    projection_status: "corrupt" as const,
-    checkpoint_available: false,
-    uncertain_provider_outcome: false,
-    recovery_state: "no_checkpoint_resume_not_implemented" as const,
-    integrity_errors: [...source.record.integrity_errors, integrityError].slice(0, 24),
-    warnings: [...source.record.warnings, "Commander recovery preview blocked by a dropped Commander journal event"].slice(0, 12),
-    record_hash: "",
-  }
-  record.record_hash = stableHash({ ...record, record_hash: "" })
+  const record = recoveryRecordBlockedByDroppedCommanderEvent(source.record, integrityError)
   const blocked = {
     ...source,
     projection_status: "corrupt" as const,
@@ -1218,6 +1228,21 @@ function recoverySourceBlockedByDroppedCommanderEvent(source: CommanderInvestiga
     source_event_count: blocked.source_event_count,
     dropped_commander_journal_event: true,
   })
+  return blocked
+}
+
+function recoveryRecordBlockedByDroppedCommanderEvent(record: CommanderInvestigationRecord, reason: string): CommanderInvestigationRecord {
+  const blocked: CommanderInvestigationRecord = {
+    ...record,
+    projection_status: "corrupt",
+    checkpoint_available: false,
+    uncertain_provider_outcome: false,
+    recovery_state: "no_checkpoint_resume_not_implemented",
+    integrity_errors: [...record.integrity_errors, bound(reason, 240)].slice(0, 24),
+    warnings: [...record.warnings, "Commander recovery preview blocked by a dropped Commander journal event"].slice(0, 12),
+    record_hash: "",
+  }
+  blocked.record_hash = stableHash({ ...blocked, record_hash: "" })
   return blocked
 }
 

@@ -633,4 +633,24 @@ describe("interactive runtime effect state merge", () => {
     expect(merged.opencodeCommanderQuestions?.latestResult?.question_id).toBe("question-1")
     expect(merged.opencodeCommanderQuestions?.records.map((record) => record.question_id)).toEqual(["question-1"])
   })
+
+  test("does not let a stale recovery execute effect overwrite a newer cancellation state", () => {
+    const baseline = initialState("/tmp/demo")
+    const current = initialState("/tmp/demo")
+    current.commanderRecovery = {
+      ...current.commanderRecovery!,
+      operation: { operation_id: "operation-1", status: "running" },
+      cancellation: { operation_id: "operation-1", status: "cancellation_requested" },
+    }
+    const effectResult = initialState("/tmp/demo")
+    effectResult.commanderRecovery = {
+      ...effectResult.commanderRecovery!,
+      operation: { operation_id: "operation-1", status: "running" },
+      cancellation: null,
+    }
+
+    const merged = mergeRuntimeEffectState(current, effectResult, 0, baseline)
+
+    expect(merged.commanderRecovery?.cancellation).toMatchObject({ status: "cancellation_requested" })
+  })
 })

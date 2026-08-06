@@ -34,7 +34,9 @@ import {
   CommanderInvestigationJournalService,
   CommanderInvestigationRecoveryContinuationBuilder,
   CommanderInvestigationRecoveryExecutionService,
+  CommanderInvestigationRecoveryOperatorService,
   CommanderInvestigationRecoveryTransactionService,
+  normalizeCommanderInvestigationRecoveryTransactionInput,
   buildCommanderInvestigationRecoveryNotice,
   reconstructCommanderRecoveryReplayExchange,
 	  CommanderInvestigationRecoveryApprovalService,
@@ -3291,6 +3293,8 @@ describe("Commander in-memory investigation controller", () => {
     service.release(run)
     const record = await service.get("inv_terminal_compact")
     expect(record).toMatchObject({ status: "final", projection_status: "ready", recovery_state: "not_required" })
+    const operatorList = await new CommanderInvestigationRecoveryOperatorService(service).list()
+    expect(operatorList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_terminal_compact", terminal: true, recovery_kind: "none" }))
     const finished = (await store.readAll()).find((event) => event.kind === "runtime_commander_investigation_finished")
     expect(finished).toBeDefined()
     expect(Buffer.byteLength(JSON.stringify(finished))).toBeLessThanOrEqual(48_000)
@@ -3326,7 +3330,8 @@ describe("Commander in-memory investigation controller", () => {
     service.release(fulfilled!.value)
 
     const journalDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-durable-pagination-"))
-    const journalService = new CommanderInvestigationJournalService({ eventStore: new EventStore(join(journalDir, ".nxl", "events.jsonl")) })
+    const journalStore = new EventStore(join(journalDir, ".nxl", "events.jsonl"))
+    const journalService = new CommanderInvestigationJournalService({ eventStore: journalStore })
     for (let index = 0; index < 101; index += 1) {
       const investigationId = index === 0 ? "inv_oldest_exact_lookup" : `inv_newer_${index}`
       const input = baseInvestigation({ investigation_id: investigationId, objective: `durable lookup ${index}` })
@@ -3339,6 +3344,38 @@ describe("Commander in-memory investigation controller", () => {
     const visibleList = await journalService.list({ limit: 100 })
     expect(visibleList).toHaveLength(100)
     expect(visibleList.some((record) => record.investigation_id === "inv_oldest_exact_lookup")).toBe(false)
+    const oldestCheckpoint = await journalService.latestCheckpoint("inv_oldest_exact_lookup")
+    const oldestInput = baseInvestigation({ investigation_id: "inv_oldest_exact_lookup", objective: "durable lookup 0" })
+    const pendingEvent = {
+      kind: "runtime_commander_investigation_model_step_started",
+      schema_version: 1,
+      investigation_id: oldestInput.investigation_id,
+      journal_sequence: 1,
+      turn_index: 1,
+      model_request_id: "model_request_oldest_filtered_recovery",
+      provider_id: oldestInput.provider_id,
+      provider_kind: oldestInput.provider_kind,
+      model_id: oldestInput.model_id,
+      tool_protocol: "native",
+      base_checkpoint_id: oldestCheckpoint!.checkpoint_id,
+      base_checkpoint_sequence: oldestCheckpoint!.checkpoint_sequence,
+      base_checkpoint_hash: oldestCheckpoint!.checkpoint_hash,
+      working_set_hash: oldestCheckpoint!.working_set.working_set_hash,
+      context_hash: "context_hash_oldest_filtered_recovery",
+      input_bytes: 128,
+      estimated_input_tokens: 32,
+      loaded_tool_refs: oldestCheckpoint!.loaded_tools,
+      provider_request_count_before: 0,
+      external_api_audit_count_before: 0,
+      started_at: "2026-01-01T00:00:00.500Z",
+      requested_by: oldestInput.requested_by,
+      occurred_at: "2026-01-01T00:00:00.500Z",
+      event_payload_hash: "",
+    }
+    pendingEvent.event_payload_hash = journalPayloadHash(pendingEvent)
+    await journalStore.append(pendingEvent as Parameters<EventStore["append"]>[0])
+    const filteredBeforeCap = await journalService.list({ limit: 100, recovery_state: "uncertain_provider_outcome_resume_not_implemented" })
+    expect(filteredBeforeCap.map((record) => record.investigation_id)).toEqual(["inv_oldest_exact_lookup"])
     const summary = await journalService.summary()
     expect(summary).toMatchObject({ total: 101, running_count: 101, checkpoint_available_count: 101 })
     await expect(journalService.createObserver(baseInvestigation({ investigation_id: "inv_oldest_exact_lookup", objective: "duplicate oldest durable lookup" }))).rejects.toThrow("9W3B recovery")
@@ -5731,6 +5768,28 @@ describe("Commander in-memory investigation controller", () => {
     expect(malformedApprovalUnrelatedSource).toMatchObject({ projection_status: "ready" })
     expect(malformedApprovalUnrelatedSource?.record?.integrity_errors.join("\n")).not.toContain("unassignable Commander journal event")
 
+    await startOnly("inv_recovery_malformed_start_owner", 11)
+    await startOnly("inv_recovery_malformed_start_unrelated", 12)
+    const missingStartTopLevelEvent = {
+      kind: "runtime_commander_investigation_recovery_started",
+      schema_version: 1,
+      journal_sequence: 1,
+      requested_by: "human_operator",
+      occurred_at: "2026-01-01T00:06:30.000Z",
+      recovery_attempt: { investigation_id: "inv_recovery_malformed_start_owner" },
+      event_payload_hash: "",
+    }
+    missingStartTopLevelEvent.event_payload_hash = journalPayloadHash(missingStartTopLevelEvent)
+    await server.eventStore.append(missingStartTopLevelEvent as Parameters<EventStore["append"]>[0])
+    const malformedStartOwnerSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_malformed_start_owner")
+    expect(malformedStartOwnerSource).toMatchObject({ projection_status: "corrupt", latest_checkpoint: undefined, normalized_input: undefined })
+    expect(malformedStartOwnerSource?.record?.integrity_errors.join("\n")).toContain("without top-level investigation_id")
+    const malformedStartUnrelatedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_malformed_start_unrelated")
+    expect(malformedStartUnrelatedSource).toMatchObject({ projection_status: "ready" })
+    const malformedStartList = await server.listCommanderInvestigationRecoveries({ limit: 100 })
+    expect(malformedStartList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_recovery_malformed_start_owner", projection_status: "corrupt" }))
+    expect(malformedStartList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_recovery_malformed_start_unrelated", projection_status: "ready" }))
+
     await startOnly("inv_recovery_interior_malformed", 7)
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_commander_inv\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_malformed","timestamp":"2026-01-01T00:04:00.000Z"}\n', { flag: "a" })
     const interiorMalformedSource = await server.getCommanderInvestigationRecoverySource("inv_recovery_interior_malformed")
@@ -5738,6 +5797,17 @@ describe("Commander in-memory investigation controller", () => {
     expect(interiorMalformedSource?.record?.integrity_errors.join("\n")).toContain("unassignable Commander journal event")
     const interiorMalformedPreview = await server.previewCommanderInvestigationRecovery({ investigation_id: "inv_recovery_interior_malformed", include_current_continuity: false })
     expect(interiorMalformedPreview).toMatchObject({ status: "blocked", recommended_action: "inspect_corrupt_record", checkpoint: undefined })
+    const interiorMalformedList = await server.listCommanderInvestigationRecoveries({ limit: 100 })
+    expect(interiorMalformedList.items).toContainEqual(expect.objectContaining({
+      investigation_id: "inv_recovery_interior_malformed",
+      projection_status: "corrupt",
+      recovery_state: "no_checkpoint_resume_not_implemented",
+      human_review_required: true,
+    }))
+    expect(interiorMalformedList.items).not.toContainEqual(expect.objectContaining({
+      investigation_id: "inv_recovery_interior_malformed",
+      projection_status: "ready",
+    }))
 
     await startOnly("inv_recovery_indeterminate_malformed", 8)
     await writeFile(server.eventStore.eventsPath, '{"kind":"runtime_command\n{"kind":"runtime_started","schema_version":1,"event_id":"runtime_started_after_indeterminate_malformed","timestamp":"2026-01-01T00:04:30.000Z"}\n', { flag: "a" })
@@ -6837,6 +6907,8 @@ describe("Commander in-memory investigation controller", () => {
       recovery_approval_recorded: false,
       latest_recovery_approval_id: undefined,
     })
+    const operatorList = await new CommanderInvestigationRecoveryOperatorService(journal).list({ approval_state: "stale" })
+    expect(operatorList.items).toContainEqual(expect.objectContaining({ investigation_id: "inv_recovery_approval_checkpoint", approval_state: "stale" }))
     const events = (await readFile(server.eventStore.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { kind: string; [key: string]: unknown })
     expect(events.filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(1)
     expect(JSON.stringify(events)).not.toContain("https://api.example.test")
@@ -10423,6 +10495,907 @@ describe("Commander in-memory investigation controller", () => {
     expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
   })
 
+  test("public recovery commands expose bounded reads and require strict explicit authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-reads-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("unused public preview transport") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_reads")
+
+    const listed = await server.command("runtime.list_commander_investigation_recoveries", { limit: 10 }) as any
+    expect(listed).toMatchObject({ count: 1, limit: 10, current_compatibility_checked: false })
+    expect(listed.items[0]).toMatchObject({ investigation_id: authority.investigation_id, approval_state: "current", current_compatibility_checked: false })
+    const shown = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(shown).toMatchObject({
+      found: true,
+      investigation_id: authority.investigation_id,
+      approval_state: "current",
+      recommended_next_operator_action: "await_recovery_execution",
+    })
+    const missing = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: "inv_missing_public_recovery" }) as any
+    expect(missing).toMatchObject({ found: false, projection_status: "missing" })
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    const approvalFilterCalls: Array<Parameters<CommanderInvestigationJournalService["list"]>[0]> = []
+    const preCapApprovalFilterOperator = new CommanderInvestigationRecoveryOperatorService({
+      list: async (options: NonNullable<Parameters<CommanderInvestigationJournalService["list"]>[0]> = {}) => {
+        approvalFilterCalls.push(options)
+        return options.recovery_approval_state === "current" ? [source!.record!] : []
+      },
+    } as unknown as CommanderInvestigationJournalService)
+    expect(await preCapApprovalFilterOperator.list({ approval_state: "current" })).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, approval_state: "current" }],
+      count: 1,
+    })
+    expect(approvalFilterCalls).toEqual([{ limit: 100, status: undefined, recovery_state: undefined, recovery_approval_state: "current" }])
+    const humanReviewRecord = {
+      ...source!.record!,
+      status: "needs_human_review" as const,
+      recovery_state: "not_required" as const,
+    }
+    const humanReviewOperator = new CommanderInvestigationRecoveryOperatorService({
+      list: async () => [humanReviewRecord],
+      recoverySource: async () => ({ ...source!, record: humanReviewRecord, terminal: {} as any }),
+    } as unknown as CommanderInvestigationJournalService)
+    expect(await humanReviewOperator.list()).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, terminal: true, human_review_required: true }],
+    })
+    expect(await humanReviewOperator.show(authority.investigation_id)).toMatchObject({
+      terminal: true,
+      human_review_required: true,
+      recommended_next_operator_action: "human_review_required",
+    })
+    const corruptRecord = {
+      ...source!.record!,
+      projection_status: "corrupt" as const,
+      integrity_errors: ["dropped Commander journal event"],
+      recovery_approval_recorded: true,
+      recovery_approval_consumed: false,
+    }
+    const corruptApprovalOperator = new CommanderInvestigationRecoveryOperatorService({
+      list: async () => [corruptRecord],
+      recoverySource: async () => ({ ...source!, projection_status: "corrupt", record: corruptRecord }),
+    } as unknown as CommanderInvestigationJournalService)
+    expect(await corruptApprovalOperator.list()).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, projection_status: "corrupt", approval_state: "none", human_review_required: true }],
+    })
+    expect(await corruptApprovalOperator.list({ approval_state: "none" })).toMatchObject({
+      items: [{ investigation_id: authority.investigation_id, projection_status: "corrupt", approval_state: "none" }],
+      count: 1,
+    })
+    expect(await corruptApprovalOperator.list({ approval_state: "current" })).toMatchObject({ items: [], count: 0 })
+    expect(await corruptApprovalOperator.show(authority.investigation_id)).toMatchObject({
+      projection_status: "corrupt",
+      approval_state: "none",
+      latest_approval: undefined,
+      recommended_next_operator_action: "inspect_corrupt_record",
+    })
+    const preview = await server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(preview).toMatchObject({ status: "approved_waiting_for_execution", current_continuity_required: true, provider_called: false, tool_executed: false, network_called: false, events_appended: false })
+    expect(transport.requests).toHaveLength(0)
+    await expect(server.command("runtime.preview_commander_investigation_recovery", { investigation_id: authority.investigation_id, include_current_continuity: false })).rejects.toThrow("unknown fields")
+    const approvalEventsBeforePaddedAuthority = (await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved").length
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: ` ${preview.recovery_plan_hash} `,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).resolves.toMatchObject({ status: "blocked", events_appended: false })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(approvalEventsBeforePaddedAuthority)
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: " approve_resume_from_checkpoint ",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).rejects.toThrow("decision is invalid")
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: false },
+    })).rejects.toThrow("tool_execution_replay_forbidden acknowledgement must be true")
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      human_note: `${" ".repeat(1001)}ok`,
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).resolves.toMatchObject({ status: "blocked", events_appended: false, blockers: ["human_note must be a bounded string"] })
+    const approvalEventCountBeforeOversizedApprover = (await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved").length
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: ` ${"a".repeat(199)} `,
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).resolves.toMatchObject({ status: "blocked", events_appended: false, blockers: ["approved_by is required and bounded"] })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_approved")).toHaveLength(approvalEventCountBeforeOversizedApprover)
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "x".repeat(201),
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).rejects.toThrow("investigation_id must use bounded durable ID characters")
+    await expect(server.command("runtime.approve_commander_investigation_recovery", {
+      investigation_id: "https://credentials.invalid/Bearer-pasted-secret",
+      recovery_plan_hash: preview.recovery_plan_hash,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "public_operator",
+      acknowledgements: { fresh_context_required: true, exact_replay_unavailable: true, provider_request_replay_forbidden: true, tool_execution_replay_forbidden: true },
+    })).rejects.toThrow("investigation_id must use bounded durable ID characters")
+    await expect(server.command("runtime.execute_commander_investigation_recovery", { ...authority.transaction_input, force: true })).rejects.toThrow("unknown fields")
+    await expect(server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_hash: "x".repeat(241),
+    })).rejects.toThrow("approval_hash is required and bounded")
+    await expect(server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      execution_preparation_hash: "Bearer accidentally-pasted-credential",
+    })).rejects.toThrow("execution_preparation_hash contains forbidden URL or credential material")
+    const paddedTransactionInput = {
+      ...authority.transaction_input,
+      approval_hash: ` ${authority.transaction_input.approval_hash} `,
+      recovery_plan_hash: ` ${authority.transaction_input.recovery_plan_hash} `,
+      execution_preparation_hash: ` ${authority.transaction_input.execution_preparation_hash} `,
+    }
+    expect(normalizeCommanderInvestigationRecoveryTransactionInput(paddedTransactionInput).input).toEqual(paddedTransactionInput)
+    const recoveryStartCountBeforePaddedExecution = (await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started").length
+    const paddedExecution = await server.command("runtime.execute_commander_investigation_recovery", paddedTransactionInput) as any
+    const paddedExecutionEntry = (server as any).publicCommanderRecoveryOperations.get(paddedExecution.operation_id)
+    await paddedExecutionEntry.promise
+    expect(paddedExecutionEntry.record.status).toBe("blocked")
+    expect(paddedExecutionEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(recoveryStartCountBeforePaddedExecution)
+    expect(transport.requests).toHaveLength(0)
+    const operationCountBeforeInvalidAuthority = (server as any).publicCommanderRecoveryOperations.size
+    const recentCountBeforeInvalidAuthority = (server as any).recentPublicCommanderRecoveryOperations.size
+    const journal = authority.journal
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    let delayedPreflightReads = 0
+    let releaseDelayedPreflight!: () => void
+    const delayedPreflight = new Promise<void>((resolve) => { releaseDelayedPreflight = resolve })
+    journal.recoverySource = async (investigationId: string) => {
+      delayedPreflightReads += 1
+      await delayedPreflight
+      return originalRecoverySource(investigationId)
+    }
+    await expect(server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_id: "approval id",
+    })).rejects.toThrow("approval_id must use bounded durable ID characters")
+    expect(delayedPreflightReads).toBe(0)
+    expect(normalizeCommanderInvestigationRecoveryTransactionInput({
+      ...authority.transaction_input,
+      approval_id: "approval id",
+    }).blockers).toContain("approval_id must use bounded durable ID characters")
+    releaseDelayedPreflight()
+    journal.recoverySource = originalRecoverySource
+    expect((server as any).publicCommanderRecoveryOperations.size).toBe(operationCountBeforeInvalidAuthority)
+    expect((server as any).recentPublicCommanderRecoveryOperations.size).toBe(recentCountBeforeInvalidAuthority)
+    const shownAfterInvalidAuthority = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(shownAfterInvalidAuthority.active_operation).toMatchObject({ operation_id: paddedExecution.operation_id, status: "blocked" })
+    expect(JSON.stringify(shownAfterInvalidAuthority)).not.toContain("accidentally-pasted-credential")
+  })
+
+  test("public execute registers before preflight so command cancellation is reachable and preserves approval", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch after public cancellation") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_preflight")
+    const journal = authority.journal
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    let entered!: () => void
+    let release!: () => void
+    const preflightEntered = new Promise<void>((resolve) => { entered = resolve })
+    const preflightRelease = new Promise<void>((resolve) => { release = resolve })
+    let reads = 0
+    journal.recoverySource = async (investigationId: string) => {
+      reads += 1
+      if (reads === 1) {
+        entered()
+        await preflightRelease
+      }
+      return originalRecoverySource(investigationId)
+    }
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(operation).toMatchObject({ status: "running", investigation_id: authority.investigation_id, approval_id: authority.transaction_input.approval_id })
+    await preflightEntered
+    const operatorService = (server as any).commanderInvestigationRecoveryOperatorService()
+    const originalShow = operatorService.show.bind(operatorService)
+    operatorService.show = async (investigationId: string) => ({
+      ...await originalShow(investigationId),
+      projection_status: "corrupt",
+      human_review_required: true,
+      recommended_next_operator_action: "inspect_corrupt_record",
+    })
+    const corruptPreflightShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(corruptPreflightShow).toMatchObject({
+      projection_status: "corrupt",
+      human_review_required: true,
+      recommended_next_operator_action: "inspect_corrupt_record",
+      active_operation: { operation_id: operation.operation_id, status: "running" },
+    })
+    operatorService.show = originalShow
+    const preflightShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(preflightShow).toMatchObject({
+      human_review_required: false,
+      recommended_next_operator_action: "await_recovery_completion",
+      active_operation: { operation_id: operation.operation_id, status: "running" },
+    })
+    expect(preflightShow.active_operation).not.toHaveProperty("recovery_attempt_id")
+    const duplicate = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(duplicate.operation_id).toBe(operation.operation_id)
+    const rejectedDifferentAuthority = await server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_hash: `${authority.transaction_input.approval_hash}_different`,
+    }) as any
+    expect(rejectedDifferentAuthority).toMatchObject({
+      operation_id: operation.operation_id,
+      status: "running",
+      request_rejected: true,
+      error: "a different Commander recovery operation is already active for this investigation",
+    })
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true, provider_outcome_known: false, durable_state_changed: false })
+    const duplicateCancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(duplicateCancellation.status).toBe("already_requested")
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    release()
+    await activeEntry.promise
+
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const source = await originalRecoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
+    const retriedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(retriedOperation.operation_id).not.toBe(operation.operation_id)
+    const retriedEntry = (server as any).publicCommanderRecoveryOperations.get(retriedOperation.operation_id)
+    await retriedEntry.promise
+    expect(retriedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  test("public pre-start cancellation remains reachable when journal reconciliation fails", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-journal-failure-"))
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const operationId = "commander_recovery_operation_cancel_journal_failure"
+    const record = {
+      operation_id: operationId,
+      operation_version: 1,
+      investigation_id: "inv_public_cancel_journal_failure",
+      approval_id: "approval_public_cancel_journal_failure",
+      approval_hash: "approval_hash_public_cancel_journal_failure",
+      recovery_plan_hash: "plan_public_cancel_journal_failure",
+      execution_preparation_hash: "preparation_public_cancel_journal_failure",
+      status: "running",
+      cancellation_requested: false,
+      started_at: new Date(0).toISOString(),
+    }
+    const controller = new AbortController()
+    ;(server as any).publicCommanderRecoveryOperations.set(operationId, {
+      record,
+      controller,
+      promise: Promise.resolve(),
+    })
+    const journal = (server as any).commanderInvestigationJournalService()
+    journal.recoverySource = async () => {
+      throw new Error("journal projection unavailable")
+    }
+
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: record.investigation_id,
+      operation_id: operationId,
+      approval_id: record.approval_id,
+      recovery_attempt_id: "caller_supplied_unverified_attempt",
+    }) as any
+
+    expect(cancellation).toMatchObject({
+      status: "cancellation_requested",
+      cancellation_requested: true,
+      investigation_id: record.investigation_id,
+      operation_id: operationId,
+      approval_id: record.approval_id,
+      provider_outcome_known: false,
+      durable_state_changed: false,
+    })
+    expect(cancellation.recovery_attempt_id).toBeUndefined()
+    expect(record.cancellation_requested).toBe(true)
+    expect(controller.signal.aborted).toBe(true)
+  })
+
+  test("different authority cannot overwrite a settled recovery operation status", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-settled-authority-"))
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    for (const status of ["completed", "already_started", "failed"] as const) {
+      const input = {
+        investigation_id: `inv_public_settled_authority_${status}`,
+        approval_id: `approval_public_settled_authority_${status}`,
+        approval_hash: `approval_hash_public_settled_authority_${status}`,
+        recovery_plan_hash: `plan_public_settled_authority_${status}`,
+        execution_preparation_hash: `preparation_public_settled_authority_${status}`,
+      }
+      const settled = {
+        operation_id: `commander_recovery_operation_settled_authority_${status}`,
+        operation_version: 1 as const,
+        ...input,
+        ...(status === "failed" ? { recovery_attempt_id: `commander_recovery_attempt_settled_authority_${status}` } : {}),
+        status,
+        cancellation_requested: false,
+        started_at: new Date(0).toISOString(),
+        completed_at: new Date(1).toISOString(),
+      }
+      ;(server as any).recentPublicCommanderRecoveryOperations.set(settled.operation_id, settled)
+
+      const rejected = server.startCommanderInvestigationRecoveryOperation({
+        ...input,
+        approval_hash: `${input.approval_hash}_different`,
+      })
+
+      expect(rejected).toMatchObject({
+        operation_id: settled.operation_id,
+        status,
+        request_rejected: true,
+        error: "a recovery attempt already exists for this investigation and different authority cannot start another",
+      })
+      expect((server as any).recentPublicCommanderRecoveryOperations.get(settled.operation_id)).toEqual(settled)
+    }
+    expect((server as any).publicCommanderRecoveryOperations.size).toBe(0)
+  })
+
+  test("duplicate public cancellation remains idempotent when the operation settles during authority refresh", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-settle-race-"))
+    const server = configuredProviderRuntimeServer(projectDir)
+    servers.push({ stop: () => server.shutdown() })
+    const operationId = "commander_recovery_operation_cancel_settle_race"
+    const record = {
+      operation_id: operationId,
+      operation_version: 1,
+      investigation_id: "inv_public_cancel_settle_race",
+      approval_id: "approval_public_cancel_settle_race",
+      approval_hash: "approval_hash_public_cancel_settle_race",
+      recovery_plan_hash: "plan_public_cancel_settle_race",
+      execution_preparation_hash: "preparation_public_cancel_settle_race",
+      status: "running",
+      cancellation_requested: true,
+      started_at: new Date(0).toISOString(),
+    }
+    const entry = {
+      record,
+      controller: new AbortController(),
+      promise: Promise.resolve(),
+    }
+    ;(server as any).publicCommanderRecoveryOperations.set(operationId, entry)
+    const journal = (server as any).commanderInvestigationJournalService()
+    let entered!: () => void
+    let release!: () => void
+    const readEntered = new Promise<void>((resolve) => { entered = resolve })
+    const readRelease = new Promise<void>((resolve) => { release = resolve })
+    journal.recoverySource = async () => {
+      entered()
+      await readRelease
+      return null
+    }
+
+    const cancellationPromise = server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: record.investigation_id,
+      operation_id: operationId,
+      approval_id: record.approval_id,
+    }) as Promise<any>
+    await readEntered
+    record.status = "blocked"
+    ;(server as any).publicCommanderRecoveryOperations.delete(operationId)
+    release()
+
+    expect(await cancellationPromise).toMatchObject({
+      status: "already_requested",
+      cancellation_requested: true,
+      operation_id: operationId,
+    })
+  })
+
+  test("public cancellation withholds attempt identity until recovery start is durable", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-committing-start-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch while recovery start is committing") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_committing_start")
+    const originalAppendIfLatest = server.eventStore.appendIfLatest.bind(server.eventStore)
+    let appendEntered!: () => void
+    let releaseAppend!: () => void
+    const entered = new Promise<void>((resolve) => { appendEntered = resolve })
+    const release = new Promise<void>((resolve) => { releaseAppend = resolve })
+    server.eventStore.appendIfLatest = async (...args: Parameters<typeof originalAppendIfLatest>) => {
+      if (args[0].kind === "runtime_commander_investigation_recovery_started") {
+        appendEntered()
+        await release
+      }
+      return originalAppendIfLatest(...args)
+    }
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    await entered
+
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", cancellation_requested: true })
+    expect(cancellation.recovery_attempt_id).toBeUndefined()
+    expect(activeEntry.record.recovery_attempt_id).toBeUndefined()
+    releaseAppend()
+    await activeEntry.promise
+
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source).toMatchObject({ latest_recovery_approval: { consumed: false }, current_recovery_attempt: undefined, terminal: undefined })
+
+    const retriedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(retriedOperation.operation_id).not.toBe(operation.operation_id)
+    const retriedEntry = (server as any).publicCommanderRecoveryOperations.get(retriedOperation.operation_id)
+    await retriedEntry.promise
+    expect(retriedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  test("blocked public preflight does not poison a corrected recovery execution", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-corrected-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("corrected recovery completed") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_corrected_preflight")
+    const staleInput = { ...authority.transaction_input, recovery_plan_hash: `${authority.transaction_input.recovery_plan_hash}_stale` }
+
+    const staleOperation = await server.command("runtime.execute_commander_investigation_recovery", staleInput) as any
+    const staleEntry = (server as any).publicCommanderRecoveryOperations.get(staleOperation.operation_id)
+    await staleEntry.promise
+    expect(staleEntry.record).toMatchObject({ status: "blocked", cancellation_requested: false })
+    expect(staleEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(typeof staleEntry.record.error).toBe("string")
+    expect(staleEntry.record.error.length).toBeGreaterThan(0)
+    expect(staleEntry.record.error.length).toBeLessThanOrEqual(300)
+    expect(transport.requests).toHaveLength(0)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+
+    const wrongApprovalOperation = await server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_id: "commander_recovery_approval_wrong",
+    }) as any
+    expect(wrongApprovalOperation.operation_id).not.toBe(staleOperation.operation_id)
+    const wrongApprovalEntry = (server as any).publicCommanderRecoveryOperations.get(wrongApprovalOperation.operation_id)
+    await wrongApprovalEntry.promise
+    expect(wrongApprovalEntry.record).toMatchObject({ status: "blocked" })
+    expect(wrongApprovalEntry.record).not.toHaveProperty("recovery_attempt_id")
+
+    const wrongApprovalHashOperation = await server.command("runtime.execute_commander_investigation_recovery", {
+      ...authority.transaction_input,
+      approval_hash: `${authority.transaction_input.approval_hash}_wrong`,
+    }) as any
+    expect(wrongApprovalHashOperation.operation_id).not.toBe(wrongApprovalOperation.operation_id)
+    const wrongApprovalHashEntry = (server as any).publicCommanderRecoveryOperations.get(wrongApprovalHashOperation.operation_id)
+    await wrongApprovalHashEntry.promise
+    expect(wrongApprovalHashEntry.record).toMatchObject({ status: "blocked" })
+    expect(wrongApprovalHashEntry.record).not.toHaveProperty("recovery_attempt_id")
+
+    const correctedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(correctedOperation.operation_id).not.toBe(wrongApprovalHashOperation.operation_id)
+    const correctedEntry = (server as any).publicCommanderRecoveryOperations.get(correctedOperation.operation_id)
+    await correctedEntry.promise
+    expect(correctedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    const completedList = await server.command("runtime.list_commander_investigation_recoveries", { limit: 10 }) as any
+    expect(completedList.items.find((item: any) => item.investigation_id === authority.investigation_id)).toMatchObject({ terminal: true, approval_state: "consumed", human_review_required: false })
+    const completedShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(completedShow).toMatchObject({ terminal: true, human_review_required: false, recommended_next_operator_action: "none" })
+  })
+
+  test("thrown public preflight remains replaceable only after journal reconciliation proves no attempt", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-thrown-preflight-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("reconciled recovery completed") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_thrown_preflight")
+    const configuredRun = server.runCommanderInvestigationRecoveryConfigured.bind(server)
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = async () => { throw new Error("transient preflight read failed") }
+
+    const failedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const failedEntry = (server as any).publicCommanderRecoveryOperations.get(failedOperation.operation_id)
+    await failedEntry.promise
+    expect(failedEntry.record.status).toBe("failed")
+    expect(failedEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(transport.requests).toHaveLength(0)
+    const source = await authority.journal.recoverySource(authority.investigation_id)
+    expect(source?.latest_recovery_approval).toMatchObject({ consumed: false })
+
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = configuredRun
+    const retriedOperation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    expect(retriedOperation.operation_id).not.toBe(failedOperation.operation_id)
+    const retriedEntry = (server as any).publicCommanderRecoveryOperations.get(retriedOperation.operation_id)
+    await retriedEntry.promise
+    expect(retriedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  test("public cancellation after durable model boundary forwards abort and preserves uncertainty", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-transport-"))
+    await writeApprovedSpec(projectDir)
+    const transport = delayedAbortTransport(Promise.resolve())
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_transport")
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    await waitFor(() => transport.requests === 1)
+    const activeShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(activeShow).toMatchObject({
+      human_review_required: false,
+      recommended_next_operator_action: "await_recovery_completion",
+      active_operation: { operation_id: operation.operation_id, status: "running" },
+    })
+    const mismatched = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: "commander_recovery_attempt_wrong",
+    }) as any
+    expect(mismatched.status).toBe("operation_identity_mismatch")
+    const missingAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(missingAttempt).toMatchObject({ status: "operation_identity_mismatch", cancellation_requested: false })
+    expect(typeof missingAttempt.recovery_attempt_id).toBe("string")
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: missingAttempt.recovery_attempt_id,
+    }) as any
+    expect(cancellation.status).toBe("cancellation_requested")
+    const attemptId = cancellation.recovery_attempt_id
+    expect(typeof attemptId).toBe("string")
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    await activeEntry.promise
+    const settledWithoutAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    expect(settledWithoutAttempt).toMatchObject({ status: "operation_identity_mismatch", recovery_attempt_id: attemptId })
+    const duplicate = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: attemptId,
+    }) as any
+    expect(duplicate.status).toBe("already_requested")
+    const settledShow = await server.command("runtime.get_commander_investigation_recovery", { investigation_id: authority.investigation_id }) as any
+    expect(settledShow.active_operation).not.toHaveProperty("result")
+    expect(JSON.stringify(settledShow.active_operation)).not.toContain("controller_result")
+    expect(JSON.stringify(settledShow.active_operation)).not.toContain("configured recovery response")
+    expect(settledShow).toMatchObject({
+      human_review_required: true,
+      recommended_next_operator_action: "human_review_required",
+      active_operation: { status: "failed" },
+    })
+
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(1)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => event.kind === "external_api_request_failed")).toHaveLength(1)
+    expect(await authority.journal.recoverySource(authority.investigation_id)).toMatchObject({
+      recovery_execution_in_progress: true,
+      recovery_execution_interrupted: true,
+      consumed_recovery_approval: { consumed: true },
+      pending_model_step: expect.any(Object),
+      terminal: undefined,
+    })
+  })
+
+  test("public cancellation never binds an unrelated journal attempt to a pre-start operation", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-cancel-unrelated-attempt-"))
+    await writeApprovedSpec(projectDir)
+    const transport = delayedAbortTransport(Promise.resolve())
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_cancel_unrelated_attempt")
+
+    const interrupted = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    await waitFor(() => transport.requests === 1)
+    const missingAttempt = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: interrupted.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+    }) as any
+    const priorAttemptId = missingAttempt.recovery_attempt_id
+    expect(typeof priorAttemptId).toBe("string")
+    await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: interrupted.operation_id,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_attempt_id: priorAttemptId,
+    })
+    const interruptedEntry = (server as any).publicCommanderRecoveryOperations.get(interrupted.operation_id)
+    await interruptedEntry.promise
+    expect(await authority.journal.recoverySource(authority.investigation_id)).toMatchObject({
+      recovery_execution_interrupted: true,
+      consumed_recovery_approval: { consumed: true },
+      terminal: undefined,
+    })
+    expect(transport.requests).toBe(1)
+
+    ;(server as any).recentPublicCommanderRecoveryOperations.clear()
+    const configuredRun = server.runCommanderInvestigationRecoveryConfigured.bind(server)
+    let settlePrestart!: (result: any) => void
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = async () => new Promise((resolve) => {
+      settlePrestart = resolve
+    })
+    const unrelatedAuthority = {
+      ...authority.transaction_input,
+      approval_id: "commander_recovery_approval_unrelated",
+      approval_hash: "approval_hash_unrelated",
+      recovery_plan_hash: "recovery_plan_hash_unrelated",
+      execution_preparation_hash: "execution_preparation_hash_unrelated",
+    }
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", unrelatedAuthority) as any
+    const shown = await server.command("runtime.get_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+    }) as any
+    expect(shown).toMatchObject({
+      human_review_required: true,
+      recommended_next_operator_action: "human_review_required",
+      latest_recovery_attempt: { recovery_attempt_id: priorAttemptId },
+      active_operation: { operation_id: operation.operation_id, status: "running" },
+    })
+    const cancellation = await server.command("runtime.cancel_commander_investigation_recovery", {
+      investigation_id: authority.investigation_id,
+      operation_id: operation.operation_id,
+      approval_id: unrelatedAuthority.approval_id,
+    }) as any
+
+    expect(cancellation).toMatchObject({ status: "cancellation_requested", recovery_attempt_id: undefined })
+    expect(cancellation.recovery_attempt_id).not.toBe(priorAttemptId)
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    expect(activeEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(activeEntry.record.cancellation_requested).toBe(true)
+    expect(transport.requests).toBe(1)
+
+    settlePrestart({
+      status: "blocked",
+      investigation_id: authority.investigation_id,
+      recovery_attempt_id: priorAttemptId,
+      approval_id: authority.transaction_input.approval_id,
+      recovery_plan_hash: authority.transaction_input.recovery_plan_hash,
+      execution_preparation_hash: authority.transaction_input.execution_preparation_hash,
+      approval_consumed: true,
+      blockers: ["a different recovery attempt already exists"],
+      warnings: [],
+    })
+    await activeEntry.promise
+    expect(activeEntry.record).not.toHaveProperty("recovery_attempt_id")
+    ;(server as any).runCommanderInvestigationRecoveryConfigured = configuredRun
+  })
+
+  test("public execute before approval does not poison later approved recovery", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-execute-before-approval-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("approved recovery completed") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const journal = (server as any).commanderInvestigationJournalService() as CommanderInvestigationJournalService
+    const investigationId = "inv_public_recovery_execute_before_approval"
+    const configured = providerConfig()
+    const input = baseInvestigation({
+      investigation_id: investigationId,
+      objective: `Execute configured recovery for ${investigationId}`,
+      provider_id: String(configured.provider_id),
+      provider_kind: "openai",
+      model_id: String(configured.model_id),
+      tool_protocol: "native",
+    })
+    const durableRun = await journal.createObserver(input)
+    const snapshot = durableStartedSnapshot(input, 42, investigationId) as any
+    snapshot.budget = { ...snapshot.budget, max_context_bytes: 65_536, max_context_tokens: 16_384, max_cumulative_tool_result_bytes: 32_000, budget_hash: "" }
+    snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
+    await durableRun.observer.onStarted(snapshot)
+    journal.release(durableRun)
+    await server.start()
+
+    const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
+    expect(recovery).toMatchObject({ status: "ready_for_approval", blockers: [] })
+    const originalRecoverySource = journal.recoverySource.bind(journal)
+    journal.recoverySource = async () => {
+      throw new Error("transient journal projection failure")
+    }
+    const placeholder = {
+      investigation_id: investigationId,
+      approval_id: "commander_recovery_approval_placeholder",
+      approval_hash: "placeholder_approval_hash",
+      recovery_plan_hash: recovery.recovery_plan_hash!,
+      execution_preparation_hash: "placeholder_execution_preparation_hash",
+    }
+    const prematureOperation = await server.command("runtime.execute_commander_investigation_recovery", placeholder) as any
+    const prematureEntry = (server as any).publicCommanderRecoveryOperations.get(prematureOperation.operation_id)
+    await prematureEntry.promise
+    expect(prematureEntry.record).toMatchObject({ status: "failed", error: "transient journal projection failure" })
+    expect(prematureEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(transport.requests).toHaveLength(0)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect((server as any).replaceablePublicCommanderRecoveryOperationIds.has(prematureOperation.operation_id)).toBe(false)
+    journal.recoverySource = originalRecoverySource
+
+    const approval = await server.recordCommanderInvestigationRecoveryApproval({
+      investigation_id: investigationId,
+      recovery_plan_hash: recovery.recovery_plan_hash!,
+      decision: "approve_resume_from_checkpoint",
+      approved_by: "configured_recovery_operator",
+      acknowledgements: {
+        fresh_context_required: true,
+        exact_replay_unavailable: true,
+        provider_request_replay_forbidden: true,
+        tool_execution_replay_forbidden: true,
+      },
+    })
+    expect(approval.status).toBe("recorded")
+    const approved = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
+    const preparation = await server.previewCommanderInvestigationRecoveryExecutionPreparation({
+      investigation_id: investigationId,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+    })
+    expect(preparation.status).toBe("ready")
+
+    const approvedOperation = await server.command("runtime.execute_commander_investigation_recovery", {
+      investigation_id: investigationId,
+      approval_id: approval.approval!.approval_id,
+      approval_hash: approval.approval!.approval_hash,
+      recovery_plan_hash: approved.recovery_plan_hash!,
+      execution_preparation_hash: preparation.execution_preparation_hash!,
+    }) as any
+    expect(approvedOperation.operation_id).not.toBe(prematureOperation.operation_id)
+    const approvedEntry = (server as any).publicCommanderRecoveryOperations.get(approvedOperation.operation_id)
+    await approvedEntry.promise
+    expect(approvedEntry.record.status).toBe("completed")
+    expect(transport.requests).toHaveLength(1)
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(1)
+  })
+
+  test("shutdown drains public replacement-authority recheck before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3c-public-replacement-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("must not dispatch after shutdown") }])
+    const server = configuredProviderRuntimeServer(projectDir, { transport })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_replacement_shutdown")
+    const lateAuthority = await prepareApprovedConfiguredRecovery(server, "inv_public_recovery_late_replacement_shutdown")
+    const settledOperation = {
+      operation_id: "commander_recovery_operation_blocked_before_replacement_shutdown",
+      operation_version: 1 as const,
+      ...authority.transaction_input,
+      approval_id: "commander_recovery_approval_blocked_before_shutdown",
+      approval_hash: "approval_hash_blocked_before_shutdown",
+      status: "blocked" as const,
+      cancellation_requested: false,
+      started_at: new Date(0).toISOString(),
+      settled_at: new Date(1).toISOString(),
+    }
+    ;(server as any).recentPublicCommanderRecoveryOperations.set(settledOperation.operation_id, settledOperation)
+    const lateSettledOperation = {
+      operation_id: "commander_recovery_operation_blocked_late_replacement_shutdown",
+      operation_version: 1 as const,
+      ...lateAuthority.transaction_input,
+      approval_id: "commander_recovery_approval_blocked_late_shutdown",
+      approval_hash: "approval_hash_blocked_late_shutdown",
+      status: "blocked" as const,
+      cancellation_requested: false,
+      started_at: new Date(0).toISOString(),
+      settled_at: new Date(1).toISOString(),
+    }
+    ;(server as any).recentPublicCommanderRecoveryOperations.set(lateSettledOperation.operation_id, lateSettledOperation)
+
+    const originalRecoverySource = authority.journal.recoverySource.bind(authority.journal)
+    let entered!: () => void
+    let release!: () => void
+    const recheckEntered = new Promise<void>((resolve) => { entered = resolve })
+    const recheckRelease = new Promise<void>((resolve) => { release = resolve })
+    let delayed = true
+    let lateReplacementReads = 0
+    authority.journal.recoverySource = async (investigationId: string) => {
+      if (investigationId === authority.investigation_id && delayed) {
+        delayed = false
+        entered()
+        await recheckRelease
+      }
+      if (investigationId === lateAuthority.investigation_id) lateReplacementReads += 1
+      return originalRecoverySource(investigationId)
+    }
+
+    const operation = await server.command("runtime.execute_commander_investigation_recovery", authority.transaction_input) as any
+    const activeEntry = (server as any).publicCommanderRecoveryOperations.get(operation.operation_id)
+    await recheckEntered
+    let shutdownSettled = false
+    const shutdown = server.shutdown("public recovery replacement authority shutdown").then(() => {
+      shutdownSettled = true
+    })
+    await waitFor(() => (server as any).lifecycleState === "stopping")
+    expect((server as any).runLock.isHeld()).toBe(true)
+    expect(activeEntry.record.status).toBe("running")
+    expect(shutdownSettled).toBe(false)
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+    const operationCountDuringDrain = (server as any).publicCommanderRecoveryOperations.size
+    await expect(server.command("runtime.execute_commander_investigation_recovery", lateAuthority.transaction_input)).rejects.toThrow("shutdown is in progress")
+    expect(lateReplacementReads).toBe(0)
+    expect((server as any).publicCommanderRecoveryOperations.size).toBe(operationCountDuringDrain)
+
+    release()
+    await activeEntry.promise
+    await shutdown
+
+    expect(activeEntry.record.status).toBe("failed")
+    expect(activeEntry.record).not.toHaveProperty("recovery_attempt_id")
+    expect(activeEntry.record.error).toContain("cancelled during replacement authority recheck")
+    expect(transport.requests).toHaveLength(0)
+    const events = await server.eventStore.readAll()
+    const investigationEvents = events.filter((event) => event.investigation_id === authority.investigation_id)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_recovery_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_model_step_started")).toHaveLength(0)
+    expect(investigationEvents.filter((event) => event.kind === "runtime_commander_investigation_finished")).toHaveLength(0)
+    expect(events.filter((event) => String(event.kind).startsWith("external_api_request_"))).toHaveLength(0)
+    expect(events[events.length - 1]?.kind).toBe("runtime_shutdown")
+    const source = await originalRecoverySource(authority.investigation_id)
+    expect(source).toMatchObject({
+      latest_recovery_approval: { consumed: false },
+      consumed_recovery_approval: undefined,
+      current_recovery_attempt: undefined,
+      terminal: undefined,
+    })
+    const lateSource = await originalRecoverySource(lateAuthority.investigation_id)
+    expect(lateSource).toMatchObject({
+      latest_recovery_approval: { consumed: false },
+      consumed_recovery_approval: undefined,
+      current_recovery_attempt: undefined,
+      terminal: undefined,
+    })
+  })
+
   test("recovery transaction resolves uncertain provider policy without inferring or replaying the old request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2a-transaction-uncertain-"))
     await writeApprovedSpec(projectDir)
@@ -11014,7 +11987,27 @@ describe("Commander in-memory investigation controller", () => {
     expect(corruptSearch.result?.candidates).toEqual([])
     expect(JSON.stringify(search)).not.toContain("runtime_commander_investigation_started")
 
-    for (let index = 1; index <= 101; index += 1) {
+    await writeFile((server as unknown as { eventStore: EventStore }).eventStore.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_search_line\",\"journal_sequence\":0', { flag: "a" })
+    const afterTornSearch = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
+    expect(afterTornSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true }))
+  })
+
+  test("durable Commander operational memory search includes records beyond the public journal cap", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3a-operational-memory-cap-"))
+    await writeApprovedSpec(projectDir)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "bulk setup conclusion" }]),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const service = new CommanderInvestigationJournalService({ eventStore: server.eventStore })
+    const resultInput = baseInvestigation({ investigation_id: "inv_bulk_result_fixture", objective: "Build bulk search result fixture" })
+    const baseResult = await server.runCommanderInvestigationInMemory(resultInput)
+
+    const fixtures = await Promise.all(Array.from({ length: 101 }, async (_, offset) => {
+      const index = offset + 1
       const investigationId = `inv_bulk_${String(index).padStart(3, "0")}`
       const input = baseInvestigation({
         investigation_id: investigationId,
@@ -11022,7 +12015,12 @@ describe("Commander in-memory investigation controller", () => {
         session_id: "session_bulk_search",
       })
       const run = await service.createObserver(input)
+      return { index, investigationId, input, run }
+    }))
+    await Promise.all(fixtures.map(async ({ index, investigationId, input, run }) => {
       await run.observer.onStarted(durableStartedSnapshot(input, index + 20, investigationId) as Parameters<typeof run.observer.onStarted>[0])
+    }))
+    await Promise.all(fixtures.map(async ({ index, investigationId, run }) => {
       await service.finish(run, {
         ...baseResult,
         investigation_id: investigationId,
@@ -11031,16 +12029,12 @@ describe("Commander in-memory investigation controller", () => {
         evidence: [],
       })
       service.release(run)
-    }
+    }))
     const projectedBulk = await service.listForOperationalMemorySearch({ limit: 800, session_id: "session_bulk_search" })
     expect(projectedBulk).toHaveLength(101)
     expect(projectedBulk.map((record) => record.investigation_id)).toContain("inv_bulk_001")
     const oldestSearch = await server.searchCommanderOperationalMemory({ query: "inv_bulk_001", source_kinds: ["commander_investigation"], session_id: "session_bulk_search" })
     expect(oldestSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_bulk_001", pointer_only: true }))
-
-    await writeFile((server as unknown as { eventStore: EventStore }).eventStore.eventsPath, '{\"kind\":\"runtime_commander_investigation_started\",\"schema_version\":1,\"investigation_id\":\"inv_torn_search_line\",\"journal_sequence\":0', { flag: "a" })
-    const afterTornSearch = await server.searchCommanderOperationalMemory({ query: "durable investigation needle", source_kinds: ["commander_investigation"], session_id: "session_search" })
-    expect(afterTornSearch.result?.candidates).toContainEqual(expect.objectContaining({ source_kind: "commander_investigation", source_id: "inv_searchable", pointer_only: true }))
   })
 
   test("operational memory search finds Commander investigations under scan cap pressure", async () => {
@@ -11933,7 +12927,7 @@ async function prepareApprovedConfiguredRecovery(server: RuntimeServer, investig
   snapshot.budget.budget_hash = stableHash({ ...snapshot.budget, budget_hash: "" })
   await durableRun.observer.onStarted(snapshot)
   journal.release(durableRun)
-  await server.start()
+  if (!(server as any).started) await server.start()
   const recovery = await server.previewCommanderInvestigationRecovery({ investigation_id: investigationId })
   expect(recovery.blockers).toEqual([])
   expect(recovery.status).toBe("ready_for_approval")

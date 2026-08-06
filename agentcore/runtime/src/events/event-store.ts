@@ -11,10 +11,14 @@ function makeEventId(): string {
 
 export class EventStore {
   private appendQueue: Promise<unknown> = Promise.resolve()
+  private pendingAppends = 0
+  private appendGeneration = 0
 
   constructor(readonly eventsPath: string) {}
 
   async append(event: JsonlEvent): Promise<string> {
+    this.appendGeneration += 1
+    this.pendingAppends += 1
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
       const safeEvent = redactValue({
@@ -32,7 +36,7 @@ export class EventStore {
       return String(safeEvent.event_id)
     })
     this.appendQueue = operation.catch(() => undefined)
-    return operation
+    return operation.finally(() => { this.pendingAppends -= 1 })
   }
 
   async appendIfLatest(
@@ -40,9 +44,11 @@ export class EventStore {
     expectedLatestEventId: string | null,
     operational: { before_write?: () => void } = {},
   ): Promise<string> {
+    this.appendGeneration += 1
+    this.pendingAppends += 1
     const operation = this.appendQueue.then(async () => {
       await mkdir(dirname(this.eventsPath), { recursive: true })
-      const events = await this.readAll()
+      const events = await this.readAllSnapshot()
       const latest = events.at(-1)?.event_id ? String(events.at(-1)?.event_id) : null
       if (latest !== expectedLatestEventId) {
         throw new Error("event log changed before append")
@@ -63,18 +69,51 @@ export class EventStore {
       return String(safeEvent.event_id)
     })
     this.appendQueue = operation.catch(() => undefined)
-    return operation
+    return operation.finally(() => { this.pendingAppends -= 1 })
   }
 
   async readAll(): Promise<JsonlEvent[]> {
+    while (true) {
+      const generationBefore = this.appendGeneration
+      const appendPendingBefore = this.pendingAppends > 0
+      try {
+        return await this.readAllSnapshot()
+      } catch (error) {
+        const appendOverlapped = appendPendingBefore
+          || this.pendingAppends > 0
+          || this.appendGeneration !== generationBefore
+        if (!(error instanceof SyntaxError) || !appendOverlapped) throw error
+        await this.appendQueue
+      }
+    }
+  }
+
+  async readText(): Promise<string> {
+    while (true) {
+      const generationBefore = this.appendGeneration
+      const appendPendingBefore = this.pendingAppends > 0
+      const text = await this.readTextSnapshot()
+      const appendOverlapped = appendPendingBefore
+        || this.pendingAppends > 0
+        || this.appendGeneration !== generationBefore
+      if (!(appendOverlapped && text.length > 0 && !/\r?\n$/.test(text))) return text
+      await this.appendQueue
+    }
+  }
+
+  private async readAllSnapshot(): Promise<JsonlEvent[]> {
+    const text = await this.readTextSnapshot()
+    return text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as JsonlEvent)
+  }
+
+  private async readTextSnapshot(): Promise<string> {
     try {
-      const text = await readFile(this.eventsPath, "utf8")
-      return text
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as JsonlEvent)
+      return await readFile(this.eventsPath, "utf8")
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""
       throw error
     }
   }

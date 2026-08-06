@@ -137,3 +137,9 @@ unchanged. 9W3C owns public read, approval, execution, cancellation, and TUI
 controls. GitHub/MCP gateways, proposals, mission mutation, OpenCode actions,
 provider failover, automatic recovery, and exact transcript replay remain out of
 scope.
+
+9W3C now wraps this method in a bounded RuntimeServer-owned public operation.
+The operation is registered before asynchronous preflight, composes operator
+cancellation with this ADR's lifecycle signal, and is removed from the active
+map only after settlement. Cancellation remains an operational request and does
+not add an event or weaken post-boundary uncertainty rules.
