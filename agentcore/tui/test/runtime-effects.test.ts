@@ -7827,6 +7827,59 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("staged Commander recovery retains rejected cancellation when refresh finds a replacement operation", async () => {
+    const command = "/commander-recovery-cancel investigation_id=inv_cancel_rejected operation_id=operation_a approval_id=approval_a"
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "operation_identity_mismatch",
+            investigation_id: "inv_cancel_rejected",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: false,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") {
+          return {
+            found: true,
+            investigation_id: "inv_cancel_rejected",
+            active_operation: {
+              investigation_id: "inv_cancel_rejected",
+              operation_id: "operation_b",
+              approval_id: "approval_b",
+              recovery_attempt_id: "attempt_b",
+              status: "running",
+              cancellation_requested: false,
+            },
+          }
+        }
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const staged = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "main" }, runtime, {
+      type: "send-command",
+      command: "stage-command",
+      args: [command],
+    })
+
+    const executed = await applyRuntimeUiEffect(staged, runtime, { type: "send-command", command: "run-staged" })
+
+    expect(executed.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_b", approval_id: "approval_b" },
+      cancellation: null,
+      commandError: "recovery cancellation operation_identity_mismatch",
+    })
+    expect(executed.operatorActions).toMatchObject({
+      staged: { command },
+      lastResult: { ok: false, command, summary: "recovery cancellation operation_identity_mismatch" },
+      commandError: "recovery cancellation operation_identity_mismatch",
+    })
+  })
+
   test("Commander recovery refreshes settled cached operations before cancellation", async () => {
     const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
     let showCount = 0
