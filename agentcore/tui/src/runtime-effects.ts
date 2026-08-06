@@ -19187,6 +19187,9 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   const cancellationError = cancellationStatus === "not_active" || cancellationStatus === "operation_identity_mismatch"
     ? `recovery cancellation ${cancellationStatus}`
     : undefined
+  const commandError = cancellationError && refreshError
+    ? `${cancellationError}; recovery refresh failed: ${refreshError}`
+    : cancellationError ?? refreshError
   const durableAttemptObserved = shown?.approval_state === "consumed"
     || isRecord(shown?.latest_recovery_attempt)
     || typeof activeAttemptId === "string"
@@ -19194,8 +19197,8 @@ async function executeCommanderRecoveryCommand(state: UiState, runtime: RuntimeC
   return {
     ...state,
     commanderRecovery: commanderRecoveryTargetChanged(current, investigationId)
-      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError: cancellationError ?? refreshError }
-      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError: cancellationError ?? refreshError },
+      ? { ...current, selected: shown, preview: null, approval: null, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError }
+      : { ...current, selected: shown ?? current.selected, preview: durableAttemptObserved ? null : current.preview, approval: durableAttemptObserved ? null : current.approval, operation: updatedOperation, cancellation: displayedCancellation, pendingConfirmation: undefined, commandError },
   }
 }
 

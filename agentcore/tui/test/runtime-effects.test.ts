@@ -7880,6 +7880,59 @@ describe("runtime UI effects", () => {
     })
   })
 
+  test("staged Commander recovery reports rejected cancellation and failed authoritative refresh", async () => {
+    const command = "/commander-recovery-cancel investigation_id=inv_cancel_refresh_failed operation_id=operation_a approval_id=approval_a"
+    const runtime: RuntimeClient = {
+      async *stream(): AsyncIterable<RuntimeEvent> {},
+      async sendUserMessage(): Promise<void> {},
+      async sendCommand(): Promise<unknown> { return undefined },
+      async command(name: string): Promise<unknown> {
+        if (name === "runtime.cancel_commander_investigation_recovery") {
+          return {
+            status: "not_active",
+            investigation_id: "inv_cancel_refresh_failed",
+            operation_id: "operation_a",
+            approval_id: "approval_a",
+            cancellation_requested: false,
+          }
+        }
+        if (name === "runtime.get_commander_investigation_recovery") throw new Error("authoritative recovery refresh unavailable")
+        throw new Error(`unexpected command ${name}`)
+      },
+    }
+    const staged = await applyRuntimeUiEffect({
+      ...initialState("/tmp/demo"),
+      screen: "main",
+      commanderRecovery: {
+        records: [],
+        selected: { investigation_id: "inv_cancel_refresh_failed" },
+        preview: null,
+        approval: null,
+        operation: {
+          investigation_id: "inv_cancel_refresh_failed",
+          operation_id: "operation_a",
+          approval_id: "approval_a",
+          status: "running",
+        },
+        cancellation: null,
+      },
+    }, runtime, { type: "send-command", command: "stage-command", args: [command] })
+
+    const executed = await applyRuntimeUiEffect(staged, runtime, { type: "send-command", command: "run-staged" })
+
+    const error = "recovery cancellation not_active; recovery refresh failed: authoritative recovery refresh unavailable"
+    expect(executed.commanderRecovery).toMatchObject({
+      operation: { operation_id: "operation_a", status: "running" },
+      cancellation: { status: "not_active", operation_id: "operation_a" },
+      commandError: error,
+    })
+    expect(executed.operatorActions).toMatchObject({
+      staged: { command },
+      lastResult: { ok: false, command, summary: error },
+      commandError: error,
+    })
+  })
+
   test("Commander recovery refreshes settled cached operations before cancellation", async () => {
     const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
     let showCount = 0
