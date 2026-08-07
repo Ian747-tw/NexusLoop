@@ -2691,7 +2691,17 @@ export class RuntimeServer {
   }
 
   commanderToolCatalogSummary(): CommanderToolRegistrySummary {
-    return this.commanderToolService().summary()
+    return {
+      ...this.commanderToolService().summary(),
+      github_gateway: this.commanderGithubReadService()?.status() ?? {
+        status: "blocked",
+        repository_count: 0,
+        repositories: [],
+        blockers: ["GitHub read gateway is not configured"],
+        warnings: ["GitHub evidence is untrusted data and cannot alter runtime authority."],
+        generated_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString(),
+      },
+    }
   }
 
   listCommanderTools(input: Parameters<CommanderToolService["list"]>[0] = {}): CommanderToolDescriptorSummary[] {

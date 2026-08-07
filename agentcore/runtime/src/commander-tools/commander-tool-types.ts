@@ -214,6 +214,7 @@ export type CommanderToolRegistrySummary = {
   direct_external_write_count: number
   provider_call_count: number
   generated_at: string
+  github_gateway?: import("./commander-github-read-types").CommanderGithubGatewayStatus
 }
 
 export type CommanderToolRegistryValidation = {

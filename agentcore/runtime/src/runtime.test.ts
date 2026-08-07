@@ -24400,7 +24400,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const validation = await server.command("runtime.validate_commander_tool_registry") as Record<string, any>
     expect(validation).toMatchObject({ status: "ready", unsafe_exposure_count: 0, authority_mismatch_count: 0 })
     const summary = await server.command("runtime.commander_tool_catalog_summary") as Record<string, any>
-    expect(summary).toMatchObject({ direct_external_write_count: 0, provider_call_count: 0 })
+    expect(summary).toMatchObject({ direct_external_write_count: 0, provider_call_count: 0, github_gateway: { status: "blocked", repository_count: 0 } })
     expect(summary.implemented_tools).toBeGreaterThan(10)
     const memoryTools = await server.command("runtime.list_commander_tools", { namespace: "memory" }) as Array<Record<string, any>>
     expect(memoryTools.map((tool) => tool.tool_id)).toContain("memory.search")
@@ -24489,6 +24489,22 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.search_commander_tools", {})).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["commander tool search requires query"]) })
     await expect(server.command("runtime.get_commander_tool", { toolId: "provider.call" })).rejects.toThrow("not found")
     await expect(server.command("runtime.preview_commander_tool_profile", { phase: "unknown" })).rejects.toThrow("unsupported")
+  })
+
+  test("Commander tool catalog exposes bounded GitHub gateway readiness without transport details", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }],
+    })
+    const summary = await server.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(summary.github_gateway).toMatchObject({ status: "ready", connector_id: "github-read-test", repositories: ["ian747-tw/nexusloop"] })
+    expect(JSON.stringify(summary.github_gateway)).not.toContain("api.example.test")
+    await server.shutdown()
   })
 
   test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
