@@ -182,8 +182,8 @@ function requestedReference(toolId: CommanderGithubReadToolId, args: Record<stri
   return undefined
 }
 
-function normalize(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, responses: unknown[], config: { max_items_per_call: number; max_normalized_bytes: number }): Normalized {
-  const evidence = normalizeOperation(toolId, responses, config.max_items_per_call)
+function normalize(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, responses: unknown[], config: { max_items_per_call: number; max_normalized_bytes: number; max_pages_per_call: number }): Normalized {
+  const evidence = normalizeOperation(toolId, responses, config.max_items_per_call, config.max_pages_per_call)
   const result = { repository, operation: toolId, requested_ref: requestedRef, evidence }
   const encoded = JSON.stringify(redactValue(result))
   if (Buffer.byteLength(encoded) > config.max_normalized_bytes) throw new Error("GitHub normalized evidence exceeds the fixed gateway byte ceiling")
@@ -191,7 +191,7 @@ function normalize(toolId: CommanderGithubReadToolId, repository: string, reques
   return { result, truncated: evidence.truncated === true, item_count: items, normalized_bytes: Buffer.byteLength(encoded), observed_commit_sha: typeof evidence.observed_commit_sha === "string" ? evidence.observed_commit_sha : undefined, page_count: responses.length }
 }
 
-function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknown[], itemCap: number): Record<string, unknown> {
+function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknown[], itemCap: number, pageCap: number): Record<string, unknown> {
   const first = responses[0]
   if (toolId === "github.repository_get") { const object = requiredObject(first); return { name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
   if (toolId === "github.commit_get") { const object = requiredObject(first); return { sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")), parent_shas: arrayOf(object.parents).slice(0, 8).map((item) => safeSha(requiredObject(item).sha)).filter(Boolean), truncated: false } }
@@ -199,19 +199,22 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   if (toolId === "github.pull_request_get") {
     const object = requiredObject(first)
     const files = boundedItems(responses.slice(1).flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { filename: safeText(value.filename, 500), status: safeText(value.status, 64), additions: safeNonNegative(value.additions), deletions: safeNonNegative(value.deletions), changes: safeNonNegative(value.changes), sha: safeSha(value.sha) } }), itemCap)
-    return { number: safePositive(object.number), title_preview: safeText(object.title, 500), state: safeText(object.state, 32), draft: object.draft === true, updated_at: safeTimestamp(object.updated_at), head_sha: safeSha(nested(object, "head", "sha")), base_sha: safeSha(nested(object, "base", "sha")), changed_files: safePositive(object.changed_files), labels: labels(object), files: files.items, truncated: files.truncated }
+    const paginationTruncated = responses.length - 1 >= pageCap && arrayOf(responses.at(-1)).length >= PAGE_SIZE
+    return { number: safePositive(object.number), title_preview: safeText(object.title, 500), state: safeText(object.state, 32), draft: object.draft === true, updated_at: safeTimestamp(object.updated_at), head_sha: safeSha(nested(object, "head", "sha")), base_sha: safeSha(nested(object, "base", "sha")), changed_files: safePositive(object.changed_files), labels: labels(object), files: files.items, truncated: files.truncated || paginationTruncated }
   }
   if (toolId === "github.commit_checks") {
     const pages = responses.map(requiredObject)
     const head = pages[0]
     const checks = boundedItems(pages.flatMap((page) => arrayOf(page.check_runs)).map((item) => { const value = requiredObject(item); return { name: safeText(value.name, 240), status: safeText(value.status, 64), conclusion: safeText(value.conclusion, 64), started_at: safeTimestamp(value.started_at), completed_at: safeTimestamp(value.completed_at) } }), itemCap)
-    return { commit_sha: safeSha(head.head_sha), observed_commit_sha: safeSha(head.head_sha), total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || pages.length > 1 && checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
+    const paginationTruncated = pages.length >= pageCap && arrayOf(pages.at(-1)?.check_runs).length >= PAGE_SIZE
+    return { commit_sha: safeSha(head.head_sha), observed_commit_sha: safeSha(head.head_sha), total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
   }
   const reviewPages = responses.slice(0, -1)
   const reviews = boundedItems(reviewPages.flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { id: safePositive(value.id), state: safeText(value.state, 64), user_login: safeText(nested(value, "user", "login"), 120), submitted_at: safeTimestamp(value.submitted_at), body_preview: safeText(value.body, 600), commit_id: safeSha(value.commit_id) } }), itemCap)
   const graph = requiredObject(responses[responses.length - 1])
   const threads = threadSummary(graph, itemCap)
-  return { items: reviews.items, thread_state: threads, truncated: reviews.truncated || threads.truncated || responses.length > 2 }
+  const paginationTruncated = reviewPages.length >= pageCap && arrayOf(reviewPages.at(-1)).length >= PAGE_SIZE
+  return { items: reviews.items, thread_state: threads, truncated: reviews.truncated || threads.truncated || paginationTruncated }
 }
 
 function threadSummary(raw: Record<string, unknown>, cap: number): Record<string, unknown> {
@@ -242,6 +245,7 @@ function validateGithubConnector(connector: ExternalApiConnector, connectorId: s
   const localTest = connector.allow_local_http === true && base.protocol === "http:" && base.hostname.endsWith(".test")
   if (!production && !localTest) throw new Error("GitHub gateway connector must use the fixed GitHub API origin")
   if (!connector.allowed_methods.includes("GET") || !connector.allowed_methods.includes("POST")) throw new Error("GitHub gateway connector must allow fixed GET and review-thread POST operations")
+  if (production && (connector.credential_refs ?? []).length === 0) throw new Error("GitHub gateway production connector must use runtime-owned credential references")
 }
 function canonicalRepository(value: string): string { if (value !== value.trim() || !REPOSITORY.test(value) || value !== value.toLowerCase()) throw new Error("repository must be an exact lowercase owner/repository identity"); return value }
 function fullSha(value: unknown): string { if (typeof value !== "string" || !FULL_SHA.test(value)) throw new Error("commit_sha must be a lowercase full 40-character SHA"); return value }
