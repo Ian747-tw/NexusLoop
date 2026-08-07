@@ -244,6 +244,12 @@ export class CommanderInvestigationRecoveryService {
     const current = this.options.descriptors.find((tool) => tool.tool_id === stored.tool_id)
     const bindingPresent = this.options.boundToolIds.includes(stored.tool_id)
     const fixedGitException = stored.tool_id === "repo.git_status" || stored.tool_id === "repo.git_diff"
+    const githubReadException = current?.namespace === "github_read"
+      && current.side_effect_class === "external_read"
+      && current.execution_backend === "runtime_service"
+      && current.requires_network === true
+      && current.requires_credentials === true
+      && current.requires_run_lock === true
     const implemented = current?.availability === "implemented_read_surface"
     const allowedInPhase = Boolean(current && isToolAllowedInPhase(current, phase))
     const authorityMatch = Boolean(current && (current.authority_id ?? "") === stored.authority_id)
@@ -266,7 +272,7 @@ export class CommanderInvestigationRecoveryService {
       stored.requires_credentials === current.requires_credentials &&
       stored.requires_approval === current.requires_approval &&
       stored.requires_run_lock === current.requires_run_lock)
-    const safeReadAuthority = Boolean(current && current.risk === "safe_read" && (current.side_effect_class === "none" || current.side_effect_class === "internal_read") && !current.mutates_events && !current.calls_provider && !current.requires_network && !current.requires_credentials && !current.requires_approval && !current.requires_run_lock && (!current.creates_external_process || fixedGitException && current.execution_backend === "restricted_git_read" && current.process_policy === "fixed_git_read_only"))
+    const safeReadAuthority = Boolean(current && current.risk === "safe_read" && !current.mutates_events && !current.calls_provider && !current.requires_approval && ((current.side_effect_class === "none" || current.side_effect_class === "internal_read") && !current.requires_network && !current.requires_credentials && !current.requires_run_lock || githubReadException) && (!current.creates_external_process || fixedGitException && current.execution_backend === "restricted_git_read" && current.process_policy === "fixed_git_read_only"))
     const blockers: string[] = []
     if (!current) blockers.push(`stored loaded tool ${stored.tool_id} no longer has a descriptor`)
     if (!bindingPresent) blockers.push(`stored loaded tool ${stored.tool_id} is not in the current Commander binding allowlist`)

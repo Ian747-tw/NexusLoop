@@ -1649,14 +1649,20 @@ function isSafeRecoveryTool(tool: CommanderToolDescriptor): boolean {
   const fixedGitRead = (tool.tool_id === "repo.git_status" || tool.tool_id === "repo.git_diff")
     && tool.execution_backend === "restricted_git_read"
     && tool.process_policy === "fixed_git_read_only"
+  const githubRead = tool.namespace === "github_read"
+    && tool.side_effect_class === "external_read"
+    && tool.execution_backend === "runtime_service"
+    && tool.requires_network
+    && tool.requires_credentials
+    && tool.requires_run_lock
   return tool.risk === "safe_read"
-    && (tool.side_effect_class === "none" || tool.side_effect_class === "internal_read")
+    && ((tool.side_effect_class === "none" || tool.side_effect_class === "internal_read") || githubRead)
     && !tool.calls_provider
     && !tool.mutates_events
-    && !tool.requires_network
-    && !tool.requires_credentials
+    && (githubRead || !tool.requires_network)
+    && (githubRead || !tool.requires_credentials)
     && !tool.requires_approval
-    && !tool.requires_run_lock
+    && (githubRead || !tool.requires_run_lock)
     && (!tool.creates_external_process || fixedGitRead)
 }
 

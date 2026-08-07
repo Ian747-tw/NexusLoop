@@ -5663,6 +5663,7 @@ export class RuntimeServer {
       supports_local_execution: config.supports_local_execution,
       supports_streaming: false as const,
       connector_policy_hash: connectorPolicyHash,
+      github_gateway_policy_hash: this.commanderGithubReadService()?.status().transport_policy_hash,
       capability_envelope_hash: capabilityEnvelopeHash,
       execution_envelope_hash: "",
     }

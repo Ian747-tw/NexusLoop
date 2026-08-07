@@ -227,6 +227,7 @@ export type CommanderInvestigationRecoveryExecutionEnvelope = {
   supports_local_execution: boolean | "unknown"
   supports_streaming: false
   connector_policy_hash: string
+  github_gateway_policy_hash?: string
   capability_envelope_hash: string
   execution_envelope_hash: string
 }

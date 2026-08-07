@@ -35,7 +35,7 @@ export type CommanderGithubProvenance = {
 }
 
 export type CommanderGithubReadResult = {
-  status: CommanderReadStatus
+  status: CommanderReadStatus | "cancelled"
   tool_id: CommanderGithubReadToolId
   repository?: string
   result: Record<string, unknown> | null
