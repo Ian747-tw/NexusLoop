@@ -467,13 +467,17 @@ export class CommanderInvestigationController {
             abort_signal: toolDeadline.signal,
             source_model_request_id: request.request_id,
             source_model_result_hash: modelResult.result_hash,
+            remaining_tool_call_budget: budget.max_tool_calls - workingSet.tool_call_count,
           }).finally(toolDeadline.cancel)
           toolDeadlineExpired = toolDeadline.expired()
         }
         if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during tool execution"], execution.warnings)
         if (toolDeadlineExpired) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings)
         executions.push(execution)
-        workingSet.tool_call_count += 1
+        const externalRequestCount = execution.external_api_audit_event_count ?? 0
+        const toolBudgetCharge = externalRequestCount > 0 ? externalRequestCount : 1
+        if (toolBudgetCharge > budget.max_tool_calls - workingSet.tool_call_count) return finish("budget_exhausted", "max_tool_calls", ["GitHub external request count exceeded remaining max_tool_calls budget"])
+        workingSet.tool_call_count += toolBudgetCharge
         if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
         const resultBytesCap = perToolResultCap(execution.max_output_bytes, context.input_bytes + currentTurnToolResultBytes, budget, modelResult.tool_calls.length - executions.length + 1)
         const toolMessage = toCommanderToolResultMessage(execution, resultBytesCap)

@@ -13,6 +13,12 @@ export const COMMANDER_BOUND_TOOL_IDS = [
   "repo.read_lines",
   "repo.git_status",
   "repo.git_diff",
+  "github.repository_get",
+  "github.commit_get",
+  "github.pull_request_get",
+  "github.issue_get",
+  "github.commit_checks",
+  "github.pull_request_reviews",
 ] as const
 
 export type CommanderBoundToolId = typeof COMMANDER_BOUND_TOOL_IDS[number]
@@ -38,6 +44,12 @@ export function createCommanderToolBindingRegistry(deps: CommanderToolBindingDep
     make("repo.read_lines", (_ctx, args) => deps.repoReadService.readLines(args)),
     make("repo.git_status", () => deps.repoReadService.gitStatus()),
     make("repo.git_diff", (_ctx, args) => deps.repoReadService.gitDiff(args)),
+    make("github.repository_get", (ctx, args) => github(deps, "github.repository_get", args, ctx.abort_signal, ctx.remaining_tool_call_budget)),
+    make("github.commit_get", (ctx, args) => github(deps, "github.commit_get", args, ctx.abort_signal, ctx.remaining_tool_call_budget)),
+    make("github.pull_request_get", (ctx, args) => github(deps, "github.pull_request_get", args, ctx.abort_signal, ctx.remaining_tool_call_budget)),
+    make("github.issue_get", (ctx, args) => github(deps, "github.issue_get", args, ctx.abort_signal, ctx.remaining_tool_call_budget)),
+    make("github.commit_checks", (ctx, args) => github(deps, "github.commit_checks", args, ctx.abort_signal, ctx.remaining_tool_call_budget)),
+    make("github.pull_request_reviews", (ctx, args) => github(deps, "github.pull_request_reviews", args, ctx.abort_signal, ctx.remaining_tool_call_budget)),
   ]
   const duplicates = duplicateIds(bindings.map((item) => item.tool_id))
   return {
@@ -49,6 +61,11 @@ export function createCommanderToolBindingRegistry(deps: CommanderToolBindingDep
       tool_ids: bindings.map((item) => item.tool_id),
     },
   }
+}
+
+function github(deps: CommanderToolBindingDependencies, toolId: Extract<CommanderBoundToolId, `github.${string}`>, args: Record<string, unknown>, signal?: AbortSignal, requestBudget?: number): Promise<unknown> {
+  if (!deps.githubReadService) return Promise.resolve({ status: "blocked", blockers: ["GitHub read gateway is not configured"], warnings: [] })
+  return deps.githubReadService.execute(toolId, args, signal, requestBudget)
 }
 
 function memorySearchArgs(args: Record<string, unknown>): Record<string, unknown> {

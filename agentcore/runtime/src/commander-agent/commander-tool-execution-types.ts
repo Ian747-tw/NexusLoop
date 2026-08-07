@@ -15,6 +15,7 @@ export type CommanderToolExecutionRequest = {
   abort_signal?: AbortSignal
   source_model_request_id?: string
   source_model_result_hash?: string
+  remaining_tool_call_budget?: number
 }
 
 export type CommanderToolExecutionResult = {
@@ -39,7 +40,9 @@ export type CommanderToolExecutionResult = {
   events_appended: false
   provider_called: false
   mcp_called: false
-  network_called: false
+  network_called: boolean
+  external_api_audit_event_count?: number
+  external_api_audit_request_ids?: string[]
   research_db_written: false
   mission_mutated: false
   proposal_mutated: false
@@ -57,6 +60,7 @@ export type CommanderToolBindingContext = {
   requested_by: string
   call_id: string
   abort_signal?: AbortSignal
+  remaining_tool_call_budget?: number
   now: () => Date
 }
 
@@ -97,6 +101,9 @@ export type CommanderToolBindingDependencies = {
     readLines(input?: Record<string, unknown>): Promise<unknown>
     gitStatus(): Promise<unknown>
     gitDiff(input?: Record<string, unknown>): Promise<unknown>
+  }
+  githubReadService?: {
+    execute(toolId: "github.repository_get" | "github.commit_get" | "github.pull_request_get" | "github.issue_get" | "github.commit_checks" | "github.pull_request_reviews", args: Record<string, unknown>, signal?: AbortSignal, requestBudget?: number): Promise<unknown>
   }
 }
 

@@ -33,6 +33,9 @@ import type { CommanderTargetContext } from "./missions/commander-target-context
 import type { ExternalApiAuditRecord, ExternalApiConnector, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "./external-api/api-connector-types"
 import { ExternalApiConnectorRegistry } from "./external-api/api-connector-registry"
 import { ExternalApiRequestService } from "./external-api/api-request-service"
+import { CommanderGithubReadService } from "./commander-tools/commander-github-read-service"
+import { readCommanderGithubGatewayConfigFromEnv, validateCommanderGithubGatewayConfig } from "./commander-tools/commander-github-read-config"
+import type { CommanderGithubGatewayConfig } from "./commander-tools/commander-github-read-types"
 import { ExternalApiResearchIngestionService, type ExternalApiResearchDbWriter } from "./external-api/api-research-ingestion-service"
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "./external-api/api-research-ingestion-types"
 import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
@@ -333,6 +336,7 @@ export interface RuntimeServerOptions {
   commanderModelStepAdapter?: CommanderModelStepAdapter
   commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
+  commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
 }
 
 export interface RuntimeResearchDbReader {
@@ -427,6 +431,7 @@ export class RuntimeServer {
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
   private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
+  private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
@@ -454,6 +459,7 @@ export class RuntimeServer {
   private commanderToolServiceInstance: CommanderToolService | null = null
   private commanderOperationalMemorySearchServiceInstance: CommanderOperationalMemorySearchService | null = null
   private commanderRepoReadServiceInstance: CommanderRepoReadService | null = null
+  private commanderGithubReadServiceInstance: CommanderGithubReadService | null = null
   private commanderToolBindingRegistryInstance: CommanderToolBindingRegistry | null = null
   private commanderToolExecutorInstance: CommanderToolExecutor | null = null
   private commanderInvestigationBootstrapServiceInstance: CommanderInvestigationBootstrapService | null = null
@@ -613,6 +619,9 @@ export class RuntimeServer {
     this.commanderQueueNow = options.commanderQueueNow
     this.commanderModelStepAdapter = options.commanderModelStepAdapter ?? this.createConfiguredCommanderModelStepAdapter()
     this.commanderInvestigationControlGate = options.commanderInvestigationControlGate
+    this.commanderGithubGatewayConfig = options.commanderGithubGatewayConfig
+      ? validateCommanderGithubGatewayConfig(options.commanderGithubGatewayConfig)
+      : readCommanderGithubGatewayConfigFromEnv(this.externalApiEnv)
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
       ok: this.researchProjectionMode === "disabled",
@@ -5355,6 +5364,19 @@ export class RuntimeServer {
     return this.commanderRepoReadServiceInstance
   }
 
+  private commanderGithubReadService(): CommanderGithubReadService | undefined {
+    if (!this.commanderGithubGatewayConfig) return undefined
+    const connector = this.externalApiConnectorRegistry.get(this.commanderGithubGatewayConfig.connector_id)
+    if (!connector) throw new Error("configured Commander GitHub gateway connector was not found")
+    this.commanderGithubReadServiceInstance ??= new CommanderGithubReadService({
+      requestService: this.externalApiRequestService(),
+      connector,
+      config: this.commanderGithubGatewayConfig,
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderGithubReadServiceInstance
+  }
+
   private commanderToolBindingRegistry(): CommanderToolBindingRegistry {
     this.commanderToolBindingRegistryInstance ??= createCommanderToolBindingRegistry({
       commanderToolService: this.commanderToolService(),
@@ -5362,6 +5384,7 @@ export class RuntimeServer {
       researchMemoryService: this.researchMemoryService(),
       operationalMemorySearchService: this.commanderOperationalMemorySearchService(),
       repoReadService: this.commanderRepoReadService(),
+      githubReadService: this.commanderGithubReadService(),
     })
     return this.commanderToolBindingRegistryInstance
   }
