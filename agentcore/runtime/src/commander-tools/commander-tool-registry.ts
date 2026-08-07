@@ -58,11 +58,12 @@ type ToolSpec = Omit<CommanderToolDescriptor, "authority_id" | "risk" | "side_ef
 
 function makeTool(spec: ToolSpec): CommanderToolDescriptor {
   const authority = spec.authority ?? (spec.slash_command ? findAuthority(spec.slash_command) : undefined)
+  const { authority: _internalAuthority, ...descriptorSpec } = spec
   const input = spec.input_schema ?? emptySchema
   const output = spec.output_schema ?? schema({ status: stringField("Bounded command result status", 64) }, ["status"])
   const schemaBytes = bytes(input) + bytes(output)
   return {
-    ...spec,
+    ...descriptorSpec,
     authority_id: authority?.authority_id,
     runtime_command: spec.runtime_command ?? authority?.runtime_command,
     risk: spec.risk ?? authority?.risk ?? "safe_read",
