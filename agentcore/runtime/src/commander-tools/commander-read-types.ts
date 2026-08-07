@@ -11,6 +11,7 @@ export type CommanderReadSourceKind =
   | "git_worktree"
   | "git_diff"
   | "git_commit"
+  | "github_read"
   | "test_manifest"
   | "dependency_manifest"
 
