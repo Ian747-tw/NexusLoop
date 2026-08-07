@@ -1,5 +1,6 @@
 import { redactText, redactValue } from "../security/redaction"
 import type { CommanderToolDescriptor, CommanderToolPhase } from "../commander-tools/commander-tool-types"
+import { COMMANDER_GITHUB_READ_TOOL_IDS } from "../commander-tools/commander-github-read-types"
 import { COMMANDER_TOOL_PHASES } from "../commander-tools/commander-tool-registry"
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
 import { stableHash } from "./commander-model-schema"
@@ -244,7 +245,9 @@ export class CommanderInvestigationRecoveryService {
     const current = this.options.descriptors.find((tool) => tool.tool_id === stored.tool_id)
     const bindingPresent = this.options.boundToolIds.includes(stored.tool_id)
     const fixedGitException = stored.tool_id === "repo.git_status" || stored.tool_id === "repo.git_diff"
-    const githubReadException = current?.namespace === "github_read"
+    const githubReadException = current !== undefined
+      && COMMANDER_GITHUB_READ_TOOL_IDS.includes(current.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number])
+      && current.namespace === "github_read"
       && current.side_effect_class === "external_read"
       && current.execution_backend === "runtime_service"
       && current.requires_network === true

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { redactText, redactValue } from "../security/redaction"
 import { COMMANDER_TOOL_PHASES, COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
+import { COMMANDER_GITHUB_READ_TOOL_IDS } from "../commander-tools/commander-github-read-types"
 import type { CommanderEvidenceCard } from "../commander-tools/commander-read-types"
 import type { CommanderToolDescriptor, CommanderToolPhase, CommanderToolSchemaMetadata } from "../commander-tools/commander-tool-types"
 import { commanderProviderVisibleDescriptionHash, commanderToolSchemaFromDescriptor, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
@@ -1649,7 +1650,8 @@ function isSafeRecoveryTool(tool: CommanderToolDescriptor): boolean {
   const fixedGitRead = (tool.tool_id === "repo.git_status" || tool.tool_id === "repo.git_diff")
     && tool.execution_backend === "restricted_git_read"
     && tool.process_policy === "fixed_git_read_only"
-  const githubRead = tool.namespace === "github_read"
+  const githubRead = COMMANDER_GITHUB_READ_TOOL_IDS.includes(tool.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number])
+    && tool.namespace === "github_read"
     && tool.side_effect_class === "external_read"
     && tool.execution_backend === "runtime_service"
     && tool.requires_network
