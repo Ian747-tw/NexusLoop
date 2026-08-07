@@ -438,6 +438,7 @@ export type CommanderInvestigationRecoveryServiceOptions = {
   boundToolIds: readonly string[]
   providerReadiness(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationProviderReadiness
   providerExecutionEnvelope?(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationRecoveryExecutionEnvelope | undefined
+  githubGatewayStatus?(): { status: "ready" | "blocked"; transport_policy_hash?: string; blockers: string[] }
   modelCapability(input: { provider_kind?: string; model_id?: string; role?: string }): import("../context/model-capability-types").ModelCapability
   currentProfile(input: { phase?: string }): import("../commander-tools/commander-tool-types").CommanderToolProfile
   currentContextBudget(input: { phase: CommanderToolPhase; provider_kind: string; model_id: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderInvestigationRecoveryCurrentContextBudget>

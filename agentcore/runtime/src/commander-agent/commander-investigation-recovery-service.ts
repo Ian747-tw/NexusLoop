@@ -180,15 +180,20 @@ export class CommanderInvestigationRecoveryService {
 
   private toolCompatibility(stored: CommanderInvestigationLoadedToolRef[], phase: CommanderToolPhase): CommanderInvestigationRecoveryToolCompatibilitySummary {
     const tools = stored.map((ref) => this.oneToolCompatibility(ref, phase))
+    const githubGateway = this.options.githubGatewayStatus?.()
+    const githubGatewayBlockers = stored.some((tool) => COMMANDER_GITHUB_READ_TOOL_IDS.includes(tool.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number])) && githubGateway?.status !== "ready"
+      ? ["stored GitHub read tool is no longer executable because the bounded gateway is not ready"]
+      : []
     const currentBoundToolRefs = this.currentBoundToolRefs(phase)
     const storedSubset = tools.every((tool) => tool.binding_present)
     const boundRefBlockers = currentBoundToolRefs.filter((tool) => !tool.descriptor_present).map((tool) => `current Commander binding ${tool.tool_id} no longer has a descriptor`)
-    const blockers = [...tools.flatMap((tool) => tool.blockers), ...boundRefBlockers].slice(0, 24)
+    const blockers = [...tools.flatMap((tool) => tool.blockers), ...boundRefBlockers, ...githubGatewayBlockers].slice(0, 24)
     const warnings = tools.flatMap((tool) => tool.warnings).slice(0, 16)
     const summary = {
       tools,
       binding_count: this.options.boundToolIds.length,
       current_bound_tool_refs: currentBoundToolRefs,
+      github_gateway_policy_hash: githubGateway?.transport_policy_hash,
       stored_subset_of_current_bindings: storedSubset,
       compatible: blockers.length === 0 && tools.every((tool) => tool.compatible),
       blockers,

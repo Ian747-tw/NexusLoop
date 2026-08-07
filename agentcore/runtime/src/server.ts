@@ -5471,6 +5471,7 @@ export class RuntimeServer {
       boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
       providerReadiness: (input) => this.previewCommanderInvestigationProviderReadiness(input),
       providerExecutionEnvelope: (input) => this.commanderInvestigationRecoveryExecutionEnvelope(input),
+      githubGatewayStatus: () => this.commanderGithubReadService()?.status() ?? { status: "blocked", blockers: ["GitHub read gateway is not configured"] },
       modelCapability: (input) => this.modelCapabilityRegistry.get(input),
       currentProfile: (input) => this.commanderToolService().profile(input),
       currentContextBudget: async (input) => {
