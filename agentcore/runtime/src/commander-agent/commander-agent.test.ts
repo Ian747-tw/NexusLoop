@@ -9336,6 +9336,7 @@ describe("Commander in-memory investigation controller", () => {
 		      stop_reason: "adapter_not_configured",
 		      model_turn_count: 1,
 		      provider_request_count: 0,
+		      external_api_audit_events_appended: checkpoint!.external_api_audit_count,
 		      events_appended: false,
 		    })
 		    const approvalInput = {
@@ -9775,6 +9776,7 @@ describe("Commander in-memory investigation controller", () => {
     })
 
     expect(result).toMatchObject({ status: "completed", execution_transport: "injected_scripted_adapter", provider_called: false, network_called: false, external_api_audit_events_appended: 0, terminal_event_count: 1, pending_boundary_disposition: "not_applicable" })
+    expect(result.controller_result?.external_api_audit_events_appended).toBe(1)
     expect(result.controller_result?.provider_audit).toMatchObject({ provider_request_count: 2, external_api_audit_event_count: 1, all_provider_requests_audited: false })
     expect(adapter.request_summaries).toHaveLength(1)
     expect((await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("external_api_request_")).length).toBe(auditEventsBefore)
@@ -10299,7 +10301,7 @@ describe("Commander in-memory investigation controller", () => {
     const result = await execution
     await shutdown
 
-    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled" })
+    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", external_api_audit_events_appended: 3, events_appended: true })
     expect(urls).toHaveLength(3)
     expect(urls[2]).toBe("http://api.github.test/repos/ian747-tw/nexusloop")
     const events = await server.eventStore.readAll()

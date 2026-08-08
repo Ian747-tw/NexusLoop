@@ -163,7 +163,7 @@ export class CommanderInvestigationController {
       : (redactValue(checkpoint.working_set) as CommanderInvestigationWorkingSet)
     const authoritativeProviderRequests = checkpoint.provider_request_count
     const finishAfterJournalLookup = (blocker: string, bootstrap: { bootstrap_id: string; bootstrap_hash: string } = minimalBootstrap(input), loadedTools: CommanderToolDescriptor[] = []) =>
-      this.finish(input, authoritativeSource.investigation_id, "blocked", "controller_error", bootstrap, checkpoint.budget, checkpoint.tool_protocol, authoritativeTurns, authoritativeWorkingSet, authoritativeProviderRequests, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+      this.finish(input, authoritativeSource.investigation_id, "blocked", "controller_error", bootstrap, checkpoint.budget, checkpoint.tool_protocol, authoritativeTurns, authoritativeWorkingSet, authoritativeProviderRequests, loadedTools, [blocker], [], resultStarted, undefined, elapsedWallMs(wallStartedMs), checkpoint.external_api_audit_count)
     if (seed.elapsed_active_ms_before !== authoritativeElapsedBefore || seed.effective_budget.consumed.elapsed_active_ms !== authoritativeElapsedBefore) {
       return finishAfterJournalLookup("recovery continuation checkpoint elapsed active time did not verify")
     }
@@ -195,10 +195,10 @@ export class CommanderInvestigationController {
     const latestToolResults = prepared.latestToolResults!
     const providerRequests = authoritativeProviderRequests
     const recentResults = new Map(workingSet.recent_result_signatures.map((item) => [item.signature_hash, { count: item.count, last_turn_index: item.last_turn_index }]))
-    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (authoritativeBudget.budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
-    if (authoritativeBudget.budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs))
+    if (!this.options.modelAdapter) return this.finish(input, seed.investigation_id, "blocked", "adapter_not_configured", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["Commander investigation model adapter is not configured"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs), checkpoint.external_api_audit_count)
+    if (options.abort_signal?.aborted) return this.finish(input, seed.investigation_id, "cancelled", "caller_cancelled", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["caller aborted recovered investigation"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs), checkpoint.external_api_audit_count)
+    if (authoritativeBudget.budget.remaining.wall_time_ms <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "wall_time_exhausted", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation wall-time budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs), checkpoint.external_api_audit_count)
+    if (authoritativeBudget.budget.remaining.model_turns <= 0) return this.finish(input, seed.investigation_id, "budget_exhausted", "max_model_turns", currentBootstrap, budget, seed.tool_protocol, turns, workingSet, providerRequests, Array.from(loaded.values()), ["recovery continuation model-turn budget exhausted"], [], resultStarted, undefined, elapsedWallMs(wallStartedMs), checkpoint.external_api_audit_count)
     return this.executePreparedInvestigation({
       mode: "recovery",
       input,
@@ -477,11 +477,11 @@ export class CommanderInvestigationController {
           }).finally(toolDeadline.cancel)
           toolDeadlineExpired = toolDeadline.expired()
         }
+        const externalRequestCount = execution.external_api_audit_event_count ?? 0
+        externalApiAudits += externalRequestCount
         if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during tool execution"], execution.warnings)
         if (toolDeadlineExpired) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings)
         executions.push(execution)
-        const externalRequestCount = execution.external_api_audit_event_count ?? 0
-        externalApiAudits += externalRequestCount
         const toolBudgetCharge = externalRequestCount > 0 ? externalRequestCount : 1
         if (toolBudgetCharge > budget.max_tool_calls - workingSet.tool_call_count) return finish("budget_exhausted", "max_tool_calls", ["GitHub external request count exceeded remaining max_tool_calls budget"])
         workingSet.tool_call_count += toolBudgetCharge
