@@ -237,6 +237,12 @@ function commanderToolLines(state: UiState): string[] {
   }
   if (tools.summary) {
     out.push(`  summary total=${tools.summary.total_tools} implemented=${tools.summary.implemented_tools} future=${tools.summary.future_tools} blocked=${tools.summary.blocked_tools} direct_external_write=${tools.summary.direct_external_write_count} provider_call=${tools.summary.provider_call_count}`)
+    const gateway = tools.summary.github_gateway
+    if (gateway) {
+      out.push(`  github_gateway status=${gateway.status} repositories=${gateway.repository_count} allowlist=${arraySummary(gateway.repositories)} policy_hash=${preview(redactText(String(gateway.transport_policy_hash ?? "none")))}`)
+      for (const blocker of gateway.blockers.slice(0, 4)) out.push(`  github_gateway_blocker=${preview(redactText(blocker))}`)
+      for (const warning of gateway.warnings.slice(0, 4)) out.push(`  github_gateway_warning=${preview(redactText(warning))}`)
+    }
   } else out.push("  summary=none")
   if (tools.records.length > 0) {
     out.push("  records")

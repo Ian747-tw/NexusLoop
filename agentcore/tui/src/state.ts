@@ -791,6 +791,15 @@ export type CommanderToolRegistrySummaryState = Record<string, unknown> & {
   blocked_tools: number
   direct_external_write_count: number
   provider_call_count: number
+  github_gateway?: {
+    status: "ready" | "blocked"
+    connector_id?: string
+    repository_count: number
+    repositories: string[]
+    transport_policy_hash?: string
+    blockers: string[]
+    warnings: string[]
+  }
 }
 
 export type CommanderToolSearchPreviewSummary = Record<string, unknown> & {

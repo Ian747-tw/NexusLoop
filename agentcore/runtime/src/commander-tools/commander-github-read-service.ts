@@ -274,7 +274,7 @@ function validateGithubConnector(connector: ExternalApiConnector, connectorId: s
   if (connector.connector_id !== connectorId) throw new Error("GitHub gateway connector identity does not match configuration")
   const base = new URL(connector.base_url)
   const production = base.protocol === "https:" && base.hostname === "api.github.com" && (base.pathname === "/" || base.pathname === "")
-  const localTest = connector.allow_local_http === true && base.protocol === "http:" && base.hostname.endsWith(".test")
+  const localTest = connector.allow_local_http === true && base.protocol === "http:" && (base.hostname === "localhost" || base.hostname.endsWith(".test"))
   if (!production && !localTest) throw new Error("GitHub gateway connector must use the fixed GitHub API origin")
   if (!connector.allowed_methods.includes("GET") || !connector.allowed_methods.includes("POST")) throw new Error("GitHub gateway connector must allow fixed GET and review-thread POST operations")
   if (production && (connector.credential_refs ?? []).length === 0) throw new Error("GitHub gateway production connector must use runtime-owned credential references")
