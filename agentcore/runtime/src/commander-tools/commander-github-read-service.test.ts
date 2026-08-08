@@ -149,6 +149,14 @@ describe("Commander GitHub read gateway", () => {
     expect(fixture.calls).toHaveLength(1)
   })
 
+  test("rejects insufficient pull-detail request capacity before metadata dispatch", async () => {
+    const fixture = service([{ number: 12, title: "must not dispatch" }], { max_items_per_call: 2 })
+    const result = await fixture.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 }, undefined, 1)
+    expect(result).toMatchObject({ status: "failed", request_count: 0, network_called: false, result: null })
+    expect(result.blockers.join(" ")).toContain("at least two remaining external request slots")
+    expect(fixture.calls).toEqual([])
+  })
+
   test("normalizes exact-SHA check-run and check-suite summaries and rejects page identity drift", async () => {
     const sha = "a".repeat(40)
     const fixture = service([{ total_count: 1, check_runs: [{ name: "unit", head_sha: sha, status: "completed", conclusion: "success", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } }] }])
