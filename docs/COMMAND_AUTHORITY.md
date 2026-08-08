@@ -31,7 +31,8 @@ run-lock-bound, network/credential-capable runtime services rather than slash
 commands or generic GitHub access. Runtime owns their exact repository
 allowlist, fixed paths/query, credentials, pagination ceilings, cancellation,
 audit, redaction, and normalization. GitHub content is untrusted evidence only;
-there is no mutation, search, governance intent, or approval authority.
+the only event mutation is the required existing external-request audit outcome.
+There is no GitHub mutation, search, governance intent, or approval authority.
 
 ## Runtime Surface
 

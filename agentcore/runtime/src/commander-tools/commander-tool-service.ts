@@ -253,10 +253,24 @@ export class CommanderToolService {
             mark(tool.tool_id, "implemented descriptor runtime command must match authority record")
           }
           const allowGitProcess = isAllowedGitProcessDescriptor(tool, authority)
-          const allowGithubExternalRead = isAllowlistedGithubRead && tool.side_effect_class === "external_read" && tool.execution_backend === "runtime_service" && tool.requires_network && tool.requires_credentials && authority.requires_run_lock === true
+          const allowGithubExternalRead = isAllowlistedGithubRead
+            && tool.side_effect_class === "external_read"
+            && tool.execution_backend === "runtime_service"
+            && tool.requires_network
+            && tool.requires_credentials
+            && tool.mutates_events
+            && authority.requires_run_lock === true
+            && authority.mutates_events === true
+            && authority.expected_event_kinds.length === 2
+            && authority.expected_event_kinds.includes("external_api_request_executed")
+            && authority.expected_event_kinds.includes("external_api_request_failed")
+          if (authority.mutates_events !== tool.mutates_events) {
+            authorityMismatch += 1
+            mark(tool.tool_id, "implemented descriptor event-mutation metadata must match authority record")
+          }
           for (const [field, expected] of Object.entries({ mutates_events: false, creates_external_process: false, calls_provider: false, requires_approval: false, requires_run_lock: false, requires_network: false, requires_credentials: false }) as Array<[keyof CommanderToolDescriptor, false]>) {
             if (field === "creates_external_process" && allowGitProcess) continue
-            if (allowGithubExternalRead && (field === "requires_network" || field === "requires_credentials" || field === "requires_run_lock")) continue
+            if (allowGithubExternalRead && (field === "mutates_events" || field === "requires_network" || field === "requires_credentials" || field === "requires_run_lock")) continue
             if (tool[field] !== expected) {
               unsafe += 1
               mark(tool.tool_id, `implemented descriptor has unsafe ${field}`)

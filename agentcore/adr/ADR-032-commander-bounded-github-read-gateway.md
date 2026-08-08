@@ -51,9 +51,10 @@ stored in Commander journal state.
 The existing controller, binding registry, safe-read executor, tool budget,
 checkpoint, and recovery machinery remain the only execution path. Each
 external request consumes existing tool-call capacity. Gateway policy identity
-is included in the recovery execution envelope so changed repository scope or
-transport policy stales recovery authority. Historical requests are never
-replayed automatically.
+is included in tool compatibility and the recovery execution envelope only
+when the accepted checkpoint loaded a GitHub descriptor, so changed repository
+scope or transport policy stales exactly the affected recovery authority.
+Historical requests are never replayed automatically.
 
 The existing Commander tool-summary surface may show bounded gateway readiness.
 There is no direct GitHub slash-command family, GitHub mutation, public

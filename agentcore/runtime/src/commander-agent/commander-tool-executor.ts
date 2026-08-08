@@ -82,7 +82,11 @@ export class CommanderToolExecutor {
         && descriptor.namespace === "github_read"
         && authority.requires_run_lock === true
         && authority.gate === "external_api_runtime"
-      if (authority.mutates_events || authority.calls_provider || authority.requires_approval || (authority.requires_run_lock && !githubAuthorityException)) blockers.push("Commander tool authority is not safe-read executable")
+        && authority.mutates_events === true
+        && authority.expected_event_kinds.length === 2
+        && authority.expected_event_kinds.includes("external_api_request_executed")
+        && authority.expected_event_kinds.includes("external_api_request_failed")
+      if ((authority.mutates_events && !githubAuthorityException) || authority.calls_provider || authority.requires_approval || (authority.requires_run_lock && !githubAuthorityException)) blockers.push("Commander tool authority is not safe-read executable")
       if (authority.requires_active_runtime || authority.requires_run_lock) {
         const runtimeAuthority = this.options.runtimeAuthority?.()
         if (authority.requires_active_runtime && runtimeAuthority?.active_runtime !== true) blockers.push("Commander tool requires an active ready runtime")
@@ -101,8 +105,9 @@ export class CommanderToolExecutor {
       && descriptor.execution_backend === "runtime_service"
       && descriptor.requires_network === true
       && descriptor.requires_credentials === true
+      && descriptor.mutates_events === true
     if (descriptor.side_effect_class !== "none" && descriptor.side_effect_class !== "internal_read" && !githubException) blockers.push("Commander tool side effect class is not executable")
-    if (descriptor.calls_provider || descriptor.mutates_events || descriptor.requires_approval || (descriptor.requires_run_lock && !githubException) || ((descriptor.requires_network || descriptor.requires_credentials) && !githubException)) blockers.push("Commander tool descriptor is not safe-read executable")
+    if (descriptor.calls_provider || (descriptor.mutates_events && !githubException) || descriptor.requires_approval || (descriptor.requires_run_lock && !githubException) || ((descriptor.requires_network || descriptor.requires_credentials) && !githubException)) blockers.push("Commander tool descriptor is not safe-read executable")
     if (!descriptor.input_schema) blockers.push("Commander tool descriptor lacks input schema")
     return blockers
   }

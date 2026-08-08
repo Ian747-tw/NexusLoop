@@ -24,6 +24,7 @@ import { ResearchMemoryService } from "../research-memory/research-memory-servic
 import { redactText } from "../security/redaction"
 import { CommanderOperationalMemorySearchService } from "../commander-tools/commander-operational-memory-search-service"
 import { CommanderRepoReadService } from "../commander-tools/commander-repo-read-service"
+import { COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS } from "./commander-github-tool-authority-registry"
 import {
   AiSdkCommanderModelStepAdapter,
   COMMANDER_BOUND_TOOL_IDS,
@@ -964,6 +965,15 @@ describe("Commander tool executor", () => {
     const registry = testBindingRegistry()
     expect(registry.validation_summary.tool_ids).toEqual([...COMMANDER_BOUND_TOOL_IDS])
     expect(registry.validation_summary.duplicate_tool_ids).toEqual([])
+  })
+
+  test("GitHub authority records declare only the exact external audit event mutation", () => {
+    expect(COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS).toHaveLength(6)
+    for (const authority of COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS) {
+      expect(authority).toMatchObject({ risk: "safe_read", gate: "external_api_runtime", mutates_events: true, calls_provider: false, requires_approval: false })
+      expect(authority.expected_event_kinds.slice().sort()).toEqual(["external_api_request_executed", "external_api_request_failed"])
+      expect(COMMANDER_TOOL_REGISTRY.find((tool) => tool.authority_id === authority.authority_id)).toMatchObject({ namespace: "github_read", mutates_events: true, calls_provider: false })
+    }
   })
 
   test("executor preflight blocks unknown, unbound, future, off-phase, and malformed calls before handlers", async () => {
@@ -10301,7 +10311,7 @@ describe("Commander in-memory investigation controller", () => {
     const result = await execution
     await shutdown
 
-    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", external_api_audit_events_appended: 3, events_appended: true })
+    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", tool_call_count: 2, external_api_audit_events_appended: 3, events_appended: true })
     expect(urls).toHaveLength(3)
     expect(urls[2]).toBe("http://api.github.test/repos/ian747-tw/nexusloop")
     const events = await server.eventStore.readAll()
@@ -10323,7 +10333,11 @@ describe("Commander in-memory investigation controller", () => {
     })
     servers.push({ stop: () => original.shutdown() })
     const authority = await prepareApprovedConfiguredRecovery(original, "inv_github_recovery_authority", ["github.repository_get"])
+    const unrelated = await prepareApprovedConfiguredRecovery(original, "inv_non_github_recovery_authority", ["commander.tool_search"])
     expect(authority.recovery.approval_state).toBe("current")
+    expect(unrelated.recovery.approval_state).toBe("current")
+    expect(unrelated.recovery.tool_compatibility.github_gateway_policy_hash).toBeUndefined()
+    expect(unrelated.recovery.provider_compatibility.execution_envelope?.github_gateway_policy_hash).toBeUndefined()
     const originalPolicyHash = authority.recovery.tool_compatibility.github_gateway_policy_hash
     await original.shutdown("change bounded GitHub authority")
 
@@ -10339,6 +10353,9 @@ describe("Commander in-memory investigation controller", () => {
     expect(stale.recovery_plan_hash).not.toBe(authority.recovery.recovery_plan_hash)
     expect(stale.execution_preparation_hash).toBe(authority.recovery.execution_preparation_hash)
     expect(stale.tool_compatibility.github_gateway_policy_hash).not.toBe(originalPolicyHash)
+    const unrelatedAfterDrift = await changed.previewCommanderInvestigationRecovery({ investigation_id: unrelated.investigation_id })
+    expect(unrelatedAfterDrift.approval_state).toBe("current")
+    expect(unrelatedAfterDrift.recovery_plan_hash).toBe(unrelated.recovery.recovery_plan_hash)
 
     const unavailable = configuredProviderRuntimeServer(projectDir)
     const blocked = await unavailable.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
@@ -10347,6 +10364,9 @@ describe("Commander in-memory investigation controller", () => {
     expect(blocked.approval_state).toBe("stale")
     expect(blocked.blockers.join(" ")).toContain("bounded gateway is not ready")
     expect(blocked.tool_compatibility.compatible).toBe(false)
+    const unrelatedUnavailable = await unavailable.previewCommanderInvestigationRecovery({ investigation_id: unrelated.investigation_id })
+    expect(unrelatedUnavailable.approval_state).toBe("current")
+    expect(unrelatedUnavailable.blockers.join(" ")).not.toContain("bounded gateway")
   })
 
   test("configured recovery shutdown aborts and drains audit and journal work before runtime shutdown", async () => {

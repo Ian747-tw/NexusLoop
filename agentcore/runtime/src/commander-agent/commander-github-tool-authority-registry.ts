@@ -12,7 +12,7 @@ export const COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS: CommandAuthorityRecord[] =
   // This is an internal binding identity, not a command-dispatch route.
   slash_command: "/commander-tool-external-read",
   aliases: [], risk: "safe_read", gate: "external_api_runtime", owner: "commander_tools",
-  mutates_events: false, creates_external_process: false, calls_provider: false,
+  mutates_events: true, creates_external_process: false, calls_provider: false,
   requires_active_runtime: true, requires_run_lock: true, requires_approval: false,
   expected_event_kinds: ["external_api_request_executed", "external_api_request_failed"],
   blocked_by_default: true, current_phase_status: "implemented", recommended_reads: ["/commander-tool-show"], validation_profile: profile,

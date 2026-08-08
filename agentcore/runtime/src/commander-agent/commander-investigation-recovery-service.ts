@@ -17,6 +17,7 @@ import type {
   CommanderInvestigationRecoveryCheckpointSummary,
   CommanderInvestigationRecoveryContextCompatibility,
   CommanderInvestigationRecoveryContinuityCompatibility,
+  CommanderInvestigationRecoveryExecutionEnvelope,
   CommanderInvestigationRecoveryHumanControl,
   CommanderInvestigationRecoveryPacket,
   CommanderInvestigationRecoveryPendingModelStep,
@@ -180,8 +181,9 @@ export class CommanderInvestigationRecoveryService {
 
   private toolCompatibility(stored: CommanderInvestigationLoadedToolRef[], phase: CommanderToolPhase): CommanderInvestigationRecoveryToolCompatibilitySummary {
     const tools = stored.map((ref) => this.oneToolCompatibility(ref, phase))
+    const storedUsesGithub = stored.some((tool) => COMMANDER_GITHUB_READ_TOOL_IDS.includes(tool.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number]))
     const githubGateway = this.options.githubGatewayStatus?.()
-    const githubGatewayBlockers = stored.some((tool) => COMMANDER_GITHUB_READ_TOOL_IDS.includes(tool.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number])) && githubGateway?.status !== "ready"
+    const githubGatewayBlockers = storedUsesGithub && githubGateway?.status !== "ready"
       ? ["stored GitHub read tool is no longer executable because the bounded gateway is not ready"]
       : []
     const currentBoundToolRefs = this.currentBoundToolRefs(phase)
@@ -193,7 +195,7 @@ export class CommanderInvestigationRecoveryService {
       tools,
       binding_count: this.options.boundToolIds.length,
       current_bound_tool_refs: currentBoundToolRefs,
-      github_gateway_policy_hash: githubGateway?.transport_policy_hash,
+      github_gateway_policy_hash: storedUsesGithub ? githubGateway?.transport_policy_hash : undefined,
       stored_subset_of_current_bindings: storedSubset,
       compatible: blockers.length === 0 && tools.every((tool) => tool.compatible),
       blockers,
@@ -258,6 +260,7 @@ export class CommanderInvestigationRecoveryService {
       && current.requires_network === true
       && current.requires_credentials === true
       && current.requires_run_lock === true
+      && current.mutates_events === true
     const implemented = current?.availability === "implemented_read_surface"
     const allowedInPhase = Boolean(current && isToolAllowedInPhase(current, phase))
     const authorityMatch = Boolean(current && (current.authority_id ?? "") === stored.authority_id)
@@ -280,7 +283,7 @@ export class CommanderInvestigationRecoveryService {
       stored.requires_credentials === current.requires_credentials &&
       stored.requires_approval === current.requires_approval &&
       stored.requires_run_lock === current.requires_run_lock)
-    const safeReadAuthority = Boolean(current && current.risk === "safe_read" && !current.mutates_events && !current.calls_provider && !current.requires_approval && ((current.side_effect_class === "none" || current.side_effect_class === "internal_read") && !current.requires_network && !current.requires_credentials && !current.requires_run_lock || githubReadException) && (!current.creates_external_process || fixedGitException && current.execution_backend === "restricted_git_read" && current.process_policy === "fixed_git_read_only"))
+    const safeReadAuthority = Boolean(current && current.risk === "safe_read" && (!current.mutates_events || githubReadException) && !current.calls_provider && !current.requires_approval && ((current.side_effect_class === "none" || current.side_effect_class === "internal_read") && !current.requires_network && !current.requires_credentials && !current.requires_run_lock || githubReadException) && (!current.creates_external_process || fixedGitException && current.execution_backend === "restricted_git_read" && current.process_policy === "fixed_git_read_only"))
     const blockers: string[] = []
     if (!current) blockers.push(`stored loaded tool ${stored.tool_id} no longer has a descriptor`)
     if (!bindingPresent) blockers.push(`stored loaded tool ${stored.tool_id} is not in the current Commander binding allowlist`)
@@ -343,7 +346,11 @@ export class CommanderInvestigationRecoveryService {
   private providerCompatibility(source: CommanderInvestigationRecoverySource, phase: CommanderToolPhase): CommanderInvestigationRecoveryProviderCompatibility {
     const record = source.record
     const readiness = this.options.providerReadiness({ phase, provider_id: record?.provider_id, provider_kind: record?.provider_kind, model_id: record?.model_id })
-    const executionEnvelope = this.options.providerExecutionEnvelope?.({ phase, provider_id: record?.provider_id, provider_kind: record?.provider_kind, model_id: record?.model_id })
+    const configuredExecutionEnvelope = this.options.providerExecutionEnvelope?.({ phase, provider_id: record?.provider_id, provider_kind: record?.provider_kind, model_id: record?.model_id })
+    const storedUsesGithub = source.latest_checkpoint?.loaded_tools.some((tool) => COMMANDER_GITHUB_READ_TOOL_IDS.includes(tool.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number])) === true
+    const executionEnvelope = configuredExecutionEnvelope && !storedUsesGithub
+      ? withoutGithubGatewayPolicy(configuredExecutionEnvelope)
+      : configuredExecutionEnvelope
     const capability = this.options.modelCapability({ provider_kind: record?.provider_kind, model_id: record?.model_id, role: "commander" })
     const providerSource = readiness.provider_source
     const identityMatch = providerSource === "configured_connector"
@@ -1115,6 +1122,14 @@ function emptyProviderCompatibility(): CommanderInvestigationRecoveryProviderCom
   const result = { provider_source: "none" as const, identity_match: false, phase_enabled: false, configuration_ready: false, execution_ready_now: false, commander_role_supported: false, stored_tool_protocol_supported: false, connector_available: false, credentials_ready: false, supports_streaming: false as const, compatible: false, blockers: [], warnings: [], compatibility_hash: "" }
   result.compatibility_hash = stableHash({ ...result, compatibility_hash: "" })
   return result
+}
+
+function withoutGithubGatewayPolicy(envelope: CommanderInvestigationRecoveryExecutionEnvelope): CommanderInvestigationRecoveryExecutionEnvelope {
+  const { github_gateway_policy_hash: _githubGatewayPolicyHash, execution_envelope_hash: _executionEnvelopeHash, ...authority } = envelope
+  return {
+    ...authority,
+    execution_envelope_hash: stableHash({ ...authority, execution_envelope_hash: "" }),
+  }
 }
 
 function emptyBudgetCompatibility(): CommanderInvestigationRecoveryBudgetCompatibility {

@@ -479,12 +479,12 @@ export class CommanderInvestigationController {
         }
         const externalRequestCount = execution.external_api_audit_event_count ?? 0
         externalApiAudits += externalRequestCount
-        if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during tool execution"], execution.warnings)
-        if (toolDeadlineExpired) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings)
-        executions.push(execution)
         const toolBudgetCharge = externalRequestCount > 0 ? externalRequestCount : 1
         if (toolBudgetCharge > budget.max_tool_calls - workingSet.tool_call_count) return finish("budget_exhausted", "max_tool_calls", ["GitHub external request count exceeded remaining max_tool_calls budget"])
         workingSet.tool_call_count += toolBudgetCharge
+        if (abortSignal?.aborted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during tool execution"], execution.warnings)
+        if (toolDeadlineExpired) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings)
+        executions.push(execution)
         if (call.tool_id === TOOL_SEARCH_ID) workingSet.tool_search_call_count += 1
         const resultBytesCap = perToolResultCap(execution.max_output_bytes, context.input_bytes + currentTurnToolResultBytes, budget, modelResult.tool_calls.length - executions.length + 1)
         const toolMessage = toCommanderToolResultMessage(execution, resultBytesCap)
@@ -1665,10 +1665,11 @@ function isSafeRecoveryTool(tool: CommanderToolDescriptor): boolean {
     && tool.requires_network
     && tool.requires_credentials
     && tool.requires_run_lock
+    && tool.mutates_events
   return tool.risk === "safe_read"
     && ((tool.side_effect_class === "none" || tool.side_effect_class === "internal_read") || githubRead)
     && !tool.calls_provider
-    && !tool.mutates_events
+    && (!tool.mutates_events || githubRead)
     && (githubRead || !tool.requires_network)
     && (githubRead || !tool.requires_credentials)
     && !tool.requires_approval
