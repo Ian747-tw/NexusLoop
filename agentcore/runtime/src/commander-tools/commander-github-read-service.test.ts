@@ -16,8 +16,9 @@ function service(bodies: unknown[] = [{ full_name: "ian747-tw/nexusloop", descri
   const calls: unknown[] = []
   let index = 0
   const requestService = {
-    async executeForInternalUse(input: unknown, options: { on_audit_persisted?: (audit: Record<string, unknown>) => void }) {
+    async executeForInternalUse(input: unknown, options: { on_transport_dispatched?: () => void; on_audit_persisted?: (audit: Record<string, unknown>) => void }) {
       calls.push(input)
+      options.on_transport_dispatched?.()
       options.on_audit_persisted?.({
         request_id: `audit_${index + 1}`, connector_id: "github-test", method: "GET", url: "[REDACTED]", ok: true, dry_run: false,
         requested_by: "commander_github_read:github.repository_get", created_at: "2026-01-01T00:00:00.000Z", event_kind: "external_api_request_executed",
@@ -104,5 +105,37 @@ describe("Commander GitHub read gateway", () => {
     const result = await executor.execute({ execution_id: "github_exec_1", call_id: "github_call_1", tool_call_id: "github_tool_1", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "test", remaining_tool_call_budget: 1 })
     expect(result).toMatchObject({ status: "ready", handler_invoked: true, network_called: true, external_api_audit_event_count: 1, provider_called: false, mcp_called: false })
     expect(fixture.calls).toHaveLength(1)
+  })
+
+  test("binds review and thread evidence to the exact requested PR head SHA", async () => {
+    const sha = "d".repeat(40)
+    const fixture = service([
+      [{ id: 1, state: "APPROVED", user: { login: "reviewer" }, commit_id: sha }],
+      { data: { repository: { pullRequest: { headRefOid: sha, reviewThreads: { nodes: [{ id: "thread-1", isResolved: false, isOutdated: false, comments: { nodes: [{ author: { login: "reviewer" }, bodyText: "still unresolved", createdAt: "2026-01-01T00:00:00.000Z" }] } }], pageInfo: { hasNextPage: false } } } } } },
+    ])
+    const result = await fixture.gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, undefined, 2)
+    expect(result).toMatchObject({ status: "ready", request_count: 2, provenance: { observed_commit_sha: sha } })
+    expect((result.result?.evidence as Record<string, any>).thread_state).toMatchObject({ unresolved_current_count: 1, completeness: "bounded_complete" })
+  })
+
+  test("rejects review evidence when the PR head moved from the exact requested SHA", async () => {
+    const fixture = service([
+      [],
+      { data: { repository: { pullRequest: { headRefOid: "e".repeat(40), reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } } },
+    ])
+    const result = await fixture.gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: "d".repeat(40) }, undefined, 2)
+    expect(result).toMatchObject({ status: "failed", request_count: 2, network_called: true, result: null })
+    expect(result.blockers.join(" ")).toContain("exact requested commit SHA")
+  })
+
+  test("reports a durable policy-failure audit without claiming network dispatch", async () => {
+    const project = await mkdtemp(join(tmpdir(), "nxl-9xa-policy-"))
+    const transport = new FakeExternalApiTransport()
+    const connector = { connector_id: "github-production", title: "GitHub", base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], credential_refs: [{ name: "github-read", source: "env" as const, env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }
+    const requestService = new ExternalApiRequestService({ registry: new ExternalApiConnectorRegistry([connector]), transport, eventStore: new EventStore(join(project, "events.jsonl")), env: {}, requestId: () => "github_policy_audit" })
+    const gateway = new CommanderGithubReadService({ requestService, connector, config: { connector_id: "github-production", allowed_repositories: ["ian747-tw/nexusloop"] } })
+    const result = await gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })
+    expect(result).toMatchObject({ status: "failed", request_count: 1, network_called: false, external_api_audit_request_ids: ["github_policy_audit"] })
+    expect(transport.requests).toHaveLength(0)
   })
 })

@@ -177,7 +177,7 @@ function githubReadTools(): CommanderToolDescriptor[] {
     makeGithub("github.pull_request_get", "GitHub pull request metadata", "Read bounded pull-request metadata and changed-file summary evidence.", ["github", "pull", "request", "files"], schema({ ...repo, pull_number: number }, ["repository", "pull_number"])),
     makeGithub("github.issue_get", "GitHub issue metadata", "Read bounded GitHub issue metadata.", ["github", "issue"], schema({ ...repo, issue_number: number }, ["repository", "issue_number"])),
     makeGithub("github.commit_checks", "GitHub exact-SHA checks", "Read bounded current check-run summaries for an exact commit SHA.", ["github", "checks", "ci", "sha"], schema({ ...repo, commit_sha: sha }, ["repository", "commit_sha"])),
-    makeGithub("github.pull_request_reviews", "GitHub pull request review state", "Read bounded review summaries and thread-aware review state for one pull request.", ["github", "review", "threads", "pull"], schema({ ...repo, pull_number: number }, ["repository", "pull_number"])),
+    makeGithub("github.pull_request_reviews", "GitHub pull request review state", "Read bounded review summaries and thread-aware review state for one pull request at an exact commit SHA.", ["github", "review", "threads", "pull", "sha"], schema({ ...repo, pull_number: number, commit_sha: sha }, ["repository", "pull_number", "commit_sha"])),
   ]
 }
 
