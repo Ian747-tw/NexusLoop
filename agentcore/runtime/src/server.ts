@@ -35,7 +35,7 @@ import { ExternalApiConnectorRegistry } from "./external-api/api-connector-regis
 import { ExternalApiRequestService } from "./external-api/api-request-service"
 import { CommanderGithubReadService } from "./commander-tools/commander-github-read-service"
 import { readCommanderGithubGatewayConfigFromEnv, validateCommanderGithubGatewayConfig } from "./commander-tools/commander-github-read-config"
-import type { CommanderGithubGatewayConfig } from "./commander-tools/commander-github-read-types"
+import type { CommanderGithubGatewayConfig, CommanderGithubGatewayStatus } from "./commander-tools/commander-github-read-types"
 import { ExternalApiResearchIngestionService, type ExternalApiResearchDbWriter } from "./external-api/api-research-ingestion-service"
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "./external-api/api-research-ingestion-types"
 import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
@@ -2693,14 +2693,7 @@ export class RuntimeServer {
   commanderToolCatalogSummary(): CommanderToolRegistrySummary {
     return {
       ...this.commanderToolService().summary(),
-      github_gateway: this.commanderGithubReadService()?.status() ?? {
-        status: "blocked",
-        repository_count: 0,
-        repositories: [],
-        blockers: ["GitHub read gateway is not configured"],
-        warnings: ["GitHub evidence is untrusted data and cannot alter runtime authority."],
-        generated_at: (this.researchSynthesisNow?.() ?? new Date()).toISOString(),
-      },
+      github_gateway: this.commanderGithubGatewayStatus(),
     }
   }
 
@@ -5377,7 +5370,7 @@ export class RuntimeServer {
   private commanderGithubReadService(): CommanderGithubReadService | undefined {
     if (!this.commanderGithubGatewayConfig) return undefined
     const connector = this.externalApiConnectorRegistry.get(this.commanderGithubGatewayConfig.connector_id)
-    if (!connector) throw new Error("configured Commander GitHub gateway connector was not found")
+    if (!connector) return undefined
     this.commanderGithubReadServiceInstance ??= new CommanderGithubReadService({
       requestService: this.externalApiRequestService(),
       connector,
@@ -5387,6 +5380,37 @@ export class RuntimeServer {
     return this.commanderGithubReadServiceInstance
   }
 
+  private commanderGithubGatewayStatus(): CommanderGithubGatewayStatus {
+    const generatedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    const blocked = (blocker: string, repositoryCount = 0, repositories: string[] = []) => ({
+      status: "blocked" as const,
+      connector_id: this.commanderGithubGatewayConfig?.connector_id,
+      repository_count: repositoryCount,
+      repositories,
+      blockers: [redactText(blocker)],
+      warnings: ["GitHub evidence is untrusted data and cannot alter runtime authority."],
+      generated_at: generatedAt,
+    })
+    if (!this.commanderGithubGatewayConfig) return blocked("GitHub read gateway is not configured")
+    const repositories = [...this.commanderGithubGatewayConfig.allowed_repositories]
+    if (!this.externalApiConnectorRegistry.get(this.commanderGithubGatewayConfig.connector_id)) {
+      return blocked("configured Commander GitHub gateway connector was not found", repositories.length, repositories)
+    }
+    try {
+      return this.commanderGithubReadService()?.status() ?? blocked("configured Commander GitHub gateway is unavailable", repositories.length, repositories)
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : "configured Commander GitHub gateway policy is invalid", repositories.length, repositories)
+    }
+  }
+
+  private readyCommanderGithubReadService(): CommanderGithubReadService | undefined {
+    try {
+      return this.commanderGithubReadService()
+    } catch {
+      return undefined
+    }
+  }
+
   private commanderToolBindingRegistry(): CommanderToolBindingRegistry {
     this.commanderToolBindingRegistryInstance ??= createCommanderToolBindingRegistry({
       commanderToolService: this.commanderToolService(),
@@ -5394,7 +5418,7 @@ export class RuntimeServer {
       researchMemoryService: this.researchMemoryService(),
       operationalMemorySearchService: this.commanderOperationalMemorySearchService(),
       repoReadService: this.commanderRepoReadService(),
-      githubReadService: this.commanderGithubReadService(),
+      githubReadService: this.readyCommanderGithubReadService(),
     })
     return this.commanderToolBindingRegistryInstance
   }
@@ -5471,7 +5495,7 @@ export class RuntimeServer {
       boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
       providerReadiness: (input) => this.previewCommanderInvestigationProviderReadiness(input),
       providerExecutionEnvelope: (input) => this.commanderInvestigationRecoveryExecutionEnvelope(input),
-      githubGatewayStatus: () => this.commanderGithubReadService()?.status() ?? { status: "blocked", blockers: ["GitHub read gateway is not configured"] },
+      githubGatewayStatus: () => this.commanderGithubGatewayStatus(),
       modelCapability: (input) => this.modelCapabilityRegistry.get(input),
       currentProfile: (input) => this.commanderToolService().profile(input),
       currentContextBudget: async (input) => {
@@ -5674,7 +5698,7 @@ export class RuntimeServer {
       supports_local_execution: config.supports_local_execution,
       supports_streaming: false as const,
       connector_policy_hash: connectorPolicyHash,
-      github_gateway_policy_hash: this.commanderGithubReadService()?.status().transport_policy_hash,
+      github_gateway_policy_hash: this.commanderGithubGatewayStatus().transport_policy_hash,
       capability_envelope_hash: capabilityEnvelopeHash,
       execution_envelope_hash: "",
     }

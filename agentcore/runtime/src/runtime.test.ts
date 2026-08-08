@@ -24507,6 +24507,34 @@ describe("ProcessOpenCodeAdapter", () => {
     await server.shutdown()
   })
 
+  test("Commander GitHub gateway readiness fails closed for missing or invalid connector authority", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const missing = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "missing-github", allowed_repositories: ["ian747-tw/nexusloop"] },
+    })
+    const missingSummary = await missing.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(missingSummary.github_gateway).toMatchObject({ status: "blocked", repository_count: 1 })
+    expect(missingSummary.github_gateway.blockers.join(" ")).toContain("connector was not found")
+    await missing.shutdown()
+
+    const invalid = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "invalid-github", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "invalid-github", title: "invalid", base_url: "https://example.com", allowed_hosts: ["example.com"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
+    })
+    const invalidSummary = await invalid.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(invalidSummary.github_gateway).toMatchObject({ status: "blocked", repository_count: 1 })
+    expect(invalidSummary.github_gateway.blockers.join(" ")).toContain("fixed GitHub API origin")
+    expect(JSON.stringify(invalidSummary.github_gateway)).not.toContain("example.com")
+    await invalid.shutdown()
+  })
+
   test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
     const service = new CommanderToolService({
       contextBudgetService: {} as any,
