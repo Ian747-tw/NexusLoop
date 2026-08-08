@@ -287,6 +287,18 @@ describe("Commander GitHub read gateway", () => {
     expect((result.result?.evidence as Record<string, unknown>).updated_at).toBe("2026-01-01T00:00:00.000Z")
   })
 
+  test("charges issue labels to the configured item ceiling and reports omissions", async () => {
+    const fixture = service([{
+      number: 12,
+      title: "issue",
+      labels: [{ name: "bug" }, { name: "security" }, { name: "recovery" }],
+    }], { max_items_per_call: 2 })
+    const result = await fixture.gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })
+    expect(result).toMatchObject({ status: "ready", item_count: 2, truncated: true })
+    expect(result.result?.evidence).toMatchObject({ labels: ["bug"], omitted_label_count: 2, truncated: true })
+    expect(fixture.calls).toHaveLength(1)
+  })
+
   test("does not publish evidence unless exactly one audit is durably observed", async () => {
     const gateway = new CommanderGithubReadService({
       requestService: { executeForInternalUse: async () => ({ ok: true, response_body_for_internal_use: JSON.stringify({ full_name: "ian747-tw/nexusloop" }) }) } as never,
@@ -425,6 +437,30 @@ describe("Commander GitHub read gateway", () => {
     const requestService = { executeForInternalUse: async () => ({}) } as never
     expect(() => new CommanderGithubReadService({ requestService, connector: { ...production, base_url: "https://api.github.com:8443" }, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] }, credentialsReady: true })).toThrow("fixed GitHub API origin")
     expect(() => new CommanderGithubReadService({ requestService, connector: { ...production, allowed_hosts: ["example.com"] }, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] }, credentialsReady: true })).toThrow("allow its fixed API host")
+  })
+
+  test("requires a supported production Authorization credential injection shape", () => {
+    const requestService = { executeForInternalUse: async () => ({}) } as never
+    const production = { ...TEST_CONNECTOR, base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allow_local_http: undefined }
+    const credential = { name: "github-read", source: "env" as const, env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }
+    const create = (credential_refs: Array<Record<string, unknown>>) => new CommanderGithubReadService({
+      requestService,
+      connector: { ...production, credential_refs } as typeof production & { credential_refs: typeof credential[] },
+      config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      credentialsReady: true,
+    })
+
+    expect(create([credential]).status().status).toBe("ready")
+    expect(create([{ ...credential, prefix: "token " }]).status().status).toBe("ready")
+    for (const invalid of [
+      { ...credential, inject_as: "query", target_name: "access_token" },
+      { ...credential, target_name: "X-Api-Key" },
+      { ...credential, prefix: "" },
+      { ...credential, prefix: "Basic " },
+    ]) {
+      expect(() => create([invalid])).toThrow("Authorization credential with a supported scheme")
+    }
+    expect(() => create([credential, { ...credential, inject_as: "query", target_name: "access_token" }])).toThrow("Authorization credential with a supported scheme")
   })
 
   test("fails closed with durable redacted audits for redirect, malformed JSON, overflow, and timeout", async () => {

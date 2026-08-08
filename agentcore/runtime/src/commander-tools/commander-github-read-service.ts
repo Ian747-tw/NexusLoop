@@ -235,13 +235,21 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   const first = responses[0]
   if (toolId === "github.repository_get") { const object = requiredObject(first); return { full_name: safeRepository(object.full_name), name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
   if (toolId === "github.commit_get") { const object = requiredObject(first); return { sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")), parent_shas: arrayOf(object.parents).slice(0, 8).map((item) => safeSha(requiredObject(item).sha)).filter(Boolean), truncated: false } }
-  if (toolId === "github.issue_get") { const object = requiredObject(first); return { number: safePositive(object.number), title_preview: safeText(object.title, 500), body_preview: safeText(object.body, 1200), state: safeText(object.state, 32), updated_at: safeTimestamp(object.updated_at), author_login: safeText(nested(object, "user", "login"), 120), labels: labels(object), truncated: false } }
+  if (toolId === "github.issue_get") {
+    const object = requiredObject(first)
+    const issueLabels = boundedLabels(object, Math.max(0, itemCap - 1))
+    return {
+      number: safePositive(object.number), title_preview: safeText(object.title, 500), body_preview: safeText(object.body, 1200), state: safeText(object.state, 32), updated_at: safeTimestamp(object.updated_at), author_login: safeText(nested(object, "user", "login"), 120),
+      labels: issueLabels.items, omitted_label_count: issueLabels.omitted, truncated: issueLabels.truncated,
+    }
+  }
   if (toolId === "github.pull_request_get") {
     const object = requiredObject(first)
     const files = boundedItems(responses.slice(1).flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { filename: safeText(value.filename, 240), status: safeText(value.status, 64), additions: safeNonNegative(value.additions), deletions: safeNonNegative(value.deletions), changes: safeNonNegative(value.changes), sha: safeSha(value.sha) } }), itemCap)
+    const pullLabels = boundedLabels(object, Math.max(0, itemCap - files.items.length))
     const paginationTruncated = responses.length - 1 >= pageCap && arrayOf(responses.at(-1)).length >= PAGE_SIZE
     const changedFiles = safePositive(object.changed_files)
-    return { number: safePositive(object.number), title_preview: safeText(object.title, 500), state: safeText(object.state, 32), draft: object.draft === true, updated_at: safeTimestamp(object.updated_at), head_sha: safeSha(nested(object, "head", "sha")), base_sha: safeSha(nested(object, "base", "sha")), changed_files: changedFiles, labels: labels(object), files: files.items, truncated: files.truncated || paginationTruncated || changedFiles !== undefined && files.items.length < changedFiles }
+    return { number: safePositive(object.number), title_preview: safeText(object.title, 500), state: safeText(object.state, 32), draft: object.draft === true, updated_at: safeTimestamp(object.updated_at), head_sha: safeSha(nested(object, "head", "sha")), base_sha: safeSha(nested(object, "base", "sha")), changed_files: changedFiles, labels: pullLabels.items, omitted_label_count: pullLabels.omitted, files: files.items, truncated: files.truncated || pullLabels.truncated || paginationTruncated || changedFiles !== undefined && files.items.length < changedFiles }
   }
   if (toolId === "github.commit_checks") {
     const pages = responses.map(requiredObject)
@@ -337,14 +345,19 @@ function visitStructured(value: unknown, visitor: (parent: Record<string, unknow
 
 function boundedItems<T>(items: T[], cap: number): { items: T[]; truncated: boolean } { return { items: items.slice(0, cap), truncated: items.length > cap } }
 function normalizedItemCount(evidence: Record<string, unknown>): number {
-  if (Array.isArray(evidence.files)) return evidence.files.length
-  if (!Array.isArray(evidence.items)) return 1
+  const labels = Array.isArray(evidence.labels) ? evidence.labels.length : 0
+  if (Array.isArray(evidence.files)) return evidence.files.length + labels
+  if (!Array.isArray(evidence.items)) return 1 + labels
   const items = evidence.items.length
   const threadState = evidence.thread_state && typeof evidence.thread_state === "object" && !Array.isArray(evidence.thread_state) ? evidence.thread_state as Record<string, unknown> : undefined
   const threadItems = Array.isArray(threadState?.items) ? threadState.items.length : 0
   return items + threadItems
 }
-function labels(object: Record<string, unknown>): string[] { return arrayOf(object.labels).slice(0, 20).map((item) => safeText(requiredObject(item).name, 100)).filter((item): item is string => Boolean(item)) }
+function boundedLabels(object: Record<string, unknown>, cap: number): { items: string[]; omitted: number; truncated: boolean } {
+  const normalized = arrayOf(object.labels).map((item) => safeText(requiredObject(item).name, 100)).filter((item): item is string => Boolean(item))
+  const items = normalized.slice(0, cap)
+  return { items, omitted: normalized.length - items.length, truncated: normalized.length > items.length }
+}
 function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
 function evidenceFor(toolId: CommanderGithubReadToolId, result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: hash({ result, provenance }) }] }
 function base(toolId: CommanderGithubReadToolId, generatedAt: string, status: "blocked" | "failed" | "cancelled", repository?: string, blocker?: unknown, audits: ExternalApiPersistedAuditRecord[] = [], networkCalled = false): CommanderGithubReadResult { const result: CommanderGithubReadResult = { status, tool_id: toolId, repository, result: null, evidence: [], request_count: audits.length, page_count: 0, item_count: 0, normalized_bytes: 0, truncated: false, external_api_audit_request_ids: audits.map((item) => item.request_id), external_api_audit_event_kinds: audits.map((item) => item.event_kind), network_called: networkCalled, blockers: [redactText(String(blocker ?? "GitHub gateway request failed"))], warnings: [], generated_at: generatedAt, result_hash: "" }; result.result_hash = hash({ ...result, generated_at: "", external_api_audit_request_ids: [] }); return result }
@@ -356,7 +369,15 @@ function validateGithubConnector(connector: ExternalApiConnector, connectorId: s
   if (!production && !localTest) throw new Error("GitHub gateway connector must use the fixed GitHub API origin")
   if (!connector.allowed_hosts.some((host) => host.trim().toLowerCase() === base.hostname.toLowerCase())) throw new Error("GitHub gateway connector must allow its fixed API host")
   if (!connector.allowed_methods.includes("GET") || !connector.allowed_methods.includes("POST")) throw new Error("GitHub gateway connector must allow fixed GET and review-thread POST operations")
-  if (production && (connector.credential_refs ?? []).length === 0) throw new Error("GitHub gateway production connector must use runtime-owned credential references")
+  const credentialRefs = connector.credential_refs ?? []
+  if (production && (credentialRefs.length !== 1 || !isGithubAuthorizationCredential(credentialRefs[0]!))) {
+    throw new Error("GitHub gateway production connector must use a runtime-owned Authorization credential with a supported scheme")
+  }
+}
+function isGithubAuthorizationCredential(ref: NonNullable<ExternalApiConnector["credential_refs"]>[number]): boolean {
+  return ref.inject_as === "header"
+    && ref.target_name.toLowerCase() === "authorization"
+    && (ref.prefix === "Bearer " || ref.prefix === "token ")
 }
 function isProductionGithubConnector(connector: ExternalApiConnector): boolean { const base = new URL(connector.base_url); return base.protocol === "https:" && base.hostname === "api.github.com" && base.port === "" && (base.pathname === "/" || base.pathname === "") }
 function githubTransportPolicyHash(connector: ExternalApiConnector, config: CommanderGithubGatewayConfig, repositories: string[]): string {
