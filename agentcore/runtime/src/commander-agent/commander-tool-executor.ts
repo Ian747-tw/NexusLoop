@@ -277,7 +277,7 @@ function normalizeStableExecutionValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value
   const normalized: Record<string, unknown> = {}
   for (const [key, nested] of Object.entries(value)) {
-    if (key === "generated_at" || key === "observed_at" || key === "duration_ms") continue
+    if (key === "generated_at" || key === "observed_at" || key === "retrieved_at" || key === "duration_ms") continue
     normalized[key] = normalizeStableExecutionValue(nested)
   }
   return normalized

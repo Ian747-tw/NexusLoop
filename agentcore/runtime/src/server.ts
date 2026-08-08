@@ -2774,7 +2774,6 @@ export class RuntimeServer {
   }
 
   runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
-    if (!this.commanderInvestigationProviderConfig) return this.commanderInvestigationController().run(input)
     if (this.lifecycleState !== "ready" || this.lifecycleShutdownRequested) return this.commanderInvestigationController().run(input)
 
     const combined = this.commanderInvestigationAbortSignal(input.abort_signal)

@@ -5,6 +5,7 @@ import type { ExternalApiPersistedAuditRecord, ExternalApiMethod } from "../exte
 import type { ExternalApiConnector } from "../external-api/api-connector-types"
 import type { CommanderEvidenceCard } from "./commander-read-types"
 import type { CommanderGithubGatewayConfig, CommanderGithubGatewayStatus, CommanderGithubReadResult, CommanderGithubReadToolId, CommanderGithubProvenance } from "./commander-github-read-types"
+import { validateCommanderGithubGatewayConfig } from "./commander-github-read-config"
 
 const REPOSITORY = /^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9][a-z0-9_.-]{0,99}$/
 const FULL_SHA = /^[a-f0-9]{40}$/
@@ -32,16 +33,17 @@ export class CommanderGithubReadService {
 
   constructor(private readonly options: { requestService: ExternalApiRequestService; connector: ExternalApiConnector; config: CommanderGithubGatewayConfig; credentialsReady?: boolean; now?: () => Date }) {
     this.now = options.now ?? (() => new Date())
+    const validatedConfig = validateCommanderGithubGatewayConfig(options.config)
     this.config = {
-      ...options.config,
-      max_requests_per_call: bounded(options.config.max_requests_per_call, MAX_REQUESTS, MAX_REQUESTS),
-      max_pages_per_call: bounded(options.config.max_pages_per_call, MAX_PAGES, MAX_PAGES),
-      max_items_per_call: bounded(options.config.max_items_per_call, MAX_ITEMS, MAX_ITEMS),
-      max_normalized_bytes: bounded(options.config.max_normalized_bytes, MAX_BYTES, MAX_BYTES),
-      max_response_bytes: Math.min(options.config.max_response_bytes ?? MAX_RESPONSE_BYTES, options.connector.max_response_bytes, MAX_RESPONSE_BYTES),
-      timeout_ms: Math.min(options.config.timeout_ms ?? MAX_TIMEOUT_MS, options.connector.timeout_ms, MAX_TIMEOUT_MS),
+      ...validatedConfig,
+      max_requests_per_call: bounded(validatedConfig.max_requests_per_call, MAX_REQUESTS, MAX_REQUESTS),
+      max_pages_per_call: bounded(validatedConfig.max_pages_per_call, MAX_PAGES, MAX_PAGES),
+      max_items_per_call: bounded(validatedConfig.max_items_per_call, MAX_ITEMS, MAX_ITEMS),
+      max_normalized_bytes: bounded(validatedConfig.max_normalized_bytes, MAX_BYTES, MAX_BYTES),
+      max_response_bytes: Math.min(validatedConfig.max_response_bytes ?? MAX_RESPONSE_BYTES, options.connector.max_response_bytes, MAX_RESPONSE_BYTES),
+      timeout_ms: Math.min(validatedConfig.timeout_ms ?? MAX_TIMEOUT_MS, options.connector.timeout_ms, MAX_TIMEOUT_MS),
     }
-    this.repositories = new Set(options.config.allowed_repositories.map(canonicalRepository))
+    this.repositories = new Set(validatedConfig.allowed_repositories.map(canonicalRepository))
     validateGithubConnector(options.connector, this.config.connector_id)
   }
 
@@ -188,7 +190,7 @@ export class CommanderGithubReadService {
       truncated: normalized.truncated, external_api_audit_request_ids: audits.map((item) => item.request_id), external_api_audit_event_kinds: audits.map((item) => item.event_kind), network_called: networkCalled,
       blockers: [], warnings: normalized.truncated ? ["GitHub result was truncated by a fixed gateway ceiling and cannot prove completeness."] : [], generated_at: generatedAt, result_hash: "",
     }
-    output.result_hash = hash({ ...output, generated_at: "", external_api_audit_request_ids: [] })
+    output.result_hash = hash(stableGatewayValue({ ...output, generated_at: "", external_api_audit_request_ids: [] }))
     return output
   }
 
@@ -234,7 +236,15 @@ function normalize(toolId: CommanderGithubReadToolId, repository: string, reques
 function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknown[], itemCap: number, pageCap: number): Record<string, unknown> {
   const first = responses[0]
   if (toolId === "github.repository_get") { const object = requiredObject(first); return { full_name: safeRepository(object.full_name), name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
-  if (toolId === "github.commit_get") { const object = requiredObject(first); return { sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")), parent_shas: arrayOf(object.parents).slice(0, 8).map((item) => safeSha(requiredObject(item).sha)).filter(Boolean), truncated: false } }
+  if (toolId === "github.commit_get") {
+    const object = requiredObject(first)
+    const parentShas = arrayOf(object.parents).map((item) => safeSha(requiredObject(item).sha)).filter((item): item is string => Boolean(item))
+    const parents = boundedItems(parentShas, Math.max(0, itemCap - 1))
+    return {
+      sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")),
+      parent_shas: parents.items, omitted_parent_count: parentShas.length - parents.items.length, truncated: parents.truncated,
+    }
+  }
   if (toolId === "github.issue_get") {
     const object = requiredObject(first)
     const issueLabels = boundedLabels(object, Math.max(0, itemCap - 1))
@@ -346,8 +356,9 @@ function visitStructured(value: unknown, visitor: (parent: Record<string, unknow
 function boundedItems<T>(items: T[], cap: number): { items: T[]; truncated: boolean } { return { items: items.slice(0, cap), truncated: items.length > cap } }
 function normalizedItemCount(evidence: Record<string, unknown>): number {
   const labels = Array.isArray(evidence.labels) ? evidence.labels.length : 0
+  const parents = Array.isArray(evidence.parent_shas) ? evidence.parent_shas.length : 0
   if (Array.isArray(evidence.files)) return evidence.files.length + labels
-  if (!Array.isArray(evidence.items)) return 1 + labels
+  if (!Array.isArray(evidence.items)) return 1 + labels + parents
   const items = evidence.items.length
   const threadState = evidence.thread_state && typeof evidence.thread_state === "object" && !Array.isArray(evidence.thread_state) ? evidence.thread_state as Record<string, unknown> : undefined
   const threadItems = Array.isArray(threadState?.items) ? threadState.items.length : 0
@@ -359,7 +370,7 @@ function boundedLabels(object: Record<string, unknown>, cap: number): { items: s
   return { items, omitted: normalized.length - items.length, truncated: normalized.length > items.length }
 }
 function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
-function evidenceFor(toolId: CommanderGithubReadToolId, result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: hash({ result, provenance }) }] }
+function evidenceFor(toolId: CommanderGithubReadToolId, _result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: provenance.evidence_hash }] }
 function base(toolId: CommanderGithubReadToolId, generatedAt: string, status: "blocked" | "failed" | "cancelled", repository?: string, blocker?: unknown, audits: ExternalApiPersistedAuditRecord[] = [], networkCalled = false): CommanderGithubReadResult { const result: CommanderGithubReadResult = { status, tool_id: toolId, repository, result: null, evidence: [], request_count: audits.length, page_count: 0, item_count: 0, normalized_bytes: 0, truncated: false, external_api_audit_request_ids: audits.map((item) => item.request_id), external_api_audit_event_kinds: audits.map((item) => item.event_kind), network_called: networkCalled, blockers: [redactText(String(blocker ?? "GitHub gateway request failed"))], warnings: [], generated_at: generatedAt, result_hash: "" }; result.result_hash = hash({ ...result, generated_at: "", external_api_audit_request_ids: [] }); return result }
 function validateGithubConnector(connector: ExternalApiConnector, connectorId: string): void {
   if (connector.connector_id !== connectorId) throw new Error("GitHub gateway connector identity does not match configuration")
@@ -404,6 +415,13 @@ function bounded(value: number | undefined, fallback: number, ceiling: number): 
 function positiveBudget(value: number): number { return Number.isInteger(value) && value > 0 ? value : 0 }
 function limits(config: CommanderGithubGatewayConfig): object { return { requests: config.max_requests_per_call ?? MAX_REQUESTS, pages: config.max_pages_per_call ?? MAX_PAGES, items: config.max_items_per_call ?? MAX_ITEMS, bytes: config.max_normalized_bytes ?? MAX_BYTES } }
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex") }
+function stableGatewayValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableGatewayValue)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => key !== "generated_at" && key !== "observed_at" && key !== "retrieved_at")
+    .map(([key, nested]) => [key, stableGatewayValue(nested)]))
+}
 function requiredObject(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("GitHub gateway response had an unexpected JSON shape"); return value as Record<string, unknown> }
 function arrayOf(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 function nested(value: Record<string, unknown>, first: string, second: string): unknown { const parent = value[first]; return parent && typeof parent === "object" && !Array.isArray(parent) ? (parent as Record<string, unknown>)[second] : undefined }

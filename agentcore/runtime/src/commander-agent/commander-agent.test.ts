@@ -10322,6 +10322,57 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(events)).not.toContain("github_shutdown_test response")
   })
 
+  test("injected in-memory GitHub investigation is lifecycle-owned and drained before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-injected-github-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let dispatched!: () => void
+    let aborted!: () => void
+    let release!: () => void
+    const dispatchObserved = new Promise<void>((resolve) => { dispatched = resolve })
+    const abortObserved = new Promise<void>((resolve) => { aborted = resolve })
+    const releaseTransport = new Promise<void>((resolve) => { release = resolve })
+    const transport: ExternalApiTransport = {
+      async request(input) {
+        dispatched()
+        await new Promise<void>((resolve) => {
+          const observe = () => { aborted(); resolve() }
+          if (input.abort_signal?.aborted) observe()
+          else input.abort_signal?.addEventListener("abort", observe, { once: true })
+        })
+        await releaseTransport
+        throw new Error("external API request cancelled after injected investigation shutdown")
+      },
+    }
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("load_injected_github", "commander.tool_get", { tool_id: "github.repository_get" })] },
+        { status: "tool_call", tool_calls: [toolCall("read_injected_github", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+        { status: "final", text: "must not run after shutdown" },
+      ]),
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [githubTestConnector()],
+      externalApiTransport: transport,
+      externalApiRequestId: () => "api_injected_github_shutdown",
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const execution = server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_injected_github_shutdown" }))
+    await dispatchObserved
+    const shutdown = server.shutdown("abort injected GitHub investigation")
+    await abortObserved
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+
+    release()
+    await expect(execution).resolves.toMatchObject({ status: "cancelled", tool_call_count: 2, external_api_audit_events_appended: 1 })
+    await shutdown
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_failed")).toHaveLength(1)
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+  })
+
   test("GitHub recovery authority becomes stale on policy drift and blocks when the gateway disappears", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-recovery-authority-"))
     await writeApprovedSpec(projectDir)
