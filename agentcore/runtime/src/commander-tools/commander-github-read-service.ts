@@ -255,8 +255,9 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   }
   if (toolId === "github.pull_request_get") {
     const object = requiredObject(first)
-    const files = boundedItems(responses.slice(1).flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { filename: safeText(value.filename, 240), status: safeText(value.status, 64), additions: safeNonNegative(value.additions), deletions: safeNonNegative(value.deletions), changes: safeNonNegative(value.changes), sha: safeSha(value.sha) } }), itemCap)
-    const pullLabels = boundedLabels(object, Math.max(0, itemCap - files.items.length))
+    const detailBudget = Math.max(0, itemCap - 1)
+    const files = boundedItems(responses.slice(1).flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { filename: safeText(value.filename, 240), status: safeText(value.status, 64), additions: safeNonNegative(value.additions), deletions: safeNonNegative(value.deletions), changes: safeNonNegative(value.changes), sha: safeSha(value.sha) } }), detailBudget)
+    const pullLabels = boundedLabels(object, Math.max(0, detailBudget - files.items.length))
     const paginationTruncated = responses.length - 1 >= pageCap && arrayOf(responses.at(-1)).length >= PAGE_SIZE
     const changedFiles = safePositive(object.changed_files)
     return { number: safePositive(object.number), title_preview: safeText(object.title, 500), state: safeText(object.state, 32), draft: object.draft === true, updated_at: safeTimestamp(object.updated_at), head_sha: safeSha(nested(object, "head", "sha")), base_sha: safeSha(nested(object, "base", "sha")), changed_files: changedFiles, labels: pullLabels.items, omitted_label_count: pullLabels.omitted, files: files.items, truncated: files.truncated || pullLabels.truncated || paginationTruncated || changedFiles !== undefined && files.items.length < changedFiles }
@@ -357,7 +358,7 @@ function boundedItems<T>(items: T[], cap: number): { items: T[]; truncated: bool
 function normalizedItemCount(evidence: Record<string, unknown>): number {
   const labels = Array.isArray(evidence.labels) ? evidence.labels.length : 0
   const parents = Array.isArray(evidence.parent_shas) ? evidence.parent_shas.length : 0
-  if (Array.isArray(evidence.files)) return evidence.files.length + labels
+  if (Array.isArray(evidence.files)) return 1 + evidence.files.length + labels
   if (!Array.isArray(evidence.items)) return 1 + labels + parents
   const items = evidence.items.length
   const threadState = evidence.thread_state && typeof evidence.thread_state === "object" && !Array.isArray(evidence.thread_state) ? evidence.thread_state as Record<string, unknown> : undefined

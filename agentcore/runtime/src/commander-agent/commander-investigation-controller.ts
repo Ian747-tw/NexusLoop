@@ -1018,7 +1018,7 @@ function repeatResultSignature(callSignature: string, execution: CommanderToolEx
 function stableForRepeat(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableForRepeat)
   if (!value || typeof value !== "object") return value
-  const omitted = new Set(["execution_id", "call_id", "tool_call_id", "source_execution_id", "generated_at", "duration_ms", "result_hash", "call_hash", "observed_at", "retrieved_at"])
+  const omitted = new Set(["execution_id", "call_id", "tool_call_id", "source_execution_id", "generated_at", "duration_ms", "result_hash", "call_hash", "observed_at", "retrieved_at", "external_api_audit_request_ids"])
   const entries: Array<[string, unknown]> = Object.entries(value as Record<string, unknown>).filter(([key]) => !omitted.has(key)).map(([key, item]) => [key, stableForRepeat(item)])
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
 }

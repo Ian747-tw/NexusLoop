@@ -138,6 +138,16 @@ describe("Commander GitHub read gateway", () => {
     expect(fixture.calls).toHaveLength(2)
   })
 
+  test("reserves one item for pull metadata before files and labels", async () => {
+    const fixture = service([
+      { number: 12, title: "bounded pull", changed_files: 1, labels: [{ name: "review" }] },
+      [{ filename: "src/example.ts", status: "modified", sha: "c".repeat(40) }],
+    ], { max_items_per_call: 1 })
+    const result = await fixture.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 })
+    expect(result).toMatchObject({ status: "ready", item_count: 1, truncated: true })
+    expect(result.result?.evidence).toMatchObject({ files: [], labels: [], omitted_label_count: 1, truncated: true })
+  })
+
   test("normalizes exact-SHA check-run and check-suite summaries and rejects page identity drift", async () => {
     const sha = "a".repeat(40)
     const fixture = service([{ total_count: 1, check_runs: [{ name: "unit", head_sha: sha, status: "completed", conclusion: "success", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } }] }])
@@ -179,6 +189,24 @@ describe("Commander GitHub read gateway", () => {
     expect(events[0]?.url).toBe("[internal request URL omitted]")
     expect(JSON.stringify(await new EventStore(join(project, "events.jsonl")).readAll())).not.toContain("/repos/ian747-tw/nexusloop")
     expect(JSON.stringify(events)).not.toContain("token budget review")
+  })
+
+  test("runtime-owned GraphQL content type replaces connector defaults case-insensitively", async () => {
+    const project = await mkdtemp(join(tmpdir(), "nxl-9xa-content-type-"))
+    const sha = "d".repeat(40)
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: "[]" },
+      { status_code: 200, body: JSON.stringify({ data: { repository: { pullRequest: { headRefOid: sha, reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } } }) },
+    ])
+    const connector = { ...TEST_CONNECTOR, default_headers: { "content-type": "text/plain", Accept: "application/vnd.github+json" } }
+    let requestIndex = 0
+    const requestService = new ExternalApiRequestService({ registry: new ExternalApiConnectorRegistry([connector]), transport, eventStore: new EventStore(join(project, "events.jsonl")), requestId: () => `github_content_type_${++requestIndex}` })
+    const gateway = new CommanderGithubReadService({ requestService, connector, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] } })
+    const result = await gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha })
+    expect(result.status).toBe("ready")
+    const headers = transport.requests[1]?.headers ?? {}
+    expect(Object.keys(headers).filter((key) => key.toLowerCase() === "content-type")).toEqual(["Content-Type"])
+    expect(headers["Content-Type"]).toBe("application/json")
   })
 
   test("executes only the bound GitHub descriptor through the Commander executor", async () => {

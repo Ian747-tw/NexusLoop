@@ -280,7 +280,7 @@ export class ExternalApiRequestService {
       if (typeof value !== "string") blockers.push(`header value must be string: ${key}`)
       else if (DANGEROUS_USER_HEADERS.has(key.toLowerCase())) blockers.push(`header is not allowed from user input: ${key}`)
       else if (credentialHeaderTargets.has(key.toLowerCase())) blockers.push(`credential header is not allowed from user input: ${key}`)
-      else headers[key] = value
+      else setHeaderCaseInsensitive(headers, key, value)
     }
 
     const credentialRefsUsed: string[] = []
@@ -388,6 +388,13 @@ export class ExternalApiRequestService {
       }
     }
   }
+}
+
+function setHeaderCaseInsensitive(headers: Record<string, string>, name: string, value: string): void {
+  for (const existing of Object.keys(headers)) {
+    if (existing.toLowerCase() === name.toLowerCase()) delete headers[existing]
+  }
+  headers[name] = value
 }
 
 interface BuiltRequest {

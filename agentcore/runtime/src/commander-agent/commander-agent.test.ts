@@ -10373,6 +10373,38 @@ describe("Commander in-memory investigation controller", () => {
     expect(events.at(-1)?.kind).toBe("runtime_shutdown")
   })
 
+  test("repeated identical GitHub evidence is not disguised by fresh audit request IDs", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-repeat-"))
+    await writeApprovedSpec(projectDir)
+    const adapter = new ScriptedCommanderModelStepAdapter([
+      { status: "tool_call", tool_calls: [toolCall("load_repeat_github", "commander.tool_get", { tool_id: "github.repository_get" })] },
+      { status: "tool_call", tool_calls: [toolCall("repeat_github_1", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+      { status: "tool_call", tool_calls: [toolCall("repeat_github_2", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+      { status: "tool_call", tool_calls: [toolCall("repeat_github_3", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+    ])
+    const body = JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: "identical bounded evidence" })
+    const transport = new FakeExternalApiTransport(Array.from({ length: 3 }, () => ({ status_code: 200, body })))
+    let requestIndex = 0
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: adapter,
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [githubTestConnector()],
+      externalApiTransport: transport,
+      externalApiRequestId: () => `api_repeat_github_${++requestIndex}`,
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_repeat_github", max_consecutive_no_progress_turns: 4 }))
+
+    expect(result).toMatchObject({ status: "no_progress", stop_reason: "repeated_identical_call", tool_call_count: 4, external_api_audit_events_appended: 3 })
+    expect(transport.requests).toHaveLength(3)
+    const audits = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("external_api_request_"))
+    expect(audits.map((event) => event.request_id)).toEqual(["api_repeat_github_1", "api_repeat_github_2", "api_repeat_github_3"])
+  })
+
   test("GitHub recovery authority becomes stale on policy drift and blocks when the gateway disappears", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-recovery-authority-"))
     await writeApprovedSpec(projectDir)
