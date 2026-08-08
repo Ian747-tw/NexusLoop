@@ -10173,7 +10173,7 @@ describe("Commander in-memory investigation controller", () => {
     const transport = new FakeExternalApiTransport([
       { status_code: 200, body: toolResponse("call_load_github", "commander__tool_get", { tool_id: "github.repository_get" }) },
       { status_code: 200, body: toolResponse("call_github_repo", "github__repository_get", { repository: "ian747-tw/nexusloop" }) },
-      { status_code: 200, body: JSON.stringify({ name: "NexusLoop", description: "untrusted repository evidence", default_branch: "main", visibility: "public", archived: false, private: false }) },
+      { status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: "untrusted repository evidence", default_branch: "main", visibility: "public", archived: false, private: false }) },
       { status_code: 200, body: chatCompletionText("configured investigation completed after bounded GitHub evidence") },
     ])
     const githubConnector = { connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.github.test", allowed_hosts: ["api.github.test"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }

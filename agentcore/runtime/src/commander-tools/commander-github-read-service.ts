@@ -76,6 +76,7 @@ export class CommanderGithubReadService {
       const operation = await this.fetchOperation(toolId, repository, args, maxRequests, audits, observation, signal)
       if (signal?.aborted) return this.cancelled(toolId, repository, generatedAt, audits, observation.network_called)
       const normalized = normalize(toolId, repository, requestedRef, operation.responses.map((item) => item.body), this.config, operation.pagination_truncated)
+      validateObservedResource(toolId, repository, args, normalized.result)
       if (requestedCommit && normalized.observed_commit_sha !== requestedCommit) {
         return this.failed(toolId, repository, generatedAt, "GitHub response did not match the exact requested commit SHA", audits, operation.network_called)
       }
@@ -214,7 +215,7 @@ function normalize(toolId: CommanderGithubReadToolId, repository: string, reques
 
 function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknown[], itemCap: number, pageCap: number): Record<string, unknown> {
   const first = responses[0]
-  if (toolId === "github.repository_get") { const object = requiredObject(first); return { name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
+  if (toolId === "github.repository_get") { const object = requiredObject(first); return { full_name: safeRepository(object.full_name), name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
   if (toolId === "github.commit_get") { const object = requiredObject(first); return { sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")), parent_shas: arrayOf(object.parents).slice(0, 8).map((item) => safeSha(requiredObject(item).sha)).filter(Boolean), truncated: false } }
   if (toolId === "github.issue_get") { const object = requiredObject(first); return { number: safePositive(object.number), title_preview: safeText(object.title, 500), body_preview: safeText(object.body, 1200), state: safeText(object.state, 32), updated_at: safeTimestamp(object.updated_at), author_login: safeText(nested(object, "user", "login"), 120), labels: labels(object), truncated: false } }
   if (toolId === "github.pull_request_get") {
@@ -256,10 +257,17 @@ function threadSummary(raw: Record<string, unknown>, cap: number): Record<string
   return { observed_commit_sha: safeSha(threadConnection.headRefOid), thread_count: nodes.length, unresolved_current_count: unresolvedCurrent, items: nodes, completeness: pageInfo.hasNextPage === true || arrayOf(threads.nodes).length > cap ? "unknown_truncated" : "bounded_complete", truncated: pageInfo.hasNextPage === true || arrayOf(threads.nodes).length > cap }
 }
 
+function validateObservedResource(toolId: CommanderGithubReadToolId, repository: string, args: Record<string, unknown>, result: Record<string, unknown>): void {
+  const evidence = requiredObject(result.evidence)
+  if (toolId === "github.repository_get" && evidence.full_name !== repository) throw new Error("GitHub response did not match the exact requested repository")
+  if (toolId === "github.issue_get" && evidence.number !== requiredNumber(args.issue_number, "issue_number")) throw new Error("GitHub response did not match the exact requested issue")
+  if (toolId === "github.pull_request_get" && evidence.number !== requiredNumber(args.pull_number, "pull_number")) throw new Error("GitHub response did not match the exact requested pull request")
+}
+
 function boundedItems<T>(items: T[], cap: number): { items: T[]; truncated: boolean } { return { items: items.slice(0, cap), truncated: items.length > cap } }
 function normalizedItemCount(evidence: Record<string, unknown>): number { if (Array.isArray(evidence.items)) return evidence.items.length; if (Array.isArray(evidence.files)) return evidence.files.length; return 1 }
 function labels(object: Record<string, unknown>): string[] { return arrayOf(object.labels).slice(0, 20).map((item) => safeText(requiredObject(item).name, 100)).filter((item): item is string => Boolean(item)) }
-function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: `https://github.com/${repository}` } }
+function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
 function evidenceFor(toolId: CommanderGithubReadToolId, result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: hash({ result, provenance }) }] }
 function base(toolId: CommanderGithubReadToolId, generatedAt: string, status: "blocked" | "failed" | "cancelled", repository?: string, blocker?: unknown, audits: ExternalApiPersistedAuditRecord[] = [], networkCalled = false): CommanderGithubReadResult { const result: CommanderGithubReadResult = { status, tool_id: toolId, repository, result: null, evidence: [], request_count: audits.length, page_count: 0, item_count: 0, normalized_bytes: 0, truncated: false, external_api_audit_request_ids: audits.map((item) => item.request_id), external_api_audit_event_kinds: audits.map((item) => item.event_kind), network_called: networkCalled, blockers: [redactText(String(blocker ?? "GitHub gateway request failed"))], warnings: [], generated_at: generatedAt, result_hash: "" }; result.result_hash = hash({ ...result, generated_at: "", external_api_audit_request_ids: [] }); return result }
 function validateGithubConnector(connector: ExternalApiConnector, connectorId: string): void {
@@ -290,7 +298,7 @@ function githubTransportPolicyHash(connector: ExternalApiConnector, config: Comm
 }
 function canonicalRepository(value: string): string { if (value !== value.trim() || !REPOSITORY.test(value) || value !== value.toLowerCase()) throw new Error("repository must be an exact lowercase owner/repository identity"); return value }
 function fullSha(value: unknown): string { if (typeof value !== "string" || !FULL_SHA.test(value)) throw new Error("commit_sha must be a lowercase full 40-character SHA"); return value }
-function requiredNumber(value: unknown, field: string): string { if (typeof value !== "number" && typeof value !== "string") throw new Error(`${field} is required`); const text = String(value); if (!NUMBER.test(text) || text === "0") throw new Error(`${field} must be a positive integer`); return text }
+function requiredNumber(value: unknown, field: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || !NUMBER.test(String(value))) throw new Error(`${field} must be a positive integer`); return value }
 function bounded(value: number | undefined, fallback: number, ceiling: number): number { return Number.isInteger(value) && value! > 0 ? Math.min(value!, ceiling) : fallback }
 function positiveBudget(value: number): number { return Number.isInteger(value) && value > 0 ? value : 0 }
 function limits(config: CommanderGithubGatewayConfig): object { return { requests: config.max_requests_per_call ?? MAX_REQUESTS, pages: config.max_pages_per_call ?? MAX_PAGES, items: config.max_items_per_call ?? MAX_ITEMS, bytes: config.max_normalized_bytes ?? MAX_BYTES } }
@@ -304,3 +312,10 @@ function safeSha(value: unknown): string | undefined { return typeof value === "
 function safePositive(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined }
 function safeNonNegative(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined }
 function safeTimestamp(value: unknown): string | undefined { return typeof value === "string" && !Number.isNaN(new Date(value).getTime()) && new Date(value).toISOString() === value ? value : undefined }
+function safeRepository(value: unknown): string | undefined { return typeof value === "string" && REPOSITORY.test(value) && value === value.toLowerCase() ? value : undefined }
+function githubWebUrl(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined): string {
+  if (toolId === "github.commit_get" || toolId === "github.commit_checks") return `https://github.com/${repository}/commit/${requestedRef}`
+  if ((toolId === "github.pull_request_get" || toolId === "github.pull_request_reviews") && requestedRef) return `https://github.com/${repository}/pull/${requestedRef.slice(5).split("@")[0]}`
+  if (toolId === "github.issue_get" && requestedRef) return `https://github.com/${repository}/issues/${requestedRef.slice(6)}`
+  return `https://github.com/${repository}`
+}
