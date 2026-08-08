@@ -109,3 +109,7 @@ GitHub/MCP read gateway, proposal generation, mission mutation, or OpenCode
 action is added. Public `provider_tool_loop_enabled` remains false. 9X owns
 external GitHub/research reads, 9Y owns evidence-backed proposals, and 9Z owns
 GitHub governance mutations.
+
+Branch 9XA supplies bounded GitHub reads only inside configured Commander
+investigations. It adds no direct GitHub operator command and does not change
+the 9W3C approval, execution, cancellation, one-shot, or uncertainty contracts.

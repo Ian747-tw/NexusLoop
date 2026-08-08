@@ -185,6 +185,10 @@ approval. 9W3B2B2A adds one recovery-start event that atomically consumes
 approval; existing model-step/checkpoint/finished events continue the journal
 with recovery linkage while pending uncertainty remains historical. 9W3B2B2B
 owns configured-provider execution, external API audit, and shutdown ownership.
-9W3C owns any public/operator
-start/list/show/pause/resume/cancel surface decision. 9Y owns proposal
-generation.
+9W3C owns the public/operator list/show/preview/approve/execute/cancel surface.
+9Y owns proposal generation.
+
+Branch 9XA allows the existing checkpoint/evidence-card path to retain only
+bounded GitHub provenance, hashes, summaries, and audit counters. Raw GitHub
+payloads, responses, schemas, diffs, and tool results remain excluded, and
+recovery never treats a historical GitHub request as replay authority.

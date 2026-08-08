@@ -34,6 +34,13 @@ uses only fixed GET paths plus one fixed review-thread GraphQL POST, bounded
 request/page/item/normalized-byte ceilings, cancellation checks between pages,
 and one existing external API audit outcome per attempted request.
 
+The hard per-call ceilings are four external requests, two list pages, fifty
+normalized items, and 24,000 normalized bytes. Configuration may tighten those
+ceilings but cannot broaden them. Connector response limits are capped at
+128,000 bytes and gateway timeouts at 15,000 milliseconds. One gateway service
+permits one active read at a time; the Commander controller remains sequential
+and charges every page request to the existing tool-call budget.
+
 Responses are converted immediately to typed, redacted, bounded untrusted
 evidence with repository-bound provenance and hashes. Review thread output
 distinguishes resolved, outdated, and current unresolved state. Truncation is

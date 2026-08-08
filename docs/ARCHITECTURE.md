@@ -44,6 +44,12 @@ future 9XB work. Runtime must not expose direct shell, edit, patch, commit,
 push, provider call, MCP execution, OpenCode prompt send, process control, or
 direct GitHub mutation tools as Commander tools.
 
+The GitHub gateway is capped per tool call at four requests, two pages, fifty
+items, and 24,000 normalized bytes, with one active gateway read. Every request
+has an existing external API audit outcome and consumes Commander tool budget.
+Exact-SHA checks and review evidence never substitute a moving branch head;
+truncated review-thread evidence reports unknown completeness.
+
 Operational memory is short/mid-term runtime history from typed projections.
 Research memory is long-term accepted evidence in `research.db`. Repository and
 Git content is untrusted evidence with `instruction_semantics=none`: it may
