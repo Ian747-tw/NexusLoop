@@ -121,6 +121,21 @@ describe("Commander GitHub read gateway", () => {
     expect(fixture.calls).toHaveLength(2)
   })
 
+  test("normalizes exact-SHA check-run and check-suite summaries and rejects page identity drift", async () => {
+    const sha = "a".repeat(40)
+    const fixture = service([{ head_sha: sha, total_count: 1, check_runs: [{ name: "unit", status: "completed", conclusion: "success", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } }] }])
+    const ready = await fixture.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect((ready.result?.evidence as Record<string, any>).items).toEqual([expect.objectContaining({ name: "unit", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } })])
+
+    const drift = service([
+      { head_sha: sha, total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `page-one-${index}` })) },
+      { head_sha: "b".repeat(40), total_count: 50, check_runs: [{ name: "wrong-page" }] },
+    ])
+    const blocked = await drift.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect(blocked).toMatchObject({ status: "failed", result: null, request_count: 2 })
+    expect(blocked.blockers.join(" ")).toContain("page identity")
+  })
+
   test("uses the runtime request service for fixed paths and persisted audit metadata", async () => {
     const project = await mkdtemp(join(tmpdir(), "nxl-9xa-github-"))
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ sha: "a".repeat(40), commit: { message: "token budget review", author: { date: "2026-01-01T00:00:00.000Z" } }, parents: [] }) }])

@@ -236,9 +236,18 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   if (toolId === "github.commit_checks") {
     const pages = responses.map(requiredObject)
     const head = pages[0]
-    const checks = boundedItems(pages.flatMap((page) => arrayOf(page.check_runs)).map((item) => { const value = requiredObject(item); return { name: safeText(value.name, 240), status: safeText(value.status, 64), conclusion: safeText(value.conclusion, 64), started_at: safeTimestamp(value.started_at), completed_at: safeTimestamp(value.completed_at) } }), itemCap)
+    const observedCommitSha = safeSha(head.head_sha)
+    if (!observedCommitSha || pages.some((page) => safeSha(page.head_sha) !== observedCommitSha)) throw new Error("GitHub check-run page identity did not match across the exact commit request")
+    const checks = boundedItems(pages.flatMap((page) => arrayOf(page.check_runs)).map((item) => {
+      const value = requiredObject(item)
+      const suite = value.check_suite && typeof value.check_suite === "object" && !Array.isArray(value.check_suite) ? requiredObject(value.check_suite) : undefined
+      return {
+        name: safeText(value.name, 240), status: safeText(value.status, 64), conclusion: safeText(value.conclusion, 64), started_at: safeTimestamp(value.started_at), completed_at: safeTimestamp(value.completed_at),
+        check_suite: suite ? { id: safePositive(suite.id), head_sha: safeSha(suite.head_sha), status: safeText(suite.status, 64), conclusion: safeText(suite.conclusion, 64) } : undefined,
+      }
+    }), itemCap)
     const paginationTruncated = pages.length >= pageCap && arrayOf(pages.at(-1)?.check_runs).length >= PAGE_SIZE
-    return { commit_sha: safeSha(head.head_sha), observed_commit_sha: safeSha(head.head_sha), total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
+    return { commit_sha: observedCommitSha, observed_commit_sha: observedCommitSha, total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
   }
   const reviewPages = responses.slice(0, -1)
   const reviewCap = Math.max(1, Math.floor(itemCap / 2))
