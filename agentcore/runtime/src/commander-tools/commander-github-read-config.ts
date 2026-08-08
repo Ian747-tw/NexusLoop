@@ -16,7 +16,7 @@ export function validateCommanderGithubGatewayConfig(value: unknown): CommanderG
     max_requests_per_call: optionalPositive(record.max_requests_per_call, "max_requests_per_call", 4) ?? 4,
     max_pages_per_call: optionalPositive(record.max_pages_per_call, "max_pages_per_call", 2) ?? 2,
     max_items_per_call: optionalPositive(record.max_items_per_call, "max_items_per_call", 50) ?? 50,
-    max_normalized_bytes: optionalPositive(record.max_normalized_bytes, "max_normalized_bytes", 24_000) ?? 24_000,
+    max_normalized_bytes: optionalPositive(record.max_normalized_bytes, "max_normalized_bytes", 24_000, 512) ?? 24_000,
     max_response_bytes: optionalPositive(record.max_response_bytes, "max_response_bytes", 128_000),
     timeout_ms: optionalPositive(record.timeout_ms, "timeout_ms", 15_000),
   })
@@ -37,5 +37,5 @@ export function commanderGithubGatewayCompatibilityHash(config: CommanderGithubG
 
 function required(value: unknown, field: string, max: number): string { if (typeof value !== "string" || !value.trim() || value.length > max || /https?:\/\//i.test(value)) throw new Error(`${field} is invalid`); return value.trim() }
 function repositoryList(value: unknown): string[] { if (!Array.isArray(value) || value.length === 0 || value.length > 32) throw new Error("allowed_repositories must contain 1-32 exact repositories"); const normalized = value.map((item) => { if (typeof item !== "string" || item !== item.trim() || item !== item.toLowerCase() || !REPOSITORY.test(item)) throw new Error("allowed_repositories must contain exact lowercase owner/repository identities"); return item }); if (new Set(normalized).size !== normalized.length) throw new Error("allowed_repositories must not contain duplicates"); return normalized.sort() }
-function positive(value: unknown, field: string, max: number): number { if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > max) throw new Error(`${field} must be a positive integer no greater than ${max}`); return Number(value) }
-function optionalPositive(value: unknown, field: string, max: number): number | undefined { return value === undefined ? undefined : positive(value, field, max) }
+function positive(value: unknown, field: string, max: number, min = 1): number { if (!Number.isInteger(value) || Number(value) < min || Number(value) > max) throw new Error(`${field} must be an integer between ${min} and ${max}`); return Number(value) }
+function optionalPositive(value: unknown, field: string, max: number, min = 1): number | undefined { return value === undefined ? undefined : positive(value, field, max, min) }

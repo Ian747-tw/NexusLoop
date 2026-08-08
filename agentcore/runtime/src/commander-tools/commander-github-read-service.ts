@@ -26,6 +26,7 @@ export class CommanderGithubReadService {
   private readonly now: () => Date
   private readonly config: Required<Pick<CommanderGithubGatewayConfig, "max_requests_per_call" | "max_pages_per_call" | "max_items_per_call" | "max_normalized_bytes">> & CommanderGithubGatewayConfig
   private readonly repositories: Set<string>
+  private activeReads = 0
 
   constructor(private readonly options: { requestService: ExternalApiRequestService; connector: ExternalApiConnector; config: CommanderGithubGatewayConfig; now?: () => Date }) {
     this.now = options.now ?? (() => new Date())
@@ -70,6 +71,8 @@ export class CommanderGithubReadService {
     const observation = { network_called: false }
     const maxRequests = Math.min(this.config.max_requests_per_call, requestBudget === undefined ? this.config.max_requests_per_call : positiveBudget(requestBudget))
     if (maxRequests < 1) return this.blocked(toolId, generatedAt, new Error("Commander tool budget has no remaining external request capacity"), repository)
+    if (this.activeReads >= 1) return this.blocked(toolId, generatedAt, new Error("Commander GitHub gateway concurrency ceiling is active"), repository)
+    this.activeReads += 1
     try {
       const requestedRef = requestedReference(toolId, args)
       const requestedCommit = requestedCommitSha(toolId, args)
@@ -87,6 +90,8 @@ export class CommanderGithubReadService {
       return signal?.aborted
         ? this.cancelled(toolId, repository, generatedAt, audits, observation.network_called)
         : this.failed(toolId, repository, generatedAt, error instanceof Error ? error.message : "GitHub gateway request failed", audits, observation.network_called)
+    } finally {
+      this.activeReads -= 1
     }
   }
 
@@ -98,9 +103,10 @@ export class CommanderGithubReadService {
       if (signal?.aborted) throw new Error("GitHub gateway read was cancelled")
       if (responses.length >= maxRequests) throw new Error("GitHub gateway request ceiling reached before required bounded evidence was retrieved")
       const observed: ExternalApiPersistedAuditRecord[] = []
+      const requestedBy = `commander_github_read:${toolId}`
       let response
       try {
-        response = await this.options.requestService.executeForInternalUse({ connector_id: this.config.connector_id, method: spec.method, path: spec.path, query: spec.query, body: spec.body, requested_by: `commander_github_read:${toolId}` }, {
+        response = await this.options.requestService.executeForInternalUse({ connector_id: this.config.connector_id, method: spec.method, path: spec.path, query: spec.query, body: spec.body, requested_by: requestedBy }, {
           timeout_ms: this.config.timeout_ms,
           max_response_bytes: this.config.max_response_bytes,
           redact_response_body: false,
@@ -111,9 +117,11 @@ export class CommanderGithubReadService {
         })
       } catch (error) {
         if (observed.length !== 1) throw new Error("GitHub gateway request failed without one durable audit outcome")
+        validateAudit(observed[0], this.config.connector_id, spec.method, requestedBy, false)
         throw error
       }
       if (observed.length !== 1) throw new Error("GitHub gateway request audit was not durably confirmed")
+      validateAudit(observed[0], this.config.connector_id, spec.method, requestedBy, response.ok)
       if (!response.ok || !response.response_body_for_internal_use) throw new Error("GitHub gateway response was unavailable")
       let body: unknown
       try { body = JSON.parse(response.response_body_for_internal_use) } catch { throw new Error("GitHub gateway response was not valid JSON") }
@@ -206,11 +214,11 @@ function requestedCommitSha(toolId: CommanderGithubReadToolId, args: Record<stri
 function normalize(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, responses: unknown[], config: { max_items_per_call: number; max_normalized_bytes: number; max_pages_per_call: number }, paginationTruncated: boolean): Normalized {
   const operationEvidence = normalizeOperation(toolId, responses, config.max_items_per_call, config.max_pages_per_call)
   const evidence = paginationTruncated ? { ...operationEvidence, truncated: true } : operationEvidence
-  const result = { repository, operation: toolId, requested_ref: requestedRef, evidence }
-  const encoded = JSON.stringify(redactValue(result))
-  if (Buffer.byteLength(encoded) > config.max_normalized_bytes) throw new Error("GitHub normalized evidence exceeds the fixed gateway byte ceiling")
-  const items = normalizedItemCount(evidence)
-  return { result, truncated: evidence.truncated === true || paginationTruncated, item_count: items, normalized_bytes: Buffer.byteLength(encoded), observed_commit_sha: typeof evidence.observed_commit_sha === "string" ? evidence.observed_commit_sha : undefined, page_count: responses.length }
+  const result = boundNormalizedResult({ repository, operation: toolId, requested_ref: requestedRef, evidence }, config.max_normalized_bytes)
+  const boundedEvidence = requiredObject(result.evidence)
+  const encoded = JSON.stringify(result)
+  const items = normalizedItemCount(boundedEvidence)
+  return { result, truncated: boundedEvidence.truncated === true || paginationTruncated, item_count: items, normalized_bytes: Buffer.byteLength(encoded), observed_commit_sha: typeof boundedEvidence.observed_commit_sha === "string" ? boundedEvidence.observed_commit_sha : undefined, page_count: responses.length }
 }
 
 function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknown[], itemCap: number, pageCap: number): Record<string, unknown> {
@@ -262,6 +270,47 @@ function validateObservedResource(toolId: CommanderGithubReadToolId, repository:
   if (toolId === "github.repository_get" && evidence.full_name !== repository) throw new Error("GitHub response did not match the exact requested repository")
   if (toolId === "github.issue_get" && evidence.number !== requiredNumber(args.issue_number, "issue_number")) throw new Error("GitHub response did not match the exact requested issue")
   if (toolId === "github.pull_request_get" && evidence.number !== requiredNumber(args.pull_number, "pull_number")) throw new Error("GitHub response did not match the exact requested pull request")
+}
+
+function validateAudit(audit: ExternalApiPersistedAuditRecord, connectorId: string, method: ExternalApiMethod, requestedBy: string, ok: boolean): void {
+  const expectedKind = ok ? "external_api_request_executed" : "external_api_request_failed"
+  if (audit.connector_id !== connectorId || audit.method !== method || audit.requested_by !== requestedBy || audit.ok !== ok || audit.event_kind !== expectedKind) {
+    throw new Error("GitHub gateway external request audit identity did not match the attempted request")
+  }
+}
+
+function boundNormalizedResult(input: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
+  const result = structuredClone(redactValue(input)) as Record<string, unknown>
+  if (Buffer.byteLength(JSON.stringify(result)) <= maxBytes) return result
+  requiredObject(result.evidence).truncated = true
+  while (Buffer.byteLength(JSON.stringify(result)) > maxBytes) {
+    const arrays: unknown[][] = []
+    visitStructured(result, (_parent, _key, value) => { if (Array.isArray(value) && value.length > 0) arrays.push(value) })
+    arrays.sort((left, right) => Buffer.byteLength(JSON.stringify(right)) - Buffer.byteLength(JSON.stringify(left)))
+    if (arrays[0]) {
+      arrays[0].pop()
+      continue
+    }
+    const strings: Array<{ parent: Record<string, unknown>; key: string; value: string }> = []
+    visitStructured(result, (parent, key, value) => {
+      if (typeof value === "string" && !NORMALIZED_IDENTITY_KEYS.has(key) && value.length > 16) strings.push({ parent, key, value })
+    })
+    strings.sort((left, right) => right.value.length - left.value.length)
+    const candidate = strings[0]
+    if (!candidate) throw new Error("GitHub normalized evidence identity exceeds the fixed gateway byte ceiling")
+    candidate.parent[candidate.key] = candidate.value.slice(0, Math.max(16, Math.floor(candidate.value.length / 2)))
+  }
+  return result
+}
+
+const NORMALIZED_IDENTITY_KEYS = new Set(["repository", "operation", "requested_ref", "full_name", "sha", "commit_sha", "observed_commit_sha", "head_sha", "base_sha"])
+
+function visitStructured(value: unknown, visitor: (parent: Record<string, unknown>, key: string, value: unknown) => void): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    visitor(value as Record<string, unknown>, key, item)
+    if (item && typeof item === "object" && !Array.isArray(item)) visitStructured(item, visitor)
+  }
 }
 
 function boundedItems<T>(items: T[], cap: number): { items: T[]; truncated: boolean } { return { items: items.slice(0, cap), truncated: items.length > cap } }
