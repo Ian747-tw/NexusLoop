@@ -10201,6 +10201,65 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(events)).not.toContain("configured investigation completed")
   })
 
+  test("configured GitHub read is aborted and drained before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let requestIndex = 0
+    let githubDispatched = false
+    const urls: string[] = []
+    const toolResponse = (id: string, name: string, args: Record<string, unknown>) => JSON.stringify({
+      id: `chatcmpl_${id}`,
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name, arguments: JSON.stringify(args) } }] } }],
+    })
+    const transport: ExternalApiTransport = {
+      async request(input) {
+        requestIndex += 1
+        urls.push(input.url)
+        if (requestIndex === 1) return { status_code: 200, body: toolResponse("call_load_github_shutdown", "commander__tool_get", { tool_id: "github.repository_get" }) }
+        if (requestIndex === 2) return { status_code: 200, body: toolResponse("call_github_shutdown", "github__repository_get", { repository: "ian747-tw/nexusloop" }) }
+        githubDispatched = true
+        return new Promise((_, reject) => {
+          const abort = () => reject(new Error("external API request cancelled"))
+          if (input.abort_signal?.aborted) abort()
+          else input.abort_signal?.addEventListener("abort", abort, { once: true })
+        })
+      },
+    }
+    const githubConnector = { connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.github.test", allowed_hosts: ["api.github.test"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [connector("openai-test", "https://api.example.test/v1"), githubConnector],
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      externalApiRequestId: (() => { let index = 0; return () => `api_github_shutdown_${++index}` })(),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const execution = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_github_shutdown", requested_by: "github_shutdown_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    await waitFor(() => githubDispatched)
+    const shutdown = server.shutdown("abort bounded GitHub read")
+    const beforeSettlement = await server.eventStore.readAll()
+    expect(beforeSettlement.map((event) => event.kind)).not.toContain("runtime_shutdown")
+    const result = await execution
+    await shutdown
+
+    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled" })
+    expect(urls).toHaveLength(3)
+    expect(urls[2]).toBe("http://api.github.test/repos/ian747-tw/nexusloop")
+    const events = await server.eventStore.readAll()
+    const kinds = events.map((event) => event.kind)
+    expect(kinds.filter((kind) => kind === "external_api_request_executed")).toHaveLength(2)
+    expect(kinds.filter((kind) => kind === "external_api_request_failed")).toHaveLength(1)
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    expect(JSON.stringify(events)).not.toContain("github_shutdown_test response")
+  })
+
   test("configured recovery shutdown aborts and drains audit and journal work before runtime shutdown", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-shutdown-"))
     await writeApprovedSpec(projectDir)
