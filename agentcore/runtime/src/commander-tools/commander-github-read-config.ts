@@ -16,7 +16,7 @@ export function validateCommanderGithubGatewayConfig(value: unknown): CommanderG
     max_requests_per_call: optionalPositive(record.max_requests_per_call, "max_requests_per_call", 4) ?? 4,
     max_pages_per_call: optionalPositive(record.max_pages_per_call, "max_pages_per_call", 2) ?? 2,
     max_items_per_call: optionalPositive(record.max_items_per_call, "max_items_per_call", 50) ?? 50,
-    max_normalized_bytes: optionalPositive(record.max_normalized_bytes, "max_normalized_bytes", 24_000, 512) ?? 24_000,
+    max_normalized_bytes: optionalPositive(record.max_normalized_bytes, "max_normalized_bytes", 8_000, 512) ?? 8_000,
     max_response_bytes: optionalPositive(record.max_response_bytes, "max_response_bytes", 128_000) ?? 128_000,
     timeout_ms: optionalPositive(record.timeout_ms, "timeout_ms", 15_000) ?? 15_000,
   })
@@ -28,7 +28,7 @@ export function readCommanderGithubGatewayConfigFromEnv(env: Record<string, stri
   const repositories = env.NXL_COMMANDER_GITHUB_READ_REPOSITORIES
   if (connector === undefined && repositories === undefined) return undefined
   if (!connector || !repositories) throw new Error("NXL_COMMANDER_GITHUB_READ_CONNECTOR_ID and NXL_COMMANDER_GITHUB_READ_REPOSITORIES must be set together")
-  return validateCommanderGithubGatewayConfig({ connector_id: connector, allowed_repositories: repositories.split(","), max_requests_per_call: 4, max_pages_per_call: 2, max_items_per_call: 50, max_normalized_bytes: 24_000 })
+  return validateCommanderGithubGatewayConfig({ connector_id: connector, allowed_repositories: repositories.split(","), max_requests_per_call: 4, max_pages_per_call: 2, max_items_per_call: 50, max_normalized_bytes: 8_000 })
 }
 
 export function commanderGithubGatewayCompatibilityHash(config: CommanderGithubGatewayConfig): string {

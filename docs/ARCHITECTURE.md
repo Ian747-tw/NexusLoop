@@ -45,7 +45,7 @@ push, provider call, MCP execution, OpenCode prompt send, process control, or
 direct GitHub mutation tools as Commander tools.
 
 The GitHub gateway is capped per tool call at four requests, two pages, fifty
-items, and 24,000 normalized bytes, with one active gateway read. Every request
+items, and 8,000 normalized bytes, with one active gateway read. Every request
 has an existing external API audit outcome and consumes Commander tool budget.
 Exact-SHA checks and review evidence never substitute a moving branch head;
 truncated review-thread evidence reports unknown completeness.

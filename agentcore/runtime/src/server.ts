@@ -3244,7 +3244,8 @@ export class RuntimeServer {
     const publicRecoveries = Array.from(this.publicCommanderRecoveryOperations.values())
     const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...Array.from(this.activeCommanderBoundReadTools), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...publicRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
     if (pending.length === 0) return
-    const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
+    const ownedExternalTimeoutMs = Math.max(this.commanderInvestigationProviderConfig?.timeout_ms ?? 0, this.commanderGithubGatewayConfig?.timeout_ms ?? 0)
+    const timeoutMs = ownedExternalTimeoutMs > 0 ? Math.max(100, Math.min(ownedExternalTimeoutMs + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
     const timedOut = Symbol("commander-provider-drain-timeout")
     const result = await Promise.race([

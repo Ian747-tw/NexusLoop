@@ -24610,6 +24610,11 @@ describe("ProcessOpenCodeAdapter", () => {
     const shutdown = server.shutdown("direct GitHub read drain")
     await abortObserved
     expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+    const stateAtOldFallbackDeadline = await Promise.race([
+      shutdown.then(() => "settled", () => "settled"),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 1_100)),
+    ])
+    expect(stateAtOldFallbackDeadline).toBe("pending")
     release()
     await expect(execution).resolves.toMatchObject({ status: "cancelled", handler_invoked: true, network_called: true, external_api_audit_event_count: 1 })
     await shutdown

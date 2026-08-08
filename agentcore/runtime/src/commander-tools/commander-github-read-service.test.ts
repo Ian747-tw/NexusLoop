@@ -9,7 +9,7 @@ import { ExternalApiRequestService } from "../external-api/api-request-service"
 import { FakeExternalApiTransport } from "../external-api/api-transport"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tool-registry"
-import { CommanderToolExecutor } from "../commander-agent/commander-tool-executor"
+import { CommanderToolExecutor, toCommanderToolResultMessage } from "../commander-agent/commander-tool-executor"
 import { createCommanderToolBindingRegistry } from "../commander-agent/commander-tool-bindings"
 import { COMMANDER_GITHUB_READ_TOOL_IDS } from "./commander-github-read-types"
 import { COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS } from "../commander-agent/commander-github-tool-authority-registry"
@@ -59,6 +59,7 @@ describe("Commander GitHub read gateway", () => {
   test("validates exact repository configuration without wildcard, URL, case, or duplicate ambiguity", () => {
     expect(validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] })).toMatchObject({
       allowed_repositories: ["ian747-tw/nexusloop"],
+      max_normalized_bytes: 8_000,
       max_response_bytes: 128_000,
       timeout_ms: 15_000,
     })
@@ -112,6 +113,12 @@ describe("Commander GitHub read gateway", () => {
     expect((await repository.gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })).status).toBe("failed")
     expect((await issue.gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })).status).toBe("failed")
     expect((await pull.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 })).status).toBe("failed")
+  })
+
+  test("canonicalizes GitHub response repository casing before exact scope validation", async () => {
+    const fixture = service([{ full_name: "Ian747-tw/NexusLoop", name: "NexusLoop" }])
+    const result = await fixture.gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })
+    expect(result).toMatchObject({ status: "ready", repository: "ian747-tw/nexusloop", result: { evidence: { full_name: "ian747-tw/nexusloop" } } })
   })
 
   test("uses bounded pull-file pagination and charges every audited request", async () => {
@@ -198,6 +205,21 @@ describe("Commander GitHub read gateway", () => {
     expect(fixture.calls).toHaveLength(0)
   })
 
+  test("bounds normalized evidence so the controller tool message retains the result", async () => {
+    const sha = "a".repeat(40)
+    const fixture = service([{ total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `check-${index}-${"x".repeat(220)}`, head_sha: sha, status: "completed", conclusion: "success" })) }], { max_pages_per_call: 1, max_items_per_call: 50, max_normalized_bytes: 8_000 })
+    const bindings = createCommanderToolBindingRegistry({
+      commanderToolService: { search: () => ({}), get: () => ({}), profile: () => ({}) }, commandAuthorityService: { get: () => COMMAND_AUTHORITY_REGISTRY[0] }, researchMemoryService: { preview: () => ({}) }, operationalMemorySearchService: { search: async () => ({}) }, repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) }, githubReadService: fixture.gateway,
+    })
+    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, runtimeAuthority: () => ({ active_runtime: true, run_lock_held: true }) })
+    const execution = await executor.execute({ execution_id: "github_bounded_exec", call_id: "github_bounded_call", tool_call_id: "github_bounded_tool", tool_id: "github.commit_checks", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop", commit_sha: sha }, requested_by: "test", remaining_tool_call_budget: 1 })
+    const message = toCommanderToolResultMessage(execution, 12_000)
+    expect(execution).toMatchObject({ status: "ready" })
+    expect(Buffer.byteLength(message.content)).toBeLessThanOrEqual(12_000)
+    expect(message.content).not.toContain("omitted_result")
+    expect(JSON.parse(message.content).result).toBeDefined()
+  })
+
   test("binds review and thread evidence to the exact requested PR head SHA", async () => {
     const sha = "d".repeat(40)
     const fixture = service([
@@ -207,6 +229,7 @@ describe("Commander GitHub read gateway", () => {
     const result = await fixture.gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, undefined, 2)
     expect(result).toMatchObject({ status: "ready", request_count: 2, provenance: { observed_commit_sha: sha } })
     expect((result.result?.evidence as Record<string, any>).thread_state).toMatchObject({ unresolved_current_count: 1, completeness: "bounded_complete" })
+    expect(fixture.calls[1]).toMatchObject({ method: "POST", headers: { "Content-Type": "application/json" } })
   })
 
   test("shares one configured item ceiling across reviews and review threads", async () => {

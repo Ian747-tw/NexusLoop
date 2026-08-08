@@ -35,7 +35,7 @@ request/page/item/normalized-byte ceilings, cancellation checks between pages,
 and one existing external API audit outcome per attempted request.
 
 The hard per-call ceilings are four external requests, two list pages, fifty
-normalized items, and 24,000 normalized bytes. Configuration may tighten those
+normalized items, and 8,000 normalized bytes. Configuration may tighten those
 ceilings but cannot broaden them. Connector response limits are capped at
 128,000 bytes and gateway timeouts at 15,000 milliseconds. One gateway service
 permits one active read at a time; the Commander controller remains sequential

@@ -12,7 +12,7 @@ const NUMBER = /^(?:0|[1-9][0-9]{0,8})$/
 const MAX_REQUESTS = 4
 const MAX_PAGES = 2
 const MAX_ITEMS = 50
-const MAX_BYTES = 24_000
+const MAX_BYTES = 8_000
 const MAX_RESPONSE_BYTES = 128_000
 const MAX_TIMEOUT_MS = 15_000
 const PAGE_SIZE = 25
@@ -115,7 +115,7 @@ export class CommanderGithubReadService {
       const requestedBy = `commander_github_read:${toolId}`
       let response
       try {
-        response = await this.options.requestService.executeForInternalUse({ connector_id: this.config.connector_id, method: spec.method, path: spec.path, query: spec.query, body: spec.body, requested_by: requestedBy }, {
+        response = await this.options.requestService.executeForInternalUse({ connector_id: this.config.connector_id, method: spec.method, path: spec.path, query: spec.query, headers: spec.method === "POST" ? { "Content-Type": "application/json" } : undefined, body: spec.body, requested_by: requestedBy }, {
           timeout_ms: this.config.timeout_ms,
           max_response_bytes: this.config.max_response_bytes,
           redact_response_body: false,
@@ -392,7 +392,11 @@ function safeSha(value: unknown): string | undefined { return typeof value === "
 function safePositive(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined }
 function safeNonNegative(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined }
 function safeTimestamp(value: unknown): string | undefined { if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return undefined; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString() }
-function safeRepository(value: unknown): string | undefined { return typeof value === "string" && REPOSITORY.test(value) && value === value.toLowerCase() ? value : undefined }
+function safeRepository(value: unknown): string | undefined {
+  if (typeof value !== "string" || value !== value.trim()) return undefined
+  const canonical = value.toLowerCase()
+  return REPOSITORY.test(canonical) ? canonical : undefined
+}
 function githubWebUrl(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined): string {
   if (toolId === "github.commit_get" || toolId === "github.commit_checks") return `https://github.com/${repository}/commit/${requestedRef}`
   if ((toolId === "github.pull_request_get" || toolId === "github.pull_request_reviews") && requestedRef) return `https://github.com/${repository}/pull/${requestedRef.slice(5).split("@")[0]}`
