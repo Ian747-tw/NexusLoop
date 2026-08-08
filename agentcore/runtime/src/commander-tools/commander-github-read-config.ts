@@ -17,8 +17,8 @@ export function validateCommanderGithubGatewayConfig(value: unknown): CommanderG
     max_pages_per_call: optionalPositive(record.max_pages_per_call, "max_pages_per_call", 2) ?? 2,
     max_items_per_call: optionalPositive(record.max_items_per_call, "max_items_per_call", 50) ?? 50,
     max_normalized_bytes: optionalPositive(record.max_normalized_bytes, "max_normalized_bytes", 24_000, 512) ?? 24_000,
-    max_response_bytes: optionalPositive(record.max_response_bytes, "max_response_bytes", 128_000),
-    timeout_ms: optionalPositive(record.timeout_ms, "timeout_ms", 15_000),
+    max_response_bytes: optionalPositive(record.max_response_bytes, "max_response_bytes", 128_000) ?? 128_000,
+    timeout_ms: optionalPositive(record.timeout_ms, "timeout_ms", 15_000) ?? 15_000,
   })
   return config
 }

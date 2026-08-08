@@ -57,7 +57,11 @@ describe("Commander GitHub read gateway", () => {
   })
 
   test("validates exact repository configuration without wildcard, URL, case, or duplicate ambiguity", () => {
-    expect(validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] }).allowed_repositories).toEqual(["ian747-tw/nexusloop"])
+    expect(validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] })).toMatchObject({
+      allowed_repositories: ["ian747-tw/nexusloop"],
+      max_response_bytes: 128_000,
+      timeout_ms: 15_000,
+    })
     for (const repository of ["*/*", "ian747-tw", "https://github.com/ian747-tw/nexusloop", "Ian747-tw/nexusloop", " ian747-tw/nexusloop", "ian747-tw/nexusloop "]) {
       expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: [repository] })).toThrow()
     }
@@ -294,10 +298,31 @@ describe("Commander GitHub read gateway", () => {
     const transport = new FakeExternalApiTransport()
     const connector = { connector_id: "github-production", title: "GitHub", base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], credential_refs: [{ name: "github-read", source: "env" as const, env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }
     const requestService = new ExternalApiRequestService({ registry: new ExternalApiConnectorRegistry([connector]), transport, eventStore: new EventStore(join(project, "events.jsonl")), env: {}, requestId: () => "github_policy_audit" })
-    const gateway = new CommanderGithubReadService({ requestService, connector, config: { connector_id: "github-production", allowed_repositories: ["ian747-tw/nexusloop"] } })
+    const gateway = new CommanderGithubReadService({ requestService, connector, config: { connector_id: "github-production", allowed_repositories: ["ian747-tw/nexusloop"] }, credentialsReady: true })
     const result = await gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })
     expect(result).toMatchObject({ status: "failed", request_count: 1, network_called: false, external_api_audit_request_ids: ["github_policy_audit"] })
     expect(transport.requests).toHaveLength(0)
+  })
+
+  test("blocks production credential absence and applies stricter connector transport ceilings", async () => {
+    const production = { ...TEST_CONNECTOR, base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allow_local_http: undefined, timeout_ms: 7000, max_response_bytes: 64_000, credential_refs: [{ name: "github-read", source: "env" as const, env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }] }
+    const calls: Array<{ input: unknown; options: Record<string, unknown> }> = []
+    const requestService = {
+      async executeForInternalUse(input: unknown, options: Record<string, unknown>) {
+        calls.push({ input, options })
+        ;(options.on_transport_dispatched as (() => void) | undefined)?.()
+        ;(options.on_audit_persisted as ((audit: Record<string, unknown>) => void) | undefined)?.({ request_id: "audit_limits", connector_id: "github-test", method: "GET", requested_by: "commander_github_read:github.repository_get", event_kind: "external_api_request_executed", ok: true })
+        return { ok: true, response_body_for_internal_use: JSON.stringify({ full_name: "ian747-tw/nexusloop" }) }
+      },
+    }
+    const unavailable = new CommanderGithubReadService({ requestService: requestService as never, connector: production, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_response_bytes: 128_000, timeout_ms: 15_000 }, credentialsReady: false })
+    expect(unavailable.status()).toMatchObject({ status: "blocked", blockers: [expect.stringContaining("credential")] })
+    expect((await unavailable.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })).status).toBe("blocked")
+    expect(calls).toEqual([])
+
+    const available = new CommanderGithubReadService({ requestService: requestService as never, connector: production, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_response_bytes: 128_000, timeout_ms: 15_000 }, credentialsReady: true })
+    expect((await available.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })).status).toBe("ready")
+    expect(calls[0]?.options).toMatchObject({ max_response_bytes: 64_000, timeout_ms: 7000 })
   })
 
   test("fails closed with durable redacted audits for redirect, malformed JSON, overflow, and timeout", async () => {

@@ -5375,6 +5375,7 @@ export class RuntimeServer {
       requestService: this.externalApiRequestService(),
       connector,
       config: this.commanderGithubGatewayConfig,
+      credentialsReady: (connector.credential_refs ?? []).every((ref) => Boolean(this.externalApiEnv[ref.env_name])),
       now: this.researchSynthesisNow,
     })
     return this.commanderGithubReadServiceInstance

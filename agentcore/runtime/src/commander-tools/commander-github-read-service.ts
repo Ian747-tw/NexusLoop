@@ -13,6 +13,8 @@ const MAX_REQUESTS = 4
 const MAX_PAGES = 2
 const MAX_ITEMS = 50
 const MAX_BYTES = 24_000
+const MAX_RESPONSE_BYTES = 128_000
+const MAX_TIMEOUT_MS = 15_000
 const PAGE_SIZE = 25
 
 type RequestSpec = { method: ExternalApiMethod; path: string; query?: Record<string, string>; body?: string }
@@ -24,11 +26,11 @@ const REVIEW_THREADS_QUERY = "query CommanderPullRequestReviewThreads($owner:Str
 
 export class CommanderGithubReadService {
   private readonly now: () => Date
-  private readonly config: Required<Pick<CommanderGithubGatewayConfig, "max_requests_per_call" | "max_pages_per_call" | "max_items_per_call" | "max_normalized_bytes">> & CommanderGithubGatewayConfig
+  private readonly config: Required<Pick<CommanderGithubGatewayConfig, "max_requests_per_call" | "max_pages_per_call" | "max_items_per_call" | "max_normalized_bytes" | "max_response_bytes" | "timeout_ms">> & CommanderGithubGatewayConfig
   private readonly repositories: Set<string>
   private activeReads = 0
 
-  constructor(private readonly options: { requestService: ExternalApiRequestService; connector: ExternalApiConnector; config: CommanderGithubGatewayConfig; now?: () => Date }) {
+  constructor(private readonly options: { requestService: ExternalApiRequestService; connector: ExternalApiConnector; config: CommanderGithubGatewayConfig; credentialsReady?: boolean; now?: () => Date }) {
     this.now = options.now ?? (() => new Date())
     this.config = {
       ...options.config,
@@ -36,6 +38,8 @@ export class CommanderGithubReadService {
       max_pages_per_call: bounded(options.config.max_pages_per_call, MAX_PAGES, MAX_PAGES),
       max_items_per_call: bounded(options.config.max_items_per_call, MAX_ITEMS, MAX_ITEMS),
       max_normalized_bytes: bounded(options.config.max_normalized_bytes, MAX_BYTES, MAX_BYTES),
+      max_response_bytes: Math.min(options.config.max_response_bytes ?? MAX_RESPONSE_BYTES, options.connector.max_response_bytes, MAX_RESPONSE_BYTES),
+      timeout_ms: Math.min(options.config.timeout_ms ?? MAX_TIMEOUT_MS, options.connector.timeout_ms, MAX_TIMEOUT_MS),
     }
     this.repositories = new Set(options.config.allowed_repositories.map(canonicalRepository))
     validateGithubConnector(options.connector, this.config.connector_id)
@@ -45,6 +49,7 @@ export class CommanderGithubReadService {
     const blockers: string[] = []
     if (!this.config.connector_id.trim()) blockers.push("GitHub gateway connector is required")
     if (this.repositories.size === 0) blockers.push("GitHub gateway repository allowlist is empty")
+    if (isProductionGithubConnector(this.options.connector) && this.options.credentialsReady !== true) blockers.push("GitHub gateway runtime-owned credential is unavailable")
     return {
       status: blockers.length ? "blocked" : "ready",
       connector_id: this.config.connector_id || undefined,
@@ -66,6 +71,8 @@ export class CommanderGithubReadService {
     } catch (error) {
       return this.blocked(toolId, generatedAt, error)
     }
+    const readiness = this.status()
+    if (readiness.status !== "ready") return this.blocked(toolId, generatedAt, new Error(readiness.blockers.join("; ")), repository)
     if (signal?.aborted) return this.cancelled(toolId, repository, generatedAt)
     const audits: ExternalApiPersistedAuditRecord[] = []
     const observation = { network_called: false }
@@ -331,12 +338,13 @@ function base(toolId: CommanderGithubReadToolId, generatedAt: string, status: "b
 function validateGithubConnector(connector: ExternalApiConnector, connectorId: string): void {
   if (connector.connector_id !== connectorId) throw new Error("GitHub gateway connector identity does not match configuration")
   const base = new URL(connector.base_url)
-  const production = base.protocol === "https:" && base.hostname === "api.github.com" && (base.pathname === "/" || base.pathname === "")
+  const production = isProductionGithubConnector(connector)
   const localTest = connector.allow_local_http === true && base.protocol === "http:" && (base.hostname === "localhost" || base.hostname.endsWith(".test"))
   if (!production && !localTest) throw new Error("GitHub gateway connector must use the fixed GitHub API origin")
   if (!connector.allowed_methods.includes("GET") || !connector.allowed_methods.includes("POST")) throw new Error("GitHub gateway connector must allow fixed GET and review-thread POST operations")
   if (production && (connector.credential_refs ?? []).length === 0) throw new Error("GitHub gateway production connector must use runtime-owned credential references")
 }
+function isProductionGithubConnector(connector: ExternalApiConnector): boolean { const base = new URL(connector.base_url); return base.protocol === "https:" && base.hostname === "api.github.com" && (base.pathname === "/" || base.pathname === "") }
 function githubTransportPolicyHash(connector: ExternalApiConnector, config: CommanderGithubGatewayConfig, repositories: string[]): string {
   const base = new URL(connector.base_url)
   return hash({

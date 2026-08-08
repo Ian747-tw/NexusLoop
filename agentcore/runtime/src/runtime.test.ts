@@ -24533,6 +24533,20 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(invalidSummary.github_gateway.blockers.join(" ")).toContain("fixed GitHub API origin")
     expect(JSON.stringify(invalidSummary.github_gateway)).not.toContain("example.com")
     await invalid.shutdown()
+
+    const missingCredential = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-production", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-production", title: "GitHub", base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allowed_methods: ["GET", "POST"], credential_refs: [{ name: "github-read", source: "env", env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }], timeout_ms: 20000, max_response_bytes: 256000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
+      externalApiEnv: {},
+    })
+    const credentialSummary = await missingCredential.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(credentialSummary.github_gateway).toMatchObject({ status: "blocked", repository_count: 1 })
+    expect(credentialSummary.github_gateway.blockers.join(" ")).toContain("credential is unavailable")
+    expect(JSON.stringify(credentialSummary.github_gateway)).not.toContain("NXL_TEST_GITHUB_KEY")
+    await missingCredential.shutdown()
   })
 
   test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
