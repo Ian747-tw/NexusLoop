@@ -346,10 +346,11 @@ function validateGithubConnector(connector: ExternalApiConnector, connectorId: s
   const production = isProductionGithubConnector(connector)
   const localTest = connector.allow_local_http === true && base.protocol === "http:" && (base.hostname === "localhost" || base.hostname.endsWith(".test"))
   if (!production && !localTest) throw new Error("GitHub gateway connector must use the fixed GitHub API origin")
+  if (!connector.allowed_hosts.some((host) => host.trim().toLowerCase() === base.hostname.toLowerCase())) throw new Error("GitHub gateway connector must allow its fixed API host")
   if (!connector.allowed_methods.includes("GET") || !connector.allowed_methods.includes("POST")) throw new Error("GitHub gateway connector must allow fixed GET and review-thread POST operations")
   if (production && (connector.credential_refs ?? []).length === 0) throw new Error("GitHub gateway production connector must use runtime-owned credential references")
 }
-function isProductionGithubConnector(connector: ExternalApiConnector): boolean { const base = new URL(connector.base_url); return base.protocol === "https:" && base.hostname === "api.github.com" && (base.pathname === "/" || base.pathname === "") }
+function isProductionGithubConnector(connector: ExternalApiConnector): boolean { const base = new URL(connector.base_url); return base.protocol === "https:" && base.hostname === "api.github.com" && base.port === "" && (base.pathname === "/" || base.pathname === "") }
 function githubTransportPolicyHash(connector: ExternalApiConnector, config: CommanderGithubGatewayConfig, repositories: string[]): string {
   const base = new URL(connector.base_url)
   return hash({

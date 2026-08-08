@@ -111,6 +111,10 @@ export type CommanderToolExecutorOptions = {
   descriptors: CommanderToolDescriptor[]
   authorityRecords: CommandAuthorityRecord[]
   bindingRegistry: CommanderToolBindingRegistry
+  runtimeAuthority?: () => {
+    active_runtime: boolean
+    run_lock_held: boolean
+  }
   now?: () => Date
   timeout?: (ms: number, signal?: AbortSignal) => Promise<never> | { promise: Promise<never>; cancel: () => void }
 }

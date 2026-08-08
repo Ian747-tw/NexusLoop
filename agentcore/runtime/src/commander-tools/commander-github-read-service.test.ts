@@ -168,10 +168,32 @@ describe("Commander GitHub read gateway", () => {
       repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) },
       githubReadService: fixture.gateway,
     })
-    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, now: () => new Date("2026-01-01T00:00:00.000Z") })
+    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, runtimeAuthority: () => ({ active_runtime: true, run_lock_held: true }), now: () => new Date("2026-01-01T00:00:00.000Z") })
     const result = await executor.execute({ execution_id: "github_exec_1", call_id: "github_call_1", tool_call_id: "github_tool_1", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "test", remaining_tool_call_budget: 1 })
     expect(result).toMatchObject({ status: "ready", handler_invoked: true, network_called: true, external_api_audit_event_count: 1, provider_called: false, mcp_called: false })
     expect(fixture.calls).toHaveLength(1)
+  })
+
+  test("blocks GitHub bindings without active RuntimeServer and run-lock authority", async () => {
+    const fixture = service()
+    const bindings = createCommanderToolBindingRegistry({
+      commanderToolService: { search: () => ({}), get: () => ({}), profile: () => ({}) },
+      commandAuthorityService: { get: () => COMMAND_AUTHORITY_REGISTRY[0] },
+      researchMemoryService: { preview: () => ({}) },
+      operationalMemorySearchService: { search: async () => ({}) },
+      repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) },
+      githubReadService: fixture.gateway,
+    })
+    const execute = async (active_runtime: boolean, run_lock_held: boolean) => new CommanderToolExecutor({
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      authorityRecords: COMMAND_AUTHORITY_REGISTRY,
+      bindingRegistry: bindings,
+      runtimeAuthority: () => ({ active_runtime, run_lock_held }),
+    }).execute({ execution_id: "github_authority_exec", call_id: "github_authority_call", tool_call_id: "github_authority_tool", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "test", remaining_tool_call_budget: 1 })
+
+    await expect(execute(false, false)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false, blockers: expect.arrayContaining([expect.stringContaining("active ready runtime"), expect.stringContaining("run lock")]) })
+    await expect(execute(true, false)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false, blockers: expect.arrayContaining([expect.stringContaining("run lock")]) })
+    expect(fixture.calls).toHaveLength(0)
   })
 
   test("binds review and thread evidence to the exact requested PR head SHA", async () => {
@@ -304,7 +326,7 @@ describe("Commander GitHub read gateway", () => {
     const bindings = createCommanderToolBindingRegistry({
       commanderToolService: { search: () => ({}), get: () => ({}), profile: () => ({}) }, commandAuthorityService: { get: () => COMMAND_AUTHORITY_REGISTRY[0] }, researchMemoryService: { preview: () => ({}) }, operationalMemorySearchService: { search: async () => ({}) }, repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) }, githubReadService: gateway,
     })
-    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, timeout: () => Promise.reject(new Error("Commander tool execution timed out")) })
+    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, runtimeAuthority: () => ({ active_runtime: true, run_lock_held: true }), timeout: () => Promise.reject(new Error("Commander tool execution timed out")) })
     const result = await executor.execute({ execution_id: "github_timeout_exec", call_id: "github_timeout_call", tool_call_id: "github_timeout_tool", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "test", remaining_tool_call_budget: 1 })
     expect(drained).toBe(true)
     expect(result).toMatchObject({ status: "cancelled", network_called: true, external_api_audit_event_count: 1, external_api_audit_request_ids: ["audit_timeout_drain"], evidence: [] })
@@ -358,6 +380,13 @@ describe("Commander GitHub read gateway", () => {
     const available = new CommanderGithubReadService({ requestService: requestService as never, connector: production, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_response_bytes: 128_000, timeout_ms: 15_000 }, credentialsReady: true })
     expect((await available.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })).status).toBe("ready")
     expect(calls[0]?.options).toMatchObject({ max_response_bytes: 64_000, timeout_ms: 7000 })
+  })
+
+  test("rejects production GitHub nondefault ports and missing host authority", () => {
+    const production = { ...TEST_CONNECTOR, base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allow_local_http: undefined, credential_refs: [{ name: "github-read", source: "env" as const, env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }] }
+    const requestService = { executeForInternalUse: async () => ({}) } as never
+    expect(() => new CommanderGithubReadService({ requestService, connector: { ...production, base_url: "https://api.github.com:8443" }, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] }, credentialsReady: true })).toThrow("fixed GitHub API origin")
+    expect(() => new CommanderGithubReadService({ requestService, connector: { ...production, allowed_hosts: ["example.com"] }, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] }, credentialsReady: true })).toThrow("allow its fixed API host")
   })
 
   test("fails closed with durable redacted audits for redirect, malformed JSON, overflow, and timeout", async () => {

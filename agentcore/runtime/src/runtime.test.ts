@@ -24549,6 +24549,32 @@ describe("ProcessOpenCodeAdapter", () => {
     await missingCredential.shutdown()
   })
 
+  test("RuntimeServer blocks bound GitHub transport outside active run-lock ownership", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop" }) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }],
+      externalApiTransport: transport,
+    })
+    const input = { execution_id: "github_runtime_authority", call_id: "github_runtime_call", tool_call_id: "github_runtime_tool", tool_id: "github.repository_get", phase: "proposal_investigation" as const, arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "operator", remaining_tool_call_budget: 1 }
+
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false })
+    expect(transport.requests).toHaveLength(0)
+    await server.start()
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "ready", handler_invoked: true, network_called: true, external_api_audit_event_count: 1 })
+    expect(transport.requests).toHaveLength(1)
+    await server.shutdown()
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false })
+    expect(transport.requests).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+  })
+
   test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
     const service = new CommanderToolService({
       contextBudgetService: {} as any,

@@ -5429,6 +5429,10 @@ export class RuntimeServer {
       descriptors: COMMANDER_TOOL_REGISTRY,
       authorityRecords: COMMAND_AUTHORITY_REGISTRY,
       bindingRegistry: this.commanderToolBindingRegistry(),
+      runtimeAuthority: () => ({
+        active_runtime: this.mode === "active" && this.started && this.lifecycleState === "ready" && !this.lifecycleShutdownRequested,
+        run_lock_held: this.runLock.isHeld(),
+      }),
       now: this.researchSynthesisNow,
     })
     return this.commanderToolExecutorInstance

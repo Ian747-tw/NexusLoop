@@ -83,6 +83,11 @@ export class CommanderToolExecutor {
         && authority.requires_run_lock === true
         && authority.gate === "external_api_runtime"
       if (authority.mutates_events || authority.calls_provider || authority.requires_approval || (authority.requires_run_lock && !githubAuthorityException)) blockers.push("Commander tool authority is not safe-read executable")
+      if (authority.requires_active_runtime || authority.requires_run_lock) {
+        const runtimeAuthority = this.options.runtimeAuthority?.()
+        if (authority.requires_active_runtime && runtimeAuthority?.active_runtime !== true) blockers.push("Commander tool requires an active ready runtime")
+        if (authority.requires_run_lock && runtimeAuthority?.run_lock_held !== true) blockers.push("Commander tool requires the RuntimeServer run lock")
+      }
       const gitException = SAFE_GIT_TOOL_IDS.has(descriptor.tool_id)
         && descriptor.execution_backend === "restricted_git_read"
         && descriptor.process_policy === "fixed_git_read_only"
