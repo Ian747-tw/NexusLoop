@@ -176,6 +176,7 @@ export type CommanderInvestigationRecoveryToolCompatibilitySummary = {
   tools: CommanderInvestigationRecoveryToolCompatibility[]
   binding_count: number
   current_bound_tool_refs: CommanderInvestigationRecoveryBoundToolAuthorityRef[]
+  github_gateway_policy_hash?: string
   stored_subset_of_current_bindings: boolean
   compatible: boolean
   blockers: string[]

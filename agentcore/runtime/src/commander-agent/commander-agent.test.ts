@@ -11,6 +11,7 @@ import { EventStore } from "../events/event-store"
 import { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
 import { ExternalApiRequestService } from "../external-api/api-request-service"
 import { FakeExternalApiTransport, FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "../external-api/api-transport"
+import type { ExternalApiConnector } from "../external-api/api-connector-types"
 import { FakeOpenCodeAdapter } from "../opencode/fake-adapter"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
@@ -10260,6 +10261,43 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(events)).not.toContain("github_shutdown_test response")
   })
 
+  test("GitHub recovery authority becomes stale on policy drift and blocks when the gateway disappears", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-recovery-authority-"))
+    await writeApprovedSpec(projectDir)
+    const original = configuredProviderRuntimeServer(projectDir, {
+      githubGateway: {
+        connector: githubTestConnector(),
+        config: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      },
+    })
+    servers.push({ stop: () => original.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(original, "inv_github_recovery_authority", ["github.repository_get"])
+    expect(authority.recovery.approval_state).toBe("current")
+    const originalPolicyHash = authority.recovery.tool_compatibility.github_gateway_policy_hash
+    await original.shutdown("change bounded GitHub authority")
+
+    const changed = configuredProviderRuntimeServer(projectDir, {
+      githubGateway: {
+        connector: githubTestConnector(),
+        config: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop", "openai/openai"] },
+      },
+    })
+    const stale = await changed.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(stale.projection_status).toBe("ready")
+    expect(stale.approval_state).toBe("stale")
+    expect(stale.recovery_plan_hash).not.toBe(authority.recovery.recovery_plan_hash)
+    expect(stale.execution_preparation_hash).toBe(authority.recovery.execution_preparation_hash)
+    expect(stale.tool_compatibility.github_gateway_policy_hash).not.toBe(originalPolicyHash)
+
+    const unavailable = configuredProviderRuntimeServer(projectDir)
+    const blocked = await unavailable.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(blocked.projection_status).toBe("ready")
+    expect(blocked.status).toBe("blocked")
+    expect(blocked.approval_state).toBe("stale")
+    expect(blocked.blockers.join(" ")).toContain("bounded gateway is not ready")
+    expect(blocked.tool_compatibility.compatible).toBe(false)
+  })
+
   test("configured recovery shutdown aborts and drains audit and journal work before runtime shutdown", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-shutdown-"))
     await writeApprovedSpec(projectDir)
@@ -12381,6 +12419,21 @@ function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: bo
   }
 }
 
+function githubTestConnector(): ExternalApiConnector {
+  return {
+    connector_id: "github-read-test",
+    title: "GitHub test connector",
+    base_url: "http://api.github.test",
+    allowed_hosts: ["api.github.test"],
+    allowed_methods: ["GET", "POST"],
+    timeout_ms: 5000,
+    max_response_bytes: 128_000,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+    allow_local_http: true,
+  }
+}
+
 function connectorConfig(overrides: Partial<ReturnType<typeof validateCommanderConnectorModelTransportConfig>> = {}) {
   return validateCommanderConnectorModelTransportConfig({
     transport_kind: "openai_compatible_connector",
@@ -12445,13 +12498,24 @@ function providerLaunchEnv(baseUrl: string) {
   }
 }
 
-function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport; externalApiEnv?: Record<string, string | undefined>; externalApiConnectorRegistry?: ExternalApiConnectorRegistry; externalApiResolveHostAddresses?: ExternalApiHostResolver } = {}) {
+function configuredProviderRuntimeServer(projectDir: string, options: {
+  adapter?: FakeOpenCodeAdapter
+  transport?: ExternalApiTransport
+  externalApiEnv?: Record<string, string | undefined>
+  externalApiConnectorRegistry?: ExternalApiConnectorRegistry
+  externalApiResolveHostAddresses?: ExternalApiHostResolver
+  githubGateway?: {
+    connector: ExternalApiConnector
+    config: { connector_id: string; allowed_repositories: string[]; timeout_ms?: number }
+  }
+} = {}) {
   return new RuntimeServer({
     projectDir,
     adapter: options.adapter ?? new FakeOpenCodeAdapter(),
     commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
     externalApiConnectorRegistry: options.externalApiConnectorRegistry,
-    externalApiConnectors: options.externalApiConnectorRegistry ? undefined : [connector("openai-test", "https://api.example.test/v1")],
+    commanderGithubGatewayConfig: options.githubGateway?.config,
+    externalApiConnectors: options.externalApiConnectorRegistry ? undefined : [connector("openai-test", "https://api.example.test/v1"), ...options.githubGateway ? [options.githubGateway.connector] : []],
     externalApiTransport: options.transport ?? new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured final") }]),
     externalApiResolveHostAddresses: options.externalApiResolveHostAddresses,
     externalApiEnv: options.externalApiEnv ?? { NXL_TEST_MODEL_KEY: "real-provider-key" },
