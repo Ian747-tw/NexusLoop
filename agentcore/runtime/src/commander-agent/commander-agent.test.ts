@@ -10160,6 +10160,47 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(events)).not.toContain("configured recovery after safe read")
   })
 
+  test("configured durable Commander investigation discovers loads and executes bounded GitHub evidence", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-configured-github-"))
+    await writeApprovedSpec(projectDir)
+    const toolResponse = (id: string, name: string, args: Record<string, unknown>) => JSON.stringify({
+      id: `chatcmpl_${id}`,
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name, arguments: JSON.stringify(args) } }] } }],
+    })
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: toolResponse("call_load_github", "commander__tool_get", { tool_id: "github.repository_get" }) },
+      { status_code: 200, body: toolResponse("call_github_repo", "github__repository_get", { repository: "ian747-tw/nexusloop" }) },
+      { status_code: 200, body: JSON.stringify({ name: "NexusLoop", description: "untrusted repository evidence", default_branch: "main", visibility: "public", archived: false, private: false }) },
+      { status_code: 200, body: chatCompletionText("configured investigation completed after bounded GitHub evidence") },
+    ])
+    const githubConnector = { connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.github.test", allowed_hosts: ["api.github.test"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [connector("openai-test", "https://api.example.test/v1"), githubConnector],
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      externalApiRequestId: (() => { let index = 0; return () => `api_github_configured_${++index}` })(),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_configured_github", requested_by: "github_gateway_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(result).toMatchObject({ status: "final", provider_request_count: 3, tool_call_count: 2 })
+    expect(result.loaded_tool_ids).toContain("github.repository_get")
+    expect(transport.requests).toHaveLength(4)
+    expect(transport.requests[2]).toMatchObject({ method: "GET", url: "http://api.github.test/repos/ian747-tw/nexusloop" })
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(4)
+    expect(events.filter((event) => event.kind === "runtime_commander_investigation_checkpointed")).toHaveLength(3)
+    expect(JSON.stringify(events)).not.toContain("untrusted repository evidence")
+    expect(JSON.stringify(events)).not.toContain("configured investigation completed")
+  })
+
   test("configured recovery shutdown aborts and drains audit and journal work before runtime shutdown", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w3b2b2b-live-shutdown-"))
     await writeApprovedSpec(projectDir)
