@@ -148,9 +148,11 @@ export class CommanderGithubReadService {
       case "github.issue_get": await request({ method: "GET", path: `/repos/${repository}/issues/${number("issue_number")}` }); break
       case "github.pull_request_get": {
         const pull = number("pull_number")
-        if (maxRequests < 2) throw new Error("GitHub pull-request evidence requires at least two remaining external request slots")
         await request({ method: "GET", path: `/repos/${repository}/pulls/${pull}` })
-        paginationTruncated = await this.fetchPages(request, `/repos/${repository}/pulls/${pull}/files`, false, Math.min(this.config.max_pages_per_call, maxRequests - 1))
+        if (this.config.max_items_per_call > 1) {
+          if (maxRequests < 2) throw new Error("GitHub pull-request file evidence requires at least two remaining external request slots")
+          paginationTruncated = await this.fetchPages(request, `/repos/${repository}/pulls/${pull}/files`, false, Math.min(this.config.max_pages_per_call, maxRequests - 1))
+        }
         break
       }
       case "github.commit_checks": paginationTruncated = await this.fetchPages(request, `/repos/${repository}/commits/${fullSha(args.commit_sha)}/check-runs`, true, Math.min(this.config.max_pages_per_call, maxRequests)); break

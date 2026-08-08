@@ -143,9 +143,10 @@ describe("Commander GitHub read gateway", () => {
       { number: 12, title: "bounded pull", changed_files: 1, labels: [{ name: "review" }] },
       [{ filename: "src/example.ts", status: "modified", sha: "c".repeat(40) }],
     ], { max_items_per_call: 1 })
-    const result = await fixture.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 })
-    expect(result).toMatchObject({ status: "ready", item_count: 1, truncated: true })
+    const result = await fixture.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 }, undefined, 1)
+    expect(result).toMatchObject({ status: "ready", request_count: 1, item_count: 1, truncated: true })
     expect(result.result?.evidence).toMatchObject({ files: [], labels: [], omitted_label_count: 1, truncated: true })
+    expect(fixture.calls).toHaveLength(1)
   })
 
   test("normalizes exact-SHA check-run and check-suite summaries and rejects page identity drift", async () => {
