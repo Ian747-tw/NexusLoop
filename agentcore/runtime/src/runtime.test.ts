@@ -24575,6 +24575,49 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(events.at(-1)?.kind).toBe("runtime_shutdown")
   })
 
+  test("RuntimeServer aborts and drains a direct bound GitHub read before runtime shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let dispatched!: () => void
+    let aborted!: () => void
+    let release!: () => void
+    const dispatchObserved = new Promise<void>((resolve) => { dispatched = resolve })
+    const abortObserved = new Promise<void>((resolve) => { aborted = resolve })
+    const releaseTransport = new Promise<void>((resolve) => { release = resolve })
+    const transport = {
+      async request(input: { abort_signal?: AbortSignal }) {
+        dispatched()
+        await new Promise<void>((resolve) => {
+          const observe = () => { aborted(); resolve() }
+          if (input.abort_signal?.aborted) observe()
+          else input.abort_signal?.addEventListener("abort", observe, { once: true })
+        })
+        await releaseTransport
+        throw new Error("external API request cancelled after dispatch")
+      },
+    }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }],
+      externalApiTransport: transport as never,
+    })
+    await server.start()
+    const execution = server.executeCommanderBoundReadTool({ execution_id: "github_shutdown_owned", call_id: "github_shutdown_call", tool_call_id: "github_shutdown_tool", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "operator", remaining_tool_call_budget: 1 })
+    await dispatchObserved
+    const shutdown = server.shutdown("direct GitHub read drain")
+    await abortObserved
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+    release()
+    await expect(execution).resolves.toMatchObject({ status: "cancelled", handler_invoked: true, network_called: true, external_api_audit_event_count: 1 })
+    await shutdown
+    const events = await server.eventStore.readAll()
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+    expect(events.find((event) => event.kind === "external_api_request_failed")?.url).toBe("[internal request URL omitted]")
+  })
+
   test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
     const service = new CommanderToolService({
       contextBudgetService: {} as any,

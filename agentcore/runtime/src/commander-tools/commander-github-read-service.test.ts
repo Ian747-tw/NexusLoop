@@ -155,6 +155,8 @@ describe("Commander GitHub read gateway", () => {
     expect(transport.requests).toEqual([expect.objectContaining({ method: "GET", url: "http://api.example.test/repos/ian747-tw/nexusloop/commits/" + "a".repeat(40) })])
     const events = await requestService.listAudit()
     expect(events).toEqual([expect.objectContaining({ request_id: "github_audit_1", connector_id: "github-live-test", requested_by: "commander_github_read:github.commit_get", ok: true })])
+    expect(events[0]?.url).toBe("[internal request URL omitted]")
+    expect(JSON.stringify(await new EventStore(join(project, "events.jsonl")).readAll())).not.toContain("/repos/ian747-tw/nexusloop")
     expect(JSON.stringify(events)).not.toContain("token budget review")
   })
 
@@ -205,6 +207,19 @@ describe("Commander GitHub read gateway", () => {
     const result = await fixture.gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, undefined, 2)
     expect(result).toMatchObject({ status: "ready", request_count: 2, provenance: { observed_commit_sha: sha } })
     expect((result.result?.evidence as Record<string, any>).thread_state).toMatchObject({ unresolved_current_count: 1, completeness: "bounded_complete" })
+  })
+
+  test("shares one configured item ceiling across reviews and review threads", async () => {
+    const sha = "d".repeat(40)
+    const fixture = service([
+      [{ id: 1, state: "APPROVED", user: { login: "reviewer" }, commit_id: sha }],
+      { data: { repository: { pullRequest: { headRefOid: sha, reviewThreads: { nodes: [{ id: "thread-1", isResolved: false, isOutdated: false, comments: { nodes: [{ author: { login: "reviewer" }, bodyText: "unresolved", createdAt: "2026-01-01T00:00:00Z" }] } }], pageInfo: { hasNextPage: false } } } } } },
+    ], { max_items_per_call: 1 })
+    const result = await fixture.gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, undefined, 2)
+    const evidence = result.result?.evidence as Record<string, any>
+    expect(result).toMatchObject({ status: "ready", item_count: 1, truncated: true })
+    expect(evidence.items.length + evidence.thread_state.items.length).toBe(1)
+    expect(evidence.thread_state).toMatchObject({ completeness: "unknown_truncated", truncated: true })
   })
 
   test("rejects review evidence when the PR head moved from the exact requested SHA", async () => {

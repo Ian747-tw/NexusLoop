@@ -241,6 +241,7 @@ def test_commander_uses_bounded_github_gateway_through_real_recovery_tui(sandbox
     assert github_requests == ["/repos/ian747-tw/nexusloop"]
     assert len(github_audits) == 1
     assert github_audits[0]["requested_by"] == "commander_github_read:github.repository_get"
+    assert github_audits[0]["url"] == "[internal request URL omitted]"
     assert kinds.count("runtime_commander_investigation_recovery_started") == 1
     assert kinds.count("runtime_commander_investigation_finished") == 1
     assert kinds.count("runtime_commander_investigation_checkpointed") >= 2
@@ -257,6 +258,7 @@ def test_commander_uses_bounded_github_gateway_through_real_recovery_tui(sandbox
     assert "github-secret-e2e" not in serialized
     assert "provider-secret-e2e" not in serialized
     assert "github.merge" not in serialized
+    assert "/repos/ian747-tw/nexusloop" not in serialized
     assert "provider_tool_loop_enabled\":true" not in serialized.replace(" ", "")
 
     server.shutdown()

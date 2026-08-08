@@ -517,6 +517,7 @@ export class RuntimeServer {
   private lifecycleShutdownRequested = false
   private commanderInvestigationLifecycleAbort = new AbortController()
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
+  private readonly activeCommanderBoundReadTools = new Set<Promise<unknown>>()
   private readonly activeDurableCommanderInvestigations = new Set<{
     promise: Promise<unknown>
     investigation_id?: string
@@ -2762,7 +2763,14 @@ export class RuntimeServer {
   }
 
   executeCommanderBoundReadTool(input: CommanderToolExecutionRequest): Promise<CommanderToolExecutionResult> {
-    return this.commanderToolExecutor().execute(input)
+    const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
+    let tracked!: Promise<CommanderToolExecutionResult>
+    tracked = this.commanderToolExecutor().execute({ ...input, abort_signal: combined.signal }).finally(() => {
+      this.activeCommanderBoundReadTools.delete(tracked)
+      combined.cleanup()
+    })
+    this.activeCommanderBoundReadTools.add(tracked)
+    return tracked
   }
 
   runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
@@ -3234,7 +3242,7 @@ export class RuntimeServer {
     const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
     const activeRecoveries = Array.from(this.activeConfiguredCommanderRecoveries)
     const publicRecoveries = Array.from(this.publicCommanderRecoveryOperations.values())
-    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...publicRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...Array.from(this.activeCommanderBoundReadTools), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...publicRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
     if (pending.length === 0) return
     const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null

@@ -120,6 +120,7 @@ export class CommanderGithubReadService {
           max_response_bytes: this.config.max_response_bytes,
           redact_response_body: false,
           omit_response_preview_from_audit: true,
+          omit_url_from_audit: true,
           abort_signal: signal,
           on_transport_dispatched: () => { networkCalled = true; observation.network_called = true },
           on_audit_persisted: (audit) => { observed.push(audit); audits.push(audit) },
@@ -262,10 +263,10 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
     return { commit_sha: observedCommitSha, observed_commit_sha: observedCommitSha, total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
   }
   const reviewPages = responses.slice(0, -1)
-  const reviewCap = Math.max(1, Math.floor(itemCap / 2))
-  const reviews = boundedItems(reviewPages.flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { id: safePositive(value.id), state: safeText(value.state, 64), user_login: safeText(nested(value, "user", "login"), 120), submitted_at: safeTimestamp(value.submitted_at), body_preview: safeText(value.body, 240), commit_id: safeSha(value.commit_id) } }), reviewCap)
+  const reviewValues = reviewPages.flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { id: safePositive(value.id), state: safeText(value.state, 64), user_login: safeText(nested(value, "user", "login"), 120), submitted_at: safeTimestamp(value.submitted_at), body_preview: safeText(value.body, 240), commit_id: safeSha(value.commit_id) } })
+  const reviews = boundedItems(reviewValues, Math.min(reviewValues.length, Math.ceil(itemCap / 2)))
   const graph = requiredObject(responses[responses.length - 1])
-  const threads = threadSummary(graph, Math.max(1, itemCap - reviewCap))
+  const threads = threadSummary(graph, itemCap - reviews.items.length)
   const paginationTruncated = reviewPages.length >= pageCap && arrayOf(reviewPages.at(-1)).length >= PAGE_SIZE
   return { observed_commit_sha: threads.observed_commit_sha, items: reviews.items, thread_state: threads, truncated: reviews.truncated || threads.truncated || paginationTruncated }
 }
@@ -335,7 +336,14 @@ function visitStructured(value: unknown, visitor: (parent: Record<string, unknow
 }
 
 function boundedItems<T>(items: T[], cap: number): { items: T[]; truncated: boolean } { return { items: items.slice(0, cap), truncated: items.length > cap } }
-function normalizedItemCount(evidence: Record<string, unknown>): number { if (Array.isArray(evidence.items)) return evidence.items.length; if (Array.isArray(evidence.files)) return evidence.files.length; return 1 }
+function normalizedItemCount(evidence: Record<string, unknown>): number {
+  if (Array.isArray(evidence.files)) return evidence.files.length
+  if (!Array.isArray(evidence.items)) return 1
+  const items = evidence.items.length
+  const threadState = evidence.thread_state && typeof evidence.thread_state === "object" && !Array.isArray(evidence.thread_state) ? evidence.thread_state as Record<string, unknown> : undefined
+  const threadItems = Array.isArray(threadState?.items) ? threadState.items.length : 0
+  return items + threadItems
+}
 function labels(object: Record<string, unknown>): string[] { return arrayOf(object.labels).slice(0, 20).map((item) => safeText(requiredObject(item).name, 100)).filter((item): item is string => Boolean(item)) }
 function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
 function evidenceFor(toolId: CommanderGithubReadToolId, result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: hash({ result, provenance }) }] }

@@ -18,6 +18,7 @@ const MAX_BODY_BYTES = 64 * 1024
 const MAX_INTERNAL_RESPONSE_BYTES = 1_000_000
 const PREVIEW_BYTES = 512
 const OMITTED_INTERNAL_RESPONSE_PREVIEW = "[internal response preview omitted]"
+const OMITTED_INTERNAL_REQUEST_URL = "[internal request URL omitted]"
 const DANGEROUS_USER_HEADERS = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"])
 
 export interface ExternalApiRequestServiceOptions {
@@ -28,6 +29,18 @@ export interface ExternalApiRequestServiceOptions {
   resolveHostAddresses?: ExternalApiHostResolver
   now?: () => Date
   requestId?: () => string
+}
+
+type ExternalApiInternalExecutionOptions = {
+  timeout_ms?: number
+  redact_response_body?: boolean
+  omit_response_preview_from_audit?: boolean
+  omit_url_from_audit?: boolean
+  persist_audit?: boolean
+  abort_signal?: AbortSignal
+  max_response_bytes?: number
+  on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void
+  on_transport_dispatched?: () => void
 }
 
 export class ExternalApiRequestService {
@@ -60,12 +73,13 @@ export class ExternalApiRequestService {
     return this.executeBuilt(input, false, {})
   }
 
-  async executeForInternalUse(input: ExternalApiRequestInput, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void; on_transport_dispatched?: () => void } = {}): Promise<ExternalApiInternalRequestResult> {
+  async executeForInternalUse(input: ExternalApiRequestInput, options: ExternalApiInternalExecutionOptions = {}): Promise<ExternalApiInternalRequestResult> {
     return this.executeBuilt(input, true, options)
   }
 
-  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: { timeout_ms?: number; redact_response_body?: boolean; omit_response_preview_from_audit?: boolean; persist_audit?: boolean; abort_signal?: AbortSignal; max_response_bytes?: number; on_audit_persisted?: (record: ExternalApiPersistedAuditRecord) => void; on_transport_dispatched?: () => void }): Promise<ExternalApiInternalRequestResult> {
+  private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: ExternalApiInternalExecutionOptions): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
+    const resultUrl = options.omit_url_from_audit === true ? OMITTED_INTERNAL_REQUEST_URL : built.redactedUrl
     const createdAt = this.now().toISOString()
     const requestId = this.requestId()
     const requestedMaxResponseBytes = options.max_response_bytes
@@ -75,7 +89,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         ok: false,
         dryRun: input.dry_run === true,
         createdAt,
@@ -89,7 +103,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         ok: false,
         dryRun: input.dry_run === true,
         createdAt,
@@ -103,7 +117,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         ok: false,
         dryRun: input.dry_run === true,
         createdAt,
@@ -118,7 +132,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         ok: false,
         dryRun: input.dry_run === true,
         createdAt,
@@ -132,7 +146,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         ok: true,
         dryRun: true,
         createdAt,
@@ -149,7 +163,7 @@ export class ExternalApiRequestService {
           requestId,
           connectorId: built.connector.connector_id,
           method: built.method,
-          url: built.redactedUrl,
+          url: resultUrl,
           ok: false,
           dryRun: false,
           createdAt,
@@ -179,7 +193,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         statusCode: response.status_code,
         ok: response.status_code >= 200 && response.status_code < 300,
         dryRun: false,
@@ -197,7 +211,7 @@ export class ExternalApiRequestService {
         requestId,
         connectorId: built.connector.connector_id,
         method: built.method,
-        url: built.redactedUrl,
+        url: resultUrl,
         ok: false,
         dryRun: false,
         createdAt,
