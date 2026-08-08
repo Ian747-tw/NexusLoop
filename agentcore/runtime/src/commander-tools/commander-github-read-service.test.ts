@@ -127,13 +127,17 @@ describe("Commander GitHub read gateway", () => {
 
   test("normalizes exact-SHA check-run and check-suite summaries and rejects page identity drift", async () => {
     const sha = "a".repeat(40)
-    const fixture = service([{ head_sha: sha, total_count: 1, check_runs: [{ name: "unit", status: "completed", conclusion: "success", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } }] }])
+    const fixture = service([{ total_count: 1, check_runs: [{ name: "unit", head_sha: sha, status: "completed", conclusion: "success", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } }] }])
     const ready = await fixture.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect((ready.result?.evidence as Record<string, any>).items).toEqual([expect.objectContaining({ name: "unit", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" } })])
 
+    const empty = service([{ total_count: 0, check_runs: [] }])
+    const noChecks = await empty.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect(noChecks).toMatchObject({ status: "ready", item_count: 0, provenance: { requested_ref: sha, observed_commit_sha: undefined } })
+
     const drift = service([
-      { head_sha: sha, total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `page-one-${index}` })) },
-      { head_sha: "b".repeat(40), total_count: 50, check_runs: [{ name: "wrong-page" }] },
+      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `page-one-${index}`, head_sha: sha })) },
+      { total_count: 50, check_runs: [{ name: "wrong-page", head_sha: "b".repeat(40) }] },
     ])
     const blocked = await drift.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect(blocked).toMatchObject({ status: "failed", result: null, request_count: 2 })
@@ -217,6 +221,12 @@ describe("Commander GitHub read gateway", () => {
     expect(a.provenance?.evidence_hash).toBe(b.provenance?.evidence_hash)
   })
 
+  test("canonicalizes valid GitHub whole-second timestamps", async () => {
+    const fixture = service([{ number: 12, title: "issue", updated_at: "2026-01-01T00:00:00Z", user: { login: "reviewer" }, labels: [] }])
+    const result = await fixture.gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })
+    expect((result.result?.evidence as Record<string, unknown>).updated_at).toBe("2026-01-01T00:00:00.000Z")
+  })
+
   test("does not publish evidence unless exactly one audit is durably observed", async () => {
     const gateway = new CommanderGithubReadService({
       requestService: { executeForInternalUse: async () => ({ ok: true, response_body_for_internal_use: JSON.stringify({ full_name: "ian747-tw/nexusloop" }) }) } as never,
@@ -245,7 +255,7 @@ describe("Commander GitHub read gateway", () => {
 
   test("bounds normalized bytes by deterministic structured truncation", async () => {
     const fixture = service([
-      { head_sha: "a".repeat(40), total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `check-${index}-${"x".repeat(220)}`, status: "completed", conclusion: "success" })) },
+      { total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `check-${index}-${"x".repeat(220)}`, head_sha: "a".repeat(40), status: "completed", conclusion: "success" })) },
     ], { max_pages_per_call: 1, max_items_per_call: 25, max_normalized_bytes: 1024 })
     const result = await fixture.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: "a".repeat(40) })
     expect(result).toMatchObject({ status: "ready", truncated: true, request_count: 1 })
@@ -275,6 +285,31 @@ describe("Commander GitHub read gateway", () => {
     expect((await first).status).toBe("ready")
   })
 
+  test("executor timeout aborts and drains a GitHub request through its audit outcome", async () => {
+    let drained = false
+    const requestService = {
+      async executeForInternalUse(input: { method: "GET" | "POST"; requested_by: string }, options: { abort_signal?: AbortSignal; on_transport_dispatched?: () => void; on_audit_persisted?: (audit: Record<string, unknown>) => void }) {
+        options.on_transport_dispatched?.()
+        await new Promise<void>((resolve) => {
+          const abort = () => resolve()
+          if (options.abort_signal?.aborted) abort()
+          else options.abort_signal?.addEventListener("abort", abort, { once: true })
+        })
+        options.on_audit_persisted?.({ request_id: "audit_timeout_drain", connector_id: "github-test", method: input.method, requested_by: input.requested_by, event_kind: "external_api_request_failed", ok: false })
+        drained = true
+        throw new Error("external API request cancelled")
+      },
+    }
+    const gateway = new CommanderGithubReadService({ requestService: requestService as never, connector: TEST_CONNECTOR, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] } })
+    const bindings = createCommanderToolBindingRegistry({
+      commanderToolService: { search: () => ({}), get: () => ({}), profile: () => ({}) }, commandAuthorityService: { get: () => COMMAND_AUTHORITY_REGISTRY[0] }, researchMemoryService: { preview: () => ({}) }, operationalMemorySearchService: { search: async () => ({}) }, repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) }, githubReadService: gateway,
+    })
+    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, timeout: () => Promise.reject(new Error("Commander tool execution timed out")) })
+    const result = await executor.execute({ execution_id: "github_timeout_exec", call_id: "github_timeout_call", tool_call_id: "github_timeout_tool", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "test", remaining_tool_call_budget: 1 })
+    expect(drained).toBe(true)
+    expect(result).toMatchObject({ status: "cancelled", network_called: true, external_api_audit_event_count: 1, external_api_audit_request_ids: ["audit_timeout_drain"], evidence: [] })
+  })
+
   test("stops pagination between pages when cancellation is observed", async () => {
     const controller = new AbortController()
     const calls: unknown[] = []
@@ -284,7 +319,7 @@ describe("Commander GitHub read gateway", () => {
         options.on_transport_dispatched?.()
         options.on_audit_persisted?.({ request_id: "audit_page_1", connector_id: "github-test", method: "GET", url: "[REDACTED]", ok: true, dry_run: false, requested_by: "commander_github_read:github.commit_checks", created_at: "2026-01-01T00:00:00.000Z", event_kind: "external_api_request_executed" })
         controller.abort()
-        return { ok: true, response_body_for_internal_use: JSON.stringify({ head_sha: "a".repeat(40), total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `check-${index}`, status: "completed", conclusion: "success" })) }) }
+        return { ok: true, response_body_for_internal_use: JSON.stringify({ total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `check-${index}`, head_sha: "a".repeat(40), status: "completed", conclusion: "success" })) }) }
       },
     }
     const gateway = new CommanderGithubReadService({ requestService: requestService as never, connector: TEST_CONNECTOR, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] } })

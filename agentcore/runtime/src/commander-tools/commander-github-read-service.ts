@@ -87,7 +87,9 @@ export class CommanderGithubReadService {
       if (signal?.aborted) return this.cancelled(toolId, repository, generatedAt, audits, observation.network_called)
       const normalized = normalize(toolId, repository, requestedRef, operation.responses.map((item) => item.body), this.config, operation.pagination_truncated)
       validateObservedResource(toolId, repository, args, normalized.result)
-      if (requestedCommit && normalized.observed_commit_sha !== requestedCommit) {
+      const normalizedEvidence = requiredObject(normalized.result.evidence)
+      const exactEmptyCheckResult = toolId === "github.commit_checks" && normalizedEvidence.total_count === 0 && Array.isArray(normalizedEvidence.items) && normalizedEvidence.items.length === 0 && normalized.observed_commit_sha === undefined
+      if (requestedCommit && normalized.observed_commit_sha !== requestedCommit && !exactEmptyCheckResult) {
         return this.failed(toolId, repository, generatedAt, "GitHub response did not match the exact requested commit SHA", audits, operation.network_called)
       }
       const provenance = provenanceFor(toolId, repository, requestedRef, normalized, generatedAt)
@@ -243,11 +245,14 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   if (toolId === "github.commit_checks") {
     const pages = responses.map(requiredObject)
     const head = pages[0]
-    const observedCommitSha = safeSha(head.head_sha)
-    if (!observedCommitSha || pages.some((page) => safeSha(page.head_sha) !== observedCommitSha)) throw new Error("GitHub check-run page identity did not match across the exact commit request")
-    const checks = boundedItems(pages.flatMap((page) => arrayOf(page.check_runs)).map((item) => {
+    const rawChecks = pages.flatMap((page) => arrayOf(page.check_runs))
+    const checkShas = rawChecks.map((item) => safeSha(requiredObject(item).head_sha))
+    const observedCommitSha = checkShas[0]
+    if (rawChecks.length > 0 && (!observedCommitSha || checkShas.some((sha) => sha !== observedCommitSha))) throw new Error("GitHub check-run page identity did not match across the exact commit request")
+    const checks = boundedItems(rawChecks.map((item) => {
       const value = requiredObject(item)
       const suite = value.check_suite && typeof value.check_suite === "object" && !Array.isArray(value.check_suite) ? requiredObject(value.check_suite) : undefined
+      if (suite && safeSha(suite.head_sha) !== safeSha(value.head_sha)) throw new Error("GitHub check-suite identity did not match its check run")
       return {
         name: safeText(value.name, 240), status: safeText(value.status, 64), conclusion: safeText(value.conclusion, 64), started_at: safeTimestamp(value.started_at), completed_at: safeTimestamp(value.completed_at),
         check_suite: suite ? { id: safePositive(suite.id), head_sha: safeSha(suite.head_sha), status: safeText(suite.status, 64), conclusion: safeText(suite.conclusion, 64) } : undefined,
@@ -377,7 +382,7 @@ function safeText(value: unknown, max: number): string | undefined { return type
 function safeSha(value: unknown): string | undefined { return typeof value === "string" && FULL_SHA.test(value) ? value : undefined }
 function safePositive(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined }
 function safeNonNegative(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined }
-function safeTimestamp(value: unknown): string | undefined { return typeof value === "string" && !Number.isNaN(new Date(value).getTime()) && new Date(value).toISOString() === value ? value : undefined }
+function safeTimestamp(value: unknown): string | undefined { if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return undefined; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString() }
 function safeRepository(value: unknown): string | undefined { return typeof value === "string" && REPOSITORY.test(value) && value === value.toLowerCase() ? value : undefined }
 function githubWebUrl(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined): string {
   if (toolId === "github.commit_get" || toolId === "github.commit_checks") return `https://github.com/${repository}/commit/${requestedRef}`

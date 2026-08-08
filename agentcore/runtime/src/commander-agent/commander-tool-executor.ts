@@ -34,13 +34,14 @@ export class CommanderToolExecutor {
       return this.result(request, descriptor, "blocked", false, undefined, started, generatedAt, validated.errors)
     }
     let timeoutHandle: CommanderToolTimeout | undefined
+    let handler: Promise<unknown> | undefined
     const executionAbort = new AbortController()
     const relayAbort = () => executionAbort.abort()
     request.abort_signal?.addEventListener("abort", relayAbort, { once: true })
     try {
       timeoutHandle = this.timeout(descriptor.timeout_ms, executionAbort.signal)
       timeoutHandle.promise.catch(() => undefined)
-      const handler = Promise.resolve(binding.execute({
+      handler = Promise.resolve(binding.execute({
         phase: request.phase,
         requested_by: request.requested_by,
         call_id: request.call_id,
@@ -52,9 +53,13 @@ export class CommanderToolExecutor {
       const outcome = handlerOutcome(raw)
       return this.result(request, descriptor, outcome.status, true, raw, started, generatedAt, outcome.blockers, undefined, outcome.warnings)
     } catch (error) {
-      const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|cancel/i.test(error.message))
+      const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|timed out|cancel/i.test(error.message))
       if (cancelled) executionAbort.abort()
-      return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, undefined, started, generatedAt, [], error)
+      let drained: unknown
+      if (cancelled && SAFE_GITHUB_TOOL_IDS.has(request.tool_id) && handler) {
+        try { drained = await handler } catch { drained = undefined }
+      }
+      return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, drained, started, generatedAt, [], error)
     } finally {
       request.abort_signal?.removeEventListener("abort", relayAbort)
       timeoutHandle?.cancel()
@@ -115,7 +120,7 @@ export class CommanderToolExecutor {
       trust_class: descriptor?.trust_class ?? "unknown",
       instruction_semantics: "none",
       result: finalStatus === "ready" ? safeResult : undefined,
-      evidence: extractEvidence(safeResult),
+      evidence: finalStatus === "ready" ? extractEvidence(safeResult) : [],
       output_bytes: oversized ? 0 : bytes,
       max_output_bytes: maxOutputBytes,
       truncated: false,
