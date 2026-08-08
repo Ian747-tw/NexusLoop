@@ -24566,7 +24566,7 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false })
     expect(transport.requests).toHaveLength(0)
     await server.start()
-    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "ready", handler_invoked: true, network_called: true, external_api_audit_event_count: 1 })
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "ready", handler_invoked: true, network_called: true, external_api_audit_event_count: 1, events_appended: true })
     expect(transport.requests).toHaveLength(1)
     await server.shutdown()
     await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false })

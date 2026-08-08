@@ -37,7 +37,7 @@ export type CommanderToolExecutionResult = {
   handler_invoked: boolean
   external_process_invoked: boolean
   process_policy: string
-  events_appended: false
+  events_appended: boolean
   provider_called: false
   mcp_called: false
   network_called: boolean

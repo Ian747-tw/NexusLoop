@@ -10191,15 +10191,64 @@ describe("Commander in-memory investigation controller", () => {
     servers.push({ stop: () => server.shutdown() })
     await server.start()
     const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_configured_github", requested_by: "github_gateway_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
-    expect(result).toMatchObject({ status: "final", provider_request_count: 3, tool_call_count: 2 })
+    expect(result).toMatchObject({ status: "final", provider_request_count: 3, tool_call_count: 2, external_api_audit_events_appended: 4, events_appended: true })
     expect(result.loaded_tool_ids).toContain("github.repository_get")
     expect(transport.requests).toHaveLength(4)
     expect(transport.requests[2]).toMatchObject({ method: "GET", url: "http://api.github.test/repos/ian747-tw/nexusloop" })
     const events = await server.eventStore.readAll()
     expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(4)
-    expect(events.filter((event) => event.kind === "runtime_commander_investigation_checkpointed")).toHaveLength(3)
+    const checkpoints = events.filter((event) => event.kind === "runtime_commander_investigation_checkpointed") as Array<{ checkpoint: { external_api_audit_count: number } }>
+    expect(checkpoints).toHaveLength(3)
+    expect(checkpoints.map((event) => event.checkpoint.external_api_audit_count)).toEqual([1, 3, 4])
+    const terminal = events.find((event) => event.kind === "runtime_commander_investigation_finished") as { terminal?: { external_api_audit_event_count?: number } } | undefined
+    expect(terminal?.terminal?.external_api_audit_event_count).toBe(4)
     expect(JSON.stringify(events)).not.toContain("untrusted repository evidence")
     expect(JSON.stringify(events)).not.toContain("configured investigation completed")
+  })
+
+  test("configured recovery reports GitHub tool audits without weakening provider audit completeness", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-recovery-github-audit-"))
+    await writeApprovedSpec(projectDir)
+    const toolResponse = JSON.stringify({
+      id: "chatcmpl_recovery_github",
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{
+        index: 0,
+        finish_reason: "tool_calls",
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_recovery_github", type: "function", function: { name: "github__repository_get", arguments: JSON.stringify({ repository: "ian747-tw/nexusloop" }) } }],
+        },
+      }],
+    })
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: toolResponse },
+      { status_code: 200, body: JSON.stringify({ full_name: "Ian747-tw/NexusLoop", name: "NexusLoop", default_branch: "main", visibility: "public", archived: false, private: false }) },
+      { status_code: 200, body: chatCompletionText("configured recovery completed after GitHub evidence") },
+    ])
+    const server = configuredProviderRuntimeServer(projectDir, {
+      transport,
+      githubGateway: {
+        connector: githubTestConnector(),
+        config: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      },
+    })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_github", ["github.repository_get"])
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "completed", provider_called: true, network_called: true, external_api_audit_events_appended: 3, model_step_event_count: 2, checkpoint_event_count: 1, terminal_event_count: 1 })
+    expect(result.controller_result).toMatchObject({ provider_request_count: 2, tool_call_count: 1, external_api_audit_events_appended: 3 })
+    expect(result.controller_result?.provider_audit).toMatchObject({ provider_request_count: 2, external_api_audit_event_count: 2, all_provider_requests_audited: true })
+    expect(transport.requests).toHaveLength(3)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(3)
+    const checkpoint = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === authority.investigation_id) as { checkpoint?: { external_api_audit_count?: number } } | undefined
+    expect(checkpoint?.checkpoint?.external_api_audit_count).toBe(2)
   })
 
   test("configured GitHub read is aborted and drained before runtime shutdown", async () => {

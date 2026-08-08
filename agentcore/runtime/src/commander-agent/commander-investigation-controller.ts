@@ -97,6 +97,7 @@ export class CommanderInvestigationController {
       latestAssistant,
       latestToolResults,
       providerRequests,
+      externalApiAudits: 0,
       recentResults,
       nextTurnIndex: 1,
       requestIdForTurn: (turn) => `${investigationId}_turn_${turn}`,
@@ -213,6 +214,7 @@ export class CommanderInvestigationController {
       latestAssistant,
       latestToolResults,
       providerRequests,
+      externalApiAudits: checkpoint.external_api_audit_count,
       recentResults,
       nextTurnIndex: seed.next_turn_index,
       requestIdForTurn: (turn) => `${expectedRecoveryRequestPrefix(seed, authoritativeCheckpoint.checkpoint!)}_turn_${turn}`,
@@ -329,6 +331,7 @@ export class CommanderInvestigationController {
     let latestAssistant = state.latestAssistant
     let latestToolResults = state.latestToolResults
     let providerRequests = state.providerRequests
+    let externalApiAudits = state.externalApiAudits
     const recentResults = state.recentResults
     const finish = (
       status: CommanderInvestigationResult["status"],
@@ -336,7 +339,7 @@ export class CommanderInvestigationController {
       blockers: string[],
       warnings: string[] = [],
       finalSummary?: string,
-    ) => this.finish(input, investigationId, status, reason, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), blockers, warnings, started, finalSummary, state.durationMs?.())
+    ) => this.finish(input, investigationId, status, reason, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), blockers, warnings, started, finalSummary, state.durationMs?.(), externalApiAudits)
 
     for (let turn = state.nextTurnIndex; turn <= budget.max_model_turns; turn += 1) {
       const preModelWarnings: string[] = []
@@ -384,10 +387,10 @@ export class CommanderInvestigationController {
         }
       }
       if (persistCheckpoints) {
-        const observedModelStep = await this.observeModelStepStarted(input, investigationId, turn, request.request_id, toolProtocol, context, workingSet, Array.from(loaded.values()), providerRequests)
+        const observedModelStep = await this.observeModelStepStarted(input, investigationId, turn, request.request_id, toolProtocol, context, workingSet, Array.from(loaded.values()), providerRequests, externalApiAudits)
         if (observedModelStep.blocker) {
           deadline.cancel()
-          return this.finish(input, investigationId, observedModelStep.status!, observedModelStep.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [observedModelStep.blocker], [], started, undefined, state.durationMs?.())
+          return this.finish(input, investigationId, observedModelStep.status!, observedModelStep.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [observedModelStep.blocker], [], started, undefined, state.durationMs?.(), externalApiAudits)
         }
       }
       const modelResult = await this.options.modelAdapter!.executeOneStep(request).finally(deadline.cancel)
@@ -400,7 +403,9 @@ export class CommanderInvestigationController {
       providerRequests += modelResult.request_count
       workingSet.model_turn_count = turn
       const transportInterrupted = modelResult.status === "cancelled" || modelResult.status === "failed"
+      const providerAuditCountBefore = workingSet.provider_audit.external_api_audit_event_count
       const audit = observeProviderAudit(workingSet.provider_audit, this.options.providerAuditPolicy, modelResult)
+      externalApiAudits += Math.max(0, workingSet.provider_audit.external_api_audit_event_count - providerAuditCountBefore)
       if (requestCountBlocker) return finish("failed", "controller_error", [requestCountBlocker], [...modelResult.warnings, ...audit.warnings])
       if (abortSignal?.aborted && transportInterrupted) return finish("cancelled", "caller_cancelled", ["caller aborted investigation during model request"], [...modelResult.warnings, ...audit.warnings])
       if (deadline.expired() && transportInterrupted) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during model request"], [...modelResult.warnings, ...audit.warnings])
@@ -413,8 +418,8 @@ export class CommanderInvestigationController {
         const summary = turnSummary(turn, request.request_id, modelResult, context, [], [], [], workingSet.tool_call_count, true, [], modelResult.warnings, audit.metadata)
         appendTurnSummary(turns, summary, workingSet, budget)
         if (persistCheckpoints && persistTerminalTurnCheckpoint) {
-          const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
-          if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.())
+          const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, externalApiAudits, wallStartedMs)
+          if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.(), externalApiAudits)
         }
         if (modelResult.status === "final") return finish("final", "model_final", [], [...modelResult.warnings, ...(modelResult.tool_calls.length === 0 && workingSet.evidence_cards.length === 0 ? ["model finalized without acquired evidence"] : [])], modelResult.text)
         if (modelResult.status === "refusal") return finish("refused", "model_refusal", [], modelResult.warnings)
@@ -476,6 +481,7 @@ export class CommanderInvestigationController {
         if (toolDeadlineExpired) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted during tool execution"], execution.warnings)
         executions.push(execution)
         const externalRequestCount = execution.external_api_audit_event_count ?? 0
+        externalApiAudits += externalRequestCount
         const toolBudgetCharge = externalRequestCount > 0 ? externalRequestCount : 1
         if (toolBudgetCharge > budget.max_tool_calls - workingSet.tool_call_count) return finish("budget_exhausted", "max_tool_calls", ["GitHub external request count exceeded remaining max_tool_calls budget"])
         workingSet.tool_call_count += toolBudgetCharge
@@ -535,8 +541,8 @@ export class CommanderInvestigationController {
       const summary = turnSummary(turn, request.request_id, modelResult, context, executions, newlyLoaded, newEvidence, workingSet.tool_call_count, progressMade, noProgressReasons, modelResult.warnings, audit.metadata)
       appendTurnSummary(turns, summary, workingSet, budget)
       if (persistCheckpoints) {
-        const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, wallStartedMs)
-        if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.())
+        const checkpointObserved = await this.observeCheckpoint(input, investigationId, bootstrap, budget, toolProtocol, turn, loaded, workingSet, turns, latestAssistant, latestToolResults, providerRequests, externalApiAudits, wallStartedMs)
+        if (checkpointObserved.blocker) return this.finish(input, investigationId, checkpointObserved.status!, checkpointObserved.reason!, bootstrap, budget, toolProtocol, turns, workingSet, providerRequests, Array.from(loaded.values()), [checkpointObserved.blocker], [], started, undefined, state.durationMs?.(), externalApiAudits)
       }
       if (workingSet.consecutive_no_progress_turns >= budget.max_consecutive_no_progress_turns) return finish("no_progress", "consecutive_no_progress", ["consecutive no-progress turn limit reached"])
     }
@@ -688,7 +694,7 @@ export class CommanderInvestigationController {
     }
   }
 
-  private async observeModelStepStarted(input: CommanderInvestigationInput, investigationId: string, turn: number, requestId: string, toolProtocol: CommanderModelToolProtocol, context: { input_bytes: number; estimated_tokens: number; messages: CommanderModelMessage[] }, workingSet: CommanderInvestigationWorkingSet, loadedTools: CommanderToolDescriptor[], providerRequests: number): Promise<ObserverOutcome> {
+  private async observeModelStepStarted(input: CommanderInvestigationInput, investigationId: string, turn: number, requestId: string, toolProtocol: CommanderModelToolProtocol, context: { input_bytes: number; estimated_tokens: number; messages: CommanderModelMessage[] }, workingSet: CommanderInvestigationWorkingSet, loadedTools: CommanderToolDescriptor[], providerRequests: number, externalApiAudits: number): Promise<ObserverOutcome> {
     if (!this.options.persistenceObserver) return {}
     try {
       await this.options.persistenceObserver.onModelStepStarted({
@@ -703,7 +709,7 @@ export class CommanderInvestigationController {
         estimated_input_tokens: context.estimated_tokens,
         loaded_tools: loadedTools,
         provider_request_count_before: providerRequests,
-        external_api_audit_count_before: workingSet.provider_audit.external_api_audit_event_count,
+        external_api_audit_count_before: externalApiAudits,
         started_at: this.now().toISOString(),
       })
       return {}
@@ -712,7 +718,7 @@ export class CommanderInvestigationController {
     }
   }
 
-  private async observeCheckpoint(input: CommanderInvestigationInput, investigationId: string, bootstrap: CommanderInvestigationBootstrap, budget: CommanderInvestigationBudget, toolProtocol: CommanderModelToolProtocol, turn: number, loaded: Map<string, CommanderToolDescriptor>, workingSet: CommanderInvestigationWorkingSet, turns: CommanderInvestigationTurnSummary[], latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[], providerRequests: number, wallStartedMs: number): Promise<ObserverOutcome> {
+  private async observeCheckpoint(input: CommanderInvestigationInput, investigationId: string, bootstrap: CommanderInvestigationBootstrap, budget: CommanderInvestigationBudget, toolProtocol: CommanderModelToolProtocol, turn: number, loaded: Map<string, CommanderToolDescriptor>, workingSet: CommanderInvestigationWorkingSet, turns: CommanderInvestigationTurnSummary[], latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[], providerRequests: number, externalApiAudits: number, wallStartedMs: number): Promise<ObserverOutcome> {
     if (!this.options.persistenceObserver) return {}
     try {
       await this.options.persistenceObserver.onCheckpoint({
@@ -729,6 +735,7 @@ export class CommanderInvestigationController {
         latest_assistant: latestAssistant,
         latest_tool_results: latestToolResults,
         provider_request_count: providerRequests,
+        external_api_audit_event_count: externalApiAudits,
         elapsed_active_ms: elapsedWallMs(wallStartedMs),
         created_at: this.now().toISOString(),
       })
@@ -738,7 +745,7 @@ export class CommanderInvestigationController {
     }
   }
 
-  private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string, activeDurationMs?: number): CommanderInvestigationResult {
+  private finish(input: CommanderInvestigationInput, investigationId: string, status: CommanderInvestigationResult["status"], stopReason: CommanderInvestigationStopReason, bootstrap: { bootstrap_id: string; bootstrap_hash: string }, budget: CommanderInvestigationBudget, protocol: CommanderModelToolProtocol, turns: CommanderInvestigationTurnSummary[], workingSet: CommanderInvestigationWorkingSet, providerRequests: number, loadedTools: CommanderToolDescriptor[], blockers: string[], warnings: string[], started: Date, finalSummary?: string, activeDurationMs?: number, externalApiAudits = workingSet.provider_audit.external_api_audit_event_count): CommanderInvestigationResult {
     applyCurrentProviderAuditPolicy(workingSet, this.options.providerAuditPolicy)
     const completed = this.now()
     const result: CommanderInvestigationResult = {
@@ -793,8 +800,8 @@ export class CommanderInvestigationController {
       transcript_persisted: false,
       working_set_persisted: false,
       investigation_events_appended: false,
-      external_api_audit_events_appended: workingSet.provider_audit.external_api_audit_event_count,
-      events_appended: workingSet.provider_audit.external_api_audit_event_count > 0,
+      external_api_audit_events_appended: externalApiAudits,
+      events_appended: externalApiAudits > 0,
       files_written: false,
       research_db_written: false,
       mission_mutated: false,
@@ -827,6 +834,7 @@ type CommanderInvestigationPreparedLoopState = {
   latestAssistant?: CommanderModelAssistantMessage
   latestToolResults: CommanderModelToolResultMessage[]
   providerRequests: number
+  externalApiAudits: number
   recentResults: Map<string, { count: number; last_turn_index: number }>
   nextTurnIndex: number
   requestIdForTurn(turn: number): string

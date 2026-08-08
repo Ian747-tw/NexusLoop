@@ -132,7 +132,7 @@ export class CommanderToolExecutor {
       handler_invoked: invoked,
       external_process_invoked: invoked && SAFE_GIT_TOOL_IDS.has(request.tool_id) && gitInvoked(safeResult),
       process_policy: descriptor?.process_policy ?? "none",
-      events_appended: false,
+      events_appended: auditCount(safeResult) > 0,
       provider_called: false,
       mcp_called: false,
       network_called: typeof safeResult === "object" && safeResult !== null && (safeResult as { network_called?: unknown }).network_called === true,

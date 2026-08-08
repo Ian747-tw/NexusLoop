@@ -19,6 +19,7 @@ import type {
 export type NormalizedCommanderInvestigationRecoveryTransactionInput = Readonly<CommanderInvestigationRecoveryTransactionInput>
 type RecoveryExecutionFacts = {
   providerRequestCount: number
+  providerExternalApiAuditEventsAppended: number
   externalApiAuditEventsAppended: number
   transportDispatchCount: number
   providerCalled: boolean
@@ -401,10 +402,12 @@ function recoveryExecutionFacts(
   mode: CommanderInvestigationRecoveryExecutionMode = { kind: "scripted", execution_transport: "injected_scripted_adapter", provider_audit_required: false },
 ): RecoveryExecutionFacts {
   const providerRequests = Math.max(0, result.provider_request_count - seed.provider_request_count_before)
-  const externalApiAudits = Math.max(0, result.provider_audit.external_api_audit_event_count - seed.external_api_audit_count_before)
+  const providerExternalApiAudits = Math.max(0, result.provider_audit.external_api_audit_event_count - seed.working_set.provider_audit.external_api_audit_event_count)
+  const externalApiAudits = Math.max(0, result.external_api_audit_events_appended - seed.external_api_audit_count_before)
   const transportDispatches = Math.max(0, (result.provider_audit.transport_dispatch_count ?? 0) - (seed.working_set.provider_audit.transport_dispatch_count ?? 0))
   return {
     providerRequestCount: providerRequests,
+    providerExternalApiAuditEventsAppended: providerExternalApiAudits,
     externalApiAuditEventsAppended: externalApiAudits,
     transportDispatchCount: transportDispatches,
     providerCalled: mode.kind === "configured_connector" && providerRequests > 0,
@@ -425,10 +428,10 @@ function executionModeBlocker(
     return undefined
   }
   const newProviderRequests = facts.providerRequestCount
-  if (facts.providerCalled && facts.externalApiAuditEventsAppended === 0) return "configured recovery provider request is missing an external API audit"
-  if (facts.externalApiAuditEventsAppended !== newProviderRequests) return "configured recovery provider request and external API audit counts do not match"
+  if (facts.providerCalled && facts.providerExternalApiAuditEventsAppended === 0) return "configured recovery provider request is missing an external API audit"
+  if (facts.providerExternalApiAuditEventsAppended !== newProviderRequests) return "configured recovery provider request and external API audit counts do not match"
   if (facts.transportDispatchCount > newProviderRequests) return "configured recovery transport dispatch count exceeds fresh provider requests"
-  if (facts.externalApiAuditEventsAppended > 0 && result.provider_audit.transport_kind !== "external_api_connector") return "configured recovery audit transport kind is invalid"
+  if (facts.providerExternalApiAuditEventsAppended > 0 && result.provider_audit.transport_kind !== "external_api_connector") return "configured recovery audit transport kind is invalid"
   if (result.provider_audit.request_body_persisted || result.provider_audit.response_body_persisted || result.provider_audit.credentials_persisted) return "configured recovery audit metadata claims forbidden provider material was persisted"
   return undefined
 }

@@ -283,6 +283,7 @@ export type CommanderInvestigationTerminalRecord = {
   omitted_evidence_count: number
   omitted_turn_count: number
   provider_audit: CommanderInvestigationProviderAuditSummary
+  external_api_audit_event_count?: number
   blockers: string[]
   warnings: string[]
   semantic_result_hash: string

@@ -255,6 +255,7 @@ export class CommanderInvestigationJournalService {
       omitted_evidence_count: result.omitted_evidence_count,
       omitted_turn_count: result.omitted_turn_count,
       provider_audit: sanitizedProviderAudit(result.provider_audit),
+      external_api_audit_event_count: result.external_api_audit_events_appended,
       blockers: result.blockers.map((item) => bound(item, 300)).slice(0, 16),
       warnings: result.warnings.map((item) => bound(item, 300)).slice(0, 24),
       semantic_result_hash: result.result_hash,
@@ -757,6 +758,7 @@ export class CommanderInvestigationJournalService {
       latestAssistant: snapshot.latest_assistant,
       latestToolResults: snapshot.latest_tool_results,
       providerRequestCount: snapshot.provider_request_count,
+      externalApiAuditEventCount: snapshot.external_api_audit_event_count,
       elapsedActiveMs: snapshot.elapsed_active_ms,
       createdAt: snapshot.created_at,
       recoveryAttempt: state.recovery_attempt,
@@ -801,6 +803,7 @@ export class CommanderInvestigationJournalService {
     latestAssistant?: CommanderModelAssistantMessage
     latestToolResults: CommanderModelToolResultMessage[]
     providerRequestCount: number
+    externalApiAuditEventCount?: number
     elapsedActiveMs: number
     createdAt: string
     measureBytes?: (checkpoint: CommanderInvestigationCheckpoint) => number
@@ -831,7 +834,7 @@ export class CommanderInvestigationJournalService {
       turn_summaries: sanitizeTurnSummaries(input.turnSummaries).slice(-snapshot.budget.max_turn_summaries),
       replay_exchange: replay,
       provider_request_count: input.providerRequestCount,
-      external_api_audit_count: workingSet.provider_audit.external_api_audit_event_count,
+      external_api_audit_count: input.externalApiAuditEventCount ?? workingSet.provider_audit.external_api_audit_event_count,
       elapsed_active_ms: Math.max(0, Math.floor(input.elapsedActiveMs)),
       previous_checkpoint_id: input.previous?.checkpoint_id,
       previous_checkpoint_hash: input.previous?.checkpoint_hash,
