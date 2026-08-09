@@ -243,6 +243,28 @@ describe("Commander GitHub read gateway", () => {
     expect(blocked.blockers.join(" ")).toContain("page identity")
   })
 
+  test("uses authoritative check totals for complete pages and rejects cross-page total drift", async () => {
+    const sha = "d".repeat(40)
+    const complete = service([
+      { total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `complete-${index}` })) },
+    ], { max_pages_per_call: 1, max_items_per_call: 50 })
+    const completeResult = await complete.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect(completeResult).toMatchObject({ status: "ready", request_count: 1, item_count: 25, truncated: false })
+
+    const drift = service([
+      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `first-${index}` })) },
+      { total_count: 51, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `second-${index}` })) },
+    ], { max_pages_per_call: 2, max_items_per_call: 50 })
+    const driftResult = await drift.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect(driftResult).toMatchObject({ status: "failed", request_count: 2, result: null, evidence: [] })
+    expect(driftResult.blockers.join(" ")).toContain("total changed between pages")
+
+    const overfull = service([{ total_count: 1, check_runs: [checkRunFixture(sha), checkRunFixture(sha, { name: "extra" })] }])
+    const overfullResult = await overfull.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect(overfullResult).toMatchObject({ status: "failed", request_count: 1, result: null, evidence: [] })
+    expect(overfullResult.blockers.join(" ")).toContain("exceeded the authoritative total")
+  })
+
   test("charges commit parents to the configured item ceiling and reports omissions", async () => {
     const sha = "a".repeat(40)
     const fixture = service([commitFixture(sha, { parents: [{ sha: "b".repeat(40) }, { sha: "c".repeat(40) }] })], { max_items_per_call: 1 })

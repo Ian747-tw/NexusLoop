@@ -175,14 +175,27 @@ export class CommanderGithubReadService {
 
   private async fetchPages(request: (spec: RequestSpec) => Promise<unknown>, path: string, checkRuns: boolean, pageLimit: number): Promise<boolean> {
     const pageSize = Math.min(PAGE_SIZE, this.config.max_items_per_call)
+    let checkTotal: number | undefined
+    let fetchedChecks = 0
     for (let page = 1; page <= pageLimit; page += 1) {
       const raw = await request({ method: "GET", path, query: { per_page: String(pageSize), page: String(page) } })
-      const values = checkRuns
-        ? requiredArray(requiredObject(raw).check_runs, "GitHub check-runs response")
+      const checkPage = checkRuns ? requiredObject(raw) : undefined
+      const values = checkPage
+        ? requiredArray(checkPage.check_runs, "GitHub check-runs response")
         : requiredArray(raw, "GitHub REST list response")
+      if (checkPage) {
+        const pageTotal = requiredNonNegative(checkPage.total_count, "GitHub check-run total count")
+        if (checkTotal !== undefined && pageTotal !== checkTotal) throw new Error("GitHub check-run total changed between pages")
+        checkTotal = pageTotal
+        fetchedChecks += values.length
+        if (fetchedChecks > checkTotal) throw new Error("GitHub check-run pages exceeded the authoritative total")
+        if (fetchedChecks === checkTotal) return false
+        if (fetchedChecks >= this.config.max_items_per_call || values.length < pageSize) return true
+        continue
+      }
       if (values.length < pageSize || values.length >= this.config.max_items_per_call) return values.length >= this.config.max_items_per_call
     }
-    return true
+    return checkRuns ? fetchedChecks < (checkTotal ?? 0) : true
   }
 
   private requireRepository(value: unknown): string {
@@ -287,7 +300,10 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
     const pages = responses.map(requiredObject)
     const head = pages[0]
     const totalCount = requiredNonNegative(head.total_count, "GitHub check-run total count")
+    const pageTotals = pages.map((page) => requiredNonNegative(page.total_count, "GitHub check-run total count"))
+    if (pageTotals.some((count) => count !== totalCount)) throw new Error("GitHub check-run total changed between pages")
     const rawChecks = pages.flatMap((page) => requiredArray(page.check_runs, "GitHub check-runs response"))
+    if (rawChecks.length > totalCount) throw new Error("GitHub check-run pages exceeded the authoritative total")
     const expectedCommitSha = requiredSha(requestedRef, "GitHub requested check-run commit SHA")
     const checkShas = rawChecks.map((item) => requiredSha(requiredObject(item).head_sha, "GitHub check-run head SHA"))
     if (checkShas.some((sha) => sha !== expectedCommitSha)) throw new Error("GitHub check-run page identity did not match the exact commit request")
@@ -302,8 +318,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
         check_suite: { id: requiredPositive(suite.id, "GitHub check-suite id"), head_sha: suiteHeadSha, status: requiredSafeText(suite.status, "GitHub check-suite status", 64), conclusion: nullableSafeText(suite.conclusion, "GitHub check-suite conclusion", 64) },
       }
     }), itemCap)
-    const paginationTruncated = pages.length >= pageCap && requiredArray(pages.at(-1)?.check_runs, "GitHub final check-runs response").length >= PAGE_SIZE
-    return { commit_sha: expectedCommitSha, observed_commit_sha: expectedCommitSha, total_count: totalCount, items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < totalCount }
+    return { commit_sha: expectedCommitSha, observed_commit_sha: expectedCommitSha, total_count: totalCount, items: checks.items, truncated: checks.truncated || rawChecks.length < totalCount || checks.items.length < totalCount }
   }
   const reviewPages = responses.slice(0, -1)
   const reviewValues = reviewPages.flatMap((page) => requiredArray(page, "GitHub reviews response")).map((item) => {
