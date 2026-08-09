@@ -231,6 +231,14 @@ describe("Commander GitHub read gateway", () => {
       expect(result.request_count).toBe(1)
       expect(result.external_api_audit_request_ids).toHaveLength(1)
     }
+    for (const parent of [{}, { sha: "a".repeat(39) }, "not-a-parent"]) {
+      const fixture = service([{ sha: "a".repeat(40), commit: { message: "commit" }, parents: [parent] }])
+      const result = await fixture.gateway.execute("github.commit_get", { repository: "ian747-tw/nexusloop", commit_sha: "a".repeat(40) })
+      expect(result.status).toBe("failed")
+      expect(result.result).toBeNull()
+      expect(result.evidence).toEqual([])
+      expect(result.request_count).toBe(1)
+    }
   })
 
   test("uses the runtime request service for fixed paths and persisted audit metadata", async () => {
