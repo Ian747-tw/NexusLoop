@@ -177,6 +177,7 @@ export class CommanderGithubReadService {
     const pageSize = Math.min(PAGE_SIZE, this.config.max_items_per_call)
     let checkTotal: number | undefined
     let fetchedChecks = 0
+    const checkIds = new Set<number>()
     for (let page = 1; page <= pageLimit; page += 1) {
       const raw = await request({ method: "GET", path, query: { per_page: String(pageSize), page: String(page) } })
       const checkPage = checkRuns ? requiredObject(raw) : undefined
@@ -187,6 +188,11 @@ export class CommanderGithubReadService {
         const pageTotal = requiredNonNegative(checkPage.total_count, "GitHub check-run total count")
         if (checkTotal !== undefined && pageTotal !== checkTotal) throw new Error("GitHub check-run total changed between pages")
         checkTotal = pageTotal
+        for (const value of values) {
+          const checkId = requiredPositive(requiredObject(value).id, "GitHub check-run id")
+          if (checkIds.has(checkId)) throw new Error("GitHub check-run pages contained a duplicate run id")
+          checkIds.add(checkId)
+        }
         fetchedChecks += values.length
         if (fetchedChecks > checkTotal) throw new Error("GitHub check-run pages exceeded the authoritative total")
         if (fetchedChecks === checkTotal) return false
@@ -290,6 +296,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
     const fileConnection = requiredObject(object.files)
     const labelConnection = requiredObject(object.labels)
     const rawFiles = requiredArray(fileConnection.nodes, "GitHub pull-request changed-file nodes")
+    if (rawFiles.length > changedFiles) throw new Error("GitHub changed-file nodes exceeded the authoritative changed-file count")
     const normalizedFiles = rawFiles.map((item) => { const value = requiredObject(item); const additions = requiredNonNegative(value.additions, "GitHub changed-file additions"); const deletions = requiredNonNegative(value.deletions, "GitHub changed-file deletions"); return { filename: requiredSafeText(value.path, "GitHub changed-file path", 240), status: requiredSafeText(value.changeType, "GitHub changed-file status", 64), additions, deletions, changes: additions + deletions } })
     const files = boundedItems(normalizedFiles, detailBudget)
     const pullLabels = boundedGraphLabels(labelConnection, Math.max(0, detailBudget - files.items.length), "GitHub pull-request labels")
@@ -304,6 +311,8 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
     if (pageTotals.some((count) => count !== totalCount)) throw new Error("GitHub check-run total changed between pages")
     const rawChecks = pages.flatMap((page) => requiredArray(page.check_runs, "GitHub check-runs response"))
     if (rawChecks.length > totalCount) throw new Error("GitHub check-run pages exceeded the authoritative total")
+    const checkIds = rawChecks.map((item) => requiredPositive(requiredObject(item).id, "GitHub check-run id"))
+    if (new Set(checkIds).size !== checkIds.length) throw new Error("GitHub check-run pages contained a duplicate run id")
     const expectedCommitSha = requiredSha(requestedRef, "GitHub requested check-run commit SHA")
     const checkShas = rawChecks.map((item) => requiredSha(requiredObject(item).head_sha, "GitHub check-run head SHA"))
     if (checkShas.some((sha) => sha !== expectedCommitSha)) throw new Error("GitHub check-run page identity did not match the exact commit request")
@@ -314,7 +323,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
       const suiteHeadSha = requiredSha(suite.head_sha, "GitHub check-suite head SHA")
       if (suiteHeadSha !== headSha) throw new Error("GitHub check-suite identity did not match its check run")
       return {
-        name: requiredSafeText(value.name, "GitHub check-run name", 240), status: requiredSafeText(value.status, "GitHub check-run status", 64), conclusion: nullableSafeText(value.conclusion, "GitHub check-run conclusion", 64), started_at: nullableTimestamp(value.started_at, "GitHub check-run start timestamp"), completed_at: nullableTimestamp(value.completed_at, "GitHub check-run completion timestamp"),
+        id: requiredPositive(value.id, "GitHub check-run id"), name: requiredSafeText(value.name, "GitHub check-run name", 240), status: requiredSafeText(value.status, "GitHub check-run status", 64), conclusion: nullableSafeText(value.conclusion, "GitHub check-run conclusion", 64), started_at: nullableTimestamp(value.started_at, "GitHub check-run start timestamp"), completed_at: nullableTimestamp(value.completed_at, "GitHub check-run completion timestamp"),
         check_suite: { id: requiredPositive(suite.id, "GitHub check-suite id"), head_sha: suiteHeadSha, status: requiredSafeText(suite.status, "GitHub check-suite status", 64), conclusion: nullableSafeText(suite.conclusion, "GitHub check-suite conclusion", 64) },
       }
     }), itemCap)

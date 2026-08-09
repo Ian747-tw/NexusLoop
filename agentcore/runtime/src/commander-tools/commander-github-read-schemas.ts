@@ -28,8 +28,8 @@ const checkSuite = object("Bounded check-suite identity", {
   id: integer("Check-suite ID", Number.MAX_SAFE_INTEGER), head_sha: string("Exact head SHA", 40), status: string("Check-suite status", 64), conclusion: string("Check-suite conclusion", 64),
 }, ["id", "head_sha", "status"])
 const check = object("Bounded check-run summary", {
-  name: string("Check name", 240), status: string("Check status", 64), conclusion: string("Check conclusion", 64), started_at: string("Start timestamp", 64), completed_at: string("Completion timestamp", 64), check_suite: checkSuite,
-}, ["name", "status", "check_suite"])
+  id: integer("Check-run ID", Number.MAX_SAFE_INTEGER), name: string("Check name", 240), status: string("Check status", 64), conclusion: string("Check conclusion", 64), started_at: string("Start timestamp", 64), completed_at: string("Completion timestamp", 64), check_suite: checkSuite,
+}, ["id", "name", "status", "check_suite"])
 const review = object("Bounded pull-request review summary", {
   id: integer("Review ID", Number.MAX_SAFE_INTEGER), state: string("Review state", 64), user_login: string("Reviewer login", 120), submitted_at: string("Submission timestamp", 64), body_preview: string("Bounded review body", 240), commit_id: string("Reviewed commit SHA", 40),
 }, ["id", "state", "user_login", "submitted_at", "commit_id"])

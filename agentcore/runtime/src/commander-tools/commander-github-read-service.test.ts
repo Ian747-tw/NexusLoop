@@ -38,7 +38,7 @@ function pullGraphFixture(options: { number?: number; headSha?: string; baseSha?
   return { data: { repository: { pullRequest } } }
 }
 function checkRunFixture(sha = SHA, overrides: Record<string, unknown> = {}) {
-  return { name: "unit", head_sha: sha, status: "completed", conclusion: "success", started_at: null, completed_at: "2026-01-01T00:00:00.000Z", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" }, ...overrides }
+  return { id: 1, name: "unit", head_sha: sha, status: "completed", conclusion: "success", started_at: null, completed_at: "2026-01-01T00:00:00.000Z", check_suite: { id: 42, head_sha: sha, status: "completed", conclusion: "success" }, ...overrides }
 }
 function reviewFixture(sha = SHA, overrides: Record<string, unknown> = {}) {
   return { id: 1, state: "APPROVED", user: { login: "reviewer" }, submitted_at: "2026-01-01T00:00:00.000Z", body: null, commit_id: sha, ...overrides }
@@ -235,8 +235,8 @@ describe("Commander GitHub read gateway", () => {
     expect(noChecks).toMatchObject({ status: "ready", item_count: 0, provenance: { requested_ref: sha, observed_commit_sha: sha } })
 
     const drift = service([
-      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `page-one-${index}` })) },
-      { total_count: 50, check_runs: [checkRunFixture("b".repeat(40), { name: "wrong-page" })] },
+      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 1, name: `page-one-${index}` })) },
+      { total_count: 50, check_runs: [checkRunFixture("b".repeat(40), { id: 26, name: "wrong-page" })] },
     ])
     const blocked = await drift.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect(blocked).toMatchObject({ status: "failed", result: null, request_count: 2 })
@@ -246,23 +246,31 @@ describe("Commander GitHub read gateway", () => {
   test("uses authoritative check totals for complete pages and rejects cross-page total drift", async () => {
     const sha = "d".repeat(40)
     const complete = service([
-      { total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `complete-${index}` })) },
+      { total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 1, name: `complete-${index}` })) },
     ], { max_pages_per_call: 1, max_items_per_call: 50 })
     const completeResult = await complete.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect(completeResult).toMatchObject({ status: "ready", request_count: 1, item_count: 25, truncated: false })
 
     const drift = service([
-      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `first-${index}` })) },
-      { total_count: 51, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `second-${index}` })) },
+      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 1, name: `first-${index}` })) },
+      { total_count: 51, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 26, name: `second-${index}` })) },
     ], { max_pages_per_call: 2, max_items_per_call: 50 })
     const driftResult = await drift.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect(driftResult).toMatchObject({ status: "failed", request_count: 2, result: null, evidence: [] })
     expect(driftResult.blockers.join(" ")).toContain("total changed between pages")
 
-    const overfull = service([{ total_count: 1, check_runs: [checkRunFixture(sha), checkRunFixture(sha, { name: "extra" })] }])
+    const overfull = service([{ total_count: 1, check_runs: [checkRunFixture(sha), checkRunFixture(sha, { id: 2, name: "extra" })] }])
     const overfullResult = await overfull.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect(overfullResult).toMatchObject({ status: "failed", request_count: 1, result: null, evidence: [] })
     expect(overfullResult.blockers.join(" ")).toContain("exceeded the authoritative total")
+
+    const duplicate = service([
+      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 1, name: `first-${index}` })) },
+      { total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 1, name: `overlap-${index}` })) },
+    ], { max_pages_per_call: 2, max_items_per_call: 50 })
+    const duplicateResult = await duplicate.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: sha })
+    expect(duplicateResult).toMatchObject({ status: "failed", request_count: 2, result: null, evidence: [] })
+    expect(duplicateResult.blockers.join(" ")).toContain("duplicate run id")
   })
 
   test("charges commit parents to the configured item ceiling and reports omissions", async () => {
@@ -368,7 +376,7 @@ describe("Commander GitHub read gateway", () => {
 
   test("bounds normalized evidence so the controller tool message retains the result", async () => {
     const sha = "a".repeat(40)
-    const fixture = service([{ total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { name: `check-${index}-${"x".repeat(220)}` })) }], { max_pages_per_call: 1, max_items_per_call: 50, max_normalized_bytes: 8_000 })
+    const fixture = service([{ total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(sha, { id: index + 1, name: `check-${index}-${"x".repeat(220)}` })) }], { max_pages_per_call: 1, max_items_per_call: 50, max_normalized_bytes: 8_000 })
     const bindings = createCommanderToolBindingRegistry({
       commanderToolService: { search: () => ({}), get: () => ({}), profile: () => ({}) }, commandAuthorityService: { get: () => COMMAND_AUTHORITY_REGISTRY[0] }, researchMemoryService: { preview: () => ({}) }, operationalMemorySearchService: { search: async () => ({}) }, repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) }, githubReadService: fixture.gateway,
     })
@@ -457,6 +465,7 @@ describe("Commander GitHub read gateway", () => {
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ overrides: { isDraft: undefined } })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ overrides: { changedFiles: undefined } })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ files: [{ path: "src/a.ts", changeType: "MODIFIED", additions: 1 }] })] },
+      { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ changedFiles: 0, files: [{ path: "src/a.ts", changeType: "MODIFIED", additions: 1, deletions: 0 }] })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ includeDetails: false })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ labels: [{ name: "security" }], omitLabelTotalCount: true })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ labels: [{ name: "security" }], labelTotalCount: 0 })] },
@@ -564,7 +573,7 @@ describe("Commander GitHub read gateway", () => {
 
   test("bounds normalized bytes by deterministic structured truncation", async () => {
     const fixture = service([
-      { total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(SHA, { name: `check-${index}-${"x".repeat(220)}` })) },
+      { total_count: 25, check_runs: Array.from({ length: 25 }, (_, index) => checkRunFixture(SHA, { id: index + 1, name: `check-${index}-${"x".repeat(220)}` })) },
     ], { max_pages_per_call: 1, max_items_per_call: 25, max_normalized_bytes: 1024 })
     const result = await fixture.gateway.execute("github.commit_checks", { repository: "ian747-tw/nexusloop", commit_sha: "a".repeat(40) })
     expect(result).toMatchObject({ status: "ready", truncated: true, request_count: 1 })
@@ -659,7 +668,7 @@ describe("Commander GitHub read gateway", () => {
         options.on_transport_dispatched?.()
         options.on_audit_persisted?.({ request_id: "audit_page_1", connector_id: "github-test", method: "GET", url: "[REDACTED]", ok: true, dry_run: false, requested_by: "commander_github_read:github.commit_checks", created_at: "2026-01-01T00:00:00.000Z", event_kind: "external_api_request_executed" })
         controller.abort()
-        return { ok: true, response_body_for_internal_use: JSON.stringify({ total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ name: `check-${index}`, head_sha: "a".repeat(40), status: "completed", conclusion: "success" })) }) }
+        return { ok: true, response_body_for_internal_use: JSON.stringify({ total_count: 50, check_runs: Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: `check-${index}`, head_sha: "a".repeat(40), status: "completed", conclusion: "success" })) }) }
       },
     }
     const gateway = new CommanderGithubReadService({ requestService: requestService as never, connector: TEST_CONNECTOR, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] } })
