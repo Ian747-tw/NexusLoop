@@ -5,7 +5,7 @@ import type { ExternalApiPersistedAuditRecord, ExternalApiMethod } from "../exte
 import type { ExternalApiConnector } from "../external-api/api-connector-types"
 import type { CommanderEvidenceCard } from "./commander-read-types"
 import type { CommanderGithubGatewayConfig, CommanderGithubGatewayStatus, CommanderGithubReadResult, CommanderGithubReadToolId, CommanderGithubProvenance } from "./commander-github-read-types"
-import { validateCommanderGithubGatewayConfig } from "./commander-github-read-config"
+import { COMMANDER_GITHUB_MIN_RESPONSE_BYTES, validateCommanderGithubGatewayConfig } from "./commander-github-read-config"
 
 const REPOSITORY = /^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9][a-z0-9_.-]{0,99}$/
 const FULL_SHA = /^[a-f0-9]{40}$/
@@ -51,6 +51,7 @@ export class CommanderGithubReadService {
     const blockers: string[] = []
     if (!this.config.connector_id.trim()) blockers.push("GitHub gateway connector is required")
     if (this.repositories.size === 0) blockers.push("GitHub gateway repository allowlist is empty")
+    if (this.config.max_response_bytes < COMMANDER_GITHUB_MIN_RESPONSE_BYTES) blockers.push(`GitHub gateway effective response ceiling must be at least ${COMMANDER_GITHUB_MIN_RESPONSE_BYTES} bytes`)
     if (isProductionGithubConnector(this.options.connector) && this.options.credentialsReady !== true) blockers.push("GitHub gateway runtime-owned credential is unavailable")
     return {
       status: blockers.length ? "blocked" : "ready",
@@ -251,6 +252,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   }
   if (toolId === "github.issue_get") {
     const object = requiredObject(first)
+    if ("pull_request" in object) throw new Error("GitHub issue response identified a pull request instead of an issue")
     const issueLabels = boundedLabels(object, Math.max(0, itemCap - 1))
     return {
       number: safePositive(object.number), title_preview: safeText(object.title, 500), body_preview: safeText(object.body, 1200), state: safeText(object.state, 32), updated_at: safeTimestamp(object.updated_at), author_login: safeText(nested(object, "user", "login"), 120),
@@ -342,6 +344,7 @@ function validateAudit(audit: ExternalApiPersistedAuditRecord, connectorId: stri
 function boundNormalizedResult(input: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
   const result = structuredClone(redactValue(input)) as Record<string, unknown>
   if (Buffer.byteLength(JSON.stringify(result)) <= maxBytes) return result
+  const originalEvidence = structuredClone(requiredObject(result.evidence))
   requiredObject(result.evidence).truncated = true
   while (Buffer.byteLength(JSON.stringify(result)) > maxBytes) {
     const arrays: unknown[][] = []
@@ -349,6 +352,7 @@ function boundNormalizedResult(input: Record<string, unknown>, maxBytes: number)
     arrays.sort((left, right) => Buffer.byteLength(JSON.stringify(right)) - Buffer.byteLength(JSON.stringify(left)))
     if (arrays[0]) {
       arrays[0].pop()
+      synchronizeNormalizedTruncationMetadata(requiredObject(result.evidence), originalEvidence)
       continue
     }
     const strings: Array<{ parent: Record<string, unknown>; key: string; value: string }> = []
@@ -361,6 +365,37 @@ function boundNormalizedResult(input: Record<string, unknown>, maxBytes: number)
     candidate.parent[candidate.key] = candidate.value.slice(0, Math.max(16, Math.floor(candidate.value.length / 2)))
   }
   return result
+}
+
+function synchronizeNormalizedTruncationMetadata(evidence: Record<string, unknown>, original: Record<string, unknown>): void {
+  synchronizeOmittedCount(evidence, original, "labels", "omitted_label_count")
+  synchronizeOmittedCount(evidence, original, "parent_shas", "omitted_parent_count")
+  for (const key of ["files", "items"] as const) {
+    if (arrayOf(evidence[key]).length < arrayOf(original[key]).length) evidence.truncated = true
+  }
+  const threadState = optionalObject(evidence.thread_state)
+  const originalThreadState = optionalObject(original.thread_state)
+  if (!threadState || !originalThreadState) return
+  const items = requiredArray(threadState.items, "normalized GitHub review-thread items")
+  const originalItems = requiredArray(originalThreadState.items, "original normalized GitHub review-thread items")
+  threadState.thread_count = items.length
+  threadState.unresolved_current_count = items.filter((item) => {
+    const thread = requiredObject(item)
+    return thread.resolved !== true && thread.outdated !== true
+  }).length
+  if (items.length < originalItems.length) {
+    threadState.truncated = true
+    threadState.completeness = "unknown_truncated"
+    evidence.truncated = true
+  }
+}
+
+function synchronizeOmittedCount(evidence: Record<string, unknown>, original: Record<string, unknown>, arrayKey: string, countKey: string): void {
+  const removed = arrayOf(original[arrayKey]).length - arrayOf(evidence[arrayKey]).length
+  if (removed <= 0) return
+  const existing = safeNonNegative(original[countKey]) ?? 0
+  evidence[countKey] = existing + removed
+  evidence.truncated = true
 }
 
 const NORMALIZED_IDENTITY_KEYS = new Set(["repository", "operation", "requested_ref", "full_name", "sha", "commit_sha", "observed_commit_sha", "head_sha", "base_sha"])
@@ -443,6 +478,7 @@ function stableGatewayValue(value: unknown): unknown {
     .map(([key, nested]) => [key, stableGatewayValue(nested)]))
 }
 function requiredObject(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("GitHub gateway response had an unexpected JSON shape"); return value as Record<string, unknown> }
+function optionalObject(value: unknown): Record<string, unknown> | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined }
 function requiredArray(value: unknown, field: string): unknown[] { if (!Array.isArray(value)) throw new Error(`${field} had an unexpected JSON shape`); return value }
 function requiredString(value: unknown, field: string): string { if (typeof value !== "string" || !value) throw new Error(`${field} had an unexpected JSON shape`); return value }
 function requiredBoolean(value: unknown, field: string): boolean { if (typeof value !== "boolean") throw new Error(`${field} had an unexpected JSON shape`); return value }

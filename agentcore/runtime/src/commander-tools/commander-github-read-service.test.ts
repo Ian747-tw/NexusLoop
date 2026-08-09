@@ -97,6 +97,7 @@ describe("Commander GitHub read gateway", () => {
     }
     expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop", "ian747-tw/nexusloop"] })).toThrow()
     expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_normalized_bytes: 512 })).toThrow("1024")
+    expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_response_bytes: 512 })).toThrow("1024")
     expect(() => new CommanderGithubReadService({
       requestService: { executeForInternalUse: async () => ({}) } as never,
       connector: TEST_CONNECTOR,
@@ -148,6 +149,13 @@ describe("Commander GitHub read gateway", () => {
     expect((await repository.gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })).status).toBe("failed")
     expect((await issue.gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })).status).toBe("failed")
     expect((await pull.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 })).status).toBe("failed")
+  })
+
+  test("rejects pull-request resources returned by the issues endpoint", async () => {
+    const fixture = service([{ number: 12, title: "pull returned as issue", pull_request: { url: "https://api.github.com/repos/ian747-tw/nexusloop/pulls/12" }, labels: [] }])
+    const result = await fixture.gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })
+    expect(result).toMatchObject({ status: "failed", result: null, request_count: 1, network_called: true })
+    expect(result.blockers.join(" ")).toContain("pull request instead of an issue")
   })
 
   test("canonicalizes GitHub response repository casing before exact scope validation", async () => {
@@ -472,6 +480,25 @@ describe("Commander GitHub read gateway", () => {
     expect(result.provenance?.observed_commit_sha).toBe("a".repeat(40))
   })
 
+  test("synchronizes omission and review completeness metadata after byte trimming", async () => {
+    const labels = Array.from({ length: 12 }, (_, index) => ({ name: `label-${index}-${"x".repeat(90)}` }))
+    const issue = await service([{ number: 12, title: "bounded issue", labels }], { max_items_per_call: 50, max_normalized_bytes: 1_024 }).gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })
+    const issueEvidence = issue.result?.evidence as Record<string, any>
+    expect(issue).toMatchObject({ status: "ready", truncated: true })
+    expect(issueEvidence.labels.length).toBeLessThan(labels.length)
+    expect(issueEvidence.omitted_label_count).toBe(labels.length - issueEvidence.labels.length)
+
+    const sha = "d".repeat(40)
+    const nodes = Array.from({ length: 12 }, (_, index) => ({ id: `thread-${index}`, isResolved: index % 3 === 0, isOutdated: index % 4 === 0, comments: { nodes: [{ bodyText: `review-${index}-${"y".repeat(220)}`, createdAt: "2026-01-01T00:00:00.000Z" }] } }))
+    const reviews = await service([[], { data: { repository: { pullRequest: { headRefOid: sha, reviewThreads: { nodes, pageInfo: { hasNextPage: false } } } } } }], { max_items_per_call: 50, max_normalized_bytes: 1_024 }).gateway.execute("github.pull_request_reviews", { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, undefined, 2)
+    const threadState = (reviews.result?.evidence as Record<string, any>).thread_state
+    expect(reviews).toMatchObject({ status: "ready", truncated: true })
+    expect(threadState.items.length).toBeLessThan(nodes.length)
+    expect(threadState.thread_count).toBe(threadState.items.length)
+    expect(threadState.unresolved_current_count).toBe(threadState.items.filter((item: any) => !item.resolved && !item.outdated).length)
+    expect(threadState).toMatchObject({ completeness: "unknown_truncated", truncated: true })
+  })
+
   test("the minimum normalized-byte policy holds maximal repository review identity", async () => {
     const repository = `${"a".repeat(100)}/${"b".repeat(100)}`
     const sha = "d".repeat(40)
@@ -580,6 +607,20 @@ describe("Commander GitHub read gateway", () => {
     expect(calls[0]?.options).toMatchObject({ max_response_bytes: 64_000, timeout_ms: 7000 })
   })
 
+  test("reports an unusably small effective connector response ceiling as blocked before transport", async () => {
+    let calls = 0
+    const requestService = { executeForInternalUse: async () => { calls += 1; throw new Error("must not dispatch") } }
+    const gateway = new CommanderGithubReadService({
+      requestService: requestService as never,
+      connector: { ...TEST_CONNECTOR, max_response_bytes: 1 },
+      config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+    })
+    expect(gateway.status()).toMatchObject({ status: "blocked", blockers: [expect.stringContaining("at least 1024 bytes")] })
+    const result = await gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })
+    expect(result).toMatchObject({ status: "blocked", request_count: 0, network_called: false })
+    expect(calls).toBe(0)
+  })
+
   test("rejects production GitHub nondefault ports and missing host authority", () => {
     const production = { ...TEST_CONNECTOR, base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allow_local_http: undefined, credential_refs: [{ name: "github-read", source: "env" as const, env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }] }
     const requestService = { executeForInternalUse: async () => ({}) } as never
@@ -620,7 +661,7 @@ describe("Commander GitHub read gateway", () => {
     }> = [
       { name: "redirect", transport: new FakeExternalApiTransport([{ status_code: 302, body: "https://evil.example/token" }]), expectedAudit: "external_api_request_failed" },
       { name: "malformed", transport: new FakeExternalApiTransport([{ status_code: 200, body: "{not-json" }]), expectedAudit: "external_api_request_executed" },
-      { name: "overflow", transport: new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", description: "secret=" + "x".repeat(500) }) }]), config: { max_response_bytes: 128 }, expectedAudit: "external_api_request_failed" },
+      { name: "overflow", transport: new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", description: "secret=" + "x".repeat(1_500) }) }]), config: { max_response_bytes: 1_024 }, expectedAudit: "external_api_request_failed" },
       {
         name: "timeout",
         transport: {
