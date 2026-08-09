@@ -17,6 +17,9 @@ const MAX_BYTES = 8_000
 const MAX_RESPONSE_BYTES = 128_000
 const MAX_TIMEOUT_MS = 15_000
 const PAGE_SIZE = 25
+const MAX_GITHUB_COUNT = 1_000_000_000
+const MAX_CHECK_RUN_COUNT = 100_000
+const MAX_OMITTED_COUNT = 100
 
 type RequestSpec = { method: ExternalApiMethod; path: string; query?: Record<string, string>; body?: string }
 type GatewayResponse = { body: unknown; audit: ExternalApiPersistedAuditRecord }
@@ -185,7 +188,7 @@ export class CommanderGithubReadService {
         ? requiredArray(checkPage.check_runs, "GitHub check-runs response")
         : requiredArray(raw, "GitHub REST list response")
       if (checkPage) {
-        const pageTotal = requiredNonNegative(checkPage.total_count, "GitHub check-run total count")
+        const pageTotal = requiredNonNegativeAtMost(checkPage.total_count, "GitHub check-run total count", MAX_CHECK_RUN_COUNT)
         if (checkTotal !== undefined && pageTotal !== checkTotal) throw new Error("GitHub check-run total changed between pages")
         checkTotal = pageTotal
         for (const value of values) {
@@ -271,10 +274,12 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
     const object = requiredObject(first)
     const parentShas = requiredArray(object.parents, "GitHub commit parents").map((item) => requiredSha(requiredObject(item).sha, "GitHub commit parent SHA"))
     const parents = boundedItems(parentShas, Math.max(0, itemCap - 1))
+    const omittedParents = parentShas.length - parents.items.length
+    if (omittedParents > MAX_OMITTED_COUNT) throw new Error("GitHub commit omitted parent count exceeded the bounded output contract")
     const author = requiredObject(object.author)
     return {
       sha: requiredSha(object.sha, "GitHub commit SHA"), observed_commit_sha: requiredSha(object.sha, "GitHub commit SHA"), message_preview: requiredSafeText(object.message, "GitHub commit message", 500), author_name_preview: requiredSafeText(author.name, "GitHub commit author name", 120), authored_at: requiredTimestamp(author.date, "GitHub commit authored timestamp"),
-      parent_shas: parents.items, omitted_parent_count: parentShas.length - parents.items.length, truncated: parents.truncated,
+      parent_shas: parents.items, omitted_parent_count: omittedParents, truncated: parents.truncated,
     }
   }
   if (toolId === "github.issue_get") {
@@ -283,7 +288,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
     const issueLabels = boundedRestLabels(object.labels, Math.max(0, itemCap - 1), "GitHub issue labels")
     const user = requiredObject(object.user)
     return {
-      number: requiredPositive(object.number, "GitHub issue number"), title_preview: requiredSafeText(object.title, "GitHub issue title", 500), body_preview: nullableSafeText(object.body, "GitHub issue body", 1200), state: requiredSafeText(object.state, "GitHub issue state", 32), updated_at: requiredTimestamp(object.updated_at, "GitHub issue update timestamp"), author_login: requiredSafeText(user.login, "GitHub issue author", 120),
+      number: requiredPositiveAtMost(object.number, "GitHub issue number", MAX_GITHUB_COUNT), title_preview: requiredSafeText(object.title, "GitHub issue title", 500), body_preview: nullableSafeText(object.body, "GitHub issue body", 1200), state: requiredSafeText(object.state, "GitHub issue state", 32), updated_at: requiredTimestamp(object.updated_at, "GitHub issue update timestamp"), author_login: requiredSafeText(user.login, "GitHub issue author", 120),
       labels: issueLabels.items, omitted_label_count: issueLabels.omitted, truncated: issueLabels.truncated,
     }
   }
@@ -292,22 +297,29 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: str
     const repository = requiredObject(graph.repository)
     const object = requiredObject(repository.pullRequest)
     const detailBudget = Math.max(0, itemCap - 1)
-    const changedFiles = requiredNonNegative(object.changedFiles, "GitHub pull-request changed-file count")
+    const changedFiles = requiredNonNegativeAtMost(object.changedFiles, "GitHub pull-request changed-file count", MAX_GITHUB_COUNT)
     const fileConnection = requiredObject(object.files)
     const labelConnection = requiredObject(object.labels)
     const rawFiles = requiredArray(fileConnection.nodes, "GitHub pull-request changed-file nodes")
     if (rawFiles.length > changedFiles) throw new Error("GitHub changed-file nodes exceeded the authoritative changed-file count")
-    const normalizedFiles = rawFiles.map((item) => { const value = requiredObject(item); const additions = requiredNonNegative(value.additions, "GitHub changed-file additions"); const deletions = requiredNonNegative(value.deletions, "GitHub changed-file deletions"); return { filename: requiredSafeText(value.path, "GitHub changed-file path", 240), status: requiredSafeText(value.changeType, "GitHub changed-file status", 64), additions, deletions, changes: additions + deletions } })
+    const normalizedFiles = rawFiles.map((item) => {
+      const value = requiredObject(item)
+      const additions = requiredNonNegativeAtMost(value.additions, "GitHub changed-file additions", MAX_GITHUB_COUNT)
+      const deletions = requiredNonNegativeAtMost(value.deletions, "GitHub changed-file deletions", MAX_GITHUB_COUNT)
+      const changes = additions + deletions
+      if (!Number.isSafeInteger(changes) || changes > MAX_GITHUB_COUNT) throw new Error("GitHub changed-file changes exceeded the bounded output contract")
+      return { filename: requiredSafeText(value.path, "GitHub changed-file path", 240), status: requiredSafeText(value.changeType, "GitHub changed-file status", 64), additions, deletions, changes }
+    })
     const files = boundedItems(normalizedFiles, detailBudget)
     const pullLabels = boundedGraphLabels(labelConnection, Math.max(0, detailBudget - files.items.length), "GitHub pull-request labels")
     const fileHasNext = requiredBoolean(requiredObject(fileConnection.pageInfo).hasNextPage, "GitHub changed-file pagination state")
-    return { number: requiredPositive(object.number, "GitHub pull-request number"), title_preview: requiredSafeText(object.title, "GitHub pull-request title", 500), state: requiredSafeText(object.state, "GitHub pull-request state", 32), draft: requiredBoolean(object.isDraft, "GitHub pull-request draft state"), updated_at: requiredTimestamp(object.updatedAt, "GitHub pull-request update timestamp"), head_sha: requiredSha(object.headRefOid, "GitHub pull-request head SHA"), base_sha: requiredSha(object.baseRefOid, "GitHub pull-request base SHA"), changed_files: changedFiles, labels: pullLabels.items, omitted_label_count: pullLabels.omitted, files: files.items, truncated: files.truncated || pullLabels.truncated || fileHasNext || files.items.length < changedFiles }
+    return { number: requiredPositiveAtMost(object.number, "GitHub pull-request number", MAX_GITHUB_COUNT), title_preview: requiredSafeText(object.title, "GitHub pull-request title", 500), state: requiredSafeText(object.state, "GitHub pull-request state", 32), draft: requiredBoolean(object.isDraft, "GitHub pull-request draft state"), updated_at: requiredTimestamp(object.updatedAt, "GitHub pull-request update timestamp"), head_sha: requiredSha(object.headRefOid, "GitHub pull-request head SHA"), base_sha: requiredSha(object.baseRefOid, "GitHub pull-request base SHA"), changed_files: changedFiles, labels: pullLabels.items, omitted_label_count: pullLabels.omitted, files: files.items, truncated: files.truncated || pullLabels.truncated || fileHasNext || files.items.length < changedFiles }
   }
   if (toolId === "github.commit_checks") {
     const pages = responses.map(requiredObject)
     const head = pages[0]
-    const totalCount = requiredNonNegative(head.total_count, "GitHub check-run total count")
-    const pageTotals = pages.map((page) => requiredNonNegative(page.total_count, "GitHub check-run total count"))
+    const totalCount = requiredNonNegativeAtMost(head.total_count, "GitHub check-run total count", MAX_CHECK_RUN_COUNT)
+    const pageTotals = pages.map((page) => requiredNonNegativeAtMost(page.total_count, "GitHub check-run total count", MAX_CHECK_RUN_COUNT))
     if (pageTotals.some((count) => count !== totalCount)) throw new Error("GitHub check-run total changed between pages")
     const rawChecks = pages.flatMap((page) => requiredArray(page.check_runs, "GitHub check-runs response"))
     if (rawChecks.length > totalCount) throw new Error("GitHub check-run pages exceeded the authoritative total")
@@ -468,15 +480,17 @@ function normalizedItemCount(evidence: Record<string, unknown>): number {
 function boundedRestLabels(value: unknown, cap: number, field: string): { items: string[]; omitted: number; truncated: boolean } {
   const normalized = requiredArray(value, field).map((item) => requiredSafeText(requiredObject(item).name, `${field} name`, 100))
   const items = normalized.slice(0, cap)
+  if (normalized.length - items.length > MAX_OMITTED_COUNT) throw new Error(`${field} omitted count exceeded the bounded output contract`)
   return { items, omitted: normalized.length - items.length, truncated: normalized.length > items.length }
 }
 function boundedGraphLabels(connection: Record<string, unknown>, cap: number, field: string): { items: string[]; omitted: number; truncated: boolean } {
   const nodes = requiredArray(connection.nodes, `${field} nodes`)
-  const totalCount = requiredNonNegative(connection.totalCount, `${field} total count`)
+  const totalCount = requiredNonNegativeAtMost(connection.totalCount, `${field} total count`, MAX_OMITTED_COUNT + MAX_ITEMS)
   if (totalCount < nodes.length) throw new Error(`${field} total count did not include returned nodes`)
   const normalized = nodes.map((item) => requiredSafeText(requiredObject(item).name, `${field} name`, 100))
   const hasNextPage = requiredBoolean(requiredObject(connection.pageInfo).hasNextPage, `${field} pagination state`)
   const items = normalized.slice(0, cap)
+  if (totalCount - items.length > MAX_OMITTED_COUNT) throw new Error(`${field} omitted count exceeded the bounded output contract`)
   return { items, omitted: totalCount - items.length, truncated: hasNextPage || totalCount > items.length }
 }
 function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
@@ -542,6 +556,8 @@ function requiredSha(value: unknown, field: string): string { if (typeof value !
 function requiredTimestamp(value: unknown, field: string): string { const timestamp = safeTimestamp(value); if (!timestamp) throw new Error(`${field} had an unexpected JSON shape`); return timestamp }
 function requiredPositive(value: unknown, field: string): number { const result = safePositive(value); if (result === undefined) throw new Error(`${field} had an unexpected JSON shape`); return result }
 function requiredNonNegative(value: unknown, field: string): number { const result = safeNonNegative(value); if (result === undefined) throw new Error(`${field} had an unexpected JSON shape`); return result }
+function requiredPositiveAtMost(value: unknown, field: string, maximum: number): number { const result = requiredPositive(value, field); if (result > maximum) throw new Error(`${field} exceeded the bounded output contract`); return result }
+function requiredNonNegativeAtMost(value: unknown, field: string, maximum: number): number { const result = requiredNonNegative(value, field); if (result > maximum) throw new Error(`${field} exceeded the bounded output contract`); return result }
 function requiredRepository(value: unknown, field: string): string { const result = safeRepository(value); if (!result) throw new Error(`${field} had an unexpected JSON shape`); return result }
 function requiredSafeText(value: unknown, field: string, max: number): string { if (typeof value !== "string") throw new Error(`${field} had an unexpected JSON shape`); return redactText(value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()).slice(0, max) }
 function nullableSafeText(value: unknown, field: string, max: number): string | undefined { if (value === null) return undefined; if (value === undefined) throw new Error(`${field} had an unexpected JSON shape`); return requiredSafeText(value, field, max) }
