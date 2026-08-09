@@ -22,6 +22,7 @@ export type CommanderToolProcessPolicy = "none" | "fixed_git_read_only"
 
 export type CommanderToolJsonSchemaProperty = {
   type: "string" | "number" | "integer" | "boolean" | "array" | "object"
+  nullable?: boolean
   description?: string
   enum?: string[]
   maxLength?: number

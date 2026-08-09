@@ -172,7 +172,9 @@ export class CommanderGithubReadService {
     const pageSize = Math.min(PAGE_SIZE, this.config.max_items_per_call)
     for (let page = 1; page <= pageLimit; page += 1) {
       const raw = await request({ method: "GET", path, query: { per_page: String(pageSize), page: String(page) } })
-      const values = checkRuns ? arrayOf(requiredObject(raw).check_runs) : arrayOf(raw)
+      const values = checkRuns
+        ? requiredArray(requiredObject(raw).check_runs, "GitHub check-runs response")
+        : requiredArray(raw, "GitHub REST list response")
       if (values.length < pageSize || values.length >= this.config.max_items_per_call) return values.length >= this.config.max_items_per_call
     }
     return true
@@ -284,7 +286,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
     return { commit_sha: observedCommitSha, observed_commit_sha: observedCommitSha, total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
   }
   const reviewPages = responses.slice(0, -1)
-  const reviewValues = reviewPages.flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { id: safePositive(value.id), state: safeText(value.state, 64), user_login: safeText(nested(value, "user", "login"), 120), submitted_at: safeTimestamp(value.submitted_at), body_preview: safeText(value.body, 240), commit_id: safeSha(value.commit_id) } })
+  const reviewValues = reviewPages.flatMap((page) => requiredArray(page, "GitHub reviews response")).map((item) => { const value = requiredObject(item); return { id: safePositive(value.id), state: safeText(value.state, 64), user_login: safeText(nested(value, "user", "login"), 120), submitted_at: safeTimestamp(value.submitted_at), body_preview: safeText(value.body, 240), commit_id: safeSha(value.commit_id) } })
   const reviews = boundedItems(reviewValues, Math.min(reviewValues.length, Math.ceil(itemCap / 2)))
   const graph = requiredObject(responses[responses.length - 1])
   const threads = threadSummary(graph, itemCap - reviews.items.length)
@@ -293,19 +295,34 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
 }
 
 function threadSummary(raw: Record<string, unknown>, cap: number): Record<string, unknown> {
+  if ("errors" in raw) {
+    const errors = requiredArray(raw.errors, "GitHub GraphQL errors")
+    if (errors.length > 0) throw new Error("GitHub GraphQL review response was partial or errored")
+  }
   const repository = requiredObject(raw.data)
   const pull = requiredObject(repository.repository)
   const threadConnection = requiredObject(pull.pullRequest)
+  const observedCommitSha = requiredSha(threadConnection.headRefOid, "GitHub GraphQL pull request head")
   const threads = requiredObject(threadConnection.reviewThreads)
-  const nodes = arrayOf(threads.nodes).slice(0, cap).map((item) => {
+  const rawNodes = requiredArray(threads.nodes, "GitHub GraphQL review-thread nodes")
+  const nodes = rawNodes.slice(0, cap).map((item) => {
     const thread = requiredObject(item)
+    const threadId = requiredString(thread.id, "GitHub GraphQL review-thread id")
+    const resolved = requiredBoolean(thread.isResolved, "GitHub GraphQL review-thread resolved state")
+    const outdated = requiredBoolean(thread.isOutdated, "GitHub GraphQL review-thread outdated state")
     const comments = requiredObject(thread.comments)
-    const comment = arrayOf(comments.nodes)[0]
-    return { thread_id: safeText(thread.id, 160), resolved: thread.isResolved === true, outdated: thread.isOutdated === true, author_login: comment ? safeText(nested(requiredObject(comment), "author", "login"), 120) : undefined, body_preview: comment ? safeText(requiredObject(comment).bodyText, 240) : undefined, created_at: comment ? safeTimestamp(requiredObject(comment).createdAt) : undefined }
+    const comment = requiredArray(comments.nodes, "GitHub GraphQL review-thread comments")[0]
+    const commentObject = comment === undefined ? undefined : requiredObject(comment)
+    if (commentObject) {
+      requiredString(commentObject.bodyText, "GitHub GraphQL review comment body")
+      requiredTimestamp(commentObject.createdAt, "GitHub GraphQL review comment timestamp")
+    }
+    return { thread_id: safeText(threadId, 160), resolved, outdated, author_login: commentObject ? safeText(nested(commentObject, "author", "login"), 120) : undefined, body_preview: commentObject ? safeText(commentObject.bodyText, 240) : undefined, created_at: commentObject ? safeTimestamp(commentObject.createdAt) : undefined }
   })
   const pageInfo = requiredObject(threads.pageInfo)
+  const hasNextPage = requiredBoolean(pageInfo.hasNextPage, "GitHub GraphQL review-thread pagination state")
   const unresolvedCurrent = nodes.filter((node) => node.resolved !== true && node.outdated !== true).length
-  return { observed_commit_sha: safeSha(threadConnection.headRefOid), thread_count: nodes.length, unresolved_current_count: unresolvedCurrent, items: nodes, completeness: pageInfo.hasNextPage === true || arrayOf(threads.nodes).length > cap ? "unknown_truncated" : "bounded_complete", truncated: pageInfo.hasNextPage === true || arrayOf(threads.nodes).length > cap }
+  return { observed_commit_sha: observedCommitSha, thread_count: nodes.length, unresolved_current_count: unresolvedCurrent, items: nodes, completeness: hasNextPage || rawNodes.length > cap ? "unknown_truncated" : "bounded_complete", truncated: hasNextPage || rawNodes.length > cap }
 }
 
 function validateObservedResource(toolId: CommanderGithubReadToolId, repository: string, args: Record<string, unknown>, result: Record<string, unknown>): void {
@@ -426,6 +443,11 @@ function stableGatewayValue(value: unknown): unknown {
     .map(([key, nested]) => [key, stableGatewayValue(nested)]))
 }
 function requiredObject(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("GitHub gateway response had an unexpected JSON shape"); return value as Record<string, unknown> }
+function requiredArray(value: unknown, field: string): unknown[] { if (!Array.isArray(value)) throw new Error(`${field} had an unexpected JSON shape`); return value }
+function requiredString(value: unknown, field: string): string { if (typeof value !== "string" || !value) throw new Error(`${field} had an unexpected JSON shape`); return value }
+function requiredBoolean(value: unknown, field: string): boolean { if (typeof value !== "boolean") throw new Error(`${field} had an unexpected JSON shape`); return value }
+function requiredSha(value: unknown, field: string): string { if (typeof value !== "string" || !FULL_SHA.test(value)) throw new Error(`${field} had an unexpected JSON shape`); return value }
+function requiredTimestamp(value: unknown, field: string): string { const timestamp = safeTimestamp(value); if (!timestamp) throw new Error(`${field} had an unexpected JSON shape`); return timestamp }
 function arrayOf(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 function nested(value: Record<string, unknown>, first: string, second: string): unknown { const parent = value[first]; return parent && typeof parent === "object" && !Array.isArray(parent) ? (parent as Record<string, unknown>)[second] : undefined }
 function nested3(value: Record<string, unknown>, first: string, second: string, third: string): unknown { const parent = nested(value, first, second); return parent && typeof parent === "object" && !Array.isArray(parent) ? (parent as Record<string, unknown>)[third] : undefined }

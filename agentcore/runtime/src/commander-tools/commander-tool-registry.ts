@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { commanderGithubToolAuthority } from "../commander-agent/commander-github-tool-authority-registry"
+import { commanderGithubOutputSchema } from "./commander-github-read-schemas"
+import type { CommanderGithubReadToolId } from "./commander-github-read-types"
 import type { CommandAuthorityRecord } from "../authority/command-authority-types"
 import type {
   CommanderToolAvailability,
@@ -170,7 +172,7 @@ function githubReadTools(): CommanderToolDescriptor[] {
   const repo = { repository: stringField("Exact configured lowercase owner/repository identity", 201) }
   const sha = stringField("Exact lowercase full 40-character commit SHA", 40)
   const number = intField("Exact pull request or issue number", 1, 1000000000)
-  const makeGithub = (tool_id: string, name: string, description: string, keywords: string[], input_schema: CommanderToolJsonSchema) => makeTool({ ...common, tool_id, name, description, keywords, authority: commanderGithubToolAuthority(tool_id), input_schema })
+  const makeGithub = (tool_id: CommanderGithubReadToolId, name: string, description: string, keywords: string[], input_schema: CommanderToolJsonSchema) => makeTool({ ...common, tool_id, name, description, keywords, authority: commanderGithubToolAuthority(tool_id), input_schema, output_schema: commanderGithubOutputSchema(tool_id) })
   return [
     makeGithub("github.repository_get", "GitHub repository metadata", "Read minimal metadata for one configured GitHub repository.", ["github", "repository", "metadata"], schema(repo, ["repository"])),
     makeGithub("github.commit_get", "GitHub commit metadata", "Read bounded exact-SHA GitHub commit metadata.", ["github", "commit", "sha"], schema({ ...repo, commit_sha: sha }, ["repository", "commit_sha"])),

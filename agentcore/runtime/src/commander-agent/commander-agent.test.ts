@@ -10422,6 +10422,27 @@ describe("Commander in-memory investigation controller", () => {
     expect(unrelated.recovery.tool_compatibility.github_gateway_policy_hash).toBeUndefined()
     expect(unrelated.recovery.provider_compatibility.execution_envelope?.github_gateway_policy_hash).toBeUndefined()
     const originalPolicyHash = authority.recovery.tool_compatibility.github_gateway_policy_hash
+    const githubDescriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "github.repository_get")!
+    const originalOutputSchema = structuredClone(githubDescriptor.output_schema!)
+    const originalSchemaMetadata = structuredClone(githubDescriptor.schema_metadata)
+    try {
+      githubDescriptor.output_schema!.properties.result.description = "Changed GitHub repository evidence output contract"
+      const outputBytes = Buffer.byteLength(JSON.stringify(githubDescriptor.output_schema))
+      githubDescriptor.schema_metadata.output_schema_hash = createHash("sha256").update(JSON.stringify(githubDescriptor.output_schema)).digest("hex")
+      githubDescriptor.schema_metadata.output_schema_bytes = outputBytes
+      githubDescriptor.schema_metadata.estimated_schema_tokens = Math.ceil((githubDescriptor.schema_metadata.input_schema_bytes + outputBytes) / 4)
+      const outputContractDrift = await original.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+      expect(outputContractDrift.approval_state).toBe("stale")
+      expect(outputContractDrift.tool_compatibility.compatible).toBe(false)
+      expect(outputContractDrift.tool_compatibility.blockers.join(" ")).toContain("schema hash changed")
+      expect(outputContractDrift.recovery_plan_hash).not.toBe(authority.recovery.recovery_plan_hash)
+    } finally {
+      githubDescriptor.output_schema = originalOutputSchema
+      githubDescriptor.schema_metadata = originalSchemaMetadata
+    }
+    const restoredOutputContract = await original.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(restoredOutputContract.approval_state).toBe("current")
+    expect(restoredOutputContract.recovery_plan_hash).toBe(authority.recovery.recovery_plan_hash)
     await original.shutdown("change bounded GitHub authority")
 
     const changed = configuredProviderRuntimeServer(projectDir, {

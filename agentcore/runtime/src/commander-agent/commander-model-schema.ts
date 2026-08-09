@@ -132,7 +132,9 @@ function validateObjectSchema(schema: CommanderToolJsonSchema, value: unknown, p
   }
   for (const [key, property] of Object.entries(schema.properties)) {
     if (!(key in value)) continue
-    validateProperty(property, (value as Record<string, unknown>)[key], `${path}.${key}`, errors, depth + 1)
+    const propertyValue = (value as Record<string, unknown>)[key]
+    if (propertyValue === undefined && !schema.required.includes(key)) continue
+    validateProperty(property, propertyValue, `${path}.${key}`, errors, depth + 1)
   }
 }
 
@@ -141,6 +143,7 @@ function validateProperty(schema: CommanderToolJsonSchemaProperty, value: unknow
     errors.push(`${path} exceeds maximum nesting`)
     return
   }
+  if (value === null && schema.nullable === true) return
   if (schema.type === "string") {
     if (typeof value !== "string") errors.push(`${path} must be string`)
     else {
