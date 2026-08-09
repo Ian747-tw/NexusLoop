@@ -243,7 +243,7 @@ function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknow
   if (toolId === "github.repository_get") { const object = requiredObject(first); return { full_name: safeRepository(object.full_name), name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
   if (toolId === "github.commit_get") {
     const object = requiredObject(first)
-    const parentShas = arrayOf(object.parents).map((item) => safeSha(requiredObject(item).sha)).filter((item): item is string => Boolean(item))
+    const parentShas = requiredArray(object.parents, "GitHub commit parents").map((item) => safeSha(requiredObject(item).sha)).filter((item): item is string => Boolean(item))
     const parents = boundedItems(parentShas, Math.max(0, itemCap - 1))
     return {
       sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")),

@@ -97,7 +97,7 @@ describe("Commander GitHub read gateway", () => {
     }
     expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop", "ian747-tw/nexusloop"] })).toThrow()
     expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_normalized_bytes: 512 })).toThrow("1024")
-    expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_response_bytes: 512 })).toThrow("1024")
+    expect(() => validateCommanderGithubGatewayConfig({ connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"], max_response_bytes: 1_024 })).toThrow("64000")
     expect(() => new CommanderGithubReadService({
       requestService: { executeForInternalUse: async () => ({}) } as never,
       connector: TEST_CONNECTOR,
@@ -219,6 +219,18 @@ describe("Commander GitHub read gateway", () => {
     const result = await fixture.gateway.execute("github.commit_get", { repository: "ian747-tw/nexusloop", commit_sha: sha })
     expect(result).toMatchObject({ status: "ready", item_count: 1, truncated: true })
     expect(result.result?.evidence).toMatchObject({ parent_shas: [], omitted_parent_count: 2, truncated: true })
+  })
+
+  test("rejects missing or malformed commit-parent collections", async () => {
+    for (const parents of [undefined, null, {}]) {
+      const fixture = service([{ sha: "a".repeat(40), commit: { message: "commit" }, ...(parents === undefined ? {} : { parents }) }])
+      const result = await fixture.gateway.execute("github.commit_get", { repository: "ian747-tw/nexusloop", commit_sha: "a".repeat(40) })
+      expect(result.status).toBe("failed")
+      expect(result.result).toBeNull()
+      expect(result.evidence).toEqual([])
+      expect(result.request_count).toBe(1)
+      expect(result.external_api_audit_request_ids).toHaveLength(1)
+    }
   })
 
   test("uses the runtime request service for fixed paths and persisted audit metadata", async () => {
@@ -615,7 +627,7 @@ describe("Commander GitHub read gateway", () => {
       connector: { ...TEST_CONNECTOR, max_response_bytes: 1 },
       config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] },
     })
-    expect(gateway.status()).toMatchObject({ status: "blocked", blockers: [expect.stringContaining("at least 1024 bytes")] })
+    expect(gateway.status()).toMatchObject({ status: "blocked", blockers: [expect.stringContaining("at least 64000 bytes")] })
     const result = await gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })
     expect(result).toMatchObject({ status: "blocked", request_count: 0, network_called: false })
     expect(calls).toBe(0)
@@ -661,7 +673,7 @@ describe("Commander GitHub read gateway", () => {
     }> = [
       { name: "redirect", transport: new FakeExternalApiTransport([{ status_code: 302, body: "https://evil.example/token" }]), expectedAudit: "external_api_request_failed" },
       { name: "malformed", transport: new FakeExternalApiTransport([{ status_code: 200, body: "{not-json" }]), expectedAudit: "external_api_request_executed" },
-      { name: "overflow", transport: new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", description: "secret=" + "x".repeat(1_500) }) }]), config: { max_response_bytes: 1_024 }, expectedAudit: "external_api_request_failed" },
+      { name: "overflow", transport: new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", description: "secret=" + "x".repeat(70_000) }) }]), config: { max_response_bytes: 64_000 }, expectedAudit: "external_api_request_failed" },
       {
         name: "timeout",
         transport: {

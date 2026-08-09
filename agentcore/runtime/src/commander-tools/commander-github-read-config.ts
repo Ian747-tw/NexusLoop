@@ -3,7 +3,7 @@ import type { CommanderGithubGatewayConfig } from "./commander-github-read-types
 
 const REPOSITORY = /^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9][a-z0-9_.-]{0,99}$/
 const MIN_NORMALIZED_BYTES = 1_024
-export const COMMANDER_GITHUB_MIN_RESPONSE_BYTES = 1_024
+export const COMMANDER_GITHUB_MIN_RESPONSE_BYTES = 64_000
 
 export function validateCommanderGithubGatewayConfig(value: unknown): CommanderGithubGatewayConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Commander GitHub gateway config must be an object")
