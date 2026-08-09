@@ -24552,7 +24552,7 @@ describe("ProcessOpenCodeAdapter", () => {
   test("RuntimeServer blocks bound GitHub transport outside active run-lock ownership", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop" }) }])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: null, default_branch: "main", visibility: "public", archived: false, private: false }) }])
     const server = new RuntimeServer({
       projectDir: dir,
       adapter: new LongLivedAdapter(),

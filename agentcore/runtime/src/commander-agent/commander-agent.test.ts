@@ -10382,7 +10382,7 @@ describe("Commander in-memory investigation controller", () => {
       { status: "tool_call", tool_calls: [toolCall("repeat_github_2", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
       { status: "tool_call", tool_calls: [toolCall("repeat_github_3", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
     ])
-    const body = JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: "identical bounded evidence" })
+    const body = JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: "identical bounded evidence", default_branch: "main", visibility: "public", archived: false, private: false })
     const transport = new FakeExternalApiTransport(Array.from({ length: 3 }, () => ({ status_code: 200, body })))
     let requestIndex = 0
     const server = new RuntimeServer({

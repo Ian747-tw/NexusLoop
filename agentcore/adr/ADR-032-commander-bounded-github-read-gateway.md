@@ -29,10 +29,13 @@ require a full lowercase SHA. There is no arbitrary endpoint, header, URL,
 repository search, organization enumeration, or model-supplied GraphQL query.
 
 The connector is a fixed GitHub API origin in production with runtime-owned
-credential references. Test connectors may be explicitly local. The gateway
-uses only fixed GET paths plus one fixed review-thread GraphQL POST, bounded
-request/page/item/normalized-byte ceilings, cancellation checks between pages,
-and one existing external API audit outcome per attempted request.
+credential references. Test connectors may be explicitly local. Exact commit
+metadata uses the patch-free Git commit-object endpoint. Pull-request changed
+file summaries and review-thread state use separate fixed GraphQL selections
+that request only approved metadata fields; callers cannot supply either
+query. The remaining operations use fixed GET paths. The gateway applies
+bounded request/page/item/normalized-byte ceilings, cancellation checks between
+pages, and one existing external API audit outcome per attempted request.
 
 The hard per-call ceilings are four external requests, two list pages, fifty
 normalized items, and 8,000 normalized bytes. Configuration may tighten those
@@ -41,8 +44,10 @@ ceilings but cannot broaden them. Connector response limits are capped at
 permits one active read at a time; the Commander controller remains sequential
 and charges every page request to the existing tool-call budget.
 
-Responses are converted immediately to typed, redacted, bounded untrusted
-evidence with repository-bound provenance and hashes. Review thread output
+Responses are structurally validated before any fact is published, then
+converted immediately to typed, redacted, bounded untrusted evidence with
+repository-bound provenance and hashes. Missing required booleans, collections,
+identity fields, or GraphQL partial-response errors fail closed. Review thread output
 distinguishes resolved, outdated, and current unresolved state. Truncation is
 explicit and cannot prove clean CI or review state. Raw payloads, credentials,
 headers, prompts, schemas, diffs, tool results, and response bodies are never

@@ -24,6 +24,13 @@ type OperationResponses = { responses: GatewayResponse[]; pagination_truncated: 
 type Normalized = { result: Record<string, unknown>; truncated: boolean; item_count: number; normalized_bytes: number; observed_commit_sha?: string; page_count: number }
 
 const REVIEW_THREADS_QUERY = "query CommanderPullRequestReviewThreads($owner:String!,$name:String!,$number:Int!,$first:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewThreads(first:$first){nodes{id isResolved isOutdated comments(first:1){nodes{author{login} bodyText createdAt}}} pageInfo{hasNextPage}}}}}"
+const PULL_REQUEST_QUERY = "query CommanderPullRequestMetadata($owner:String!,$name:String!,$number:Int!,$first:Int!,$includeDetails:Boolean!){repository(owner:$owner,name:$name){pullRequest(number:$number){number title state isDraft updatedAt headRefOid baseRefOid changedFiles labels(first:$first)@include(if:$includeDetails){nodes{name} pageInfo{hasNextPage}} files(first:$first)@include(if:$includeDetails){nodes{path changeType additions deletions} pageInfo{hasNextPage}}}}}"
+const GITHUB_REQUEST_CONTRACT_HASH = hash({
+  contract_version: 2,
+  commit_path: "/repos/{repository}/git/commits/{full_sha}",
+  pull_request_query: PULL_REQUEST_QUERY,
+  review_threads_query: REVIEW_THREADS_QUERY,
+})
 
 export class CommanderGithubReadService {
   private readonly now: () => Date
@@ -145,15 +152,12 @@ export class CommanderGithubReadService {
     const number = (key: string) => requiredNumber(args[key], key)
     switch (toolId) {
       case "github.repository_get": await request({ method: "GET", path: `/repos/${repository}` }); break
-      case "github.commit_get": await request({ method: "GET", path: `/repos/${repository}/commits/${fullSha(args.commit_sha)}` }); break
+      case "github.commit_get": await request({ method: "GET", path: `/repos/${repository}/git/commits/${fullSha(args.commit_sha)}` }); break
       case "github.issue_get": await request({ method: "GET", path: `/repos/${repository}/issues/${number("issue_number")}` }); break
       case "github.pull_request_get": {
         const pull = number("pull_number")
-        if (this.config.max_items_per_call > 1 && maxRequests < 2) throw new Error("GitHub pull-request file evidence requires at least two remaining external request slots")
-        await request({ method: "GET", path: `/repos/${repository}/pulls/${pull}` })
-        if (this.config.max_items_per_call > 1) {
-          paginationTruncated = await this.fetchPages(request, `/repos/${repository}/pulls/${pull}/files`, false, Math.min(this.config.max_pages_per_call, maxRequests - 1))
-        }
+        const [owner, name] = repository.split("/")
+        await request({ method: "POST", path: "/graphql", body: JSON.stringify({ query: PULL_REQUEST_QUERY, variables: { owner, name, number: Number(pull), first: Math.min(PAGE_SIZE, Math.max(1, this.config.max_items_per_call - 1)), includeDetails: true } }) })
         break
       }
       case "github.commit_checks": paginationTruncated = await this.fetchPages(request, `/repos/${repository}/commits/${fullSha(args.commit_sha)}/check-runs`, true, Math.min(this.config.max_pages_per_call, maxRequests)); break
@@ -229,7 +233,7 @@ function requestedReference(toolId: CommanderGithubReadToolId, args: Record<stri
 function requestedCommitSha(toolId: CommanderGithubReadToolId, args: Record<string, unknown>): string | undefined { return toolId === "github.commit_get" || toolId === "github.commit_checks" || toolId === "github.pull_request_reviews" ? fullSha(args.commit_sha) : undefined }
 
 function normalize(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, responses: unknown[], config: { max_items_per_call: number; max_normalized_bytes: number; max_pages_per_call: number }, paginationTruncated: boolean): Normalized {
-  const operationEvidence = normalizeOperation(toolId, responses, config.max_items_per_call, config.max_pages_per_call)
+  const operationEvidence = normalizeOperation(toolId, requestedRef, responses, config.max_items_per_call, config.max_pages_per_call)
   const evidence = paginationTruncated ? { ...operationEvidence, truncated: true } : operationEvidence
   const result = boundNormalizedResult({ repository, operation: toolId, requested_ref: requestedRef, evidence }, config.max_normalized_bytes)
   const boundedEvidence = requiredObject(result.evidence)
@@ -238,57 +242,75 @@ function normalize(toolId: CommanderGithubReadToolId, repository: string, reques
   return { result, truncated: boundedEvidence.truncated === true || paginationTruncated, item_count: items, normalized_bytes: Buffer.byteLength(encoded), observed_commit_sha: typeof boundedEvidence.observed_commit_sha === "string" ? boundedEvidence.observed_commit_sha : undefined, page_count: responses.length }
 }
 
-function normalizeOperation(toolId: CommanderGithubReadToolId, responses: unknown[], itemCap: number, pageCap: number): Record<string, unknown> {
+function normalizeOperation(toolId: CommanderGithubReadToolId, requestedRef: string | undefined, responses: unknown[], itemCap: number, pageCap: number): Record<string, unknown> {
   const first = responses[0]
-  if (toolId === "github.repository_get") { const object = requiredObject(first); return { full_name: safeRepository(object.full_name), name: safeText(object.name, 120), description_preview: safeText(object.description, 500), default_branch: safeText(object.default_branch, 120), visibility: safeText(object.visibility, 32), archived: object.archived === true, private: object.private === true, truncated: false } }
+  if (toolId === "github.repository_get") {
+    const object = requiredObject(first)
+    return { full_name: requiredRepository(object.full_name, "GitHub repository identity"), name: requiredSafeText(object.name, "GitHub repository name", 120), description_preview: nullableSafeText(object.description, "GitHub repository description", 500), default_branch: requiredSafeText(object.default_branch, "GitHub default branch", 120), visibility: requiredSafeText(object.visibility, "GitHub repository visibility", 32), archived: requiredBoolean(object.archived, "GitHub repository archived state"), private: requiredBoolean(object.private, "GitHub repository private state"), truncated: false }
+  }
   if (toolId === "github.commit_get") {
     const object = requiredObject(first)
     const parentShas = requiredArray(object.parents, "GitHub commit parents").map((item) => requiredSha(requiredObject(item).sha, "GitHub commit parent SHA"))
     const parents = boundedItems(parentShas, Math.max(0, itemCap - 1))
+    const author = requiredObject(object.author)
     return {
-      sha: safeSha(object.sha), observed_commit_sha: safeSha(object.sha), message_preview: safeText(nested(object, "commit", "message"), 500), author_login: safeText(nested(object, "author", "login"), 120), authored_at: safeTimestamp(nested3(object, "commit", "author", "date")),
+      sha: requiredSha(object.sha, "GitHub commit SHA"), observed_commit_sha: requiredSha(object.sha, "GitHub commit SHA"), message_preview: requiredSafeText(object.message, "GitHub commit message", 500), author_name_preview: requiredSafeText(author.name, "GitHub commit author name", 120), authored_at: requiredTimestamp(author.date, "GitHub commit authored timestamp"),
       parent_shas: parents.items, omitted_parent_count: parentShas.length - parents.items.length, truncated: parents.truncated,
     }
   }
   if (toolId === "github.issue_get") {
     const object = requiredObject(first)
     if ("pull_request" in object) throw new Error("GitHub issue response identified a pull request instead of an issue")
-    const issueLabels = boundedLabels(object, Math.max(0, itemCap - 1))
+    const issueLabels = boundedRestLabels(object.labels, Math.max(0, itemCap - 1), "GitHub issue labels")
+    const user = requiredObject(object.user)
     return {
-      number: safePositive(object.number), title_preview: safeText(object.title, 500), body_preview: safeText(object.body, 1200), state: safeText(object.state, 32), updated_at: safeTimestamp(object.updated_at), author_login: safeText(nested(object, "user", "login"), 120),
+      number: requiredPositive(object.number, "GitHub issue number"), title_preview: requiredSafeText(object.title, "GitHub issue title", 500), body_preview: nullableSafeText(object.body, "GitHub issue body", 1200), state: requiredSafeText(object.state, "GitHub issue state", 32), updated_at: requiredTimestamp(object.updated_at, "GitHub issue update timestamp"), author_login: requiredSafeText(user.login, "GitHub issue author", 120),
       labels: issueLabels.items, omitted_label_count: issueLabels.omitted, truncated: issueLabels.truncated,
     }
   }
   if (toolId === "github.pull_request_get") {
-    const object = requiredObject(first)
+    const graph = requiredGraphqlData(first, "GitHub pull-request response")
+    const repository = requiredObject(graph.repository)
+    const object = requiredObject(repository.pullRequest)
     const detailBudget = Math.max(0, itemCap - 1)
-    const files = boundedItems(responses.slice(1).flatMap((page) => arrayOf(page)).map((item) => { const value = requiredObject(item); return { filename: safeText(value.filename, 240), status: safeText(value.status, 64), additions: safeNonNegative(value.additions), deletions: safeNonNegative(value.deletions), changes: safeNonNegative(value.changes), sha: safeSha(value.sha) } }), detailBudget)
-    const pullLabels = boundedLabels(object, Math.max(0, detailBudget - files.items.length))
-    const paginationTruncated = responses.length - 1 >= pageCap && arrayOf(responses.at(-1)).length >= PAGE_SIZE
-    const changedFiles = safePositive(object.changed_files)
-    return { number: safePositive(object.number), title_preview: safeText(object.title, 500), state: safeText(object.state, 32), draft: object.draft === true, updated_at: safeTimestamp(object.updated_at), head_sha: safeSha(nested(object, "head", "sha")), base_sha: safeSha(nested(object, "base", "sha")), changed_files: changedFiles, labels: pullLabels.items, omitted_label_count: pullLabels.omitted, files: files.items, truncated: files.truncated || pullLabels.truncated || paginationTruncated || changedFiles !== undefined && files.items.length < changedFiles }
+    const changedFiles = requiredNonNegative(object.changedFiles, "GitHub pull-request changed-file count")
+    const fileConnection = requiredObject(object.files)
+    const labelConnection = requiredObject(object.labels)
+    const rawFiles = requiredArray(fileConnection.nodes, "GitHub pull-request changed-file nodes")
+    const normalizedFiles = rawFiles.map((item) => { const value = requiredObject(item); const additions = requiredNonNegative(value.additions, "GitHub changed-file additions"); const deletions = requiredNonNegative(value.deletions, "GitHub changed-file deletions"); return { filename: requiredSafeText(value.path, "GitHub changed-file path", 240), status: requiredSafeText(value.changeType, "GitHub changed-file status", 64), additions, deletions, changes: additions + deletions } })
+    const files = boundedItems(normalizedFiles, detailBudget)
+    const pullLabels = boundedGraphLabels(labelConnection, Math.max(0, detailBudget - files.items.length), "GitHub pull-request labels")
+    const fileHasNext = requiredBoolean(requiredObject(fileConnection.pageInfo).hasNextPage, "GitHub changed-file pagination state")
+    return { number: requiredPositive(object.number, "GitHub pull-request number"), title_preview: requiredSafeText(object.title, "GitHub pull-request title", 500), state: requiredSafeText(object.state, "GitHub pull-request state", 32), draft: requiredBoolean(object.isDraft, "GitHub pull-request draft state"), updated_at: requiredTimestamp(object.updatedAt, "GitHub pull-request update timestamp"), head_sha: requiredSha(object.headRefOid, "GitHub pull-request head SHA"), base_sha: requiredSha(object.baseRefOid, "GitHub pull-request base SHA"), changed_files: changedFiles, labels: pullLabels.items, omitted_label_count: pullLabels.omitted, files: files.items, truncated: files.truncated || pullLabels.truncated || fileHasNext || files.items.length < changedFiles }
   }
   if (toolId === "github.commit_checks") {
     const pages = responses.map(requiredObject)
     const head = pages[0]
-    const rawChecks = pages.flatMap((page) => arrayOf(page.check_runs))
-    const checkShas = rawChecks.map((item) => safeSha(requiredObject(item).head_sha))
-    const observedCommitSha = checkShas[0]
-    if (rawChecks.length > 0 && (!observedCommitSha || checkShas.some((sha) => sha !== observedCommitSha))) throw new Error("GitHub check-run page identity did not match across the exact commit request")
+    const totalCount = requiredNonNegative(head.total_count, "GitHub check-run total count")
+    const rawChecks = pages.flatMap((page) => requiredArray(page.check_runs, "GitHub check-runs response"))
+    const expectedCommitSha = requiredSha(requestedRef, "GitHub requested check-run commit SHA")
+    const checkShas = rawChecks.map((item) => requiredSha(requiredObject(item).head_sha, "GitHub check-run head SHA"))
+    if (checkShas.some((sha) => sha !== expectedCommitSha)) throw new Error("GitHub check-run page identity did not match the exact commit request")
     const checks = boundedItems(rawChecks.map((item) => {
       const value = requiredObject(item)
-      const suite = value.check_suite && typeof value.check_suite === "object" && !Array.isArray(value.check_suite) ? requiredObject(value.check_suite) : undefined
-      if (suite && safeSha(suite.head_sha) !== safeSha(value.head_sha)) throw new Error("GitHub check-suite identity did not match its check run")
+      const suite = requiredObject(value.check_suite)
+      const headSha = requiredSha(value.head_sha, "GitHub check-run head SHA")
+      const suiteHeadSha = requiredSha(suite.head_sha, "GitHub check-suite head SHA")
+      if (suiteHeadSha !== headSha) throw new Error("GitHub check-suite identity did not match its check run")
       return {
-        name: safeText(value.name, 240), status: safeText(value.status, 64), conclusion: safeText(value.conclusion, 64), started_at: safeTimestamp(value.started_at), completed_at: safeTimestamp(value.completed_at),
-        check_suite: suite ? { id: safePositive(suite.id), head_sha: safeSha(suite.head_sha), status: safeText(suite.status, 64), conclusion: safeText(suite.conclusion, 64) } : undefined,
+        name: requiredSafeText(value.name, "GitHub check-run name", 240), status: requiredSafeText(value.status, "GitHub check-run status", 64), conclusion: nullableSafeText(value.conclusion, "GitHub check-run conclusion", 64), started_at: nullableTimestamp(value.started_at, "GitHub check-run start timestamp"), completed_at: nullableTimestamp(value.completed_at, "GitHub check-run completion timestamp"),
+        check_suite: { id: requiredPositive(suite.id, "GitHub check-suite id"), head_sha: suiteHeadSha, status: requiredSafeText(suite.status, "GitHub check-suite status", 64), conclusion: nullableSafeText(suite.conclusion, "GitHub check-suite conclusion", 64) },
       }
     }), itemCap)
-    const paginationTruncated = pages.length >= pageCap && arrayOf(pages.at(-1)?.check_runs).length >= PAGE_SIZE
-    return { commit_sha: observedCommitSha, observed_commit_sha: observedCommitSha, total_count: safeNonNegative(head.total_count), items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < (safeNonNegative(head.total_count) ?? 0) }
+    const paginationTruncated = pages.length >= pageCap && requiredArray(pages.at(-1)?.check_runs, "GitHub final check-runs response").length >= PAGE_SIZE
+    return { commit_sha: expectedCommitSha, observed_commit_sha: expectedCommitSha, total_count: totalCount, items: checks.items, truncated: checks.truncated || paginationTruncated || checks.items.length < totalCount }
   }
   const reviewPages = responses.slice(0, -1)
-  const reviewValues = reviewPages.flatMap((page) => requiredArray(page, "GitHub reviews response")).map((item) => { const value = requiredObject(item); return { id: safePositive(value.id), state: safeText(value.state, 64), user_login: safeText(nested(value, "user", "login"), 120), submitted_at: safeTimestamp(value.submitted_at), body_preview: safeText(value.body, 240), commit_id: safeSha(value.commit_id) } })
+  const reviewValues = reviewPages.flatMap((page) => requiredArray(page, "GitHub reviews response")).map((item) => {
+    const value = requiredObject(item)
+    const user = requiredObject(value.user)
+    return { id: requiredPositive(value.id, "GitHub review id"), state: requiredSafeText(value.state, "GitHub review state", 64), user_login: requiredSafeText(user.login, "GitHub reviewer login", 120), submitted_at: requiredTimestamp(value.submitted_at, "GitHub review submission timestamp"), body_preview: nullableSafeText(value.body, "GitHub review body", 240), commit_id: requiredSha(value.commit_id, "GitHub review commit SHA") }
+  })
   const reviews = boundedItems(reviewValues, Math.min(reviewValues.length, Math.ceil(itemCap / 2)))
   const graph = requiredObject(responses[responses.length - 1])
   const threads = threadSummary(graph, itemCap - reviews.items.length)
@@ -419,10 +441,17 @@ function normalizedItemCount(evidence: Record<string, unknown>): number {
   const threadItems = Array.isArray(threadState?.items) ? threadState.items.length : 0
   return items + threadItems
 }
-function boundedLabels(object: Record<string, unknown>, cap: number): { items: string[]; omitted: number; truncated: boolean } {
-  const normalized = arrayOf(object.labels).map((item) => safeText(requiredObject(item).name, 100)).filter((item): item is string => Boolean(item))
+function boundedRestLabels(value: unknown, cap: number, field: string): { items: string[]; omitted: number; truncated: boolean } {
+  const normalized = requiredArray(value, field).map((item) => requiredSafeText(requiredObject(item).name, `${field} name`, 100))
   const items = normalized.slice(0, cap)
   return { items, omitted: normalized.length - items.length, truncated: normalized.length > items.length }
+}
+function boundedGraphLabels(connection: Record<string, unknown>, cap: number, field: string): { items: string[]; omitted: number; truncated: boolean } {
+  const nodes = requiredArray(connection.nodes, `${field} nodes`)
+  const normalized = nodes.map((item) => requiredSafeText(requiredObject(item).name, `${field} name`, 100))
+  const hasNextPage = requiredBoolean(requiredObject(connection.pageInfo).hasNextPage, `${field} pagination state`)
+  const items = normalized.slice(0, cap)
+  return { items, omitted: normalized.length - items.length, truncated: hasNextPage || normalized.length > items.length }
 }
 function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
 function evidenceFor(toolId: CommanderGithubReadToolId, _result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: provenance.evidence_hash }] }
@@ -461,6 +490,7 @@ function githubTransportPolicyHash(connector: ExternalApiConnector, config: Comm
     repositories: [...repositories].sort(),
     limits: { ...limits(config), max_response_bytes: config.max_response_bytes, timeout_ms: config.timeout_ms },
     operations: COMMANDER_GITHUB_OPERATION_IDS,
+    request_contract_hash: GITHUB_REQUEST_CONTRACT_HASH,
   })
 }
 function canonicalRepository(value: string): string { if (value !== value.trim() || !REPOSITORY.test(value) || value !== value.toLowerCase()) throw new Error("repository must be an exact lowercase owner/repository identity"); return value }
@@ -484,6 +514,13 @@ function requiredString(value: unknown, field: string): string { if (typeof valu
 function requiredBoolean(value: unknown, field: string): boolean { if (typeof value !== "boolean") throw new Error(`${field} had an unexpected JSON shape`); return value }
 function requiredSha(value: unknown, field: string): string { if (typeof value !== "string" || !FULL_SHA.test(value)) throw new Error(`${field} had an unexpected JSON shape`); return value }
 function requiredTimestamp(value: unknown, field: string): string { const timestamp = safeTimestamp(value); if (!timestamp) throw new Error(`${field} had an unexpected JSON shape`); return timestamp }
+function requiredPositive(value: unknown, field: string): number { const result = safePositive(value); if (result === undefined) throw new Error(`${field} had an unexpected JSON shape`); return result }
+function requiredNonNegative(value: unknown, field: string): number { const result = safeNonNegative(value); if (result === undefined) throw new Error(`${field} had an unexpected JSON shape`); return result }
+function requiredRepository(value: unknown, field: string): string { const result = safeRepository(value); if (!result) throw new Error(`${field} had an unexpected JSON shape`); return result }
+function requiredSafeText(value: unknown, field: string, max: number): string { if (typeof value !== "string") throw new Error(`${field} had an unexpected JSON shape`); return redactText(value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()).slice(0, max) }
+function nullableSafeText(value: unknown, field: string, max: number): string | undefined { if (value === null) return undefined; if (value === undefined) throw new Error(`${field} had an unexpected JSON shape`); return requiredSafeText(value, field, max) }
+function nullableTimestamp(value: unknown, field: string): string | undefined { if (value === null) return undefined; if (value === undefined) throw new Error(`${field} had an unexpected JSON shape`); return requiredTimestamp(value, field) }
+function requiredGraphqlData(value: unknown, field: string): Record<string, unknown> { const raw = requiredObject(value); if ("errors" in raw && requiredArray(raw.errors, `${field} errors`).length > 0) throw new Error(`${field} was partial or errored`); return requiredObject(raw.data) }
 function arrayOf(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
 function nested(value: Record<string, unknown>, first: string, second: string): unknown { const parent = value[first]; return parent && typeof parent === "object" && !Array.isArray(parent) ? (parent as Record<string, unknown>)[second] : undefined }
 function nested3(value: Record<string, unknown>, first: string, second: string, third: string): unknown { const parent = nested(value, first, second); return parent && typeof parent === "object" && !Array.isArray(parent) ? (parent as Record<string, unknown>)[third] : undefined }

@@ -12,10 +12,11 @@
    current preflight rejects `requires_network` and `external_read`; 9XA needs a
    narrow, explicit external-read execution mode with truthful result flags and
    no relaxation for any existing tool.
-4. **Which operations are in scope?** Repository metadata, full-SHA commit
-   metadata, PR metadata/files, issue metadata, exact-SHA checks, and PR review
-   summaries/thread state only. Search, diffs, logs, mutations, and external
-   research are excluded.
+4. **Which operations are in scope?** Repository metadata, patch-free full-SHA
+   Git commit-object metadata, PR metadata and metadata-only changed-file
+   summaries, issue metadata, exact-SHA checks, and PR review summaries/thread
+   state only. Search, diffs, logs, mutations, and external research are
+   excluded.
 5. **Can response payloads be durable evidence?** No. ADR-025 journal working
    sets retain only bounded cards/digests/hashes; the gateway must normalize
    before results reach the controller.

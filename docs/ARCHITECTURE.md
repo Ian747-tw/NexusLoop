@@ -47,6 +47,9 @@ direct GitHub mutation tools as Commander tools.
 The GitHub gateway is capped per tool call at four requests, two pages, fifty
 items, and 8,000 normalized bytes, with one active gateway read. Every request
 has an existing external API audit outcome and consumes Commander tool budget.
+Exact commit metadata uses the patch-free Git object endpoint; pull-request
+file summaries use a fixed metadata-only GraphQL selection. Partial or malformed
+responses fail closed rather than fabricating absent fields as known facts.
 Exact-SHA checks and review evidence never substitute a moving branch head;
 truncated review-thread evidence reports unknown completeness.
 

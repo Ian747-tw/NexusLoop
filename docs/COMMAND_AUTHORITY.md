@@ -25,7 +25,8 @@ Commander tools and are not included in provider-visible schemas.
 ## Bounded GitHub Evidence
 
 9XA adds six internal `github_read` Commander descriptors through the existing
-binding registry: repository, exact commit, pull-request/files, issue,
+binding registry: repository, exact commit, pull-request metadata and bounded
+patch-free file summaries, issue,
 exact-SHA checks, and pull-request review/thread state. They are safe-read,
 run-lock-bound, network/credential-capable runtime services rather than slash
 commands or generic GitHub access. Runtime owns their exact repository
