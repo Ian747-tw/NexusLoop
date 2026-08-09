@@ -452,7 +452,9 @@ function synchronizeOmittedCount(evidence: Record<string, unknown>, original: Re
   const removed = arrayOf(original[arrayKey]).length - arrayOf(evidence[arrayKey]).length
   if (removed <= 0) return
   const existing = safeNonNegative(original[countKey]) ?? 0
-  evidence[countKey] = existing + removed
+  const omitted = existing + removed
+  if (omitted > MAX_OMITTED_COUNT) throw new Error(`GitHub ${countKey} exceeded the bounded output contract after byte trimming`)
+  evidence[countKey] = omitted
   evidence.truncated = true
 }
 

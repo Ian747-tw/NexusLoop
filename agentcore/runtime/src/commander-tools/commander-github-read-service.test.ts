@@ -620,6 +620,18 @@ describe("Commander GitHub read gateway", () => {
     expect(threadState).toMatchObject({ completeness: "unknown_truncated", truncated: true })
   })
 
+  test("fails closed when byte trimming would exceed the omission-count contract", async () => {
+    const labels = Array.from({ length: 149 }, (_, index) => ({ name: `label-${index}-${"x".repeat(90)}` }))
+    const result = await service([issueFixture({ title: "bounded issue", labels })], {
+      max_items_per_call: 50,
+      max_normalized_bytes: 1_024,
+    }).gateway.execute("github.issue_get", { repository: "ian747-tw/nexusloop", issue_number: 12 })
+
+    expect(result).toMatchObject({ status: "failed", result: null, evidence: [], request_count: 1, network_called: true })
+    expect("provenance" in result).toBe(false)
+    expect(result.blockers.join(" ")).toContain("omitted_label_count exceeded the bounded output contract after byte trimming")
+  })
+
   test("the minimum normalized-byte policy holds maximal repository review identity", async () => {
     const repository = `${"a".repeat(100)}/${"b".repeat(100)}`
     const sha = "d".repeat(40)
