@@ -470,6 +470,7 @@ describe("Commander GitHub read gateway", () => {
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ labels: [{ name: "security" }], omitLabelTotalCount: true })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ labels: [{ name: "security" }], labelTotalCount: 0 })] },
       { tool: "github.commit_checks", args: { repository: "ian747-tw/nexusloop", commit_sha: sha }, bodies: [{ total_count: 1, check_runs: [{ ...checkRunFixture(sha), status: undefined }] }] },
+      { tool: "github.commit_checks", args: { repository: "ian747-tw/nexusloop", commit_sha: sha }, bodies: [{ total_count: 1, check_runs: [checkRunFixture(sha, { id: Number.MAX_SAFE_INTEGER + 1 })] }] },
       { tool: "github.pull_request_reviews", args: { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, bodies: [[{ ...reviewFixture(sha), submitted_at: undefined }], { data: { repository: { pullRequest: { headRefOid: sha, reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } } }] },
     ]
     for (const fixture of cases) {
