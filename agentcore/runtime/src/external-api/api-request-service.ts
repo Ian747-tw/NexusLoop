@@ -17,6 +17,7 @@ import { externalApiCancelledError, externalApiTimeoutError, isExternalApiTimeou
 const MAX_BODY_BYTES = 64 * 1024
 const MAX_INTERNAL_RESPONSE_BYTES = 1_000_000
 const PREVIEW_BYTES = 512
+const MAX_ERROR_CHARS = 500
 const OMITTED_INTERNAL_RESPONSE_PREVIEW = "[internal response preview omitted]"
 const OMITTED_INTERNAL_REQUEST_URL = "[internal request URL omitted]"
 const DANGEROUS_USER_HEADERS = new Set(["authorization", "cookie", "set-cookie", "proxy-authorization"])
@@ -337,7 +338,7 @@ export class ExternalApiRequestService {
       ok: input.ok,
       response_bytes: input.responseBytes,
       response_preview: input.responsePreview ? preview(input.responsePreview) : undefined,
-      error: input.error ? redactText(input.error) : undefined,
+      error: input.error ? redactText(input.error).slice(0, MAX_ERROR_CHARS) : undefined,
       dry_run: input.dryRun,
       created_at: input.createdAt,
     })

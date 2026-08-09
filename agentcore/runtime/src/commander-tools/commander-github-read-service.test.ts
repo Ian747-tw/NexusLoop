@@ -824,4 +824,43 @@ describe("Commander GitHub read gateway", () => {
       expect(JSON.stringify(events)).not.toContain("secret=")
     }
   })
+
+  test("bounds transport failures across audit gateway schema and executor output", async () => {
+    const project = await mkdtemp(join(tmpdir(), "nxl-9xa-long-failure-"))
+    const eventStore = new EventStore(join(project, "events.jsonl"))
+    const secret = `token=${"s".repeat(80)}`
+    const transport = { request: async (): Promise<never> => { throw new Error(`${secret}${"x".repeat(10_000)}`) } }
+    let requestIndex = 0
+    const requestService = new ExternalApiRequestService({
+      registry: new ExternalApiConnectorRegistry([TEST_CONNECTOR]),
+      transport,
+      eventStore,
+      requestId: () => `audit_long_transport_failure_${++requestIndex}`,
+    })
+    const gateway = new CommanderGithubReadService({ requestService, connector: TEST_CONNECTOR, config: { connector_id: "github-test", allowed_repositories: ["ian747-tw/nexusloop"] } })
+    const bindings = createCommanderToolBindingRegistry({
+      commanderToolService: { search: () => ({}), get: () => ({}), profile: () => ({}) },
+      commandAuthorityService: { get: () => COMMAND_AUTHORITY_REGISTRY[0] },
+      researchMemoryService: { preview: () => ({}) },
+      operationalMemorySearchService: { search: async () => ({}) },
+      repoReadService: { searchText: async () => ({}), readLines: async () => ({}), gitStatus: async () => ({}), gitDiff: async () => ({}) },
+      githubReadService: gateway,
+    })
+    const executor = new CommanderToolExecutor({ descriptors: COMMANDER_TOOL_REGISTRY, authorityRecords: COMMAND_AUTHORITY_REGISTRY, bindingRegistry: bindings, runtimeAuthority: () => ({ active_runtime: true, run_lock_held: true }) })
+    const execution = await executor.execute({ execution_id: "github_long_failure_exec", call_id: "github_long_failure_call", tool_call_id: "github_long_failure_tool", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "test", remaining_tool_call_budget: 1 })
+
+    const audits = await eventStore.readAll()
+    expect(audits).toHaveLength(1)
+    expect(audits[0]).toMatchObject({ kind: "external_api_request_failed", request_id: "audit_long_transport_failure_1", ok: false })
+    expect(String(audits[0]?.error).length).toBeLessThanOrEqual(500)
+    expect(JSON.stringify(audits)).not.toContain(secret)
+
+    const gatewayResult = await gateway.execute("github.repository_get", { repository: "ian747-tw/nexusloop" })
+    const descriptor = COMMANDER_TOOL_REGISTRY.find((item) => item.tool_id === "github.repository_get")!
+    expect(gatewayResult.blockers[0]?.length).toBeLessThanOrEqual(500)
+    expect(validateCommanderToolArguments(descriptor.output_schema!, gatewayResult)).toMatchObject({ valid: true, errors: [] })
+    expect(execution).toMatchObject({ status: "failed", result: undefined, external_api_audit_event_count: 1, network_called: true })
+    expect(execution.blockers[0]?.length).toBeLessThanOrEqual(500)
+    expect(JSON.stringify({ gatewayResult, execution })).not.toContain(secret)
+  })
 })
