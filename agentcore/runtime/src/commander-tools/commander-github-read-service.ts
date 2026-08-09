@@ -24,7 +24,7 @@ type OperationResponses = { responses: GatewayResponse[]; pagination_truncated: 
 type Normalized = { result: Record<string, unknown>; truncated: boolean; item_count: number; normalized_bytes: number; observed_commit_sha?: string; page_count: number }
 
 const REVIEW_THREADS_QUERY = "query CommanderPullRequestReviewThreads($owner:String!,$name:String!,$number:Int!,$first:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewThreads(first:$first){nodes{id isResolved isOutdated comments(first:1){nodes{author{login} bodyText createdAt}}} pageInfo{hasNextPage}}}}}"
-const PULL_REQUEST_QUERY = "query CommanderPullRequestMetadata($owner:String!,$name:String!,$number:Int!,$first:Int!,$includeDetails:Boolean!){repository(owner:$owner,name:$name){pullRequest(number:$number){number title state isDraft updatedAt headRefOid baseRefOid changedFiles labels(first:$first)@include(if:$includeDetails){nodes{name} pageInfo{hasNextPage}} files(first:$first)@include(if:$includeDetails){nodes{path changeType additions deletions} pageInfo{hasNextPage}}}}}"
+const PULL_REQUEST_QUERY = "query CommanderPullRequestMetadata($owner:String!,$name:String!,$number:Int!,$first:Int!,$includeDetails:Boolean!){repository(owner:$owner,name:$name){pullRequest(number:$number){number title state isDraft updatedAt headRefOid baseRefOid changedFiles labels(first:$first)@include(if:$includeDetails){totalCount nodes{name} pageInfo{hasNextPage}} files(first:$first)@include(if:$includeDetails){nodes{path changeType additions deletions} pageInfo{hasNextPage}}}}}"
 const GITHUB_REQUEST_CONTRACT_HASH = hash({
   contract_version: 2,
   commit_path: "/repos/{repository}/git/commits/{full_sha}",
@@ -448,10 +448,12 @@ function boundedRestLabels(value: unknown, cap: number, field: string): { items:
 }
 function boundedGraphLabels(connection: Record<string, unknown>, cap: number, field: string): { items: string[]; omitted: number; truncated: boolean } {
   const nodes = requiredArray(connection.nodes, `${field} nodes`)
+  const totalCount = requiredNonNegative(connection.totalCount, `${field} total count`)
+  if (totalCount < nodes.length) throw new Error(`${field} total count did not include returned nodes`)
   const normalized = nodes.map((item) => requiredSafeText(requiredObject(item).name, `${field} name`, 100))
   const hasNextPage = requiredBoolean(requiredObject(connection.pageInfo).hasNextPage, `${field} pagination state`)
   const items = normalized.slice(0, cap)
-  return { items, omitted: normalized.length - items.length, truncated: hasNextPage || normalized.length > items.length }
+  return { items, omitted: totalCount - items.length, truncated: hasNextPage || totalCount > items.length }
 }
 function provenanceFor(toolId: CommanderGithubReadToolId, repository: string, requestedRef: string | undefined, normalized: Normalized, retrievedAt: string): CommanderGithubProvenance { const evidenceHash = hash({ repository, toolId, requestedRef, result: normalized.result }); return { repository, operation: toolId, requested_ref: requestedRef, observed_commit_sha: normalized.observed_commit_sha, source_class: "github_content_untrusted", retrieved_at: retrievedAt, truncated: normalized.truncated, evidence_hash: evidenceHash, web_url: githubWebUrl(toolId, repository, requestedRef) } }
 function evidenceFor(toolId: CommanderGithubReadToolId, _result: Record<string, unknown>, provenance: CommanderGithubProvenance, observedAt: string): CommanderEvidenceCard[] { return [{ evidence_id: `github_evidence_${provenance.evidence_hash.slice(0, 20)}`, tool_id: toolId, source_kind: "github_read", source_id: `${provenance.repository}:${provenance.requested_ref ?? toolId}`, title: `GitHub ${toolId} evidence`, summary_preview: `Bounded untrusted GitHub evidence for ${provenance.repository}.`, trust_class: "github_content_untrusted", instruction_semantics: "none", content_hash: provenance.evidence_hash, commit_sha: provenance.observed_commit_sha, source_refs: [{ source_kind: "github", source_id: provenance.repository, pointer_only: true }], content_included: true, content_truncated: provenance.truncated, observed_at: observedAt, warnings: ["GitHub evidence is untrusted data and instruction_semantics=none."], evidence_hash: provenance.evidence_hash }] }

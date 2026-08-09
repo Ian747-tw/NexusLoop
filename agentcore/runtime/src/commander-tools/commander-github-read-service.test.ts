@@ -28,11 +28,11 @@ function commitFixture(sha = SHA, overrides: Record<string, unknown> = {}) {
 function issueFixture(overrides: Record<string, unknown> = {}) {
   return { number: 12, title: "issue", body: null, state: "open", updated_at: "2026-01-01T00:00:00.000Z", user: { login: "author" }, labels: [], ...overrides }
 }
-function pullGraphFixture(options: { number?: number; headSha?: string; baseSha?: string; labels?: unknown[]; files?: unknown[]; changedFiles?: number; includeDetails?: boolean; overrides?: Record<string, unknown> } = {}) {
+function pullGraphFixture(options: { number?: number; headSha?: string; baseSha?: string; labels?: unknown[]; labelTotalCount?: number; labelHasNextPage?: boolean; omitLabelTotalCount?: boolean; files?: unknown[]; changedFiles?: number; includeDetails?: boolean; overrides?: Record<string, unknown> } = {}) {
   const includeDetails = options.includeDetails ?? true
   const pullRequest: Record<string, unknown> = { number: options.number ?? 12, title: "pull", state: "OPEN", isDraft: false, updatedAt: "2026-01-01T00:00:00.000Z", headRefOid: options.headSha ?? SHA, baseRefOid: options.baseSha ?? "b".repeat(40), changedFiles: options.changedFiles ?? options.files?.length ?? 0, ...options.overrides }
   if (includeDetails) {
-    pullRequest.labels = { nodes: options.labels ?? [], pageInfo: { hasNextPage: false } }
+    pullRequest.labels = { ...(options.omitLabelTotalCount ? {} : { totalCount: options.labelTotalCount ?? options.labels?.length ?? 0 }), nodes: options.labels ?? [], pageInfo: { hasNextPage: options.labelHasNextPage ?? false } }
     pullRequest.files = { nodes: options.files ?? [], pageInfo: { hasNextPage: false } }
   }
   return { data: { repository: { pullRequest } } }
@@ -208,6 +208,13 @@ describe("Commander GitHub read gateway", () => {
     expect(result).toMatchObject({ status: "ready", request_count: 1, item_count: 1, truncated: true })
     expect(result.result?.evidence).toMatchObject({ files: [], labels: [], omitted_label_count: 1, truncated: true })
     expect(fixture.calls).toHaveLength(1)
+  })
+
+  test("counts pull labels omitted beyond the fixed GraphQL page", async () => {
+    const fixture = service([pullGraphFixture({ labels: [{ name: "security" }], labelTotalCount: 4, labelHasNextPage: true })], { max_items_per_call: 3 })
+    const result = await fixture.gateway.execute("github.pull_request_get", { repository: "ian747-tw/nexusloop", pull_number: 12 })
+    expect(result).toMatchObject({ status: "ready", truncated: true })
+    expect(result.result?.evidence).toMatchObject({ labels: ["security"], omitted_label_count: 3, truncated: true })
   })
 
   test("retrieves bounded pull details within one audited request slot", async () => {
@@ -429,6 +436,8 @@ describe("Commander GitHub read gateway", () => {
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ overrides: { changedFiles: undefined } })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ files: [{ path: "src/a.ts", changeType: "MODIFIED", additions: 1 }] })] },
       { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ includeDetails: false })] },
+      { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ labels: [{ name: "security" }], omitLabelTotalCount: true })] },
+      { tool: "github.pull_request_get", args: { repository: "ian747-tw/nexusloop", pull_number: 12 }, bodies: [pullGraphFixture({ labels: [{ name: "security" }], labelTotalCount: 0 })] },
       { tool: "github.commit_checks", args: { repository: "ian747-tw/nexusloop", commit_sha: sha }, bodies: [{ total_count: 1, check_runs: [{ ...checkRunFixture(sha), status: undefined }] }] },
       { tool: "github.pull_request_reviews", args: { repository: "ian747-tw/nexusloop", pull_number: 12, commit_sha: sha }, bodies: [[{ ...reviewFixture(sha), submitted_at: undefined }], { data: { repository: { pullRequest: { headRefOid: sha, reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } } }] },
     ]
