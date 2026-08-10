@@ -176,6 +176,7 @@ export type CommanderInvestigationRecoveryToolCompatibilitySummary = {
   tools: CommanderInvestigationRecoveryToolCompatibility[]
   binding_count: number
   current_bound_tool_refs: CommanderInvestigationRecoveryBoundToolAuthorityRef[]
+  github_gateway_policy_hash?: string
   stored_subset_of_current_bindings: boolean
   compatible: boolean
   blockers: string[]
@@ -227,6 +228,7 @@ export type CommanderInvestigationRecoveryExecutionEnvelope = {
   supports_local_execution: boolean | "unknown"
   supports_streaming: false
   connector_policy_hash: string
+  github_gateway_policy_hash?: string
   capability_envelope_hash: string
   execution_envelope_hash: string
 }
@@ -437,6 +439,7 @@ export type CommanderInvestigationRecoveryServiceOptions = {
   boundToolIds: readonly string[]
   providerReadiness(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationProviderReadiness
   providerExecutionEnvelope?(input: { phase?: CommanderToolPhase; provider_id?: string; provider_kind?: string; model_id?: string }): CommanderInvestigationRecoveryExecutionEnvelope | undefined
+  githubGatewayStatus?(): { status: "ready" | "blocked"; transport_policy_hash?: string; blockers: string[] }
   modelCapability(input: { provider_kind?: string; model_id?: string; role?: string }): import("../context/model-capability-types").ModelCapability
   currentProfile(input: { phase?: string }): import("../commander-tools/commander-tool-types").CommanderToolProfile
   currentContextBudget(input: { phase: CommanderToolPhase; provider_kind: string; model_id: string; max_context_tokens?: number; max_context_bytes?: number }): Promise<CommanderInvestigationRecoveryCurrentContextBudget>

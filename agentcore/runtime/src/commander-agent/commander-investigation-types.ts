@@ -344,6 +344,7 @@ export type CommanderInvestigationCheckpointSnapshot = {
   latest_assistant?: CommanderModelAssistantMessage
   latest_tool_results: CommanderModelToolResultMessage[]
   provider_request_count: number
+  external_api_audit_event_count?: number
   elapsed_active_ms: number
   created_at: string
 }

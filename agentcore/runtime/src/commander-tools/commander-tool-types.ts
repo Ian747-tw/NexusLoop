@@ -22,6 +22,7 @@ export type CommanderToolProcessPolicy = "none" | "fixed_git_read_only"
 
 export type CommanderToolJsonSchemaProperty = {
   type: "string" | "number" | "integer" | "boolean" | "array" | "object"
+  nullable?: boolean
   description?: string
   enum?: string[]
   maxLength?: number
@@ -214,6 +215,7 @@ export type CommanderToolRegistrySummary = {
   direct_external_write_count: number
   provider_call_count: number
   generated_at: string
+  github_gateway?: import("./commander-github-read-types").CommanderGithubGatewayStatus
 }
 
 export type CommanderToolRegistryValidation = {

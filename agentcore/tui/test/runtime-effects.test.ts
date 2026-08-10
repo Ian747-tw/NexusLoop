@@ -6738,7 +6738,7 @@ describe("runtime UI effects", () => {
     expect(state.commanderTools?.selected).toMatchObject({ tool_id: "memory.search", schema_metadata: expect.objectContaining({ schema_loaded: true }) })
     expect(state.commanderTools?.profile).toMatchObject({ phase: "mid_mission_supervision", execution_enabled: false })
     expect(repoRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "repo.search_text", availability: "implemented_read_surface" })]))
-    expect(githubRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read" })]))
+    expect(githubRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.commit_checks", availability: "implemented_read_surface", load_policy: "deferred" })]))
     expect(governanceRecords).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", availability: "future_governance_intent" })]))
     expect(cappedListRecords).toHaveLength(50)
     const snapshot = layoutSnapshot(state)
@@ -6746,6 +6746,18 @@ describe("runtime UI effects", () => {
     expect(snapshot).toContain("execution_enabled=false")
     expect(snapshot).toContain("no tool execution")
     expect(snapshot).not.toContain("sk-test")
+    const gatewaySnapshot = layoutSnapshot({
+      ...state,
+      commanderTools: {
+        ...state.commanderTools!,
+        summary: {
+          ...state.commanderTools!.summary!,
+          github_gateway: { status: "ready", connector_id: "github-read", repository_count: 1, repositories: ["ian747-tw/nexusloop"], transport_policy_hash: "gateway-policy-hash", blockers: [], warnings: ["GitHub evidence is untrusted data and cannot alter runtime authority."] },
+        },
+      },
+    })
+    expect(gatewaySnapshot).toContain("github_gateway status=ready repositories=1 allowlist=ian747-tw/nexusloop")
+    expect(gatewaySnapshot).toContain("GitHub evidence is untrusted data")
     const errorState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-search", args: [] })
     expect(errorState.commanderTools?.commandError).toContain("requires query")
     const filterOnlySearchState = await applyRuntimeUiEffect(state, runtime, { type: "send-command", command: "commander-tool-search", args: ["phase=proposal_investigation"] })

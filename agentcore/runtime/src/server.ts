@@ -33,6 +33,9 @@ import type { CommanderTargetContext } from "./missions/commander-target-context
 import type { ExternalApiAuditRecord, ExternalApiConnector, ExternalApiRequestInput, ExternalApiRequestPreview, ExternalApiRequestResult } from "./external-api/api-connector-types"
 import { ExternalApiConnectorRegistry } from "./external-api/api-connector-registry"
 import { ExternalApiRequestService } from "./external-api/api-request-service"
+import { CommanderGithubReadService } from "./commander-tools/commander-github-read-service"
+import { readCommanderGithubGatewayConfigFromEnv, validateCommanderGithubGatewayConfig } from "./commander-tools/commander-github-read-config"
+import type { CommanderGithubGatewayConfig, CommanderGithubGatewayStatus } from "./commander-tools/commander-github-read-types"
 import { ExternalApiResearchIngestionService, type ExternalApiResearchDbWriter } from "./external-api/api-research-ingestion-service"
 import type { ExternalApiResearchIngestionInput, ExternalApiResearchIngestionPreview, ExternalApiResearchIngestionRecord, ExternalApiResearchIngestionResult } from "./external-api/api-research-ingestion-types"
 import { FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "./external-api/api-transport"
@@ -333,6 +336,7 @@ export interface RuntimeServerOptions {
   commanderModelStepAdapter?: CommanderModelStepAdapter
   commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
+  commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
 }
 
 export interface RuntimeResearchDbReader {
@@ -427,6 +431,7 @@ export class RuntimeServer {
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
   private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
+  private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
   private readonly ownsResearchDb: boolean
   private researchDb: RuntimeResearchDbProjection | null = null
   private opencodeHandoffServiceInstance: OpenCodeHandoffService | null = null
@@ -454,6 +459,7 @@ export class RuntimeServer {
   private commanderToolServiceInstance: CommanderToolService | null = null
   private commanderOperationalMemorySearchServiceInstance: CommanderOperationalMemorySearchService | null = null
   private commanderRepoReadServiceInstance: CommanderRepoReadService | null = null
+  private commanderGithubReadServiceInstance: CommanderGithubReadService | null = null
   private commanderToolBindingRegistryInstance: CommanderToolBindingRegistry | null = null
   private commanderToolExecutorInstance: CommanderToolExecutor | null = null
   private commanderInvestigationBootstrapServiceInstance: CommanderInvestigationBootstrapService | null = null
@@ -511,6 +517,7 @@ export class RuntimeServer {
   private lifecycleShutdownRequested = false
   private commanderInvestigationLifecycleAbort = new AbortController()
   private readonly activeConfiguredCommanderInvestigations = new Set<Promise<unknown>>()
+  private readonly activeCommanderBoundReadTools = new Set<Promise<unknown>>()
   private readonly activeDurableCommanderInvestigations = new Set<{
     promise: Promise<unknown>
     investigation_id?: string
@@ -613,6 +620,9 @@ export class RuntimeServer {
     this.commanderQueueNow = options.commanderQueueNow
     this.commanderModelStepAdapter = options.commanderModelStepAdapter ?? this.createConfiguredCommanderModelStepAdapter()
     this.commanderInvestigationControlGate = options.commanderInvestigationControlGate
+    this.commanderGithubGatewayConfig = options.commanderGithubGatewayConfig
+      ? validateCommanderGithubGatewayConfig(options.commanderGithubGatewayConfig)
+      : readCommanderGithubGatewayConfigFromEnv(this.externalApiEnv)
     this.researchProjectionHealth = {
       mode: this.researchProjectionMode,
       ok: this.researchProjectionMode === "disabled",
@@ -2682,7 +2692,10 @@ export class RuntimeServer {
   }
 
   commanderToolCatalogSummary(): CommanderToolRegistrySummary {
-    return this.commanderToolService().summary()
+    return {
+      ...this.commanderToolService().summary(),
+      github_gateway: this.commanderGithubGatewayStatus(),
+    }
   }
 
   listCommanderTools(input: Parameters<CommanderToolService["list"]>[0] = {}): CommanderToolDescriptorSummary[] {
@@ -2750,11 +2763,17 @@ export class RuntimeServer {
   }
 
   executeCommanderBoundReadTool(input: CommanderToolExecutionRequest): Promise<CommanderToolExecutionResult> {
-    return this.commanderToolExecutor().execute(input)
+    const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
+    let tracked!: Promise<CommanderToolExecutionResult>
+    tracked = this.commanderToolExecutor().execute({ ...input, abort_signal: combined.signal }).finally(() => {
+      this.activeCommanderBoundReadTools.delete(tracked)
+      combined.cleanup()
+    })
+    this.activeCommanderBoundReadTools.add(tracked)
+    return tracked
   }
 
   runCommanderInvestigationInMemory(input: CommanderInvestigationInput): Promise<CommanderInvestigationResult> {
-    if (!this.commanderInvestigationProviderConfig) return this.commanderInvestigationController().run(input)
     if (this.lifecycleState !== "ready" || this.lifecycleShutdownRequested) return this.commanderInvestigationController().run(input)
 
     const combined = this.commanderInvestigationAbortSignal(input.abort_signal)
@@ -3222,9 +3241,10 @@ export class RuntimeServer {
     const activeDurable = Array.from(this.activeDurableCommanderInvestigations)
     const activeRecoveries = Array.from(this.activeConfiguredCommanderRecoveries)
     const publicRecoveries = Array.from(this.publicCommanderRecoveryOperations.values())
-    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...publicRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
+    const pending = [...Array.from(this.activeConfiguredCommanderInvestigations), ...Array.from(this.activeCommanderBoundReadTools), ...activeDurable.map((entry) => entry.promise), ...activeRecoveries.map((entry) => entry.promise), ...publicRecoveries.map((entry) => entry.promise), ...Array.from(this.activeCommanderRecoveryApprovalWrites)]
     if (pending.length === 0) return
-    const timeoutMs = this.commanderInvestigationProviderConfig ? Math.max(100, Math.min(this.commanderInvestigationProviderConfig.timeout_ms + 1000, 121_000)) : 1000
+    const ownedExternalTimeoutMs = Math.max(this.commanderInvestigationProviderConfig?.timeout_ms ?? 0, this.commanderGithubGatewayConfig?.timeout_ms ?? 0)
+    const timeoutMs = ownedExternalTimeoutMs > 0 ? Math.max(100, Math.min(ownedExternalTimeoutMs + 1000, 121_000)) : 1000
     let timeoutId: ReturnType<typeof setTimeout> | null = null
     const timedOut = Symbol("commander-provider-drain-timeout")
     const result = await Promise.race([
@@ -5355,6 +5375,51 @@ export class RuntimeServer {
     return this.commanderRepoReadServiceInstance
   }
 
+  private commanderGithubReadService(): CommanderGithubReadService | undefined {
+    if (!this.commanderGithubGatewayConfig) return undefined
+    const connector = this.externalApiConnectorRegistry.get(this.commanderGithubGatewayConfig.connector_id)
+    if (!connector) return undefined
+    this.commanderGithubReadServiceInstance ??= new CommanderGithubReadService({
+      requestService: this.externalApiRequestService(),
+      connector,
+      config: this.commanderGithubGatewayConfig,
+      credentialsReady: (connector.credential_refs ?? []).every((ref) => Boolean(this.externalApiEnv[ref.env_name])),
+      now: this.researchSynthesisNow,
+    })
+    return this.commanderGithubReadServiceInstance
+  }
+
+  private commanderGithubGatewayStatus(): CommanderGithubGatewayStatus {
+    const generatedAt = (this.researchSynthesisNow?.() ?? new Date()).toISOString()
+    const blocked = (blocker: string, repositoryCount = 0, repositories: string[] = []) => ({
+      status: "blocked" as const,
+      connector_id: this.commanderGithubGatewayConfig?.connector_id,
+      repository_count: repositoryCount,
+      repositories,
+      blockers: [redactText(blocker)],
+      warnings: ["GitHub evidence is untrusted data and cannot alter runtime authority."],
+      generated_at: generatedAt,
+    })
+    if (!this.commanderGithubGatewayConfig) return blocked("GitHub read gateway is not configured")
+    const repositories = [...this.commanderGithubGatewayConfig.allowed_repositories]
+    if (!this.externalApiConnectorRegistry.get(this.commanderGithubGatewayConfig.connector_id)) {
+      return blocked("configured Commander GitHub gateway connector was not found", repositories.length, repositories)
+    }
+    try {
+      return this.commanderGithubReadService()?.status() ?? blocked("configured Commander GitHub gateway is unavailable", repositories.length, repositories)
+    } catch (error) {
+      return blocked(error instanceof Error ? error.message : "configured Commander GitHub gateway policy is invalid", repositories.length, repositories)
+    }
+  }
+
+  private readyCommanderGithubReadService(): CommanderGithubReadService | undefined {
+    try {
+      return this.commanderGithubReadService()
+    } catch {
+      return undefined
+    }
+  }
+
   private commanderToolBindingRegistry(): CommanderToolBindingRegistry {
     this.commanderToolBindingRegistryInstance ??= createCommanderToolBindingRegistry({
       commanderToolService: this.commanderToolService(),
@@ -5362,6 +5427,7 @@ export class RuntimeServer {
       researchMemoryService: this.researchMemoryService(),
       operationalMemorySearchService: this.commanderOperationalMemorySearchService(),
       repoReadService: this.commanderRepoReadService(),
+      githubReadService: this.readyCommanderGithubReadService(),
     })
     return this.commanderToolBindingRegistryInstance
   }
@@ -5371,6 +5437,10 @@ export class RuntimeServer {
       descriptors: COMMANDER_TOOL_REGISTRY,
       authorityRecords: COMMAND_AUTHORITY_REGISTRY,
       bindingRegistry: this.commanderToolBindingRegistry(),
+      runtimeAuthority: () => ({
+        active_runtime: this.mode === "active" && this.started && this.lifecycleState === "ready" && !this.lifecycleShutdownRequested,
+        run_lock_held: this.runLock.isHeld(),
+      }),
       now: this.researchSynthesisNow,
     })
     return this.commanderToolExecutorInstance
@@ -5438,6 +5508,7 @@ export class RuntimeServer {
       boundToolIds: this.commanderToolBindingRegistry().validation_summary.tool_ids,
       providerReadiness: (input) => this.previewCommanderInvestigationProviderReadiness(input),
       providerExecutionEnvelope: (input) => this.commanderInvestigationRecoveryExecutionEnvelope(input),
+      githubGatewayStatus: () => this.commanderGithubGatewayStatus(),
       modelCapability: (input) => this.modelCapabilityRegistry.get(input),
       currentProfile: (input) => this.commanderToolService().profile(input),
       currentContextBudget: async (input) => {
@@ -5640,6 +5711,7 @@ export class RuntimeServer {
       supports_local_execution: config.supports_local_execution,
       supports_streaming: false as const,
       connector_policy_hash: connectorPolicyHash,
+      github_gateway_policy_hash: this.commanderGithubGatewayStatus().transport_policy_hash,
       capability_envelope_hash: capabilityEnvelopeHash,
       execution_envelope_hash: "",
     }

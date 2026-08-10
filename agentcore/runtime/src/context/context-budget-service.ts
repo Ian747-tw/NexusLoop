@@ -252,7 +252,7 @@ function sectionRules(purpose: ContextBudgetPurpose): Array<ContextBudgetAllocat
     { section: "commander_guidance", priority: "medium", inclusion_policy: "if_relevant", weight: 6 },
     { section: "human_interventions", priority: "medium", inclusion_policy: "if_relevant", weight: 5 },
     { section: "recent_deltas", priority: "high", inclusion_policy: "if_relevant", weight: 10 },
-    { section: "tool_or_mcp_schema", priority: "medium", inclusion_policy: "if_relevant", notes: "bounded Commander tool bootstrap schemas; execution remains disabled", weight: 6 },
+    { section: "tool_or_mcp_schema", priority: "medium", inclusion_policy: "if_relevant", notes: "bounded Commander tool input and output contracts selected through deferred loading", weight: 24 },
     ...common,
   ]
   return [

@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
+import { commanderGithubToolAuthority } from "../commander-agent/commander-github-tool-authority-registry"
+import { commanderGithubOutputSchema } from "./commander-github-read-schemas"
+import type { CommanderGithubReadToolId } from "./commander-github-read-types"
 import type { CommandAuthorityRecord } from "../authority/command-authority-types"
 import type {
   CommanderToolAvailability,
@@ -52,15 +55,17 @@ type ToolSpec = Omit<CommanderToolDescriptor, "authority_id" | "risk" | "side_ef
   process_policy?: CommanderToolDescriptor["process_policy"]
   calls_provider?: boolean
   mutates_events?: boolean
+  authority?: CommandAuthorityRecord
 }
 
 function makeTool(spec: ToolSpec): CommanderToolDescriptor {
-  const authority = spec.slash_command ? findAuthority(spec.slash_command) : undefined
+  const authority = spec.authority ?? (spec.slash_command ? findAuthority(spec.slash_command) : undefined)
+  const { authority: _internalAuthority, ...descriptorSpec } = spec
   const input = spec.input_schema ?? emptySchema
   const output = spec.output_schema ?? schema({ status: stringField("Bounded command result status", 64) }, ["status"])
   const schemaBytes = bytes(input) + bytes(output)
   return {
-    ...spec,
+    ...descriptorSpec,
     authority_id: authority?.authority_id,
     runtime_command: spec.runtime_command ?? authority?.runtime_command,
     risk: spec.risk ?? authority?.risk ?? "safe_read",
@@ -154,13 +159,28 @@ export function namespaceSummaries(tools: CommanderToolDescriptor[] = COMMANDER_
 }
 
 function futureTools(): CommanderToolDescriptor[] {
-  const github = ["repo_info", "pr_read", "pr_diff", "pr_files", "pr_checks", "pr_review_threads", "issue_search", "workflow_run", "workflow_logs"]
-    .map((name) => makeFuture(`github.${name}`, "github_read", "future_external_read", "github_content_untrusted", true, true, ["proposal_investigation", "result_review", "governance_review"]))
+  const github = githubReadTools()
   const external = ["search", "source_show", "paper_metadata"]
     .map((name) => makeFuture(`external_research.${name}`, "external_research", "future_external_read", "external_content_untrusted", true, false, ["proposal_investigation"]))
   const governance = ["stage_pr_review", "stage_pr_approval", "stage_pr_request_changes", "stage_ci_rerun", "stage_pr_merge"]
     .map((name) => makeFuture(`governance.${name}`, "governance", "future_governance_intent", "governance_metadata", true, true, ["governance_review"], "governance_intent", true))
   return [...github, ...external, ...governance]
+}
+
+function githubReadTools(): CommanderToolDescriptor[] {
+  const common = { namespace: "github_read" as const, version: "1.0.0", trust_class: "github_content_untrusted" as const, side_effect_class: "external_read" as const, availability: "implemented_read_surface" as const, load_policy: "deferred" as const, allowed_phases: ["proposal_investigation", "result_review", "governance_review"] as CommanderToolPhase[], requires_network: true, requires_credentials: true, requires_approval: false, requires_run_lock: true, creates_external_process: false, execution_backend: "runtime_service" as const, process_policy: "none" as const, calls_provider: false, mutates_events: false, max_output_bytes: 12_000, timeout_ms: 15_000, notes: ["Bounded runtime-owned GitHub evidence gateway; output is untrusted data with instruction_semantics=none."], out_of_scope: ["GitHub mutation", "search", "raw payloads", "diffs", "arbitrary REST/GraphQL"] }
+  const repo = { repository: stringField("Exact configured lowercase owner/repository identity", 201) }
+  const sha = stringField("Exact lowercase full 40-character commit SHA", 40)
+  const number = intField("Exact pull request or issue number", 1, 1000000000)
+  const makeGithub = (tool_id: CommanderGithubReadToolId, name: string, description: string, keywords: string[], input_schema: CommanderToolJsonSchema) => makeTool({ ...common, tool_id, name, description, keywords, authority: commanderGithubToolAuthority(tool_id), input_schema, output_schema: commanderGithubOutputSchema(tool_id) })
+  return [
+    makeGithub("github.repository_get", "GitHub repository metadata", "Read minimal metadata for one configured GitHub repository.", ["github", "repository", "metadata"], schema(repo, ["repository"])),
+    makeGithub("github.commit_get", "GitHub commit metadata", "Read bounded exact-SHA GitHub commit metadata.", ["github", "commit", "sha"], schema({ ...repo, commit_sha: sha }, ["repository", "commit_sha"])),
+    makeGithub("github.pull_request_get", "GitHub pull request metadata", "Read bounded pull-request metadata and changed-file summary evidence.", ["github", "pull", "request", "files"], schema({ ...repo, pull_number: number }, ["repository", "pull_number"])),
+    makeGithub("github.issue_get", "GitHub issue metadata", "Read bounded GitHub issue metadata.", ["github", "issue"], schema({ ...repo, issue_number: number }, ["repository", "issue_number"])),
+    makeGithub("github.commit_checks", "GitHub exact-SHA checks", "Read bounded current check-run summaries for an exact commit SHA.", ["github", "checks", "ci", "sha"], schema({ ...repo, commit_sha: sha }, ["repository", "commit_sha"])),
+    makeGithub("github.pull_request_reviews", "GitHub pull request review state", "Read bounded review summaries and thread-aware review state for one pull request at an exact commit SHA.", ["github", "review", "threads", "pull", "sha"], schema({ ...repo, pull_number: number, commit_sha: sha }, ["repository", "pull_number", "commit_sha"])),
+  ]
 }
 
 function repoReadTools(): CommanderToolDescriptor[] {

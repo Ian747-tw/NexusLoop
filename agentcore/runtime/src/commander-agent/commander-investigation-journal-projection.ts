@@ -325,7 +325,7 @@ function projectOne(investigationId: string, events: JsonlEvent[]): { record: Co
     resume_supported: false,
     recovery_state: recoveryState,
     investigation_event_count: events.length,
-    external_api_audit_event_count: terminalRecord?.provider_audit.external_api_audit_event_count ?? latestCheckpoint?.external_api_audit_count ?? 0,
+    external_api_audit_event_count: terminalRecord?.external_api_audit_event_count ?? terminalRecord?.provider_audit.external_api_audit_event_count ?? latestCheckpoint?.external_api_audit_count ?? 0,
     semantic_result_hash: terminalRecord?.semantic_result_hash,
     projection_status: projectionStatus,
     integrity_errors: integrity,
@@ -1739,6 +1739,7 @@ function isFinishedPayload(event: JsonlEvent): event is CommanderInvestigationFi
     hasNumber(event.terminal, "omitted_evidence_count") &&
     hasNumber(event.terminal, "omitted_turn_count") &&
     isProviderAuditSummary(event.terminal.provider_audit) &&
+    (event.terminal.external_api_audit_event_count === undefined || isNonnegativeInteger(event.terminal.external_api_audit_event_count)) &&
     Array.isArray(event.terminal.blockers) &&
     event.terminal.blockers.every((item) => typeof item === "string") &&
     Array.isArray(event.terminal.warnings) &&

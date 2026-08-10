@@ -24400,7 +24400,7 @@ describe("ProcessOpenCodeAdapter", () => {
     const validation = await server.command("runtime.validate_commander_tool_registry") as Record<string, any>
     expect(validation).toMatchObject({ status: "ready", unsafe_exposure_count: 0, authority_mismatch_count: 0 })
     const summary = await server.command("runtime.commander_tool_catalog_summary") as Record<string, any>
-    expect(summary).toMatchObject({ direct_external_write_count: 0, provider_call_count: 0 })
+    expect(summary).toMatchObject({ direct_external_write_count: 0, provider_call_count: 0, github_gateway: { status: "blocked", repository_count: 0 } })
     expect(summary.implemented_tools).toBeGreaterThan(10)
     const memoryTools = await server.command("runtime.list_commander_tools", { namespace: "memory" }) as Array<Record<string, any>>
     expect(memoryTools.map((tool) => tool.tool_id)).toContain("memory.search")
@@ -24416,13 +24416,16 @@ describe("ProcessOpenCodeAdapter", () => {
       expect.objectContaining({ tool_id: "repo.git_diff", creates_external_process: true, execution_backend: "restricted_git_read", process_policy: "fixed_git_read_only" }),
     ]))
     const githubTools = await server.command("runtime.list_commander_tools", { namespace: "github_read" }) as Array<Record<string, any>>
-    expect(githubTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "github.pr_checks", availability: "future_external_read", requires_network: true })]))
+    expect(githubTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tool_id: "github.repository_get", availability: "implemented_read_surface", requires_network: true, requires_credentials: true, instruction_semantics: "none" }),
+      expect.objectContaining({ tool_id: "github.commit_checks", availability: "implemented_read_surface", requires_run_lock: true, trust_class: "github_content_untrusted" }),
+    ]))
     const governanceTools = await server.command("runtime.list_commander_tools", { namespace: "governance" }) as Array<Record<string, any>>
     expect(governanceTools).toEqual(expect.arrayContaining([expect.objectContaining({ tool_id: "governance.stage_pr_merge", availability: "future_governance_intent", side_effect_class: "governance_intent" })]))
     const allToolIds = COMMANDER_TOOL_REGISTRY.map((tool) => tool.tool_id)
     expect(allToolIds).not.toContain("github.merge")
     expect(allToolIds).not.toContain("github.approve")
-    expect(allToolIds.some((id) => /\.(shell|edit|patch|commit|push)$/.test(id))).toBe(false)
+    expect(allToolIds.some((id) => /\.(shell|edit|patch|push)$/.test(id))).toBe(false)
     const selected = await server.command("runtime.get_commander_tool", { toolId: "memory.search" }) as Record<string, any>
     expect(selected).toMatchObject({ tool_id: "memory.search", schema_metadata: expect.objectContaining({ schema_loaded: true }), instruction_semantics: "none" })
     expect(Object.keys(selected.input_schema.properties)).toContain("query")
@@ -24441,7 +24444,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(profile).toMatchObject({ execution_enabled: false })
     expect(profile.allowed_namespaces).toEqual(expect.arrayContaining(["memory", "continuity", "repo_read", "github_read", "external_research"]))
     expect(profile).not.toHaveProperty("workflow_steps")
-    expect(profile.deferred_tool_ids).toEqual(expect.arrayContaining(["repo.search_text", "github.pr_checks", "external_research.search"]))
+    expect(profile.deferred_tool_ids).toEqual(expect.arrayContaining(["repo.search_text", "github.commit_checks", "external_research.search"]))
     expect(profile).toMatchObject({ manual_internal_read_execution_enabled: true, provider_tool_loop_enabled: false })
     const governanceProfile = await server.command("runtime.preview_commander_tool_profile", { phase: "governance_review" }) as Record<string, any>
     const governanceProfileIds = [...governanceProfile.always_loaded_tool_ids, ...governanceProfile.deferred_tool_ids, ...governanceProfile.unavailable_tool_ids, ...governanceProfile.staged_intent_tool_ids]
@@ -24488,6 +24491,138 @@ describe("ProcessOpenCodeAdapter", () => {
     await expect(server.command("runtime.preview_commander_tool_profile", { phase: "unknown" })).rejects.toThrow("unsupported")
   })
 
+  test("Commander tool catalog exposes bounded GitHub gateway readiness without transport details", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }],
+    })
+    const summary = await server.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(summary.github_gateway).toMatchObject({ status: "ready", connector_id: "github-read-test", repositories: ["ian747-tw/nexusloop"] })
+    expect(JSON.stringify(summary.github_gateway)).not.toContain("api.example.test")
+    await server.shutdown()
+  })
+
+  test("Commander GitHub gateway readiness fails closed for missing or invalid connector authority", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const missing = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "missing-github", allowed_repositories: ["ian747-tw/nexusloop"] },
+    })
+    const missingSummary = await missing.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(missingSummary.github_gateway).toMatchObject({ status: "blocked", repository_count: 1 })
+    expect(missingSummary.github_gateway.blockers.join(" ")).toContain("connector was not found")
+    await missing.shutdown()
+
+    const invalid = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "invalid-github", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "invalid-github", title: "invalid", base_url: "https://example.com", allowed_hosts: ["example.com"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
+    })
+    const invalidSummary = await invalid.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(invalidSummary.github_gateway).toMatchObject({ status: "blocked", repository_count: 1 })
+    expect(invalidSummary.github_gateway.blockers.join(" ")).toContain("fixed GitHub API origin")
+    expect(JSON.stringify(invalidSummary.github_gateway)).not.toContain("example.com")
+    await invalid.shutdown()
+
+    const missingCredential = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-production", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-production", title: "GitHub", base_url: "https://api.github.com", allowed_hosts: ["api.github.com"], allowed_methods: ["GET", "POST"], credential_refs: [{ name: "github-read", source: "env", env_name: "NXL_TEST_GITHUB_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }], timeout_ms: 20000, max_response_bytes: 256000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
+      externalApiEnv: {},
+    })
+    const credentialSummary = await missingCredential.command("runtime.commander_tool_catalog_summary") as Record<string, any>
+    expect(credentialSummary.github_gateway).toMatchObject({ status: "blocked", repository_count: 1 })
+    expect(credentialSummary.github_gateway.blockers.join(" ")).toContain("credential is unavailable")
+    expect(JSON.stringify(credentialSummary.github_gateway)).not.toContain("NXL_TEST_GITHUB_KEY")
+    await missingCredential.shutdown()
+  })
+
+  test("RuntimeServer blocks bound GitHub transport outside active run-lock ownership", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: null, default_branch: "main", visibility: "public", archived: false, private: false }) }])
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }],
+      externalApiTransport: transport,
+    })
+    const input = { execution_id: "github_runtime_authority", call_id: "github_runtime_call", tool_call_id: "github_runtime_tool", tool_id: "github.repository_get", phase: "proposal_investigation" as const, arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "operator", remaining_tool_call_budget: 1 }
+
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false })
+    expect(transport.requests).toHaveLength(0)
+    await server.start()
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "ready", handler_invoked: true, network_called: true, external_api_audit_event_count: 1, events_appended: true })
+    expect(transport.requests).toHaveLength(1)
+    await server.shutdown()
+    await expect(server.executeCommanderBoundReadTool(input)).resolves.toMatchObject({ status: "blocked", handler_invoked: false, network_called: false })
+    expect(transport.requests).toHaveLength(1)
+    const events = await server.eventStore.readAll()
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+  })
+
+  test("RuntimeServer aborts and drains a direct bound GitHub read before runtime shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let dispatched!: () => void
+    let aborted!: () => void
+    let release!: () => void
+    const dispatchObserved = new Promise<void>((resolve) => { dispatched = resolve })
+    const abortObserved = new Promise<void>((resolve) => { aborted = resolve })
+    const releaseTransport = new Promise<void>((resolve) => { release = resolve })
+    const transport = {
+      async request(input: { abort_signal?: AbortSignal }) {
+        dispatched()
+        await new Promise<void>((resolve) => {
+          const observe = () => { aborted(); resolve() }
+          if (input.abort_signal?.aborted) observe()
+          else input.abort_signal?.addEventListener("abort", observe, { once: true })
+        })
+        await releaseTransport
+        throw new Error("external API request cancelled after dispatch")
+      },
+    }
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [{ connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.example.test", allowed_hosts: ["api.example.test"], allowed_methods: ["GET", "POST"], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }],
+      externalApiTransport: transport as never,
+    })
+    await server.start()
+    const execution = server.executeCommanderBoundReadTool({ execution_id: "github_shutdown_owned", call_id: "github_shutdown_call", tool_call_id: "github_shutdown_tool", tool_id: "github.repository_get", phase: "proposal_investigation", arguments: { repository: "ian747-tw/nexusloop" }, requested_by: "operator", remaining_tool_call_budget: 1 })
+    await dispatchObserved
+    const shutdown = server.shutdown("direct GitHub read drain")
+    await abortObserved
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+    const stateAtOldFallbackDeadline = await Promise.race([
+      shutdown.then(() => "settled", () => "settled"),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 1_100)),
+    ])
+    expect(stateAtOldFallbackDeadline).toBe("pending")
+    release()
+    await expect(execution).resolves.toMatchObject({ status: "cancelled", handler_invoked: true, network_called: true, external_api_audit_event_count: 1 })
+    await shutdown
+    const events = await server.eventStore.readAll()
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+    expect(events.find((event) => event.kind === "external_api_request_failed")?.url).toBe("[internal request URL omitted]")
+  })
+
   test("Commander tool registry validation rejects malformed, forbidden, and authority-mismatched descriptors", () => {
     const service = new CommanderToolService({
       contextBudgetService: {} as any,
@@ -24502,7 +24637,7 @@ describe("ProcessOpenCodeAdapter", () => {
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "commander.tool_list")!, allowed_phases: ["not_a_phase" as any] },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "memory.near_duplicates")!, runtime_command: "runtime.submit_user_message" },
         { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "repo.tree")!, runtime_command: "runtime.fake_repo_tree" },
-        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "github.pr_checks")!, slash_command: "/github-pr-checks", runtime_command: "runtime.github_pr_checks" },
+        { ...COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "github.commit_checks")!, slash_command: "/github-pr-checks", runtime_command: "runtime.github_pr_checks" },
       ],
       now: () => new Date(0),
     })
@@ -24515,7 +24650,7 @@ describe("ProcessOpenCodeAdapter", () => {
     expect(validation.errors.join("\n")).toContain("runtime command must match authority record")
     expect(validation.errors.join("\n")).toContain("unsafe requires_network")
     expect(validation.errors.join("\n")).toContain("unsafe requires_credentials")
-    expect(validation.errors.join("\n")).toContain("future descriptor must not pretend to be executable")
+    expect(validation.errors.join("\n")).toContain("runtime command must match authority record")
   })
 
   test("Commander internal read tools search typed operational memory without appending events", async () => {

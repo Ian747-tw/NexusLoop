@@ -61,3 +61,9 @@ Branch 9W0 does not replace these safety boundaries. It selects a lower
 model-step SDK fit only; repository readers, path denial, fixed Git reads,
 evidence redaction, and event-free read semantics remain NexusLoop runtime
 responsibilities.
+
+Branch 9XA adds external GitHub evidence through the same descriptor, binding,
+executor, budget, and checkpoint path. Unlike local 9V repository reads, these
+six deferred tools are network- and credential-capable, require an exact
+configured repository allowlist, persist one external-request audit per page,
+and classify all normalized output as untrusted non-instructional evidence.

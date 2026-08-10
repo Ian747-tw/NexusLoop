@@ -158,6 +158,7 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9W3B2B2A: recovery transaction and scripted persistence.
 - 9W3B2B2B: configured-provider live recovery execution.
 - 9W3C: public/operator investigation surface decision.
-- 9X: external read gateway for GitHub and allowlisted research MCP reads.
+- 9XA: bounded allowlisted GitHub evidence reads through six deferred tools.
+- 9XB: allowlisted external research MCP reads.
 - 9Y: Commander research proposal gate.
 - 9Z: GitHub governance intent and approval gate.

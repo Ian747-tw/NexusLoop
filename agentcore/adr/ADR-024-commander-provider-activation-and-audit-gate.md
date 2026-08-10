@@ -133,3 +133,9 @@ Branch 9W3B2B2B applies the same configured-provider readiness, one-request,
 audit-completeness, abort, and shutdown-drain authority to approved Commander
 recovery. Recovery additionally requires the durable one-shot transaction and
 current plan/preparation revalidation before this connector path can run.
+
+Branch 9XA reuses `ExternalApiRequestService` for bounded GitHub evidence
+requests selected by the controller. Each page has its own exact audit outcome;
+evidence is withheld when audit persistence is absent or inconsistent. These
+tool requests do not become provider calls and do not broaden the public
+provider-loop capability.

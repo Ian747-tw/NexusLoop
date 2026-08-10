@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { redactText, redactValue } from "../security/redaction"
+import { COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS } from "./commander-github-tool-authority-registry"
 import { isToolAllowedInPhase } from "../commander-tools/commander-tool-service"
 import { validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelToolResultMessage } from "./commander-model-types"
@@ -7,6 +8,7 @@ import type { CommanderToolExecutionRequest, CommanderToolExecutionResult, Comma
 
 const DEFAULT_RESULT_MESSAGE_BYTES = 12_000
 const SAFE_GIT_TOOL_IDS = new Set(["repo.git_status", "repo.git_diff"])
+const SAFE_GITHUB_TOOL_IDS = new Set(["github.repository_get", "github.commit_get", "github.pull_request_get", "github.issue_get", "github.commit_checks", "github.pull_request_reviews"])
 
 export class CommanderToolExecutor {
   private readonly now: () => Date
@@ -32,26 +34,32 @@ export class CommanderToolExecutor {
       return this.result(request, descriptor, "blocked", false, undefined, started, generatedAt, validated.errors)
     }
     let timeoutHandle: CommanderToolTimeout | undefined
+    let handler: Promise<unknown> | undefined
     const executionAbort = new AbortController()
     const relayAbort = () => executionAbort.abort()
     request.abort_signal?.addEventListener("abort", relayAbort, { once: true })
     try {
       timeoutHandle = this.timeout(descriptor.timeout_ms, executionAbort.signal)
       timeoutHandle.promise.catch(() => undefined)
-      const handler = Promise.resolve(binding.execute({
+      handler = Promise.resolve(binding.execute({
         phase: request.phase,
         requested_by: request.requested_by,
         call_id: request.call_id,
         abort_signal: executionAbort.signal,
+        remaining_tool_call_budget: request.remaining_tool_call_budget,
         now: this.now,
       }, validated.arguments))
       const raw = await Promise.race([handler, timeoutHandle.promise])
       const outcome = handlerOutcome(raw)
       return this.result(request, descriptor, outcome.status, true, raw, started, generatedAt, outcome.blockers, undefined, outcome.warnings)
     } catch (error) {
-      const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|cancel/i.test(error.message))
+      const cancelled = request.abort_signal?.aborted || (error instanceof Error && /timeout|timed out|cancel/i.test(error.message))
       if (cancelled) executionAbort.abort()
-      return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, undefined, started, generatedAt, [], error)
+      let drained: unknown
+      if (cancelled && SAFE_GITHUB_TOOL_IDS.has(request.tool_id) && handler) {
+        try { drained = await handler } catch { drained = undefined }
+      }
+      return this.result(request, descriptor, cancelled ? "cancelled" : "failed", true, drained, started, generatedAt, [], error)
     } finally {
       request.abort_signal?.removeEventListener("abort", relayAbort)
       timeoutHandle?.cancel()
@@ -65,12 +73,25 @@ export class CommanderToolExecutor {
     if (descriptor.availability !== "implemented_read_surface") blockers.push("Commander tool is not an implemented read surface")
     if (!isToolAllowedInPhase(descriptor, request.phase)) blockers.push("Commander tool is not allowed in requested phase")
     if (!descriptor.authority_id) blockers.push("Commander tool descriptor lacks authority_id")
-    const authority = this.options.authorityRecords.find((record) => record.authority_id === descriptor.authority_id)
+    const authority = [...this.options.authorityRecords, ...COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS].find((record) => record.authority_id === descriptor.authority_id)
     if (!authority) blockers.push("Commander tool authority record was not found")
     else {
       if (authority.risk !== descriptor.risk || authority.risk !== "safe_read") blockers.push("Commander tool authority risk mismatch")
       if (authority.runtime_command !== descriptor.runtime_command) blockers.push("Commander tool authority runtime command mismatch")
-      if (authority.mutates_events || authority.calls_provider || authority.requires_approval || authority.requires_run_lock) blockers.push("Commander tool authority is not safe-read executable")
+      const githubAuthorityException = SAFE_GITHUB_TOOL_IDS.has(descriptor.tool_id)
+        && descriptor.namespace === "github_read"
+        && authority.requires_run_lock === true
+        && authority.gate === "external_api_runtime"
+        && authority.mutates_events === true
+        && authority.expected_event_kinds.length === 2
+        && authority.expected_event_kinds.includes("external_api_request_executed")
+        && authority.expected_event_kinds.includes("external_api_request_failed")
+      if ((authority.mutates_events && !githubAuthorityException) || authority.calls_provider || authority.requires_approval || (authority.requires_run_lock && !githubAuthorityException)) blockers.push("Commander tool authority is not safe-read executable")
+      if (authority.requires_active_runtime || authority.requires_run_lock) {
+        const runtimeAuthority = this.options.runtimeAuthority?.()
+        if (authority.requires_active_runtime && runtimeAuthority?.active_runtime !== true) blockers.push("Commander tool requires an active ready runtime")
+        if (authority.requires_run_lock && runtimeAuthority?.run_lock_held !== true) blockers.push("Commander tool requires the RuntimeServer run lock")
+      }
       const gitException = SAFE_GIT_TOOL_IDS.has(descriptor.tool_id)
         && descriptor.execution_backend === "restricted_git_read"
         && descriptor.process_policy === "fixed_git_read_only"
@@ -78,8 +99,15 @@ export class CommanderToolExecutor {
       if (descriptor.creates_external_process && !gitException) blockers.push("Commander tool external process is not an allowed fixed Git read")
       if (!descriptor.creates_external_process && authority.creates_external_process) blockers.push("Commander tool authority process metadata mismatch")
     }
-    if (descriptor.side_effect_class !== "none" && descriptor.side_effect_class !== "internal_read") blockers.push("Commander tool side effect class is not executable")
-    if (descriptor.calls_provider || descriptor.mutates_events || descriptor.requires_approval || descriptor.requires_run_lock || descriptor.requires_network || descriptor.requires_credentials) blockers.push("Commander tool descriptor is not safe-read executable")
+    const githubException = SAFE_GITHUB_TOOL_IDS.has(descriptor.tool_id)
+      && descriptor.namespace === "github_read"
+      && descriptor.side_effect_class === "external_read"
+      && descriptor.execution_backend === "runtime_service"
+      && descriptor.requires_network === true
+      && descriptor.requires_credentials === true
+      && descriptor.mutates_events === true
+    if (descriptor.side_effect_class !== "none" && descriptor.side_effect_class !== "internal_read" && !githubException) blockers.push("Commander tool side effect class is not executable")
+    if (descriptor.calls_provider || (descriptor.mutates_events && !githubException) || descriptor.requires_approval || (descriptor.requires_run_lock && !githubException) || ((descriptor.requires_network || descriptor.requires_credentials) && !githubException)) blockers.push("Commander tool descriptor is not safe-read executable")
     if (!descriptor.input_schema) blockers.push("Commander tool descriptor lacks input schema")
     return blockers
   }
@@ -102,17 +130,19 @@ export class CommanderToolExecutor {
       trust_class: descriptor?.trust_class ?? "unknown",
       instruction_semantics: "none",
       result: finalStatus === "ready" ? safeResult : undefined,
-      evidence: extractEvidence(safeResult),
+      evidence: finalStatus === "ready" ? extractEvidence(safeResult) : [],
       output_bytes: oversized ? 0 : bytes,
       max_output_bytes: maxOutputBytes,
       truncated: false,
       handler_invoked: invoked,
       external_process_invoked: invoked && SAFE_GIT_TOOL_IDS.has(request.tool_id) && gitInvoked(safeResult),
       process_policy: descriptor?.process_policy ?? "none",
-      events_appended: false,
+      events_appended: auditCount(safeResult) > 0,
       provider_called: false,
       mcp_called: false,
-      network_called: false,
+      network_called: typeof safeResult === "object" && safeResult !== null && (safeResult as { network_called?: unknown }).network_called === true,
+      external_api_audit_event_count: auditCount(safeResult),
+      external_api_audit_request_ids: auditIds(safeResult),
       research_db_written: false,
       mission_mutated: false,
       proposal_mutated: false,
@@ -168,6 +198,16 @@ function extractEvidence(value: unknown) {
 
 function gitInvoked(value: unknown): boolean {
   return !!value && typeof value === "object" && (value as { git_process_invoked?: unknown }).git_process_invoked === true
+}
+
+function auditCount(value: unknown): number {
+  const count = value && typeof value === "object" ? (value as { external_api_audit_event_kinds?: unknown }).external_api_audit_event_kinds : undefined
+  return Array.isArray(count) ? count.length : 0
+}
+
+function auditIds(value: unknown): string[] {
+  const ids = value && typeof value === "object" ? (value as { external_api_audit_request_ids?: unknown }).external_api_audit_request_ids : undefined
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string").slice(0, 8) : []
 }
 
 function measuredOutputBytes(value: unknown): number {
@@ -237,7 +277,7 @@ function normalizeStableExecutionValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value
   const normalized: Record<string, unknown> = {}
   for (const [key, nested] of Object.entries(value)) {
-    if (key === "generated_at" || key === "observed_at" || key === "duration_ms") continue
+    if (key === "generated_at" || key === "observed_at" || key === "retrieved_at" || key === "duration_ms") continue
     normalized[key] = normalizeStableExecutionValue(nested)
   }
   return normalized

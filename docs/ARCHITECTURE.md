@@ -35,11 +35,23 @@ history or context window.
 
 Commander tools follow a broad-read, narrow-act contract. Runtime may expose
 curated, bounded read capabilities for research memory, operational continuity,
-runtime records, OpenCode session metadata, repository files, and fixed
-read-only Git evidence. GitHub and external research reads remain future gateway
-work. Runtime must not expose direct shell, edit, patch, commit, push, provider
-call, MCP execution, OpenCode prompt send, process control, or direct GitHub
-mutation tools as Commander tools.
+runtime records, OpenCode session metadata, repository files, fixed read-only
+Git evidence, and six deferred runtime-owned GitHub evidence tools. The GitHub
+gateway accepts only exact configured repositories and fixed operation inputs,
+uses existing external-request audit/lifecycle ownership, and returns bounded
+untrusted evidence with `instruction_semantics=none`. External research remains
+future 9XB work. Runtime must not expose direct shell, edit, patch, commit,
+push, provider call, MCP execution, OpenCode prompt send, process control, or
+direct GitHub mutation tools as Commander tools.
+
+The GitHub gateway is capped per tool call at four requests, two pages, fifty
+items, and 8,000 normalized bytes, with one active gateway read. Every request
+has an existing external API audit outcome and consumes Commander tool budget.
+Exact commit metadata uses the patch-free Git object endpoint; pull-request
+file summaries use a fixed metadata-only GraphQL selection. Partial or malformed
+responses fail closed rather than fabricating absent fields as known facts.
+Exact-SHA checks and review evidence never substitute a moving branch head;
+truncated review-thread evidence reports unknown completeness.
 
 Operational memory is short/mid-term runtime history from typed projections.
 Research memory is long-term accepted evidence in `research.db`. Repository and
@@ -289,7 +301,8 @@ Follow-on sequencing:
 - 9W3B2B2A: recovery transaction and scripted persistence.
 - 9W3B2B2B: configured-provider live recovery execution.
 - 9W3C: public/operator investigation surface decision.
-- 9X: external GitHub and research read gateway.
+- 9XA: bounded GitHub read gateway.
+- 9XB: external research/MCP read gateway.
 - 9Y: evidence-backed proposal gate.
 - 9Z: GitHub governance intents and approval gate.
 

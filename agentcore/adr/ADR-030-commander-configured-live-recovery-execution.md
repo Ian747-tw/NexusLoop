@@ -143,3 +143,8 @@ The operation is registered before asynchronous preflight, composes operator
 cancellation with this ADR's lifecycle signal, and is removed from the active
 map only after settlement. Cancellation remains an operational request and does
 not add an event or weaken post-boundary uncertainty rules.
+
+Branch 9XA binds current GitHub descriptor, binding, allowlist, and transport
+policy identity into recovery compatibility. A loaded GitHub tool whose gateway
+is unavailable blocks recovery; changed gateway authority stales approval and
+requires a new preview rather than replaying any historical request.

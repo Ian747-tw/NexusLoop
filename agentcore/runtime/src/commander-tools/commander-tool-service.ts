@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
+import { COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS } from "../commander-agent/commander-github-tool-authority-registry"
+import { COMMANDER_GITHUB_READ_TOOL_IDS } from "./commander-github-read-types"
 import type { CommandAuthorityRisk } from "../authority/command-authority-types"
 import type { ContextBudgetService } from "../context/context-budget-service"
 import { redactText } from "../security/redaction"
@@ -214,6 +216,14 @@ export class CommanderToolService {
     let schemaViolation = 0
     let unsafe = 0
     for (const tool of tools) {
+      if (!tool || typeof tool !== "object") {
+        mark("unknown", "descriptor must be an object")
+        continue
+      }
+      if (typeof tool.tool_id !== "string" || typeof tool.namespace !== "string") {
+        mark("unknown", "descriptor must include string tool_id and namespace")
+        continue
+      }
       if (seen.has(tool.tool_id)) mark(tool.tool_id, "duplicate Commander tool_id")
       seen.add(tool.tool_id)
       if (!/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(tool.tool_id)) mark(tool.tool_id, "tool_id must be lowercase namespace-qualified identifier")
@@ -224,9 +234,12 @@ export class CommanderToolService {
         mark(tool.tool_id, "schema version is missing or unsupported")
       }
       if (tool.instruction_semantics !== "none") mark(tool.tool_id, "instruction_semantics must be none")
-      if (FORBIDDEN_PATTERNS.some((pattern) => pattern.test(tool.tool_id))) mark(tool.tool_id, "forbidden direct tool capability is exposed")
+      const isAllowlistedGithubRead = tool.namespace === "github_read" && COMMANDER_GITHUB_READ_TOOL_IDS.includes(tool.tool_id as typeof COMMANDER_GITHUB_READ_TOOL_IDS[number])
+      if (!isAllowlistedGithubRead && FORBIDDEN_PATTERNS.some((pattern) => pattern.test(tool.tool_id))) mark(tool.tool_id, "forbidden direct tool capability is exposed")
       if (tool.availability === "implemented_read_surface") {
-        const authority = tool.slash_command ? authorityFor(tool.slash_command) : undefined
+        const authority = tool.namespace === "github_read"
+          ? COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS.find((record) => record.authority_id === tool.authority_id)
+          : tool.slash_command ? authorityFor(tool.slash_command) : undefined
         if (!authority || !tool.authority_id || authority.authority_id !== tool.authority_id) {
           authorityMismatch += 1
           mark(tool.tool_id, "implemented descriptor must map to an exact authority record")
@@ -240,8 +253,24 @@ export class CommanderToolService {
             mark(tool.tool_id, "implemented descriptor runtime command must match authority record")
           }
           const allowGitProcess = isAllowedGitProcessDescriptor(tool, authority)
+          const allowGithubExternalRead = isAllowlistedGithubRead
+            && tool.side_effect_class === "external_read"
+            && tool.execution_backend === "runtime_service"
+            && tool.requires_network
+            && tool.requires_credentials
+            && tool.mutates_events
+            && authority.requires_run_lock === true
+            && authority.mutates_events === true
+            && authority.expected_event_kinds.length === 2
+            && authority.expected_event_kinds.includes("external_api_request_executed")
+            && authority.expected_event_kinds.includes("external_api_request_failed")
+          if (authority.mutates_events !== tool.mutates_events) {
+            authorityMismatch += 1
+            mark(tool.tool_id, "implemented descriptor event-mutation metadata must match authority record")
+          }
           for (const [field, expected] of Object.entries({ mutates_events: false, creates_external_process: false, calls_provider: false, requires_approval: false, requires_run_lock: false, requires_network: false, requires_credentials: false }) as Array<[keyof CommanderToolDescriptor, false]>) {
             if (field === "creates_external_process" && allowGitProcess) continue
+            if (allowGithubExternalRead && (field === "mutates_events" || field === "requires_network" || field === "requires_credentials" || field === "requires_run_lock")) continue
             if (tool[field] !== expected) {
               unsafe += 1
               mark(tool.tool_id, `implemented descriptor has unsafe ${field}`)

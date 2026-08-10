@@ -11,6 +11,7 @@ import { EventStore } from "../events/event-store"
 import { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
 import { ExternalApiRequestService } from "../external-api/api-request-service"
 import { FakeExternalApiTransport, FetchExternalApiTransport, type ExternalApiHostResolver, type ExternalApiTransport } from "../external-api/api-transport"
+import type { ExternalApiConnector } from "../external-api/api-connector-types"
 import { FakeOpenCodeAdapter } from "../opencode/fake-adapter"
 import { COMMAND_AUTHORITY_REGISTRY } from "../authority/command-authority-registry"
 import { COMMANDER_TOOL_REGISTRY } from "../commander-tools/commander-tool-registry"
@@ -23,6 +24,7 @@ import { ResearchMemoryService } from "../research-memory/research-memory-servic
 import { redactText } from "../security/redaction"
 import { CommanderOperationalMemorySearchService } from "../commander-tools/commander-operational-memory-search-service"
 import { CommanderRepoReadService } from "../commander-tools/commander-repo-read-service"
+import { COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS } from "./commander-github-tool-authority-registry"
 import {
   AiSdkCommanderModelStepAdapter,
   COMMANDER_BOUND_TOOL_IDS,
@@ -963,6 +965,15 @@ describe("Commander tool executor", () => {
     const registry = testBindingRegistry()
     expect(registry.validation_summary.tool_ids).toEqual([...COMMANDER_BOUND_TOOL_IDS])
     expect(registry.validation_summary.duplicate_tool_ids).toEqual([])
+  })
+
+  test("GitHub authority records declare only the exact external audit event mutation", () => {
+    expect(COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS).toHaveLength(6)
+    for (const authority of COMMANDER_GITHUB_TOOL_AUTHORITY_RECORDS) {
+      expect(authority).toMatchObject({ risk: "safe_read", gate: "external_api_runtime", mutates_events: true, calls_provider: false, requires_approval: false })
+      expect(authority.expected_event_kinds.slice().sort()).toEqual(["external_api_request_executed", "external_api_request_failed"])
+      expect(COMMANDER_TOOL_REGISTRY.find((tool) => tool.authority_id === authority.authority_id)).toMatchObject({ namespace: "github_read", mutates_events: true, calls_provider: false })
+    }
   })
 
   test("executor preflight blocks unknown, unbound, future, off-phase, and malformed calls before handlers", async () => {
@@ -9335,6 +9346,7 @@ describe("Commander in-memory investigation controller", () => {
 		      stop_reason: "adapter_not_configured",
 		      model_turn_count: 1,
 		      provider_request_count: 0,
+		      external_api_audit_events_appended: checkpoint!.external_api_audit_count,
 		      events_appended: false,
 		    })
 		    const approvalInput = {
@@ -9774,6 +9786,7 @@ describe("Commander in-memory investigation controller", () => {
     })
 
     expect(result).toMatchObject({ status: "completed", execution_transport: "injected_scripted_adapter", provider_called: false, network_called: false, external_api_audit_events_appended: 0, terminal_event_count: 1, pending_boundary_disposition: "not_applicable" })
+    expect(result.controller_result?.external_api_audit_events_appended).toBe(1)
     expect(result.controller_result?.provider_audit).toMatchObject({ provider_request_count: 2, external_api_audit_event_count: 1, all_provider_requests_audited: false })
     expect(adapter.request_summaries).toHaveLength(1)
     expect((await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("external_api_request_")).length).toBe(auditEventsBefore)
@@ -10158,6 +10171,306 @@ describe("Commander in-memory investigation controller", () => {
     expect(secondModel).toBeGreaterThan(checkpoint)
     expect(kinds[kinds.length - 1]).toBe("runtime_commander_investigation_finished")
     expect(JSON.stringify(events)).not.toContain("configured recovery after safe read")
+  })
+
+  test("configured durable Commander investigation discovers loads and executes bounded GitHub evidence", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-configured-github-"))
+    await writeApprovedSpec(projectDir)
+    const toolResponse = (id: string, name: string, args: Record<string, unknown>) => JSON.stringify({
+      id: `chatcmpl_${id}`,
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name, arguments: JSON.stringify(args) } }] } }],
+    })
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: toolResponse("call_load_github", "commander__tool_get", { tool_id: "github.repository_get" }) },
+      { status_code: 200, body: toolResponse("call_github_repo", "github__repository_get", { repository: "ian747-tw/nexusloop" }) },
+      { status_code: 200, body: JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: "untrusted repository evidence", default_branch: "main", visibility: "public", archived: false, private: false }) },
+      { status_code: 200, body: chatCompletionText("configured investigation completed after bounded GitHub evidence") },
+    ])
+    const githubConnector = { connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.github.test", allowed_hosts: ["api.github.test"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [connector("openai-test", "https://api.example.test/v1"), githubConnector],
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      externalApiRequestId: (() => { let index = 0; return () => `api_github_configured_${++index}` })(),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const result = await server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_configured_github", requested_by: "github_gateway_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    expect(result).toMatchObject({ status: "final", provider_request_count: 3, tool_call_count: 2, external_api_audit_events_appended: 4, events_appended: true })
+    expect(result.loaded_tool_ids).toContain("github.repository_get")
+    expect(transport.requests).toHaveLength(4)
+    expect(transport.requests[2]).toMatchObject({ method: "GET", url: "http://api.github.test/repos/ian747-tw/nexusloop" })
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(4)
+    const checkpoints = events.filter((event) => event.kind === "runtime_commander_investigation_checkpointed") as Array<{ checkpoint: { external_api_audit_count: number } }>
+    expect(checkpoints).toHaveLength(3)
+    expect(checkpoints.map((event) => event.checkpoint.external_api_audit_count)).toEqual([1, 3, 4])
+    const terminal = events.find((event) => event.kind === "runtime_commander_investigation_finished") as { terminal?: { external_api_audit_event_count?: number } } | undefined
+    expect(terminal?.terminal?.external_api_audit_event_count).toBe(4)
+    expect(JSON.stringify(events)).not.toContain("untrusted repository evidence")
+    expect(JSON.stringify(events)).not.toContain("configured investigation completed")
+  })
+
+  test("configured recovery reports GitHub tool audits without weakening provider audit completeness", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-recovery-github-audit-"))
+    await writeApprovedSpec(projectDir)
+    const toolResponse = JSON.stringify({
+      id: "chatcmpl_recovery_github",
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{
+        index: 0,
+        finish_reason: "tool_calls",
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_recovery_github", type: "function", function: { name: "github__repository_get", arguments: JSON.stringify({ repository: "ian747-tw/nexusloop" }) } }],
+        },
+      }],
+    })
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: toolResponse },
+      { status_code: 200, body: JSON.stringify({ full_name: "Ian747-tw/NexusLoop", name: "NexusLoop", default_branch: "main", visibility: "public", archived: false, private: false }) },
+      { status_code: 200, body: chatCompletionText("configured recovery completed after GitHub evidence") },
+    ])
+    const server = configuredProviderRuntimeServer(projectDir, {
+      transport,
+      githubGateway: {
+        connector: githubTestConnector(),
+        config: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      },
+    })
+    servers.push({ stop: () => server.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(server, "inv_configured_recovery_github", ["github.repository_get"])
+
+    const result = await server.runCommanderInvestigationRecoveryConfigured(authority.transaction_input)
+
+    expect(result).toMatchObject({ status: "completed", provider_called: true, network_called: true, external_api_audit_events_appended: 3, model_step_event_count: 2, checkpoint_event_count: 1, terminal_event_count: 1 })
+    expect(result.controller_result).toMatchObject({ provider_request_count: 2, tool_call_count: 1, external_api_audit_events_appended: 3 })
+    expect(result.controller_result?.provider_audit).toMatchObject({ provider_request_count: 2, external_api_audit_event_count: 2, all_provider_requests_audited: true })
+    expect(transport.requests).toHaveLength(3)
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_executed")).toHaveLength(3)
+    const checkpoint = events.find((event) => event.kind === "runtime_commander_investigation_checkpointed" && event.investigation_id === authority.investigation_id) as { checkpoint?: { external_api_audit_count?: number } } | undefined
+    expect(checkpoint?.checkpoint?.external_api_audit_count).toBe(2)
+  })
+
+  test("configured GitHub read is aborted and drained before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let requestIndex = 0
+    let githubDispatched = false
+    const urls: string[] = []
+    const toolResponse = (id: string, name: string, args: Record<string, unknown>) => JSON.stringify({
+      id: `chatcmpl_${id}`,
+      object: "chat.completion",
+      created: 1784160000,
+      model: "fixture-model",
+      choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name, arguments: JSON.stringify(args) } }] } }],
+    })
+    const transport: ExternalApiTransport = {
+      async request(input) {
+        requestIndex += 1
+        urls.push(input.url)
+        if (requestIndex === 1) return { status_code: 200, body: toolResponse("call_load_github_shutdown", "commander__tool_get", { tool_id: "github.repository_get" }) }
+        if (requestIndex === 2) return { status_code: 200, body: toolResponse("call_github_shutdown", "github__repository_get", { repository: "ian747-tw/nexusloop" }) }
+        githubDispatched = true
+        return new Promise((_, reject) => {
+          const abort = () => reject(new Error("external API request cancelled"))
+          if (input.abort_signal?.aborted) abort()
+          else input.abort_signal?.addEventListener("abort", abort, { once: true })
+        })
+      },
+    }
+    const githubConnector = { connector_id: "github-read-test", title: "GitHub test", base_url: "http://api.github.test", allowed_hosts: ["api.github.test"], allowed_methods: ["GET", "POST"] as ("GET" | "POST")[], timeout_ms: 5000, max_response_bytes: 128000, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", allow_local_http: true }
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [connector("openai-test", "https://api.example.test/v1"), githubConnector],
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+      externalApiRequestId: (() => { let index = 0; return () => `api_github_shutdown_${++index}` })(),
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+    const execution = server.runCommanderInvestigationDurable(baseInvestigation({ investigation_id: "inv_github_shutdown", requested_by: "github_shutdown_test", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model", tool_protocol: "native" }))
+    await waitFor(() => githubDispatched)
+    const shutdown = server.shutdown("abort bounded GitHub read")
+    const beforeSettlement = await server.eventStore.readAll()
+    expect(beforeSettlement.map((event) => event.kind)).not.toContain("runtime_shutdown")
+    const result = await execution
+    await shutdown
+
+    expect(result).toMatchObject({ status: "cancelled", stop_reason: "caller_cancelled", tool_call_count: 2, external_api_audit_events_appended: 3, events_appended: true })
+    expect(urls).toHaveLength(3)
+    expect(urls[2]).toBe("http://api.github.test/repos/ian747-tw/nexusloop")
+    const events = await server.eventStore.readAll()
+    const kinds = events.map((event) => event.kind)
+    expect(kinds.filter((kind) => kind === "external_api_request_executed")).toHaveLength(2)
+    expect(kinds.filter((kind) => kind === "external_api_request_failed")).toHaveLength(1)
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    expect(JSON.stringify(events)).not.toContain("github_shutdown_test response")
+  })
+
+  test("injected in-memory GitHub investigation is lifecycle-owned and drained before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-injected-github-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let dispatched!: () => void
+    let aborted!: () => void
+    let release!: () => void
+    const dispatchObserved = new Promise<void>((resolve) => { dispatched = resolve })
+    const abortObserved = new Promise<void>((resolve) => { aborted = resolve })
+    const releaseTransport = new Promise<void>((resolve) => { release = resolve })
+    const transport: ExternalApiTransport = {
+      async request(input) {
+        dispatched()
+        await new Promise<void>((resolve) => {
+          const observe = () => { aborted(); resolve() }
+          if (input.abort_signal?.aborted) observe()
+          else input.abort_signal?.addEventListener("abort", observe, { once: true })
+        })
+        await releaseTransport
+        throw new Error("external API request cancelled after injected investigation shutdown")
+      },
+    }
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([
+        { status: "tool_call", tool_calls: [toolCall("load_injected_github", "commander.tool_get", { tool_id: "github.repository_get" })] },
+        { status: "tool_call", tool_calls: [toolCall("read_injected_github", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+        { status: "final", text: "must not run after shutdown" },
+      ]),
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [githubTestConnector()],
+      externalApiTransport: transport,
+      externalApiRequestId: () => "api_injected_github_shutdown",
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const execution = server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_injected_github_shutdown" }))
+    await dispatchObserved
+    const shutdown = server.shutdown("abort injected GitHub investigation")
+    await abortObserved
+    expect((await server.eventStore.readAll()).map((event) => event.kind)).not.toContain("runtime_shutdown")
+
+    release()
+    await expect(execution).resolves.toMatchObject({ status: "cancelled", tool_call_count: 2, external_api_audit_events_appended: 1 })
+    await shutdown
+    const events = await server.eventStore.readAll()
+    expect(events.filter((event) => event.kind === "external_api_request_failed")).toHaveLength(1)
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+  })
+
+  test("repeated identical GitHub evidence is not disguised by fresh audit request IDs", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-repeat-"))
+    await writeApprovedSpec(projectDir)
+    const adapter = new ScriptedCommanderModelStepAdapter([
+      { status: "tool_call", tool_calls: [toolCall("load_repeat_github", "commander.tool_get", { tool_id: "github.repository_get" })] },
+      { status: "tool_call", tool_calls: [toolCall("repeat_github_1", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+      { status: "tool_call", tool_calls: [toolCall("repeat_github_2", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+      { status: "tool_call", tool_calls: [toolCall("repeat_github_3", "github.repository_get", { repository: "ian747-tw/nexusloop" })] },
+    ])
+    const body = JSON.stringify({ full_name: "ian747-tw/nexusloop", name: "NexusLoop", description: "identical bounded evidence", default_branch: "main", visibility: "public", archived: false, private: false })
+    const transport = new FakeExternalApiTransport(Array.from({ length: 3 }, () => ({ status_code: 200, body })))
+    let requestIndex = 0
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderModelStepAdapter: adapter,
+      commanderGithubGatewayConfig: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      externalApiConnectors: [githubTestConnector()],
+      externalApiTransport: transport,
+      externalApiRequestId: () => `api_repeat_github_${++requestIndex}`,
+    })
+    servers.push({ stop: () => server.shutdown() })
+    await server.start()
+
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_repeat_github", max_consecutive_no_progress_turns: 4 }))
+
+    expect(result).toMatchObject({ status: "no_progress", stop_reason: "repeated_identical_call", tool_call_count: 4, external_api_audit_events_appended: 3 })
+    expect(transport.requests).toHaveLength(3)
+    const audits = (await server.eventStore.readAll()).filter((event) => String(event.kind).startsWith("external_api_request_"))
+    expect(audits.map((event) => event.request_id)).toEqual(["api_repeat_github_1", "api_repeat_github_2", "api_repeat_github_3"])
+  })
+
+  test("GitHub recovery authority becomes stale on policy drift and blocks when the gateway disappears", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9xa-github-recovery-authority-"))
+    await writeApprovedSpec(projectDir)
+    const original = configuredProviderRuntimeServer(projectDir, {
+      githubGateway: {
+        connector: githubTestConnector(),
+        config: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop"] },
+      },
+    })
+    servers.push({ stop: () => original.shutdown() })
+    const authority = await prepareApprovedConfiguredRecovery(original, "inv_github_recovery_authority", ["github.repository_get"])
+    const unrelated = await prepareApprovedConfiguredRecovery(original, "inv_non_github_recovery_authority", ["commander.tool_search"])
+    expect(authority.recovery.approval_state).toBe("current")
+    expect(unrelated.recovery.approval_state).toBe("current")
+    expect(unrelated.recovery.tool_compatibility.github_gateway_policy_hash).toBeUndefined()
+    expect(unrelated.recovery.provider_compatibility.execution_envelope?.github_gateway_policy_hash).toBeUndefined()
+    const originalPolicyHash = authority.recovery.tool_compatibility.github_gateway_policy_hash
+    const githubDescriptor = COMMANDER_TOOL_REGISTRY.find((tool) => tool.tool_id === "github.repository_get")!
+    const originalOutputSchema = structuredClone(githubDescriptor.output_schema!)
+    const originalSchemaMetadata = structuredClone(githubDescriptor.schema_metadata)
+    try {
+      githubDescriptor.output_schema!.properties.result.description = "Changed GitHub repository evidence output contract"
+      const outputBytes = Buffer.byteLength(JSON.stringify(githubDescriptor.output_schema))
+      githubDescriptor.schema_metadata.output_schema_hash = createHash("sha256").update(JSON.stringify(githubDescriptor.output_schema)).digest("hex")
+      githubDescriptor.schema_metadata.output_schema_bytes = outputBytes
+      githubDescriptor.schema_metadata.estimated_schema_tokens = Math.ceil((githubDescriptor.schema_metadata.input_schema_bytes + outputBytes) / 4)
+      const outputContractDrift = await original.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+      expect(outputContractDrift.approval_state).toBe("stale")
+      expect(outputContractDrift.tool_compatibility.compatible).toBe(false)
+      expect(outputContractDrift.tool_compatibility.blockers.join(" ")).toContain("schema hash changed")
+      expect(outputContractDrift.recovery_plan_hash).not.toBe(authority.recovery.recovery_plan_hash)
+    } finally {
+      githubDescriptor.output_schema = originalOutputSchema
+      githubDescriptor.schema_metadata = originalSchemaMetadata
+    }
+    const restoredOutputContract = await original.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(restoredOutputContract.approval_state).toBe("current")
+    expect(restoredOutputContract.recovery_plan_hash).toBe(authority.recovery.recovery_plan_hash)
+    await original.shutdown("change bounded GitHub authority")
+
+    const changed = configuredProviderRuntimeServer(projectDir, {
+      githubGateway: {
+        connector: githubTestConnector(),
+        config: { connector_id: "github-read-test", allowed_repositories: ["ian747-tw/nexusloop", "openai/openai"] },
+      },
+    })
+    const stale = await changed.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(stale.projection_status).toBe("ready")
+    expect(stale.approval_state).toBe("stale")
+    expect(stale.recovery_plan_hash).not.toBe(authority.recovery.recovery_plan_hash)
+    expect(stale.execution_preparation_hash).toBe(authority.recovery.execution_preparation_hash)
+    expect(stale.tool_compatibility.github_gateway_policy_hash).not.toBe(originalPolicyHash)
+    const unrelatedAfterDrift = await changed.previewCommanderInvestigationRecovery({ investigation_id: unrelated.investigation_id })
+    expect(unrelatedAfterDrift.approval_state).toBe("current")
+    expect(unrelatedAfterDrift.recovery_plan_hash).toBe(unrelated.recovery.recovery_plan_hash)
+
+    const unavailable = configuredProviderRuntimeServer(projectDir)
+    const blocked = await unavailable.previewCommanderInvestigationRecovery({ investigation_id: authority.investigation_id })
+    expect(blocked.projection_status).toBe("ready")
+    expect(blocked.status).toBe("blocked")
+    expect(blocked.approval_state).toBe("stale")
+    expect(blocked.blockers.join(" ")).toContain("bounded gateway is not ready")
+    expect(blocked.tool_compatibility.compatible).toBe(false)
+    const unrelatedUnavailable = await unavailable.previewCommanderInvestigationRecovery({ investigation_id: unrelated.investigation_id })
+    expect(unrelatedUnavailable.approval_state).toBe("current")
+    expect(unrelatedUnavailable.blockers.join(" ")).not.toContain("bounded gateway")
   })
 
   test("configured recovery shutdown aborts and drains audit and journal work before runtime shutdown", async () => {
@@ -12281,6 +12594,21 @@ function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: bo
   }
 }
 
+function githubTestConnector(): ExternalApiConnector {
+  return {
+    connector_id: "github-read-test",
+    title: "GitHub test connector",
+    base_url: "http://api.github.test",
+    allowed_hosts: ["api.github.test"],
+    allowed_methods: ["GET", "POST"],
+    timeout_ms: 5000,
+    max_response_bytes: 128_000,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+    allow_local_http: true,
+  }
+}
+
 function connectorConfig(overrides: Partial<ReturnType<typeof validateCommanderConnectorModelTransportConfig>> = {}) {
   return validateCommanderConnectorModelTransportConfig({
     transport_kind: "openai_compatible_connector",
@@ -12345,13 +12673,24 @@ function providerLaunchEnv(baseUrl: string) {
   }
 }
 
-function configuredProviderRuntimeServer(projectDir: string, options: { adapter?: FakeOpenCodeAdapter; transport?: ExternalApiTransport; externalApiEnv?: Record<string, string | undefined>; externalApiConnectorRegistry?: ExternalApiConnectorRegistry; externalApiResolveHostAddresses?: ExternalApiHostResolver } = {}) {
+function configuredProviderRuntimeServer(projectDir: string, options: {
+  adapter?: FakeOpenCodeAdapter
+  transport?: ExternalApiTransport
+  externalApiEnv?: Record<string, string | undefined>
+  externalApiConnectorRegistry?: ExternalApiConnectorRegistry
+  externalApiResolveHostAddresses?: ExternalApiHostResolver
+  githubGateway?: {
+    connector: ExternalApiConnector
+    config: { connector_id: string; allowed_repositories: string[]; timeout_ms?: number }
+  }
+} = {}) {
   return new RuntimeServer({
     projectDir,
     adapter: options.adapter ?? new FakeOpenCodeAdapter(),
     commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig()),
     externalApiConnectorRegistry: options.externalApiConnectorRegistry,
-    externalApiConnectors: options.externalApiConnectorRegistry ? undefined : [connector("openai-test", "https://api.example.test/v1")],
+    commanderGithubGatewayConfig: options.githubGateway?.config,
+    externalApiConnectors: options.externalApiConnectorRegistry ? undefined : [connector("openai-test", "https://api.example.test/v1"), ...options.githubGateway ? [options.githubGateway.connector] : []],
     externalApiTransport: options.transport ?? new FakeExternalApiTransport([{ status_code: 200, body: chatCompletionText("configured final") }]),
     externalApiResolveHostAddresses: options.externalApiResolveHostAddresses,
     externalApiEnv: options.externalApiEnv ?? { NXL_TEST_MODEL_KEY: "real-provider-key" },
