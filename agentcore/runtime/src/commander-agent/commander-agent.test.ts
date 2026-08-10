@@ -266,6 +266,17 @@ describe("Commander AI SDK model adapter", () => {
     expect(serverToolResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
     expect(serverToolResult.error).toContain("forbidden or unsupported content block")
     expect(JSON.stringify(serverToolResult)).not.toContain("forbidden collision")
+
+    const pauseTurnTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
+      ...JSON.parse(anthropicMessageText("server-side work remains pending")),
+      stop_reason: "pause_turn",
+    }) }])
+    const pauseTurnAdapter = connectorBackedAdapter(projectDir, pauseTurnTransport, "api_anthropic_pause_turn", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    const pauseTurnResult = await pauseTurnAdapter.executeOneStep(request)
+    expect(pauseTurnTransport.requests).toHaveLength(1)
+    expect(pauseTurnResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(pauseTurnResult.error).toContain("stop reason is forbidden or unsupported")
+    expect(JSON.stringify(pauseTurnResult)).not.toContain("server-side work remains pending")
   })
 
   test("Anthropic connector retries zero times and synthesizes bounded native error envelopes", async () => {

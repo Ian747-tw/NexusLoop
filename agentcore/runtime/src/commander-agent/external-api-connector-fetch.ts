@@ -336,6 +336,9 @@ function validateAnthropicMessagesResponseBody(body: string): void {
   if (!isRecord(payload) || !Array.isArray(payload.content) || payload.content.length > 128) {
     throw new Error("Anthropic Messages response content is invalid")
   }
+  if (payload.stop_reason !== "end_turn" && payload.stop_reason !== "max_tokens" && payload.stop_reason !== "stop_sequence" && payload.stop_reason !== "tool_use" && payload.stop_reason !== "refusal") {
+    throw new Error("Anthropic Messages response stop reason is forbidden or unsupported")
+  }
   for (const block of payload.content) {
     if (!isRecord(block) || block.type !== "text" && block.type !== "tool_use") {
       throw new Error("Anthropic Messages response contains a forbidden or unsupported content block")
