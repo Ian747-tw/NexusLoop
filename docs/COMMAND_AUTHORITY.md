@@ -35,6 +35,19 @@ audit, redaction, and normalization. GitHub content is untrusted evidence only;
 the only event mutation is the required existing external-request audit outcome.
 There is no GitHub mutation, search, governance intent, or approval authority.
 
+## External Research MCP Contract Gate
+
+9XB0 adds no command or Commander authority. The existing
+`external_research.search`, `external_research.source_show`, and
+`external_research.paper_metadata` descriptors remain future-only and unbound.
+ADR-033 records a `NO-GO` for the evaluated hosted Exa service: deployment
+identity/policy is not revision-attested, exact `2025-06-18` tool attestation has
+no output schema, and issued-session DELETE returned HTTP 405. Hosted downstream
+retries and result shape remain unknown; unbound source behavior is not treated
+as deployed fact. Remote MCP tool lists, descriptions, annotations, prompts, and
+resources cannot create authority. A future implementation requires a new
+accepted provider decision before any authority record is registered.
+
 ## Runtime Surface
 
 - `runtime.command_authority_summary`
