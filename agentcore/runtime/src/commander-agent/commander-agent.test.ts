@@ -177,6 +177,23 @@ describe("Commander AI SDK model adapter", () => {
     expect(metadata.request_attempt_count()).toBe(9)
     expect(metadata.transport_dispatch_count()).toBe(1)
     expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+
+    const mismatchedTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ ...JSON.parse(anthropicMessageText("context must not become authority")), model: "claude-context-only" }) }])
+    const mismatchedRequestService = new ExternalApiRequestService({
+      registry,
+      transport: mismatchedTransport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "mismatched-events.jsonl")),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_context_mismatch",
+    })
+    const { fetch: mismatchedFetch } = createExternalApiConnectorFetch({
+      registry,
+      requestService: mismatchedRequestService,
+      config,
+      context: { commander_model_request_id: "req_anthropic_context_mismatch", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-context-only" },
+    })
+    await expect(mismatchedFetch(expected, { method: "POST", headers, body: validBody })).rejects.toThrow("response model does not match configured authority")
+    expect(mismatchedTransport.requests).toHaveLength(1)
   })
 
   test("connector-backed native Anthropic normalizes final text tool use continuation usage and stop reasons", async () => {

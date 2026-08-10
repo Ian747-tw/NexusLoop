@@ -62,7 +62,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
       on_audit_persisted: (record) => auditRecords.push(record),
       on_transport_dispatched: () => { transportDispatches += 1 },
     })
-    return new Response(providerResponseBody(result, options.config.transport_kind, options.context.model_id), {
+    return new Response(providerResponseBody(result, options.config.transport_kind, options.config.model_id), {
       status: result.status_code ?? 500,
       headers: { "Content-Type": "application/json" },
     })
