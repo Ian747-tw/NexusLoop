@@ -302,7 +302,10 @@ Follow-on sequencing:
 - 9W3B2B2B: configured-provider live recovery execution.
 - 9W3C: public/operator investigation surface decision.
 - 9XA: bounded GitHub read gateway.
-- 9XB: external research/MCP read gateway.
+- 9XB0: external research/MCP contract and provider-fit gate (`NO-GO`; no
+  runtime activation).
+- 9XB1: first exact external-research descriptor only after provider
+  requalification.
 - 9Y: evidence-backed proposal gate.
 - 9Z: GitHub governance intents and approval gate.
 
@@ -456,3 +459,5 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-029-commander-recovery-transaction.md`
 - `agentcore/adr/ADR-030-commander-configured-live-recovery-execution.md`
 - `agentcore/adr/ADR-031-commander-recovery-operator-controls.md`
+- `agentcore/adr/ADR-032-commander-bounded-github-read-gateway.md`
+- `agentcore/adr/ADR-033-commander-external-research-mcp-gateway.md`

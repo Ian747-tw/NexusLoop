@@ -47,10 +47,26 @@ query strings, cookies, raw response headers, session IDs in evidence/errors,
 and cleanup against an attacker-controlled origin.
 
 Controls: fixed HTTPS origin and path; no caller URL/header fields; existing DNS
-and redirect controls; runtime-only credential injection; allowlisted internal
-response headers (`content-type`, `mcp-session-id` only); ephemeral validated
+and redirect controls plus connection pinning to one validated public address;
+original-host SNI/certificate/Host verification; no native re-resolution or
+address fallback; one fresh HTTP/1.1 connection per request with no pooling,
+keep-alive, HTTP/2/3, coalescing, or alternate-service reuse; runtime-only
+credential injection; allowlisted internal response headers (`content-type`,
+`mcp-session-id` only); ephemeral validated
 session ID; same-origin audited cleanup; redaction before errors, hashing, or
 publication.
+
+A valid issued session is observed synchronously through one internal
+allowlisted-header callback at response-header receipt, before any body read or
+audit persistence. Body timeout/oversize/decode failure and audit append failure
+therefore cannot skip cleanup. The callback is memory-only and never becomes
+result, error, audit, journal, or recovery state; malformed session headers are
+not reflected.
+
+The runtime injects exact JSON content type and JSON/SSE Accept headers on POST,
+then exact MCP protocol version and any issued session ID on every subsequent
+request. Missing, duplicate, caller-provided, premature-session, or overridden
+headers fail before transport or result publication.
 
 ### Audit Gaps And False Accounting
 
@@ -61,8 +77,18 @@ MCP audit being described as all downstream work.
 Controls: every NexusLoop HTTP attempt passes through
 `ExternalApiRequestService`; client retry count zero; request count includes all
 protocol messages and cleanup; evidence is withheld until audits are durable;
-results explicitly state that provider-internal calls are unobserved. A provider
-with hidden retries is rejected.
+results explicitly state that provider-internal calls are unobserved. Attempted
+request-service calls, transport entry, pinned TCP/TLS connection attempt,
+verified HTTP dispatch, and confirmed durable audits remain separate bounded
+counters. `network_called` changes immediately before opening the pinned
+connection; HTTP dispatch changes only after TLS verification. Transport entry
+cannot fabricate network activity, TLS failure cannot be rewritten as no
+network, and post-dispatch audit failure cannot erase either fact. The failed call
+charges the attempt and publishes no evidence. The executor carries the attempted count
+separately from durable audits even when it omits a failed handler result, and
+the controller charges `max(1, attempted_count)` for every invoked MCP tool
+before another model turn. A zero-request preflight therefore still consumes
+one tool-call slot. A provider with hidden retries is rejected.
 
 ### Protocol Expansion
 
@@ -73,7 +99,11 @@ or unexpected content types expanding authority after initialization.
 Controls: pin one protocol revision; support only initialize, initialized,
 single-page attestation, one tool call, and cleanup; accept POST-scoped JSON or
 bounded SSE only; reject every unexpected method/capability/message/content
-type; no GET stream or resumption.
+type; no GET stream or resumption. The initialize request has fixed client
+identity `nexusloop-commander-external-research@1.0.0`, empty client
+capabilities, no SDK-added fields, and a policy-bound canonical request shape.
+An initialize attestation rejection blocks all later application messages but
+still permits the one mandatory audited DELETE when a session was issued.
 
 ### Evidence Injection And False Completeness
 
@@ -94,9 +124,35 @@ message, cleanup writes after shutdown, or uncertain transport becomes known
 success.
 
 Controls: register RuntimeServer ownership before the first await; combine
-caller and lifecycle signals; check abort before and between each message;
-drain transport and audit persistence before `runtime_shutdown`; cancelled,
-timed-out, disconnected, or unaudited calls publish no successful evidence.
+caller and lifecycle signals for application messages; check abort before and
+between each application message; after session issuance, use a separate
+bounded RuntimeServer-owned cleanup signal so caller cancellation cannot skip
+DELETE. Reserve the last 2,000 ms of one 15,000 ms monotonic invocation ceiling
+for cleanup and its audit; application protocol work ends after 13,000 ms, and
+cleanup also obeys any earlier shutdown-drain deadline. Start no network request
+after the applicable deadline; drain cleanup, transport, and audit persistence
+before `runtime_shutdown`; cancelled, timed-out, disconnected, or unaudited
+calls publish no successful evidence.
+
+The gateway hard deadline is 15 seconds. Its descriptor/executor envelope is 17
+seconds solely so caller cancellation or the exact-deadline race can settle or
+perform a bounded ownership handoff while preserving the observed accounting
+ledger. A settled handler returns final facts. If an already-started cleanup or
+audit boundary remains unresolved at 17 seconds, the executor returns a
+non-success `runtime_owned_unresolved` lower-bound snapshot only after the live
+promise remains registered in RuntimeServer's exact
+`activeExternalResearchReadSettlements` drain set, where it was placed before
+the gateway's first await. The controller halts and
+publishes no evidence. No external request gains authority in the extra window;
+a drain timeout retains the run lock and prevents `runtime_shutdown`.
+
+The exact external-research binding returns a synchronous owned-execution handle
+before the executor awaits anything: a result promise, the RuntimeServer-owned
+settlement promise, and a bounded side-effect-free ledger snapshot callback.
+Descriptor metadata cannot select this path. The callback makes the 17-second
+handoff implementable without waiting for an unresolved result. Audit
+`persistence_uncertain` and settlement `settled` are mutually incompatible;
+ambiguity keeps the ownership entry and run-lock fence until reconciled.
 
 ### Recovery Replay Or Authority Drift
 
@@ -111,7 +167,7 @@ result replay; `resume_supported=false`.
 
 ## Evaluated Provider-Specific Findings
 
-At Exa source revision
+The following are source-only findings at unbound Exa revision
 [`394f9210ed16d3e25d328e1e6db285824caedc04`](https://github.com/exa-labs/exa-mcp-server/tree/394f9210ed16d3e25d328e1e6db285824caedc04):
 
 - `web_search_exa` and `web_fetch_exa` are enabled by default; the server also
@@ -125,14 +181,22 @@ At Exa source revision
 - optional `agent_run` supports retained asynchronous runs and continuation;
   it is forbidden even though the fixed query can omit it.
 
-The hosted deployment probe on 2026-08-10 negotiated protocol `2025-03-26`,
-returned POST-scoped `text/event-stream`, issued `Mcp-Session-Id`, advertised
-tool/prompt/resource list-change capabilities, and reported server version
-`3.2.1`. This differs from the inspected source's `3.4.0` identity and proves
-that source revision cannot be inferred from hosted server metadata.
+These findings motivate attestation requirements but do not describe the hosted
+deployment because hosted `3.2.1` is not bound to source `3.4.0`.
+
+The superseding hosted probe on 2026-08-10 requested and negotiated exact
+`2025-06-18`, returned POST-scoped `text/event-stream`, issued
+`Mcp-Session-Id`, advertised tools/prompts/resources capability families,
+set `tools.listChanged=true`, attested only `web_search_exa`, and supplied no
+output schema. Same-session DELETE returned HTTP 405. A production client would
+reject the initialize capability shape before sending another protocol message;
+the fit probe continued only to collect bounded evidence. No research tool was
+called, so hosted result shape, downstream retry behavior, rate limits,
+telemetry, and retained-session policy remain unknown. A prior `2025-03-26` echo
+is not treated as a maximum-version test.
 
 ## Residual Risk Decision
 
 The residual risks are authority blockers, not warnings. Hosted Exa cannot be
-approved for 9XB1 until deployment identity, structured output, and downstream
-retry visibility are resolved. Outcome: `NO-GO`.
+approved for 9XB1 until deployment identity/policy, structured output, session
+cleanup, and downstream visibility are resolved. Outcome: `NO-GO`.

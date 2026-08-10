@@ -12,6 +12,14 @@ was identified from repository evidence, and marketplace sampling is forbidden.
 No 9XB1 descriptor, binding, authority record, or runtime path is approved by
 this decision.
 
+The current repository also lacks a production-faithful real-CLI fixture:
+`allow_local_http` permits loopback by relaxing HTTPS/private-address policy and
+therefore cannot validate this gateway contract. Provider requalification must
+include a fixed deterministic HTTPS fixture origin that passes the same
+certificate, public-address, origin, header, audit, and lifecycle checks without
+real credentials or live mutable evidence. Until then, E2E activation is also
+NO-GO.
+
 ## Evidence Basis
 
 Evidence was collected on 2026-08-10 from:
@@ -26,14 +34,19 @@ Evidence was collected on 2026-08-10 from:
   [search](https://github.com/exa-labs/exa-mcp-server/blob/394f9210ed16d3e25d328e1e6db285824caedc04/src/tools/webSearch.ts),
   [fetch](https://github.com/exa-labs/exa-mcp-server/blob/394f9210ed16d3e25d328e1e6db285824caedc04/src/tools/webFetch.ts), and
   [retry behavior](https://github.com/exa-labs/exa-mcp-server/blob/394f9210ed16d3e25d328e1e6db285824caedc04/src/utils/errorHandler.ts)
-- a bounded anonymous initialize/initialized/tools-list probe against the
-  documented hosted endpoint; no research tool was called
+- bounded anonymous initialize/initialized/tools-list probes against the
+  documented hosted endpoint, including an exact `2025-06-18` request; no
+  research tool was called
 - the official MCP
-  [2025-03-26 Streamable HTTP specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
+  [2025-03-26 Streamable HTTP specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports),
+  [2025-03-26 tool contract](https://modelcontextprotocol.io/specification/2025-03-26/server/tools),
+  and [2025-06-18 structured tool contract](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 
 The source revision was the official `main` head at inspection time. It declares
 `exa-mcp-server` version `3.4.0`, resolves `@modelcontextprotocol/sdk` to
-`1.26.0`, and uses `mcp-handler` `1.0.4`.
+`1.26.0`, and uses `mcp-handler` `1.0.4`. It is evidence about one inspectable
+candidate implementation only. The hosted deployment does not attest that
+revision, so source-only behavior below is not attributed to hosted Exa.
 
 ## Hosted Exa Candidate
 
@@ -55,29 +68,33 @@ names, login flags, API keys, source identifiers, or arbitrary query fields.
 
 ### Protocol And Session Probe
 
-The sanitized probe sequence was:
+The superseding sanitized probe sequence was:
 
-1. POST `initialize` with protocol `2025-03-26`.
+1. POST `initialize` requesting exact protocol `2025-06-18`.
 2. POST `notifications/initialized` with the returned ephemeral session header.
 3. POST one `tools/list` request.
+4. DELETE the same session using the negotiated protocol and session header.
 
 Observed facts:
 
 ```text
 initialize status: 200
 initialize content-type: text/event-stream
-negotiated protocol: 2025-03-26
+negotiated protocol: 2025-06-18
 Mcp-Session-Id present: yes
 reported server name: exa-search-server
 reported server version: 3.2.1
-server capabilities: tools.listChanged, prompts.listChanged, resources.listChanged
+server capabilities: tools.listChanged=true, prompts.listChanged=true,
+  resources.listChanged=true
 initialized status: 202
 tools/list status: 200
 tools/list content-type: text/event-stream
 attested tools under fixed query: web_search_exa
 input schema present: yes
 output schema present: no
-task support: forbidden
+next cursor present: no
+session DELETE status: 405
+research tool called: no
 ```
 
 The inspected source advertises version `3.4.0`, but the hosted service reported
@@ -85,17 +102,21 @@ The inspected source advertises version `3.4.0`, but the hosted service reported
 digest. A server-version string alone is insufficient because it does not bind
 the deployed schema, handler code, dependencies, or downstream policy.
 
-Only protocol `2025-03-26` was positively verified. This contract does not infer
-support for another revision from SDK source or current MCP documentation.
+Hosted Exa therefore supports exact protocol `2025-06-18`, but its attested
+`web_search_exa` tool still supplies no `outputSchema`. Protocol support alone
+does not prove a provider-specific structured result. A prior probe requested
+`2025-03-26` and received that supported version back; that observation did not
+test the server's maximum supported revision and is not used as a NO-GO reason.
 
-The hosted source issues `Mcp-Session-Id`, exposes it in CORS headers, stores
-bounded client metadata for up to 24 hours when Redis is configured, and exports
-GET, POST, and DELETE handlers. A compliant 2025-03-26 session client therefore
-needs ephemeral session handling and same-origin DELETE termination.
+The hosted endpoint issued `Mcp-Session-Id`, but same-session DELETE returned
+HTTP 405 with a nonempty body. That fails the required deterministic cleanup
+contract. The inspected, unbound source exports DELETE and describes retained
+session metadata, but those implementation details cannot repair or explain the
+observed hosted behavior without deployment attestation.
 
 ### Exposed Capabilities
 
-Default tools in the inspected source are:
+Default tools in the unbound inspected source are:
 
 - `web_search_exa`
 - `web_fetch_exa`
@@ -104,10 +125,11 @@ Optional/deprecated entries include advanced search, code/company/people
 search, deep research, and `agent_run`. `agent_run` can retain asynchronous work
 and resume by run ID, so it is categorically forbidden.
 
-Even with `tools=web_search_exa`, initialization advertises prompt and resource
-capabilities and list-change support. The source registers a search-help prompt
-and a tools-list resource. NexusLoop must reject and ignore these capabilities;
-they must never become model context or runtime authority.
+With `tools=web_search_exa`, the hosted initialization advertised tools,
+prompts, and resources capability families. The unbound source registers a
+search-help prompt and a tools-list resource. NexusLoop must reject these
+capabilities regardless of their deployed contents; they never become model
+context or runtime authority.
 
 ### Tool Schema And Result Shape
 
@@ -129,93 +151,106 @@ The remote numeric field has no useful maximum in the observed attestation. A
 future NexusLoop adapter would need a stricter runtime-owned integer bound and
 must compare the remote schema to an expected hash rather than adopt it.
 
-No output schema was observed. The pinned implementation converts each result
-into a formatted text block containing title, URL, publication date, author,
-and highlights/text, separated by prose delimiters. It does not return MCP
-`structuredContent`.
-
-This is not a citation-grade machine contract:
-
-- hostile result text can imitate delimiters and labels;
-- missing values are rendered as prose such as `N/A`;
-- no structural distinction exists between provider metadata and source text;
-- partial data cannot be distinguished reliably from complete data;
-- no output-schema hash can be bound into recovery compatibility.
-
-An exact text parser is not approved because the hosted deployment is not
-revision-attested and the text includes attacker-controlled web content.
+No output schema was observed under the exact hosted `2025-06-18` attestation.
+No tool call was made, so hosted result content and formatting remain unknown.
+The unbound source revision formats search results as MCP text and does not
+produce structured content, but that is a source-fit warning, not a verified
+hosted result contract. NexusLoop cannot approve either an output-schema-free
+hosted deployment or a parser inferred from an unattested source revision.
 
 ### Downstream Requests, Retry, Rate Limit, And Telemetry
 
-`web_search_exa` calls the Exa Search REST API inside the remote server. The
-implementation wraps that call in `retryWithBackoff`, whose default is two
-retries after the first attempt for Exa errors with status 500, 502, 503, or
-504. NexusLoop can see one MCP `tools/call`; it cannot see or durably audit the
-one-to-three downstream Exa API attempts.
-
-The hosted layer rate-limits anonymous `tools/call` requests. Source defaults
-are 2 QPS and 50 requests/day when Upstash is configured. A rate-limiter failure
-is explicitly fail-open. A provider API key bypasses anonymous limits. HTTP 429
-is returned as an MCP error and is not retried by the inspected handler, but
-NexusLoop cannot bind hosted environment configuration.
-
-The source instruments the MCP server with Agnost analytics. Input, output,
-error, and logs are configured disabled, and hosted request handling removes API
-key headers/query before forwarding to the handler. Nevertheless, tool-side
-analytics are an additional provider-controlled outbound boundary and their
-deployed behavior cannot be attested by NexusLoop.
+Hosted downstream request count, retry behavior, rate-limit configuration, and
+telemetry are unknown because no deployed artifact or policy digest is attested.
+The unbound source revision calls Exa Search behind the MCP boundary, uses
+`retryWithBackoff` with two retries for selected transient errors, contains
+rate-limit behavior, and instruments Agnost analytics. Those facts demonstrate
+why an implementation/policy attestation is necessary; they are not claims that
+the hosted `3.2.1` deployment executes the same code or policy. NexusLoop can
+audit only its own MCP HTTP requests and must never infer downstream counts.
 
 ### Prompts, Resources, Sampling, Elicitation, Tasks, Notifications
 
-| Capability | Candidate behavior | NexusLoop decision |
+| Capability | Evidence classification | NexusLoop decision |
 | --- | --- | --- |
-| Tools | Search/fetch plus optional/deprecated tools | Attestation only; one exact tool would be required |
-| Prompts | Registered | Reject capability and every prompt message |
-| Resources | Registered | Reject capability and every resource/read |
-| Tool list changes | Advertised | Reject; no server-driven changes |
-| Sampling | Not needed for search | Reject any request/capability |
-| Elicitation | Not needed for search | Reject any request/capability |
-| Tasks | Search attestation says forbidden; agent supports retained runs | Reject all task/retained-run behavior |
-| Notifications | List changes advertised | Reject server notifications; allow only client initialized notification |
-| GET stream | Hosted handler exports GET | Do not use |
-| SSE POST response | Observed and required for this candidate | A future client must parse bounded request-scoped SSE |
+| Tools | Hosted fixed query attested only `web_search_exa`; other tools are source/docs-only | Attestation only; one exact tool would be required |
+| Prompts | Hosted capability family advertised; contents not requested | Reject capability and every prompt message |
+| Resources | Hosted capability family advertised; contents not requested | Reject capability and every resource/read |
+| Tool list changes | Advertised in hosted initialization metadata | Reject; no server-driven changes |
+| Sampling | Not observed or needed | Reject any request/capability |
+| Elicitation | Not observed or needed | Reject any request/capability |
+| Tasks | Not invoked; retained-agent behavior exists only in unbound source | Reject all task/retained-run behavior |
+| Notifications | Hosted list-change metadata observed | Reject server notifications; allow only client initialized notification |
+| GET stream | Exported by unbound source only | Do not use |
+| SSE POST response | Hosted probe observed it | A future client must parse bounded request-scoped SSE |
 
 ### Descriptor Fit
 
 | Commander placeholder | Candidate mapping | Decision | Reason |
 | --- | --- | --- | --- |
-| `external_research.search` | `web_search_exa` | Rejected | Hidden downstream retries, text-only result, no output schema, deployment drift |
-| `external_research.source_show` | `web_fetch_exa` | Rejected | Arbitrary URL arrays, full content fetch, same retry/audit gap |
+| `external_research.search` | `web_search_exa` | Rejected | No hosted output schema, no immutable deployment/policy attestation, session cleanup returned 405 |
+| `external_research.source_show` | `web_fetch_exa` | Rejected | Mapping exists only in unbound source/docs and its arbitrary-URL contract is outside approved source scope |
 | `external_research.paper_metadata` | none | Rejected | No exact remote paper metadata operation |
 
 The initial descriptor set is therefore empty.
 
 ## Required MCP Subset If A Future Provider Qualifies
 
-The narrow protocol contract is:
+The narrow protocol contract for any newly qualified provider is:
 
-- exact version `2025-03-26`, subject to revalidation against the selected
-  provider and any approved client dependency;
+- exact version `2025-06-18`, re-probed against the selected deployment and any
+  approved client dependency; earlier or later negotiated versions fail closed;
 - Streamable HTTP to one fixed HTTPS origin/path/query;
 - one JSON-RPC message per POST;
-- `initialize`;
-- `notifications/initialized`;
+- `initialize` with exact runtime-owned params: protocol `2025-06-18`, empty
+  client capabilities, and client identity
+  `nexusloop-commander-external-research@1.0.0`; no caller or SDK-added field;
+- immediate initialize attestation requiring exact protocol, selected
+  `serverInfo.name`/`version`, and capabilities exactly
+  `{tools:{listChanged:false}}`; every extra capability/field or identity drift
+  stops before `notifications/initialized`; an issued session still receives
+  only its bounded audited same-session DELETE cleanup;
+- `notifications/initialized`, whose sole accepted acknowledgement is HTTP 202
+  with an empty body and no JSON-RPC response;
 - one bounded `tools/list` page for exact attestation;
 - exactly one allowlisted `tools/call`;
 - same-origin audited DELETE session termination when a session is issued;
-- POST responses may be `application/json` or bounded request-scoped
-  `text/event-stream`;
+  cleanup accepts only an empty HTTP 200 or 204 and is not parsed as JSON-RPC;
+- `initialize`, `tools/list`, and `tools/call` JSON-RPC responses require HTTP
+  200 exactly and may be `application/json` or bounded request-scoped
+  `text/event-stream`; other statuses fail even with parseable bodies;
+- every POST has runtime-owned `Content-Type: application/json` and
+  `Accept: application/json, text/event-stream`; every post-initialize request
+  also has `MCP-Protocol-Version: 2025-06-18` and the validated session ID when
+  one was issued; callers cannot add or override headers;
+- every request uses a fresh pinned HTTP/1.1 TLS connection with
+  `Connection: close`; pooling, keep-alive, HTTP/2/3 multiplexing, alternate
+  service, coalescing, and cross-request reuse are forbidden;
+- session DELETE has no body and carries only the protocol version, issued
+  session ID, runtime-owned credentials, and transport-required fixed headers;
 - zero client retries and no resumption.
 
 Reject any unexpected batch, response ID, duplicate ID, server request,
 notification, capability, next cursor, extra tool, content type, SSE event,
 JSON-RPC method, or message after the final response.
 
+For `tools/call`, `content` is a required array with zero entries or one
+canonical JSON `TextContent` mirror. `structuredContent` is the separately
+required top-level object. An absent or malformed content array, `isError: true`,
+or any other content-block type fails before evidence publication.
+
 The selected provider must either be stateless and issue no session or support
 the cleanup contract above. Session IDs must match a conservative ASCII token
 grammar, remain memory-only, be sent only to the exact origin, and be destroyed
 at settlement. Cleanup is an audited transport request; cleanup uncertainty
 prevents successful evidence publication.
+
+The request service must pass a runtime-internal validated-header observer to
+the transport. The transport invokes it at initialize response-header receipt,
+before body consumption or audit persistence. That lets the gateway retain an
+issued session ephemerally and run DELETE cleanup when body processing or the
+initialize audit append fails. It exposes only validated `content-type` and
+`mcp-session-id`, never raw headers or durable session metadata.
 
 ## Audit Semantics
 
@@ -231,7 +266,8 @@ For a stateful single-tool invocation, the maximum expected audit sequence is:
 5. session DELETE.
 
 Every attempted request needs one durable `external_api_request_executed` or
-`external_api_request_failed` outcome. A logical result is not successful until
+`external_api_request_failed` outcome. Result DTOs use these full event-kind
+strings rather than shortened labels. A logical result is not successful until
 all required request audits, including cleanup, are durable. Audit IDs,
 timestamps, session IDs, and JSON-RPC IDs are operational metadata excluded from
 semantic evidence hashes.
@@ -240,6 +276,9 @@ The result must separately report:
 
 - NexusLoop transport request count and audit IDs/kinds;
 - one logical MCP invocation count;
+- whether an MCP protocol request entered the fixed adapter (`mcp_called`);
+- whether a pinned TCP/TLS connection was attempted (`network_called`) and,
+  separately, whether HTTP request bytes were dispatched after TLS verification;
 - provider downstream request visibility: `unknown`.
 
 It must never claim that a single MCP audit proves the count or outcome of
@@ -253,6 +292,10 @@ Accepted result content is limited to:
   exact expected output schema; and
 - if required by the selected server, at most one text block containing
   canonical JSON that parses to semantic equality with `structuredContent`.
+
+`structuredContent` is a top-level tool-result field, not an element of
+`content[]`. The content field is required and is either an empty array or an
+array containing only that one canonical text mirror.
 
 Rejected content:
 
@@ -271,6 +314,11 @@ and produce operation-specific evidence plus provenance containing provider,
 server-policy, remote-tool, schema, source, retrieval, truncation, and stable
 content hashes. Missing or partial required fields produce `unknown`, `blocked`,
 or `failed`, never known-empty or complete.
+
+`unknown` is a gateway fact, not a successful Commander execution outcome. The
+future executor must map it to `failed`, retain bounded audit facts, publish no
+result/evidence, and prevent controller progress. Any unrecognized gateway
+status fails the same way.
 
 ## Source Scope
 
@@ -300,18 +348,55 @@ These ceilings are the maximum contract, not caller defaults:
 | NexusLoop transport requests | 5 with session cleanup; 4 if proven stateless |
 | `tools/list` pages | 1; `nextCursor` fails attestation |
 | Search results | 8 |
-| MCP content blocks | 2 total; only structured plus canonical JSON mirror |
+| Top-level `structuredContent` objects | exactly 1 for successful evidence |
+| MCP `content[]` blocks | at most 1 exact canonical JSON text mirror |
 | Response bytes per request | 128,000 |
 | Normalized evidence bytes | 8,000 |
-| Total wall time | 15,000 ms |
+| Application protocol wall time | 13,000 ms |
+| Reserved cleanup-and-audit wall time | 2,000 ms |
+| Gateway external-work and settlement wall time | 15,000 ms |
+| Executor settle-or-handoff envelope | 17,000 ms; no external work after 15,000 ms |
 | Concurrent external-research calls per RuntimeServer | 1 |
 | Concurrent sessions | 1 |
 | Client retries | 0 |
 
 Each transport request must consume existing Commander external-request/tool
-budget using the 9XA accounting model. Cancellation is checked before and
-during every request, between messages, before the tool call, before cleanup,
-and during shutdown drain. No later request starts after abort.
+budget using the 9XA accounting model. Before initialization, the gateway must
+require capacity for the complete fixed sequence: five slots for stateful or
+optionally stateful policy, four only for a proven-stateless policy. Insufficient
+capacity dispatches zero requests; final charging uses the exact number of
+request-service invocations incremented before each call rather than the
+reservation or only durable audits. Attempted request-service, transport-entry,
+pinned-connection, verified HTTP-dispatch, and confirmed-durable-audit counts
+remain distinct when transport preflight or audit persistence fails.
+Cancellation is checked before and during
+every application request, between messages, and before the tool call.
+No later application request starts after abort. If a session was issued,
+same-origin cleanup still runs under a separate bounded RuntimeServer cleanup
+signal that ignores caller cancellation but remains owned by shutdown drain.
+One monotonic clock starts before protocol preflight. Application work ends at
+`started_at + 13,000 ms`; the remaining 2,000 ms is reserved inside, not added
+to, the 15,000 ms total for cleanup, its audit, and settlement. Cleanup expires
+at the earliest of two seconds after cleanup begins, the original total
+deadline, or an earlier shutdown-drain deadline. No network request starts after
+that point. Cleanup uncertainty prevents successful evidence publication;
+unresolved durable persistence uses the existing run-lock fence instead of
+extending executable tool authority.
+
+The executor does not await an unresolved persistence promise without a bound.
+At 17,000 ms it must have either the final settled ledger or an atomic
+RuntimeServer-owned handoff plus a bounded lower-bound ledger marked
+`runtime_owned_unresolved`. The ledger preserves the exact current audit status;
+an unresolved audit append is `persistence_uncertain`. The handoff publishes no
+evidence, halts the Commander loop, remains in shutdown drain, and prevents a
+successful shutdown/run-lock release until it settles safely.
+
+The fixed binding must expose a synchronous package-internal owned-execution
+handle before any await, containing separate result/settlement promises and a
+bounded ledger snapshot callback. This is not a generic descriptor-selected
+extension. `persistence_uncertain` always implies
+`runtime_owned_unresolved`; a settled/uncertain pair is invalid and cannot
+remove the RuntimeServer fence.
 
 ## Recovery Compatibility Identity
 
@@ -321,6 +406,10 @@ A future credential-free gateway policy hash must include:
 - authority ID and complete authority-record hash;
 - binding ID/version/hash;
 - provider ID, immutable server build/policy identity, fixed origin/path/query;
+- exact initialize server name/version and static tools-only capability
+  attestation identity;
+- exact initialize client name/version, empty client-capability object, and
+  canonical request-shape identity;
 - protocol version and accepted response content types;
 - remote tool name and expected input/output schema hashes;
 - accepted MCP result block types and normalization version;
@@ -329,7 +418,10 @@ A future credential-free gateway policy hash must include:
   concurrency, and retry ceilings;
 - source-scope policy;
 - credential reference names and injection shape, never values;
-- transport DNS, redirect, origin, and audit policy identity.
+- transport DNS full-answer validation, deterministic address pinning,
+  peer/SNI/certificate/Host verification, HTTP/ALPN version,
+  connection-close/no-reuse, redirect, origin, dispatch-observation, and audit
+  policy identity.
 
 Only investigations whose accepted checkpoint loaded an external-research tool
 bind this policy. Any relevant change stales that recovery authority. Session
@@ -370,8 +462,14 @@ retained runs, and historical network requests are never persisted or replayed.
 - **Retry:** can guarantee zero client retries.
 - **Authority:** fixed methods, IDs, schemas, and capabilities remain local.
 - **Frozen/upstream impact:** no frozen MCP gate or upstream code needed.
-- **Fit:** preferred future transport shape if a provider qualifies and the
-  protocol subset remains small; requires a fit spike before production.
+- **DNS/TLS fit:** current native fetch re-resolves after DNS validation and is
+  not approved. The adapter must pin one validated public address with no
+  fallback while retaining original-host SNI, certificate, and Host validation.
+- **Connection fit:** one new pinned HTTP/1.1 connection per request is required;
+  generic fetch pooling and HTTP/2 multiplexing are not approved.
+- **Fit:** preferred future transport shape if a provider qualifies, the
+  protocol subset remains small, and a deterministic pinning fit spike passes;
+  otherwise remains `NO-GO`.
 
 ### 3. Reuse Upstream OpenCode MCP Machinery
 
@@ -399,14 +497,22 @@ retained runs, and historical network requests are never persisted or replayed.
 
 ## Production-Fit Verdict
 
-Hosted Exa fails three independent mandatory gates:
+Hosted Exa fails four independently observed mandatory gates:
 
 1. no immutable deployment/source identity;
-2. unobservable provider-internal retries;
-3. no strict structured output schema.
+2. initialize advertised forbidden prompts/resources capability families and
+   `tools.listChanged=true` rather than exact tools-only static capability;
+3. no strict output schema in exact `2025-06-18` tools attestation;
+4. issued-session cleanup returned HTTP 405 instead of the required empty
+   HTTP 200/204 acknowledgement.
 
-It additionally exposes arbitrary fetch, prompts/resources/list changes,
-provider analytics, and stateful cleanup requirements not supported by the
-current audit service contract unchanged.
+Hosted downstream retries, result formatting, rate-limit policy, telemetry, and
+retained-session implementation remain unknown/unattested. The inspected source
+raises risks in each area but is not bound to the deployment. Hosted capability
+families also include prompts and resources, which remain forbidden. The
+production-faithful deterministic HTTPS fixture gate remains unresolved.
+NexusLoop's current native-fetch transport also does not pin the validated DNS
+answer to the connection; a production-fit pinning spike is an independent
+9XB1 blocker, not permission to weaken DNS or TLS checks.
 
 **Final provider result: `NO-GO`.**

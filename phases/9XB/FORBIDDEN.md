@@ -34,4 +34,3 @@ accepted ADR explicitly replaces them.
   `external_read_execution_enabled=false`.
 - No edit to any path listed in `FROZEN.lock`, including the frozen MCP gate and
   shared Python MCP contracts.
-
