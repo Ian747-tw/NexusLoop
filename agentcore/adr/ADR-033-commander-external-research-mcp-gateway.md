@@ -317,3 +317,8 @@ No external MCP call is available to Commander. No proposal or governance
 authority is created. `resume_supported=false`,
 `provider_tool_loop_enabled=false`, and
 `external_read_execution_enabled=false` remain unchanged.
+
+Branch 9W4A records external MCP and `external_research.*` as post-v1
+deferred. 9XB1 therefore requires fresh provider requalification after v1;
+this ADR remains Proposed with a `NO-GO` and no executable descriptor is
+activated.

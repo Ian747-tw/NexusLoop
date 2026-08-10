@@ -139,3 +139,9 @@ requests selected by the controller. Each page has its own exact audit outcome;
 evidence is withheld when audit persistence is absent or inconsistent. These
 tool requests do not become provider calls and do not broaden the public
 provider-loop capability.
+
+Branch 9W4A generalizes this configured path through a closed protocol
+discriminant. The existing OpenAI-compatible policy is preserved, and native
+Anthropic Messages adds an exact `/messages`, `x-api-key`, and protocol-header
+policy. Both remain subject to this ADR's readiness, audit-completeness,
+cancellation, run-lock, and shutdown-drain requirements.

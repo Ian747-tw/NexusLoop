@@ -162,3 +162,8 @@ Repository, GitHub, and external evidence descriptors use untrusted trust classe
 - 9XB: allowlisted external research MCP reads.
 - 9Y: Commander research proposal gate.
 - 9Z: GitHub governance intent and approval gate.
+
+Branch 9W4A adds native Anthropic Messages as a second closed Commander model
+protocol without changing tool authority. Anthropic server tools, MCP, and
+provider-defined tools are rejected; only current curated NexusLoop client
+tools can execute. External-research placeholders remain future-only after v1.

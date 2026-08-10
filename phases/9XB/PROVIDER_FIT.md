@@ -44,7 +44,8 @@ Evidence was collected on 2026-08-10 from:
 
 The source revision was the official `main` head at inspection time. It declares
 `exa-mcp-server` version `3.4.0`, resolves `@modelcontextprotocol/sdk` to
-`1.26.0`, and uses `mcp-handler` `1.0.4`. It is evidence about one inspectable
+`1.26.0`, declares `mcp-handler ^1.0.4` in `package.json`, and resolves
+`mcp-handler` to `1.1.0` in the committed lockfile. It is evidence about one inspectable
 candidate implementation only. The hosted deployment does not attest that
 revision, so source-only behavior below is not attributed to hosted Exa.
 
