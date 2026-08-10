@@ -277,6 +277,17 @@ describe("Commander AI SDK model adapter", () => {
     expect(pauseTurnResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
     expect(pauseTurnResult.error).toContain("stop reason is forbidden or unsupported")
     expect(JSON.stringify(pauseTurnResult)).not.toContain("server-side work remains pending")
+
+    const maxTokensTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
+      ...JSON.parse(anthropicMessageText("truncated answer must not become final")),
+      stop_reason: "max_tokens",
+    }) }])
+    const maxTokensAdapter = connectorBackedAdapter(projectDir, maxTokensTransport, "api_anthropic_max_tokens", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    const maxTokensResult = await maxTokensAdapter.executeOneStep(request)
+    expect(maxTokensTransport.requests).toHaveLength(1)
+    expect(maxTokensResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(maxTokensResult.error).toContain("stop reason is forbidden or unsupported")
+    expect(JSON.stringify(maxTokensResult)).not.toContain("truncated answer must not become final")
   })
 
   test("Anthropic connector retries zero times and synthesizes bounded native error envelopes", async () => {
