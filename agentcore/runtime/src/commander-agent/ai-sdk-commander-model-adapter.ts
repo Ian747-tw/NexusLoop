@@ -418,6 +418,7 @@ function validateOptions(options: AiSdkCommanderModelAdapterOptions): void {
   if (options.transport_kind !== undefined && options.transport_kind !== "openai_compatible_connector" && options.transport_kind !== "anthropic_messages_connector") throw new Error("AI SDK transport_kind is invalid")
   const credentialMode = options.credential_mode ?? "explicit_api_key"
   if (credentialMode !== "explicit_api_key" && credentialMode !== "connector_managed") throw new Error("AI SDK credential_mode is invalid")
+  if (options.transport_kind === "anthropic_messages_connector" && credentialMode !== "connector_managed") throw new Error("Anthropic Messages requires connector_managed credential mode")
   if (credentialMode === "explicit_api_key" && (!options.api_key || options.api_key.length > 4096)) throw new Error("AI SDK api_key is required and bounded")
   if (credentialMode === "connector_managed") {
     if (options.api_key) throw new Error("connector_managed credential mode must not receive api_key")

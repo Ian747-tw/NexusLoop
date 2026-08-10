@@ -323,9 +323,17 @@ describe("Commander AI SDK model adapter", () => {
   })
 
   test("connector-managed AI SDK credential mode rejects real credentials and uses a non-secret sentinel only internally", () => {
+    let fetchCalls = 0
+    const unreachableFetch = (async () => {
+      fetchCalls += 1
+      throw new Error("must remain unreachable")
+    }) as unknown as typeof fetch
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("api_key is required")
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", api_key: "real-secret", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("must not receive api_key")
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", default_headers: { Authorization: "Bearer real-secret" }, fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("credential-like header")
+    expect(() => new AiSdkCommanderModelStepAdapter({ transport_kind: "anthropic_messages_connector", provider_name: "fixture", base_url: "https://api.anthropic.com/v1", api_key: "real-secret", fetch: unreachableFetch })).toThrow("requires connector_managed credential mode")
+    expect(() => new AiSdkCommanderModelStepAdapter({ transport_kind: "anthropic_messages_connector", provider_name: "fixture", base_url: "https://api.anthropic.com/v1", credential_mode: "explicit_api_key", api_key: "real-secret", fetch: unreachableFetch })).toThrow("requires connector_managed credential mode")
+    expect(fetchCalls).toBe(0)
     expect(CONNECTOR_MANAGED_API_KEY_SENTINEL).not.toMatch(/sk-|Bearer|token|secret/i)
   })
 
