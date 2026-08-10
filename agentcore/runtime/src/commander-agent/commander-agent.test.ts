@@ -288,6 +288,19 @@ describe("Commander AI SDK model adapter", () => {
     expect(maxTokensResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
     expect(maxTokensResult.error).toContain("stop reason is forbidden or unsupported")
     expect(JSON.stringify(maxTokensResult)).not.toContain("truncated answer must not become final")
+
+    for (const [name, body, error] of [
+      ["wrong_model", { ...JSON.parse(anthropicMessageText("wrong model evidence")), model: "claude-unconfigured" }, "response model does not match configured authority"],
+      ["stop_sequence", { ...JSON.parse(anthropicMessageText("unrequested early stop")), stop_reason: "stop_sequence", stop_sequence: "forbidden" }, "stop reason is forbidden or unsupported"],
+    ] as const) {
+      const identityTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(body) }])
+      const identityAdapter = connectorBackedAdapter(projectDir, identityTransport, `api_anthropic_${name}`, { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+      const identityResult = await identityAdapter.executeOneStep(request)
+      expect(identityTransport.requests).toHaveLength(1)
+      expect(identityResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+      expect(identityResult.error).toContain(error)
+      expect(JSON.stringify(identityResult)).not.toContain(name === "wrong_model" ? "wrong model evidence" : "unrequested early stop")
+    }
   })
 
   test("Anthropic connector retries zero times and synthesizes bounded native error envelopes", async () => {

@@ -62,7 +62,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
       on_audit_persisted: (record) => auditRecords.push(record),
       on_transport_dispatched: () => { transportDispatches += 1 },
     })
-    return new Response(providerResponseBody(result, options.config.transport_kind), {
+    return new Response(providerResponseBody(result, options.config.transport_kind, options.context.model_id), {
       status: result.status_code ?? 500,
       headers: { "Content-Type": "application/json" },
     })
@@ -300,10 +300,10 @@ function boundedHeaderName(name: string): string {
   return `${normalized.slice(0, MAX_DROPPED_HEADER_NAME_LENGTH - 14)}...<truncated>`
 }
 
-function providerResponseBody(result: { ok: boolean; status_code?: number; request_id: string; response_body_for_internal_use?: string }, transportKind: CommanderConnectorModelTransportConfig["transport_kind"]): string {
+function providerResponseBody(result: { ok: boolean; status_code?: number; request_id: string; response_body_for_internal_use?: string }, transportKind: CommanderConnectorModelTransportConfig["transport_kind"], expectedModelId: string): string {
   if (result.ok) {
     const body = result.response_body_for_internal_use ?? ""
-    if (transportKind === "anthropic_messages_connector") validateAnthropicMessagesResponseBody(body)
+    if (transportKind === "anthropic_messages_connector") validateAnthropicMessagesResponseBody(body, expectedModelId)
     return body
   }
   const status = typeof result.status_code === "number" ? result.status_code : 500
@@ -326,7 +326,7 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
   })
 }
 
-function validateAnthropicMessagesResponseBody(body: string): void {
+function validateAnthropicMessagesResponseBody(body: string, expectedModelId: string): void {
   let payload: unknown
   try {
     payload = JSON.parse(body)
@@ -336,7 +336,8 @@ function validateAnthropicMessagesResponseBody(body: string): void {
   if (!isRecord(payload) || !Array.isArray(payload.content) || payload.content.length > 128) {
     throw new Error("Anthropic Messages response content is invalid")
   }
-  if (payload.stop_reason !== "end_turn" && payload.stop_reason !== "stop_sequence" && payload.stop_reason !== "tool_use" && payload.stop_reason !== "refusal") {
+  if (payload.model !== expectedModelId) throw new Error("Anthropic Messages response model does not match configured authority")
+  if (payload.stop_reason !== "end_turn" && payload.stop_reason !== "tool_use" && payload.stop_reason !== "refusal") {
     throw new Error("Anthropic Messages response stop reason is forbidden or unsupported")
   }
   let toolUseCount = 0
