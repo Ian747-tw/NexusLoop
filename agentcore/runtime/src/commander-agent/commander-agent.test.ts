@@ -285,6 +285,42 @@ describe("Commander AI SDK model adapter", () => {
     }
   })
 
+  test("Anthropic model evidence is withheld when the external API audit cannot persist", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-audit-failure-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("must remain unavailable") }])
+    const eventStore = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    eventStore.append = async (): Promise<string> => {
+      throw new Error("simulated durable audit failure")
+    }
+    const registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore,
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_audit_failure",
+    })
+    const adapter = new ConnectorBackedCommanderModelStepAdapter({
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" }),
+      registry,
+      requestService,
+    })
+
+    const result = await adapter.executeOneStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: "claude-fixture",
+    })
+    expect(transport.requests).toHaveLength(1)
+    expect(result).toMatchObject({ status: "failed", request_count: 1 })
+    expect(result.text).toBeUndefined()
+    expect(result.tool_calls).toEqual([])
+    expect(result.error).toContain("audit failure")
+    expect(JSON.stringify(result)).not.toContain("must remain unavailable")
+    expect(await eventText(projectDir)).toBe("")
+  })
+
   test("connector-managed AI SDK credential mode rejects real credentials and uses a non-secret sentinel only internally", () => {
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("api_key is required")
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", api_key: "real-secret", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("must not receive api_key")
@@ -2455,18 +2491,27 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(envelope)).not.toContain("NXL_TEST_ANTHROPIC_KEY")
     expect(JSON.stringify(envelope)).not.toContain("real-anthropic-key")
 
-    const wrongCredential = new RuntimeServer({
-      projectDir: await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-wrong-credential-")),
-      adapter: new FakeOpenCodeAdapter(),
-      commanderInvestigationProviderConfig: config,
-      externalApiConnectors: [{ ...anthropicConnector(), credential_refs: [{ name: "bad", source: "env", env_name: "NXL_TEST_ANTHROPIC_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }] }],
-      externalApiTransport: new FakeExternalApiTransport([]),
-      externalApiEnv: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
-    })
-    const blocked = wrongCredential.previewCommanderInvestigationProviderReadiness({ provider_kind: "anthropic" })
-    expect(blocked.configuration_ready).toBe(false)
-    expect(blocked.blockers.join(" ")).toContain("provider request policy")
-    expect(blocked.checks.find((check) => check.name === "provider_request_policy")?.redacted_detail).toContain("x-api-key")
+    const invalidCredentials: Array<{ label: string; credential_refs: ExternalApiConnector["credential_refs"]; expected: string }> = [
+      { label: "missing", credential_refs: [], expected: "exactly one credential reference" },
+      { label: "duplicate", credential_refs: [...anthropicConnector().credential_refs!, ...anthropicConnector().credential_refs!], expected: "exactly one credential reference" },
+      { label: "wrong-header", credential_refs: [{ name: "bad", source: "env", env_name: "NXL_TEST_ANTHROPIC_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }], expected: "x-api-key" },
+      { label: "prefixed", credential_refs: [{ ...anthropicConnector().credential_refs![0], prefix: "Bearer " }], expected: "x-api-key" },
+      { label: "query", credential_refs: [{ ...anthropicConnector().credential_refs![0], inject_as: "query", target_name: "api_key" }], expected: "x-api-key" },
+    ]
+    for (const fixture of invalidCredentials) {
+      const blockedServer = new RuntimeServer({
+        projectDir: await mkdtemp(join(tmpdir(), `nxl-9w4a-anthropic-${fixture.label}-credential-`)),
+        adapter: new FakeOpenCodeAdapter(),
+        commanderInvestigationProviderConfig: config,
+        externalApiConnectors: [{ ...anthropicConnector(), credential_refs: fixture.credential_refs }],
+        externalApiTransport: new FakeExternalApiTransport([]),
+        externalApiEnv: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      })
+      const blocked = blockedServer.previewCommanderInvestigationProviderReadiness({ provider_kind: "anthropic" })
+      expect(blocked.configuration_ready).toBe(false)
+      expect(blocked.blockers.join(" ")).toContain("provider request policy")
+      expect(blocked.checks.find((check) => check.name === "provider_request_policy")?.redacted_detail).toContain(fixture.expected)
+    }
   })
 
   test("provider audit policy fails closed before tool execution when metadata is missing or malformed", async () => {
