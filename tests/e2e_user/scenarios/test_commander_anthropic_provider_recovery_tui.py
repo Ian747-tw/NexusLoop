@@ -49,7 +49,7 @@ def test_commander_recovers_through_native_anthropic_messages_via_real_tui(sandb
             requests.append(request)
             observed_headers.append({key.lower(): value for key, value in self.headers.items()})
             assert request["model"] == "claude-fixture"
-            assert request["stream"] is False
+            assert request.get("stream", False) is False
             assert "mcp_servers" not in request
             assert "thinking" not in request
             assert "service_tier" not in request
@@ -142,8 +142,12 @@ def test_commander_recovers_through_native_anthropic_messages_via_real_tui(sandb
         return match.group(1)
 
     investigation_id = "commander_anthropic_recovery_e2e"
-    preview = run([f"/commander-recovery-preview {investigation_id}"])
-    assert "recovery=ready" in preview.stdout or "approval=required" in preview.stdout
+    preview = run([
+        "/commander-recoveries",
+        f"/commander-recovery-show {investigation_id}",
+        f"/commander-recovery-preview {investigation_id}",
+    ])
+    assert "preview=ready_for_approval" in preview.stdout
     plan_hash = field(preview.stdout, "recovery_plan_hash")
     approved = run(
         [
