@@ -301,7 +301,11 @@ function boundedHeaderName(name: string): string {
 }
 
 function providerResponseBody(result: { ok: boolean; status_code?: number; request_id: string; response_body_for_internal_use?: string }, transportKind: CommanderConnectorModelTransportConfig["transport_kind"]): string {
-  if (result.ok) return result.response_body_for_internal_use ?? ""
+  if (result.ok) {
+    const body = result.response_body_for_internal_use ?? ""
+    if (transportKind === "anthropic_messages_connector") validateAnthropicMessagesResponseBody(body)
+    return body
+  }
   const status = typeof result.status_code === "number" ? result.status_code : 500
   if (transportKind === "anthropic_messages_connector") {
     return JSON.stringify({
@@ -320,6 +324,23 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
       request_id: result.request_id,
     },
   })
+}
+
+function validateAnthropicMessagesResponseBody(body: string): void {
+  let payload: unknown
+  try {
+    payload = JSON.parse(body)
+  } catch {
+    throw new Error("Anthropic Messages response must be valid JSON")
+  }
+  if (!isRecord(payload) || !Array.isArray(payload.content) || payload.content.length > 128) {
+    throw new Error("Anthropic Messages response content is invalid")
+  }
+  for (const block of payload.content) {
+    if (!isRecord(block) || block.type !== "text" && block.type !== "tool_use") {
+      throw new Error("Anthropic Messages response contains a forbidden or unsupported content block")
+    }
+  }
 }
 
 function decodeUtf8(bytes: Uint8Array): string {

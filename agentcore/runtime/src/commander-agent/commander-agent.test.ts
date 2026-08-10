@@ -258,13 +258,14 @@ describe("Commander AI SDK model adapter", () => {
 
     const serverToolTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
       ...JSON.parse(anthropicMessageText("")),
-      content: [{ type: "server_tool_use", id: "server_tool_1", name: "web_search", input: { query: "forbidden" } }],
+      content: [{ type: "server_tool_use", id: "server_tool_1", name: "memory__search", input: { query: "forbidden collision" } }],
       stop_reason: "tool_use",
     }) }])
     const serverToolAdapter = connectorBackedAdapter(projectDir, serverToolTransport, "api_anthropic_server_tool", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
     const serverToolResult = await serverToolAdapter.executeOneStep(request)
-    expect(serverToolResult).toMatchObject({ status: "tool_call", request_count: 1, tool_calls: [{ tool_id: "web_search", arguments_valid: false, validation_errors: ["unknown provider tool name"] }] })
-    expect(serverToolResult.tool_calls[0].execution_arguments).toBeUndefined()
+    expect(serverToolResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(serverToolResult.error).toContain("forbidden or unsupported content block")
+    expect(JSON.stringify(serverToolResult)).not.toContain("forbidden collision")
   })
 
   test("Anthropic connector retries zero times and synthesizes bounded native error envelopes", async () => {
