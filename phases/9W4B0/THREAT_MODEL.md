@@ -25,6 +25,7 @@
 | One role falls back to the other | Exact independent role bindings; absence fails closed. |
 | Caller mutation redirects a projection | Validate, clone, canonicalize, recursively freeze, then project only from the snapshot. |
 | Caller-controlled array methods forge validated authority | Dense own-index reconstruction rejects holes, accessors, symbols, non-index properties, and custom prototypes without invoking caller methods or iterators. |
+| Inherited or proxy-fabricated fields become authority | Reconstruct records into null-prototype own-data snapshots and reject live or revoked proxies before reflective inspection or semantic hashing. |
 | Duplicate or confusable identity | ASCII grammar, bounded normalized identifiers, and duplicate checks after normalization. |
 | Secret or endpoint authority enters state/hash/error | Strict field allowlists exclude endpoint/package/header/plugin authority; credential and environment material is rejected; bounded redacted errors. Model IDs remain inert data. |
 | Display/catalog drift stales authority | Display metadata and all remote observations are excluded from semantic projections and hashes. |

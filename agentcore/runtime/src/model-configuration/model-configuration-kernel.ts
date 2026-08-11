@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { isIP } from "node:net"
+import { types as nodeUtilTypes } from "node:util"
 import { redactText } from "../security/redaction"
 import {
   COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
@@ -392,14 +393,21 @@ function requiredConnection(configuration: ModelConfiguration, connectionId: str
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${label} must be an object`)
+  if (typeof value !== "object" || value === null) fail(`${label} must be an object`)
+  rejectProxy(value, label)
+  if (Array.isArray(value)) fail(`${label} must be an object`)
   if (Object.getPrototypeOf(value) !== Object.prototype) fail(`${label} must be a plain object`)
-  const snapshot: Record<string, unknown> = {}
+  const snapshot = Object.create(null) as Record<string, unknown>
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") fail(`${label} must not contain symbol keys`)
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) fail(`${label} must contain enumerable data fields only`)
-    snapshot[key] = descriptor.value
+    Object.defineProperty(snapshot, key, {
+      value: descriptor.value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
   }
   return snapshot
 }
@@ -411,6 +419,7 @@ function exactKeys(input: Record<string, unknown>, allowed: ReadonlySet<string>,
 }
 
 function boundedArray(value: unknown, label: string, max: number): unknown[] {
+  rejectProxy(value, label)
   if (!Array.isArray(value)) fail(`${label} must be an array`)
   if (Object.getPrototypeOf(value) !== Array.prototype) fail(`${label} must be a plain array`)
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length")
@@ -678,6 +687,7 @@ function canonicalJson(value: unknown): string {
     if (!Number.isFinite(value)) fail("semantic hash input contains a non-finite number")
     return JSON.stringify(value)
   }
+  rejectProxy(value, "semantic hash input")
   if (Array.isArray(value)) {
     const items = boundedArray(value, "semantic hash array", Number.MAX_SAFE_INTEGER)
     const parts: string[] = []
@@ -694,6 +704,12 @@ function canonicalJson(value: unknown): string {
     parts.push(`${JSON.stringify(key)}:${canonicalJson(object[key])}`)
   }
   return `{${parts.join(",")}}`
+}
+
+function rejectProxy(value: unknown, label: string): void {
+  if ((typeof value === "object" && value !== null || typeof value === "function") && nodeUtilTypes.isProxy(value)) {
+    fail(`${label} must not be a Proxy`)
+  }
 }
 
 function deepFreeze<T>(value: T): T {

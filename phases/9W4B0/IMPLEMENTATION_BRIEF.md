@@ -50,7 +50,9 @@ not a second endpoint/package grammar. Snapshot, canonicalize unordered arrays,
 and recursively freeze every object and array. Reconstruct arrays only through
 trusted dense own-index traversal; reject sparse, accessor-bearing,
 symbol-bearing, non-index, and custom-prototype arrays without invoking
-caller-owned methods or iterators. Canonical hashes accept plain JSON data only.
+caller-owned methods or iterators. Reconstruct records as null-prototype
+own-data snapshots and reject live or revoked proxies before reflective
+inspection or canonical hashing. Canonical hashes accept plain JSON data only.
 
 ## Hashes
 

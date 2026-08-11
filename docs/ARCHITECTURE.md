@@ -106,6 +106,24 @@ engine and adds the closed `anthropic_messages_connector` native Messages
 protocol beside the unchanged `openai_compatible_connector` protocol. Both use
 the same controller, audited connector transport, cancellation, recovery, and
 shutdown ownership. See `docs/COMMANDER_PROVIDERS.md` and ADR-034.
+Branch 9W4B0 adds a disconnected, pure model-configuration kernel. Connections,
+profiles, and independent Commander/Executor role bindings express selection
+intent without activating either runtime. Commander projection additionally
+requires exact NexusLoop conformance; OpenCode catalog, auth, plugins, and
+provider connectivity can never satisfy that requirement. See ADR-035.
+
+```text
+NexusLoop model configuration
+├── model connections
+├── model profiles
+└── role bindings
+    ├── Commander selection projection -> static Commander conformance required
+    └── Executor selection projection  -> primary tactical provider/model only
+```
+
+A shared profile shares provider/model intent only. Credentials, provider
+objects, contexts, tools, lifecycle, retries, streaming, and network authority
+remain role-owned. 9W4B0 has no RuntimeServer, CLI, or TUI activation.
 
 ```text
 NexusLoop domain control plane
@@ -310,10 +328,18 @@ Follow-on sequencing:
 - 9XB0: external research/MCP contract and provider-fit gate (`NO-GO`; no
   runtime activation).
 - 9W4A: static Commander provider protocols and native Anthropic Messages.
+- 9W4B0: unified model-profile authority and pure role projections.
+- 9W4B0 Executor projections require a static NexusLoop provider-ID-to-kind
+  mapping registry; OpenCode catalog/auth observations are not that authority.
+- 9W4B1: runtime registry, legacy Commander environment adapter, scoped
+  Executor projection, and role readiness.
+- 9W4C: native Gemini through unified model profiles.
+- 9W4D: native OpenAI Responses and verified compatibility matrix.
+- 9W4E: first-run provider setup and TUI role-model selection.
 - post-v1 9XB1: first exact external-research descriptor only after fresh
   provider requalification; v1 does not activate external MCP or
   `external_research.*`.
-- 9Y: evidence-backed proposal gate.
+- 9Y: evidence-backed proposal gate after 9W4E.
 - 9Z: GitHub governance intents and approval gate.
 
 ## Authority Model
@@ -468,3 +494,5 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-031-commander-recovery-operator-controls.md`
 - `agentcore/adr/ADR-032-commander-bounded-github-read-gateway.md`
 - `agentcore/adr/ADR-033-commander-external-research-mcp-gateway.md`
+- `agentcore/adr/ADR-034-commander-model-provider-protocols.md`
+- `agentcore/adr/ADR-035-unified-model-profiles-and-role-bindings.md`
