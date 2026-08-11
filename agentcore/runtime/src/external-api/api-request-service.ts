@@ -45,12 +45,20 @@ type ExternalApiInternalExecutionOptions = {
 }
 
 export class ExternalApiRequestService {
+  private readonly registry: ExternalApiConnectorRegistry
+  private readonly transport: ExternalApiTransport
+  private readonly eventStore: EventStore
   private readonly env: Record<string, string | undefined>
+  private readonly resolveHostAddresses?: ExternalApiHostResolver
   private readonly now: () => Date
   private readonly requestId: () => string
 
-  constructor(private readonly options: ExternalApiRequestServiceOptions) {
-    this.env = options.env ?? {}
+  constructor(options: ExternalApiRequestServiceOptions) {
+    this.registry = options.registry
+    this.transport = options.transport
+    this.eventStore = options.eventStore
+    this.env = Object.freeze({ ...(options.env ?? {}) })
+    this.resolveHostAddresses = options.resolveHostAddresses
     this.now = options.now ?? (() => new Date())
     this.requestId = options.requestId ?? (() => `api_${randomUUID()}`)
   }
@@ -79,7 +87,7 @@ export class ExternalApiRequestService {
   }
 
   usesConnectorRegistry(registry: ExternalApiConnectorRegistry): boolean {
-    return this.options.registry === registry
+    return this.registry === registry
   }
 
   private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: ExternalApiInternalExecutionOptions): Promise<ExternalApiInternalRequestResult> {
@@ -160,9 +168,9 @@ export class ExternalApiRequestService {
     }
     const effectiveTimeoutMs = requestedTimeoutMs ?? built.connector.timeout_ms
     const operation = createExternalApiOperationSignal(effectiveTimeoutMs, options.abort_signal)
-    if (this.options.resolveHostAddresses || this.options.transport.requiresResolvedHostValidation === true) {
+    if (this.resolveHostAddresses || this.transport.requiresResolvedHostValidation === true) {
       try {
-        await raceExternalApiAbort(validateResolvedHost(built.url.hostname, this.options.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp }), operation.signal)
+        await raceExternalApiAbort(validateResolvedHost(built.url.hostname, this.resolveHostAddresses, { allowLocalTestHost: built.allowedLocalHttp }), operation.signal)
       } catch (error) {
         const result = this.result({
           requestId,
@@ -181,7 +189,7 @@ export class ExternalApiRequestService {
     }
     try {
       options.on_transport_dispatched?.()
-      const response = await this.options.transport.request({
+      const response = await this.transport.request({
         method: built.method,
         url: built.url.toString(),
         headers: built.headers,
@@ -230,7 +238,7 @@ export class ExternalApiRequestService {
   }
 
   async listAudit(limit = 20): Promise<ExternalApiAuditRecord[]> {
-    const events = await this.options.eventStore.readAll()
+    const events = await this.eventStore.readAll()
     return events
       .filter((event) => event.kind === "external_api_request_executed" || event.kind === "external_api_request_failed")
       .reverse()
@@ -250,7 +258,7 @@ export class ExternalApiRequestService {
   }
 
   private build(input: ExternalApiRequestInput): BuiltRequest {
-    const connector = this.options.registry.get(requiredString(input.connector_id, "connector_id"))
+    const connector = this.registry.get(requiredString(input.connector_id, "connector_id"))
     if (!connector) throw new Error(`unknown external API connector: ${redactText(input.connector_id)}`)
     const method = readMethod(input.method)
     const blockers: string[] = []
@@ -357,7 +365,7 @@ export class ExternalApiRequestService {
   }
 
   private async writeAudit(kind: "external_api_request_executed" | "external_api_request_failed", result: ExternalApiRequestResult, requestedBy: string, observer?: (record: ExternalApiPersistedAuditRecord) => void): Promise<void> {
-    await this.options.eventStore.append({
+    await this.eventStore.append({
       kind,
       request_id: result.request_id,
       connector_id: result.connector_id,

@@ -3,6 +3,7 @@ import type { ExternalApiConnector } from "../external-api/api-connector-types"
 
 export type CommanderConnectorModelTransportKind = "openai_compatible_connector" | "anthropic_messages_connector"
 
+export const CONNECTOR_MANAGED_API_KEY_SENTINEL = "NEXUSLOOP_CONNECTOR_MANAGED_CREDENTIAL"
 export const ANTHROPIC_MESSAGES_PROTOCOL_VERSION = "2023-06-01" as const
 export const ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION = "ai@7.0.29/@ai-sdk/anthropic@4.0.15" as const
 export const ANTHROPIC_MESSAGES_REQUEST_SHAPE_POLICY_VERSION = "anthropic_messages_v1" as const

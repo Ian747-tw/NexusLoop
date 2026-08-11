@@ -7,4 +7,4 @@
 - [x] 5. Implement strict audited Anthropic Messages transport and readiness.
 - [x] 6. Bind protocol authority into recovery compatibility without changing OpenAI semantics.
 - [x] 7. Add ADR-034, provider taxonomy, v1 roadmap correction, and narrow ADR consequences.
-- [ ] 8. Run complete validation, commit logical units, push, open PR, and obtain clean exact-head review/thread closure.
+- [x] 8. Run complete validation, commit logical units, push, open PR, and obtain clean exact-head review/thread closure.

@@ -2,8 +2,7 @@ import { redactText } from "../security/redaction"
 import type { ExternalApiConnectorRegistry } from "../external-api/api-connector-registry"
 import type { ExternalApiPersistedAuditRecord } from "../external-api/api-connector-types"
 import type { ExternalApiRequestService } from "../external-api/api-request-service"
-import { CONNECTOR_MANAGED_API_KEY_SENTINEL } from "./ai-sdk-commander-model-adapter"
-import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, connectorModelRequestUrl, validateCommanderConnectorProtocolPolicy, type CommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
+import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, CONNECTOR_MANAGED_API_KEY_SENTINEL, connectorModelRequestUrl, validateCommanderConnectorModelTransportConfig, validateCommanderConnectorProtocolPolicy, type CommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
 
 export type ExternalApiConnectorFetchContext = {
   commander_model_request_id: string
@@ -27,17 +26,34 @@ export type ExternalApiConnectorFetchOptions = {
   context: ExternalApiConnectorFetchContext
 }
 
+export type ExternalApiConnectorFetchAuthority = Readonly<{
+  transport_kind: CommanderConnectorModelTransportConfig["transport_kind"]
+  provider_id: string
+  connector_id: string
+  model_id: string
+  base_url: string
+}>
+
 const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key"])
 const ANTHROPIC_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk"])
 const ANTHROPIC_REQUEST_KEYS = new Set(["model", "max_tokens", "messages", "system", "tools", "tool_choice", "temperature", "stream"])
 const MAX_DROPPED_HEADER_NAME_LENGTH = 80
+const AUDITED_CONNECTOR_FETCHES = new WeakMap<typeof fetch, ExternalApiConnectorFetchAuthority>()
+
+export function externalApiConnectorFetchAuthority(value: typeof fetch): ExternalApiConnectorFetchAuthority | undefined {
+  return AUDITED_CONNECTOR_FETCHES.get(value)
+}
 
 export function createExternalApiConnectorFetch(options: ExternalApiConnectorFetchOptions): { fetch: typeof fetch; metadata: ExternalApiConnectorFetchMetadata } {
-  if (!options.requestService.usesConnectorRegistry(options.registry)) throw new Error("connector fetch bridge and request service must share one registry authority")
-  const connector = options.registry.get(options.config.connector_id)
-  if (!connector) throw new Error(`unknown connector: ${redactText(options.config.connector_id)}`)
-  validateCommanderConnectorProtocolPolicy(options.config, connector)
-  const expectedUrl = connectorModelRequestUrl(connector, options.config.transport_kind)
+  const registry = options.registry
+  const requestService = options.requestService
+  const config = validateCommanderConnectorModelTransportConfig(options.config)
+  const context = Object.freeze({ ...options.context })
+  if (!requestService.usesConnectorRegistry(registry)) throw new Error("connector fetch bridge and request service must share one registry authority")
+  const connector = registry.get(config.connector_id)
+  if (!connector) throw new Error(`unknown connector: ${redactText(config.connector_id)}`)
+  validateCommanderConnectorProtocolPolicy(config, connector)
+  const expectedUrl = connectorModelRequestUrl(connector, config.transport_kind)
   const dropped = new Set<string>()
   const auditRecords: ExternalApiPersistedAuditRecord[] = []
   let attempts = 0
@@ -45,18 +61,18 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
   const bridge = (async (input, init) => {
     attempts += 1
     const request = await parseBridgeRequest(input, init)
-    validateBridgeRequest(request, expectedUrl, options.config)
-    const headers = filterHeaders(request.headers, dropped, options.config)
-    const result = await options.requestService.executeForInternalUse({
-      connector_id: options.config.connector_id,
+    validateBridgeRequest(request, expectedUrl, config)
+    const headers = filterHeaders(request.headers, dropped, config)
+    const result = await requestService.executeForInternalUse({
+      connector_id: config.connector_id,
       method: "POST",
       path: expectedUrl.pathname,
       headers,
       body: request.body,
-      requested_by: boundedRequestedBy(options.context),
+      requested_by: boundedRequestedBy(context),
     }, {
-      timeout_ms: options.config.timeout_ms,
-      max_response_bytes: options.config.max_response_bytes,
+      timeout_ms: config.timeout_ms,
+      max_response_bytes: config.max_response_bytes,
       abort_signal: request.signal ?? init?.signal ?? undefined,
       redact_response_body: false,
       omit_response_preview_from_audit: true,
@@ -64,11 +80,18 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
       on_audit_persisted: (record) => auditRecords.push(record),
       on_transport_dispatched: () => { transportDispatches += 1 },
     })
-    return new Response(providerResponseBody(result, options.config.transport_kind, options.config.model_id), {
+    return new Response(providerResponseBody(result, config.transport_kind, config.model_id), {
       status: result.status_code ?? 500,
       headers: { "Content-Type": "application/json" },
     })
   }) as typeof fetch
+  AUDITED_CONNECTOR_FETCHES.set(bridge, Object.freeze({
+    transport_kind: config.transport_kind,
+    provider_id: config.provider_id,
+    connector_id: config.connector_id,
+    model_id: config.model_id,
+    base_url: new URL(connector.base_url).toString(),
+  }))
   return {
     fetch: bridge,
     metadata: {

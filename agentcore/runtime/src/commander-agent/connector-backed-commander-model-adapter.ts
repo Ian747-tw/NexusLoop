@@ -26,10 +26,14 @@ export class ConnectorBackedCommanderModelStepAdapter implements CommanderModelS
   readonly supports_usage = true as const
   readonly supports_openai_compatible: boolean
   private readonly config: CommanderConnectorModelTransportConfig
+  private readonly registry: ExternalApiConnectorRegistry
+  private readonly requestService: ExternalApiRequestService
   private readonly now: () => Date
 
-  constructor(private readonly options: ConnectorBackedCommanderModelStepAdapterOptions) {
+  constructor(options: ConnectorBackedCommanderModelStepAdapterOptions) {
     this.config = validateCommanderConnectorModelTransportConfig(options.config)
+    this.registry = options.registry
+    this.requestService = options.requestService
     this.adapter_version = this.config.transport_kind === "anthropic_messages_connector"
       ? `${ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION}/external-api-connector`
       : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11/external-api-connector"
@@ -41,14 +45,14 @@ export class ConnectorBackedCommanderModelStepAdapter implements CommanderModelS
   async executeOneStep(request: CommanderModelStepRequest): Promise<CommanderModelStepResult> {
     if (request.provider_id !== this.config.provider_id) return failedResult(request, this.adapter_id, "provider_id does not match connector transport config")
     if (request.model_id !== this.config.model_id) return failedResult(request, this.adapter_id, "model_id does not match connector transport config")
-    const connector = this.options.registry.get(this.config.connector_id)
+    const connector = this.registry.get(this.config.connector_id)
     if (!connector) return failedResult(request, this.adapter_id, `connector not found: ${this.config.connector_id}`)
     let bridge: ReturnType<typeof createExternalApiConnectorFetch>
     try {
       validateCommanderConnectorProtocolPolicy(this.config, connector)
       bridge = createExternalApiConnectorFetch({
-        registry: this.options.registry,
-        requestService: this.options.requestService,
+        registry: this.registry,
+        requestService: this.requestService,
         config: this.config,
         context: {
           commander_model_request_id: request.request_id,
