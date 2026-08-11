@@ -333,7 +333,7 @@ function validateAnthropicMessagesResponseBody(body: string, expectedModelId: st
   } catch {
     throw new Error("Anthropic Messages response must be valid JSON")
   }
-  if (!isRecord(payload) || !Array.isArray(payload.content) || payload.content.length > 128) {
+  if (!isRecord(payload) || payload.type !== "message" || payload.role !== "assistant" || !boundedIdentifier(payload.id, 200) || !Array.isArray(payload.content) || payload.content.length === 0 || payload.content.length > 128) {
     throw new Error("Anthropic Messages response content is invalid")
   }
   if (payload.model !== expectedModelId) throw new Error("Anthropic Messages response model does not match configured authority")
@@ -341,15 +341,23 @@ function validateAnthropicMessagesResponseBody(body: string, expectedModelId: st
     throw new Error("Anthropic Messages response stop reason is forbidden or unsupported")
   }
   let toolUseCount = 0
+  let nonemptyTextCount = 0
   for (const block of payload.content) {
     if (!isRecord(block) || block.type !== "text" && block.type !== "tool_use") {
       throw new Error("Anthropic Messages response contains a forbidden or unsupported content block")
     }
-    if (block.type === "tool_use") toolUseCount += 1
+    if (block.type === "text") {
+      if (!hasExactKeys(block, ["type", "text"]) || typeof block.text !== "string" || !block.text.trim()) throw new Error("Anthropic Messages response text block is invalid")
+      nonemptyTextCount += 1
+    } else {
+      if (!hasExactKeys(block, ["type", "id", "name", "input"]) || !boundedIdentifier(block.id, 200) || !boundedIdentifier(block.name, 200) || !isRecord(block.input)) throw new Error("Anthropic Messages response client tool block is invalid")
+      toolUseCount += 1
+    }
   }
   if ((payload.stop_reason === "tool_use") !== (toolUseCount > 0)) {
     throw new Error("Anthropic Messages response stop reason does not match client tool content")
   }
+  if (payload.stop_reason !== "tool_use" && nonemptyTextCount === 0) throw new Error("Anthropic Messages final response requires nonempty text")
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
