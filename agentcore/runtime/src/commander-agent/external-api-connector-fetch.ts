@@ -33,6 +33,7 @@ const ANTHROPIC_REQUEST_KEYS = new Set(["model", "max_tokens", "messages", "syst
 const MAX_DROPPED_HEADER_NAME_LENGTH = 80
 
 export function createExternalApiConnectorFetch(options: ExternalApiConnectorFetchOptions): { fetch: typeof fetch; metadata: ExternalApiConnectorFetchMetadata } {
+  if (!options.requestService.usesConnectorRegistry(options.registry)) throw new Error("connector fetch bridge and request service must share one registry authority")
   const connector = options.registry.get(options.config.connector_id)
   if (!connector) throw new Error(`unknown connector: ${redactText(options.config.connector_id)}`)
   validateCommanderConnectorProtocolPolicy(options.config, connector)

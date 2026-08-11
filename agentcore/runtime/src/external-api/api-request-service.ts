@@ -78,6 +78,10 @@ export class ExternalApiRequestService {
     return this.executeBuilt(input, true, options)
   }
 
+  usesConnectorRegistry(registry: ExternalApiConnectorRegistry): boolean {
+    return this.options.registry === registry
+  }
+
   private async executeBuilt(input: ExternalApiRequestInput, includeInternalBody: boolean, options: ExternalApiInternalExecutionOptions): Promise<ExternalApiInternalRequestResult> {
     const built = this.build(input)
     const resultUrl = options.omit_url_from_audit === true ? OMITTED_INTERNAL_REQUEST_URL : built.redactedUrl

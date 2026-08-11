@@ -154,6 +154,9 @@ describe("Commander AI SDK model adapter", () => {
     ]) {
       expect(() => createExternalApiConnectorFetch({ registry: new ExternalApiConnectorRegistry([invalidConnector]), requestService, config, context: { commander_model_request_id: "req_invalid", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-fixture" } })).toThrow()
     }
+    const invalidServiceRegistry = new ExternalApiConnectorRegistry([{ ...anthropicConnector(), default_headers: { "anthropic-beta": "unsafe" } }])
+    const invalidService = new ExternalApiRequestService({ registry: invalidServiceRegistry, transport, eventStore: new EventStore(join(projectDir, ".nxl", "invalid-service-events.jsonl")), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    expect(() => createExternalApiConnectorFetch({ registry, requestService: invalidService, config, context: { commander_model_request_id: "req_registry_mismatch", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-fixture" } })).toThrow("share one registry authority")
     const { fetch: bridgeFetch, metadata } = createExternalApiConnectorFetch({
       registry,
       requestService,
