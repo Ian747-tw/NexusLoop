@@ -126,3 +126,10 @@ in-memory investigation seam. That branch owns provider configuration, provider
 preflight, model capability registration, run-lock enforcement, investigation
 audit result semantics, and internal readiness previews. 9W3 still owns durable
 investigation working sets, pause/resume, and recovery.
+
+Branch 9W4A generalizes the transport configuration into the closed
+`openai_compatible_connector | anthropic_messages_connector` union. The former
+retains this ADR's exact Chat Completions semantics. The latter adds an exact
+native Messages endpoint, header, body, credential, and synthetic-error policy
+without weakening connector audit, host, timeout, cancellation, or retry
+boundaries.

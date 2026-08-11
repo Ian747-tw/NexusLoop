@@ -1,13 +1,16 @@
+import { AnthropicLanguageModel } from "@ai-sdk/anthropic/internal"
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { generateText, InvalidToolInputError, jsonSchema, NoSuchToolError, Output, streamText, tool, type ModelMessage } from "ai"
 import { redactText, redactValue } from "../security/redaction"
 import { buildProviderToolMap, makeCommanderToolCall, parseJsonFallback, providerJsonSchema, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelToolCallPart, CommanderModelUsage } from "./commander-model-types"
+import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, CONNECTOR_MANAGED_API_KEY_SENTINEL, type CommanderConnectorModelTransportKind } from "./commander-connector-transport-types"
+import { externalApiConnectorFetchAuthority, type ExternalApiConnectorFetchAuthority } from "./external-api-connector-fetch"
 
-export const CONNECTOR_MANAGED_API_KEY_SENTINEL = "NEXUSLOOP_CONNECTOR_MANAGED_CREDENTIAL"
 export type AiSdkCommanderCredentialMode = "explicit_api_key" | "connector_managed"
 
 export type AiSdkCommanderModelAdapterOptions = {
+  transport_kind?: CommanderConnectorModelTransportKind
   provider_name: string
   base_url: string
   credential_mode?: AiSdkCommanderCredentialMode
@@ -19,33 +22,48 @@ export type AiSdkCommanderModelAdapterOptions = {
 
 export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter {
   readonly adapter_id = "ai_sdk_core" as const
-  readonly adapter_version = "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11"
-  readonly supports_streaming = true as const
+  readonly adapter_version: string
+  readonly supports_streaming: boolean
   readonly supports_native_tools = true as const
   readonly supports_json_fallback = true as const
-  readonly supports_structured_output = true as const
+  readonly supports_structured_output: boolean
   readonly supports_abort_signal = true as const
   readonly supports_usage = true as const
-  readonly supports_openai_compatible = true as const
+  readonly supports_openai_compatible: boolean
 
   private readonly now: () => Date
+  private readonly transportKind: CommanderConnectorModelTransportKind
+  private readonly connectorFetchAuthority?: ExternalApiConnectorFetchAuthority
+  private readonly options: AiSdkCommanderModelAdapterOptions
 
-  constructor(private readonly options: AiSdkCommanderModelAdapterOptions) {
-    validateOptions(options)
-    this.now = options.now ?? (() => new Date())
+  constructor(options: AiSdkCommanderModelAdapterOptions) {
+    this.options = snapshotOptions(options)
+    this.connectorFetchAuthority = validateOptions(this.options)
+    this.transportKind = this.options.transport_kind ?? "openai_compatible_connector"
+    this.adapter_version = this.transportKind === "anthropic_messages_connector"
+      ? ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION
+      : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11"
+    this.supports_structured_output = this.transportKind === "openai_compatible_connector"
+    this.supports_openai_compatible = this.transportKind === "openai_compatible_connector"
+    this.supports_streaming = this.transportKind === "openai_compatible_connector"
+    this.now = this.options.now ?? (() => new Date())
   }
 
   async executeOneStep(request: CommanderModelStepRequest): Promise<CommanderModelStepResult> {
+    request = snapshotModelStepRequest(request)
     const started = Date.now()
+    if (this.connectorFetchAuthority && (request.provider_id !== this.connectorFetchAuthority.provider_id || request.model_id !== this.connectorFetchAuthority.model_id)) {
+      return finalizeStep(request, "failed", { usage: { provider_reported: false }, requestCount: 0, durationMs: Date.now() - started, error: "Anthropic connector fetch authority does not match request identity" })
+    }
     const measured = this.providerForCall()
     try {
       const result = await generateText({
-        model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
+        model: measured.model(boundIdentifier(request.model_id, "model_id")),
         instructions: instructionsFromRequest(request),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
-        output: structuredOutput(request),
+        output: this.transportKind === "openai_compatible_connector" ? structuredOutput(request) : undefined,
         maxOutputTokens: request.max_output_tokens,
         temperature: request.temperature,
         abortSignal: request.abort_signal,
@@ -79,17 +97,22 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
   }
 
   async *executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
+    request = snapshotModelStepRequest(request)
+    if (this.transportKind === "anthropic_messages_connector") {
+      yield { type: "error", error: "Anthropic Messages connector streaming is not enabled" }
+      return
+    }
     const started = Date.now()
     const measured = this.providerForCall()
     let completed = false
     try {
       const result = streamText({
-        model: measured.provider.chatModel(boundIdentifier(request.model_id, "model_id")),
+        model: measured.model(boundIdentifier(request.model_id, "model_id")),
         instructions: instructionsFromRequest(request),
         messages: toAiSdkMessages(request),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
-        output: structuredOutput(request),
+        output: this.transportKind === "openai_compatible_connector" ? structuredOutput(request) : undefined,
         maxOutputTokens: request.max_output_tokens,
         temperature: request.temperature,
         abortSignal: request.abort_signal,
@@ -202,19 +225,46 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       requestCount += 1
       return this.options.fetch(input, redactRequestInit(init))
     }) as typeof fetch
-    return {
-      provider: createOpenAICompatible({
+    const apiKey = this.options.credential_mode === "connector_managed" ? CONNECTOR_MANAGED_API_KEY_SENTINEL : this.options.api_key
+    if (this.transportKind === "anthropic_messages_connector") {
+      const baseURL = canonicalAnthropicProviderBaseUrl(this.options.base_url)
+      const model = (modelId: string) => new AnthropicLanguageModel(modelId, {
+        provider: "nexusloop-commander-anthropic",
+        baseURL,
+        headers: {
+          "anthropic-version": ANTHROPIC_MESSAGES_PROTOCOL_VERSION,
+          "x-api-key": apiKey,
+        },
+        fetch: guardedFetch,
+        supportedUrls: () => ({}),
+        supportsNativeStructuredOutput: false,
+        supportsStrictTools: false,
+      })
+      return {
+        model,
+        requestCount: () => requestCount,
+      }
+    }
+    const provider = createOpenAICompatible({
         name: boundIdentifier(this.options.provider_name, "provider_name"),
         baseURL: this.options.base_url,
-        apiKey: this.options.credential_mode === "connector_managed" ? CONNECTOR_MANAGED_API_KEY_SENTINEL : this.options.api_key,
+        apiKey,
         headers: this.options.default_headers,
         fetch: guardedFetch,
         includeUsage: true,
         supportsStructuredOutputs: true,
-      }),
+      })
+    return {
+      model: (modelId: string) => provider.chatModel(modelId),
       requestCount: () => requestCount,
     }
   }
+}
+
+function canonicalAnthropicProviderBaseUrl(value: string): string {
+  const parsed = new URL(value)
+  const pathname = parsed.pathname.replace(/\/+$/, "")
+  return `${parsed.origin}${pathname}`
 }
 
 function aiSdkTools(request: CommanderModelStepRequest): Record<string, ReturnType<typeof tool>> | undefined {
@@ -344,12 +394,14 @@ function redactedToolCallWithExecutionArguments(call: CommanderModelToolCallPart
     arguments: redactValue(call.arguments),
     raw_arguments: call.raw_arguments ? redactText(call.raw_arguments).slice(0, 4096) : call.raw_arguments,
   }
-  Object.defineProperty(safeCall, "execution_arguments", {
-    value: explicitExecutionArguments ?? call.arguments,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  })
+  if (call.arguments_valid) {
+    Object.defineProperty(safeCall, "execution_arguments", {
+      value: explicitExecutionArguments ?? call.arguments,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    })
+  }
   return safeCall
 }
 
@@ -384,13 +436,20 @@ function isAiSdkToolCallValidationError(error: unknown): boolean {
   return NoSuchToolError.isInstance(error) || InvalidToolInputError.isInstance(error)
 }
 
-function validateOptions(options: AiSdkCommanderModelAdapterOptions): void {
+function validateOptions(options: AiSdkCommanderModelAdapterOptions): ExternalApiConnectorFetchAuthority | undefined {
   if (typeof options.fetch !== "function") throw new Error("AiSdkCommanderModelStepAdapter requires explicit fetch")
   const parsed = new URL(options.base_url)
   if (parsed.username || parsed.password) throw new Error("AI SDK base_url credentials are not allowed")
   boundIdentifier(options.provider_name, "provider_name")
+  if (options.transport_kind !== undefined && options.transport_kind !== "openai_compatible_connector" && options.transport_kind !== "anthropic_messages_connector") throw new Error("AI SDK transport_kind is invalid")
   const credentialMode = options.credential_mode ?? "explicit_api_key"
   if (credentialMode !== "explicit_api_key" && credentialMode !== "connector_managed") throw new Error("AI SDK credential_mode is invalid")
+  if (options.transport_kind === "anthropic_messages_connector" && credentialMode !== "connector_managed") throw new Error("Anthropic Messages requires connector_managed credential mode")
+  const connectorAuthority = options.transport_kind === "anthropic_messages_connector" ? externalApiConnectorFetchAuthority(options.fetch) : undefined
+  if (options.transport_kind === "anthropic_messages_connector" && !connectorAuthority) throw new Error("Anthropic Messages requires audited connector fetch authority")
+  if (connectorAuthority && (connectorAuthority.transport_kind !== options.transport_kind || connectorAuthority.provider_id !== options.provider_name || connectorAuthority.base_url !== parsed.toString())) {
+    throw new Error("Anthropic audited connector fetch does not match provider authority")
+  }
   if (credentialMode === "explicit_api_key" && (!options.api_key || options.api_key.length > 4096)) throw new Error("AI SDK api_key is required and bounded")
   if (credentialMode === "connector_managed") {
     if (options.api_key) throw new Error("connector_managed credential mode must not receive api_key")
@@ -398,6 +457,39 @@ function validateOptions(options: AiSdkCommanderModelAdapterOptions): void {
       if (/^(authorization|proxy-authorization|cookie|x-api-key|api-key)$/i.test(key) || /api[_-]?key|token|secret|password|authorization/i.test(key)) throw new Error(`connector_managed credential mode rejects credential-like header: ${key}`)
     }
   }
+  return connectorAuthority
+}
+
+function snapshotOptions(options: AiSdkCommanderModelAdapterOptions): AiSdkCommanderModelAdapterOptions {
+  return Object.freeze({
+    transport_kind: options.transport_kind,
+    provider_name: options.provider_name,
+    base_url: options.base_url,
+    credential_mode: options.credential_mode,
+    api_key: options.api_key,
+    fetch: options.fetch,
+    default_headers: options.default_headers ? Object.freeze({ ...options.default_headers }) : undefined,
+    now: options.now,
+  })
+}
+
+function snapshotModelStepRequest(request: CommanderModelStepRequest): CommanderModelStepRequest {
+  return Object.freeze({
+    request_id: request.request_id,
+    provider_id: request.provider_id,
+    provider_kind: request.provider_kind,
+    model_id: request.model_id,
+    messages: structuredClone(request.messages),
+    tools: structuredClone(request.tools),
+    tool_protocol: request.tool_protocol,
+    tool_choice: request.tool_choice,
+    max_output_tokens: request.max_output_tokens,
+    temperature: request.temperature,
+    structured_output_schema: request.structured_output_schema ? structuredClone(request.structured_output_schema) : undefined,
+    abort_signal: request.abort_signal,
+    metadata: request.metadata ? { ...request.metadata } : undefined,
+    requested_at: request.requested_at,
+  })
 }
 
 function boundIdentifier(value: string, name: string): string {

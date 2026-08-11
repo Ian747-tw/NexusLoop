@@ -196,11 +196,16 @@ import {
   CommanderToolExecutor,
   ConnectorBackedCommanderModelStepAdapter,
   commanderInvestigationModelCapability,
+  ANTHROPIC_MESSAGES_PROTOCOL_VERSION,
+  ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION,
+  ANTHROPIC_MESSAGES_REQUEST_SHAPE_POLICY_VERSION,
   connectorChatCompletionsUrl,
+  connectorModelRequestUrl,
   normalizeCommanderInvestigationRecoveryTransactionInput,
   stableHash,
   commanderRecoveryTransactionBlockedResult,
   validateCommanderInvestigationProviderConfig,
+  validateCommanderConnectorProtocolPolicy,
   type CommanderInvestigationControlGate,
   type CommanderInvestigationControlSnapshot,
   type CommanderInvestigationInput,
@@ -3351,10 +3356,12 @@ export class RuntimeServer {
     push("connector_exists", Boolean(connector), "error", "configured external API connector exists")
     if (connector) {
       try {
-        connectorChatCompletionsUrl(connector)
-        push("chat_completions_url", true, "info", "exact chat-completions URL can be derived")
+        validateCommanderConnectorProtocolPolicy(config, connector)
+        const requestUrl = connectorModelRequestUrl(connector, config.transport_kind)
+        push("provider_request_policy", true, "info", `exact ${config.transport_kind} request policy is valid`)
+        push("provider_request_url", true, "info", `exact ${requestUrl.pathname} provider URL can be derived`)
       } catch (error) {
-        push("chat_completions_url", false, "error", "exact chat-completions URL could not be derived", error instanceof Error ? error.message : String(error))
+        push("provider_request_policy", false, "error", "exact provider request policy is invalid", error instanceof Error ? error.message : String(error))
       }
       push("connector_allows_post", connector.allowed_methods.includes("POST"), "error", "connector permits POST")
       push("timeout_within_connector", config.timeout_ms <= connector.timeout_ms, "error", "provider timeout is within connector timeout")
@@ -3363,7 +3370,7 @@ export class RuntimeServer {
       const missingCredentials = (connector.credential_refs ?? []).filter((ref) => !this.externalApiEnv[ref.env_name])
       push("credential_values_present", missingCredentials.length === 0, "error", "connector credential values are present")
       try {
-        const preview = this.externalApiRequestService().preview({ connector_id: config.connector_id, method: "POST", path: connectorChatCompletionsUrl(connector).pathname, headers: { "Content-Type": "application/json" }, body: "{}", dry_run: true, requested_by: "commander_provider_readiness" })
+        const preview = this.externalApiRequestService().preview({ connector_id: config.connector_id, method: "POST", path: connectorModelRequestUrl(connector, config.transport_kind).pathname, headers: { "Content-Type": "application/json" }, body: "{}", dry_run: true, requested_by: "commander_provider_readiness" })
         push("external_api_preview", preview.allowed, "error", "ExternalApiRequestService preview allows exact request", preview.blockers.join("; "))
       } catch (error) {
         push("external_api_preview", false, "error", "ExternalApiRequestService preview failed", error instanceof Error ? error.message : String(error))
@@ -5664,7 +5671,7 @@ export class RuntimeServer {
     if (!config) return undefined
     const connector = this.externalApiConnectorRegistry.get(config.connector_id)
     const capability = this.modelCapabilityRegistry.get({ provider_kind: config.provider_kind, model_id: config.model_id, role: "commander" })
-    const connectorPolicyHash = stableHash({
+    const openAiConnectorPolicy = {
       connector_id: config.connector_id,
       chat_completions_url: connector ? connectorChatCompletionsUrl(connector).toString() : undefined,
       allowed_hosts: connector?.allowed_hosts.slice().sort() ?? [],
@@ -5674,7 +5681,24 @@ export class RuntimeServer {
       connector_timeout_ms: connector?.timeout_ms,
       connector_max_response_bytes: connector?.max_response_bytes,
       allow_local_http: connector?.allow_local_http === true,
-    })
+    }
+    const anthropicConnectorPolicy = {
+      connector_id: config.connector_id,
+      messages_url: connector ? connectorModelRequestUrl(connector, config.transport_kind).toString() : undefined,
+      allowed_hosts: connector?.allowed_hosts.slice().sort() ?? [],
+      allowed_methods: connector?.allowed_methods.slice().sort() ?? [],
+      default_headers: Object.entries(connector?.default_headers ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+      credential_ref_injection_shape: (connector?.credential_refs ?? []).map((ref) => ({ source: ref.source, inject_as: ref.inject_as, target_name: ref.target_name, prefix: ref.prefix })).sort((a, b) => `${a.inject_as}:${a.target_name}`.localeCompare(`${b.inject_as}:${b.target_name}`)),
+      connector_timeout_ms: connector?.timeout_ms,
+      connector_max_response_bytes: connector?.max_response_bytes,
+      allow_local_http: connector?.allow_local_http === true,
+      anthropic_version: ANTHROPIC_MESSAGES_PROTOCOL_VERSION,
+      provider_adapter_version: ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION,
+      request_shape_policy_version: ANTHROPIC_MESSAGES_REQUEST_SHAPE_POLICY_VERSION,
+      beta_headers_allowed: false,
+      server_tools_allowed: false,
+    }
+    const connectorPolicyHash = stableHash(config.transport_kind === "openai_compatible_connector" ? openAiConnectorPolicy : anthropicConnectorPolicy)
     const capabilityEnvelopeHash = stableHash({
       provider_kind: capability.provider_kind,
       provider_id: capability.provider_id,
@@ -5692,9 +5716,9 @@ export class RuntimeServer {
       safety_margin_ratio: capability.safety_margin_ratio,
       source: capability.source,
     })
-    const envelope = {
+    const envelope: CommanderInvestigationRecoveryExecutionEnvelope = {
       envelope_version: 1 as const,
-      transport_kind: "openai_compatible_connector" as const,
+      transport_kind: config.transport_kind,
       provider_id: config.provider_id,
       provider_kind: config.provider_kind,
       connector_id: config.connector_id,
@@ -5711,6 +5735,10 @@ export class RuntimeServer {
       supports_local_execution: config.supports_local_execution,
       supports_streaming: false as const,
       connector_policy_hash: connectorPolicyHash,
+      ...(config.transport_kind === "anthropic_messages_connector" ? {
+        provider_adapter_version: ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION,
+        request_shape_policy_version: ANTHROPIC_MESSAGES_REQUEST_SHAPE_POLICY_VERSION,
+      } : {}),
       github_gateway_policy_hash: this.commanderGithubGatewayStatus().transport_policy_hash,
       capability_envelope_hash: capabilityEnvelopeHash,
       execution_envelope_hash: "",

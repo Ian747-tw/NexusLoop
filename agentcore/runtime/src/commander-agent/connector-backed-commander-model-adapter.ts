@@ -3,7 +3,7 @@ import type { ExternalApiConnectorRegistry } from "../external-api/api-connector
 import type { ExternalApiRequestService } from "../external-api/api-request-service"
 import { AiSdkCommanderModelStepAdapter } from "./ai-sdk-commander-model-adapter"
 import type { CommanderConnectorModelTransportMetadata, CommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
-import { connectorChatCompletionsUrl, validateCommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
+import { ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, validateCommanderConnectorModelTransportConfig, validateCommanderConnectorProtocolPolicy } from "./commander-connector-transport-types"
 import type { CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelUsage } from "./commander-model-types"
 import { stableHash } from "./commander-model-schema"
 import { createExternalApiConnectorFetch } from "./external-api-connector-fetch"
@@ -17,34 +17,42 @@ export type ConnectorBackedCommanderModelStepAdapterOptions = {
 
 export class ConnectorBackedCommanderModelStepAdapter implements CommanderModelStepAdapter {
   readonly adapter_id = "external_api_connector_ai_sdk_core" as const
-  readonly adapter_version = "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11/external-api-connector"
+  readonly adapter_version: string
   readonly supports_streaming = false as const
   readonly supports_native_tools = true as const
   readonly supports_json_fallback = true as const
-  readonly supports_structured_output = true as const
+  readonly supports_structured_output: boolean
   readonly supports_abort_signal = true as const
   readonly supports_usage = true as const
-  readonly supports_openai_compatible = true as const
+  readonly supports_openai_compatible: boolean
   private readonly config: CommanderConnectorModelTransportConfig
+  private readonly registry: ExternalApiConnectorRegistry
+  private readonly requestService: ExternalApiRequestService
   private readonly now: () => Date
 
-  constructor(private readonly options: ConnectorBackedCommanderModelStepAdapterOptions) {
+  constructor(options: ConnectorBackedCommanderModelStepAdapterOptions) {
     this.config = validateCommanderConnectorModelTransportConfig(options.config)
+    this.registry = options.registry
+    this.requestService = options.requestService
+    this.adapter_version = this.config.transport_kind === "anthropic_messages_connector"
+      ? `${ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION}/external-api-connector`
+      : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11/external-api-connector"
+    this.supports_structured_output = this.config.transport_kind === "openai_compatible_connector"
+    this.supports_openai_compatible = this.config.transport_kind === "openai_compatible_connector"
     this.now = options.now ?? (() => new Date())
   }
 
   async executeOneStep(request: CommanderModelStepRequest): Promise<CommanderModelStepResult> {
     if (request.provider_id !== this.config.provider_id) return failedResult(request, this.adapter_id, "provider_id does not match connector transport config")
     if (request.model_id !== this.config.model_id) return failedResult(request, this.adapter_id, "model_id does not match connector transport config")
-    const connector = this.options.registry.get(this.config.connector_id)
+    const connector = this.registry.get(this.config.connector_id)
     if (!connector) return failedResult(request, this.adapter_id, `connector not found: ${this.config.connector_id}`)
-    if (this.config.timeout_ms > connector.timeout_ms) return failedResult(request, this.adapter_id, `transport timeout_ms exceeds connector limit: ${connector.timeout_ms}`)
     let bridge: ReturnType<typeof createExternalApiConnectorFetch>
     try {
-      connectorChatCompletionsUrl(connector)
+      validateCommanderConnectorProtocolPolicy(this.config, connector)
       bridge = createExternalApiConnectorFetch({
-        registry: this.options.registry,
-        requestService: this.options.requestService,
+        registry: this.registry,
+        requestService: this.requestService,
         config: this.config,
         context: {
           commander_model_request_id: request.request_id,
@@ -58,6 +66,7 @@ export class ConnectorBackedCommanderModelStepAdapter implements CommanderModelS
       return failedResult(request, this.adapter_id, error instanceof Error ? error.message : String(error))
     }
     const adapter = new AiSdkCommanderModelStepAdapter({
+      transport_kind: this.config.transport_kind,
       provider_name: this.config.provider_id,
       base_url: connector.base_url,
       credential_mode: "connector_managed",

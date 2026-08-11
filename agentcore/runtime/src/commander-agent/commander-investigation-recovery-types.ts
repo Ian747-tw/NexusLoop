@@ -211,7 +211,7 @@ export type CommanderInvestigationRecoveryProviderCompatibility = {
 
 export type CommanderInvestigationRecoveryExecutionEnvelope = {
   envelope_version: 1
-  transport_kind: "openai_compatible_connector"
+  transport_kind: "openai_compatible_connector" | "anthropic_messages_connector"
   provider_id: string
   provider_kind: string
   connector_id: string
@@ -228,6 +228,8 @@ export type CommanderInvestigationRecoveryExecutionEnvelope = {
   supports_local_execution: boolean | "unknown"
   supports_streaming: false
   connector_policy_hash: string
+  provider_adapter_version?: string
+  request_shape_policy_version?: string
   github_gateway_policy_hash?: string
   capability_envelope_hash: string
   execution_envelope_hash: string

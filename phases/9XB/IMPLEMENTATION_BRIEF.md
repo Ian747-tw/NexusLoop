@@ -722,7 +722,7 @@ cursors, and retained work are never reconstructed or replayed.
   failed outcomes, include it in the stable execution projection, and add only
   `external_research.search` to an exact drained-handler set.
 - `commander-tool-service.ts`: retain proposal-only deferred membership.
-- `api-request-service.ts`, `external-api-transport.ts`, and narrow types:
+- `api-request-service.ts`, `api-transport.ts`, and narrow types:
   allowlisted internal headers, MCP-specific DELETE, and a runtime-only final
   connection-attempt and HTTP-dispatch observation pair that is not caller/model authority;
   add a provider-scoped HTTPS path that pins the validated address while

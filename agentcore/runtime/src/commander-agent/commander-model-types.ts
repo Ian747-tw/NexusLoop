@@ -102,10 +102,10 @@ export type CommanderModelStepAdapter = {
   supports_streaming: boolean
   supports_native_tools: true
   supports_json_fallback: true
-  supports_structured_output: true
+  supports_structured_output: boolean
   supports_abort_signal: true
   supports_usage: true
-  supports_openai_compatible: true
+  supports_openai_compatible: boolean
   executeOneStep(request: CommanderModelStepRequest): Promise<CommanderModelStepResult>
   executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent>
 }

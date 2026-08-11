@@ -101,6 +101,11 @@ active/ready/run-lock authority. A configured connector-backed continuation now
 uses the existing external API audit service and real bound safe-read executor,
 while remaining an internal TypeScript method with no command, client, or TUI
 surface.
+Branch 9W4A separates provider construction from the shared AI SDK one-step
+engine and adds the closed `anthropic_messages_connector` native Messages
+protocol beside the unchanged `openai_compatible_connector` protocol. Both use
+the same controller, audited connector transport, cancellation, recovery, and
+shutdown ownership. See `docs/COMMANDER_PROVIDERS.md` and ADR-034.
 
 ```text
 NexusLoop domain control plane
@@ -304,8 +309,10 @@ Follow-on sequencing:
 - 9XA: bounded GitHub read gateway.
 - 9XB0: external research/MCP contract and provider-fit gate (`NO-GO`; no
   runtime activation).
-- 9XB1: first exact external-research descriptor only after provider
-  requalification.
+- 9W4A: static Commander provider protocols and native Anthropic Messages.
+- post-v1 9XB1: first exact external-research descriptor only after fresh
+  provider requalification; v1 does not activate external MCP or
+  `external_research.*`.
 - 9Y: evidence-backed proposal gate.
 - 9Z: GitHub governance intents and approval gate.
 

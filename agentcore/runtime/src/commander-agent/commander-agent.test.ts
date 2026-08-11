@@ -48,7 +48,8 @@ import {
 	  buildProviderToolMap,
   commanderInvestigationModelCapability,
   commanderProviderVisibleDescriptionHash,
-  commanderToolSchemaFromDescriptor,
+	  commanderToolSchemaFromDescriptor,
+	  connectorAnthropicMessagesUrl,
 	  connectorChatCompletionsUrl,
 	  createExternalApiConnectorFetch,
 	  createCommanderToolBindingRegistry,
@@ -60,12 +61,14 @@ import {
 	  stableHash,
   toCommanderToolResultMessage,
   validateCommanderInvestigationProviderConfig,
+  validateCommanderConnectorProtocolPolicy,
   validateCommanderConnectorModelTransportConfig,
   validateCommanderToolArguments,
   type CommanderInvestigationCheckpointSnapshot,
   type CommanderInvestigationStartedSnapshot,
 	  type CommanderInvestigationCheckpoint,
   type CommanderInvestigationRecoveryContinuationSeed,
+	  type CommanderInvestigationRecoveryExecutionEnvelope,
 	  type CommanderInvestigationLoadedToolRef,
 	  type CommanderInvestigationReplayExchange,
 	  type CommanderInvestigationWorkingSet,
@@ -86,6 +89,7 @@ describe("Commander AI SDK model adapter", () => {
     const pkg = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as { dependencies?: Record<string, string> }
     expect(pkg.dependencies?.ai).toBe("7.0.29")
     expect(pkg.dependencies?.["@ai-sdk/openai-compatible"]).toBe("3.0.11")
+    expect(pkg.dependencies?.["@ai-sdk/anthropic"]).toBe("4.0.15")
     expect(pkg.dependencies?.["@openai/agents"]).toBeUndefined()
     const grep = await $`bash -lc "rg -n 'commander-agent-runtime-sdk-fit|@openai/agents' src package.json -g '!src/commander-agent/commander-agent.test.ts' || true"`.cwd(process.cwd()).text()
     expect(grep.trim()).toBe("")
@@ -114,10 +118,525 @@ describe("Commander AI SDK model adapter", () => {
     expect(connectorChatCompletionsUrl(connector("plain", "https://api.example.test/v1")).toString()).toBe("https://api.example.test/v1/chat/completions")
   })
 
+  test("provider transport is a closed union with an exact native Anthropic Messages endpoint", () => {
+    const config = validateCommanderConnectorModelTransportConfig({
+      transport_kind: "anthropic_messages_connector",
+      provider_id: "anthropic_provider",
+      connector_id: "anthropic-connector",
+      model_id: "claude-fixture",
+      timeout_ms: 5000,
+      max_request_bytes: 4096,
+      max_response_bytes: 8192,
+    })
+    expect(config.transport_kind).toBe("anthropic_messages_connector")
+    expect(connectorAnthropicMessagesUrl(connector("anthropic", "https://api.anthropic.com/v1")).toString()).toBe("https://api.anthropic.com/v1/messages")
+    expect(connectorAnthropicMessagesUrl(connector("anthropic-nested", "https://api.example.test/custom/v1/")).toString()).toBe("https://api.example.test/custom/v1/messages")
+    expect(() => connectorAnthropicMessagesUrl(connector("anthropic-credentials", "https://user:secret@api.anthropic.com/v1"))).toThrow("credentials")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, transport_kind: "arbitrary_provider" })).toThrow("transport_kind")
+    expect(() => validateCommanderConnectorModelTransportConfig({ ...config, headers: { "anthropic-beta": "unsafe" } })).toThrow("unknown")
+  })
+
+  test("native Anthropic bridge enforces exact headers body and connector credential boundary", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-bridge-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("bridge ok") }])
+    const registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    const eventStore = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    const requestServiceOptions = {
+      registry,
+      transport,
+      eventStore,
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_bridge",
+      now: () => new Date("2026-08-10T00:00:00.000Z"),
+    }
+    const requestService = new ExternalApiRequestService(requestServiceOptions)
+    const config = connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" })
+    for (const invalidConnector of [
+      { ...anthropicConnector(), default_headers: { "anthropic-beta": "unsafe" } },
+      { ...anthropicConnector(), credential_refs: [...(anthropicConnector().credential_refs ?? []), { name: "extra", source: "env" as const, env_name: "NXL_EXTRA_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }] },
+    ]) {
+      expect(() => createExternalApiConnectorFetch({ registry: new ExternalApiConnectorRegistry([invalidConnector]), requestService, config, context: { commander_model_request_id: "req_invalid", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-fixture" } })).toThrow()
+    }
+    const invalidServiceRegistry = new ExternalApiConnectorRegistry([{ ...anthropicConnector(), default_headers: { "anthropic-beta": "unsafe" } }])
+    const invalidService = new ExternalApiRequestService({ registry: invalidServiceRegistry, transport, eventStore: new EventStore(join(projectDir, ".nxl", "invalid-service-events.jsonl")), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    expect(() => createExternalApiConnectorFetch({ registry, requestService: invalidService, config, context: { commander_model_request_id: "req_registry_mismatch", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-fixture" } })).toThrow("share one registry authority")
+    const bridgeOptions = {
+      registry,
+      requestService,
+      config,
+      context: { commander_model_request_id: "req_anthropic_bridge", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-fixture" },
+    }
+    const { fetch: bridgeFetch, metadata } = createExternalApiConnectorFetch(bridgeOptions)
+    const replacementTransport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("replacement transport") }])
+    const replacementEventStore = new EventStore(join(projectDir, ".nxl", "replacement-events.jsonl"))
+    requestServiceOptions.registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    requestServiceOptions.transport = replacementTransport
+    requestServiceOptions.eventStore = replacementEventStore
+    requestServiceOptions.env.NXL_TEST_ANTHROPIC_KEY = "attacker-key"
+    let replacementServiceCalls = 0
+    bridgeOptions.requestService = { executeForInternalUse: async () => {
+      replacementServiceCalls += 1
+      throw new Error("mutable replacement request service must remain unreachable")
+    } } as unknown as ExternalApiRequestService
+    bridgeOptions.config = connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "attacker_provider", connector_id: "anthropic-test", model_id: "attacker-model" })
+    bridgeOptions.context = { commander_model_request_id: "attacker_request", requested_by: "attacker", provider_id: "attacker_provider", model_id: "attacker-model" }
+    const expected = "https://api.anthropic.com/v1/messages"
+    const validBody = JSON.stringify({ model: "claude-fixture", max_tokens: 128, messages: [{ role: "user", content: "hello" }], stream: false })
+    const headers = { "Content-Type": "application/json", Accept: "application/json", "x-api-key": CONNECTOR_MANAGED_API_KEY_SENTINEL, "anthropic-version": "2023-06-01" }
+    await expect(bridgeFetch(`${expected}?beta=1`, { method: "POST", headers, body: validBody })).rejects.toThrow("query")
+    await expect(bridgeFetch(expected.replace("/messages", "/complete"), { method: "POST", headers, body: validBody })).rejects.toThrow("Messages endpoint")
+    await expect(bridgeFetch(expected, { method: "GET", headers, body: validBody })).rejects.toThrow("POST")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { ...headers, "anthropic-beta": "tools" }, body: validBody })).rejects.toThrow("anthropic-beta")
+    await expect(bridgeFetch(expected, { method: "POST", headers: { ...headers, "x-api-key": "real-secret" }, body: validBody })).rejects.toThrow("sentinel")
+    await expect(bridgeFetch(expected, { method: "POST", headers, body: JSON.stringify({ ...JSON.parse(validBody), mcp_servers: [] }) })).rejects.toThrow("mcp_servers")
+    await expect(bridgeFetch(expected, { method: "POST", headers, body: JSON.stringify({ ...JSON.parse(validBody), thinking: { type: "enabled" } }) })).rejects.toThrow("thinking")
+    await expect(bridgeFetch(expected, { method: "POST", headers, body: JSON.stringify({ ...JSON.parse(validBody), tools: [{ type: "web_search_20250305", name: "web_search" }] }) })).rejects.toThrow("server tool")
+    expect(transport.requests).toHaveLength(0)
+
+    const response = await bridgeFetch(expected, { method: "POST", headers, body: validBody })
+    expect(response.status).toBe(200)
+    expect(transport.requests).toHaveLength(1)
+    expect(replacementTransport.requests).toHaveLength(0)
+    expect(transport.requests[0].url).toBe(expected)
+    expect(transport.requests[0].headers["x-api-key"]).toBe("real-anthropic-key")
+    expect(transport.requests[0].headers["anthropic-version"]).toBe("2023-06-01")
+    expect(JSON.stringify(transport.requests[0].headers)).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+    expect(metadata.request_attempt_count()).toBe(9)
+    expect(metadata.transport_dispatch_count()).toBe(1)
+    expect(replacementServiceCalls).toBe(0)
+    const persistedEvents = await eventText(projectDir)
+    expect(persistedEvents.match(/external_api_request_executed/g)).toHaveLength(1)
+    expect(persistedEvents).not.toContain("attacker")
+    await expect(replacementEventStore.readAll()).resolves.toEqual([])
+
+    const mismatchedTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ ...JSON.parse(anthropicMessageText("context must not become authority")), model: "claude-context-only" }) }])
+    const mismatchedRequestService = new ExternalApiRequestService({
+      registry,
+      transport: mismatchedTransport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "mismatched-events.jsonl")),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_context_mismatch",
+    })
+    const { fetch: mismatchedFetch } = createExternalApiConnectorFetch({
+      registry,
+      requestService: mismatchedRequestService,
+      config,
+      context: { commander_model_request_id: "req_anthropic_context_mismatch", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-context-only" },
+    })
+    await expect(mismatchedFetch(expected, { method: "POST", headers, body: validBody })).rejects.toThrow("response model does not match configured authority")
+    expect(mismatchedTransport.requests).toHaveLength(1)
+  })
+
+  test("connector-backed native Anthropic normalizes final text tool use continuation usage and stop reasons", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-adapter-"))
+    const finalTransport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("native final") }])
+    const finalAdapter = connectorBackedAdapter(projectDir, finalTransport, "api_anthropic_final", {
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" }),
+      connector: anthropicConnector(),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    const base = baseRequest({ baseUrl: "http://127.0.0.1:1" }).request
+    const request = { ...base, provider_id: "anthropic_provider", model_id: "claude-fixture" }
+    const final = await finalAdapter.executeOneStep(request)
+    expect(final).toMatchObject({ status: "final", text: "native final", request_count: 1, finish_reason: "stop", usage: { input_tokens: 31, output_tokens: 7, provider_reported: true } })
+
+    const toolTransport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageToolUse("toolu_exact_1", "memory__search", { query: "bounded evidence" }) }])
+    const toolAdapter = connectorBackedAdapter(projectDir, toolTransport, "api_anthropic_tool", {
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" }),
+      connector: anthropicConnector(),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    const toolResult = await toolAdapter.executeOneStep(request)
+    expect(toolResult).toMatchObject({ status: "tool_call", request_count: 1, tool_calls: [{ tool_call_id: "toolu_exact_1", tool_id: "memory.search", arguments: { query: "bounded evidence" }, arguments_valid: true }] })
+
+    const continuationTransport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("continued final") }])
+    const continuationAdapter = connectorBackedAdapter(projectDir, continuationTransport, "api_anthropic_continuation", {
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" }),
+      connector: anthropicConnector(),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    const continuation = await continuationAdapter.executeOneStep({
+      ...request,
+      messages: [
+        ...request.messages,
+        { role: "assistant", content: [{ type: "tool_call", tool_call_id: "toolu_exact_1", tool_id: "memory.search", arguments: { query: "bounded evidence" }, raw_arguments: "{\"query\":\"bounded evidence\"}", arguments_valid: true, validation_errors: [], call_hash: "call_hash" }] },
+        { role: "tool", tool_call_id: "toolu_exact_1", tool_id: "memory.search", content: "summary-only result", content_hash: "result_hash", truncated: false },
+      ],
+    })
+    expect(continuation.status).toBe("final")
+    const continuationBody = JSON.parse(String(continuationTransport.requests[0].body)) as { messages: Array<{ role: string; content: unknown }> }
+    expect(JSON.stringify(continuationBody.messages)).toContain("toolu_exact_1")
+    expect(JSON.stringify(continuationBody.messages)).toContain("tool_result")
+  })
+
+  test("recognized Claude models dispatch ordinary client tools without structured-output beta", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-recognized-model-"))
+    const modelId = "claude-sonnet-4-5-20250929"
+    const response = JSON.stringify({
+      ...JSON.parse(anthropicMessageToolUse("toolu_recognized_1", "memory__search", { query: "bounded evidence" })),
+      model: modelId,
+    })
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: response }])
+    const config = connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: modelId })
+    const connector = { ...anthropicConnector(), base_url: "https://api.anthropic.com/v1/" }
+    expect(() => validateCommanderConnectorProtocolPolicy(config, connector)).not.toThrow()
+    const adapter = connectorBackedAdapter(projectDir, transport, "api_anthropic_recognized_model", {
+      config,
+      connector,
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    const request = {
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: modelId,
+      max_output_tokens: 4096,
+    }
+
+    const result = await adapter.executeOneStep(request)
+
+    expect(result).toMatchObject({
+      status: "tool_call",
+      request_count: 1,
+      tool_calls: [{ tool_call_id: "toolu_recognized_1", tool_id: "memory.search", arguments_valid: true }],
+      provider_metadata: {
+        nexusloop_transport: {
+          audit_event_count: 1,
+          successful_audit_count: 1,
+          failed_audit_count: 0,
+          transport_dispatch_count: 1,
+        },
+      },
+    })
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].url).toBe("https://api.anthropic.com/v1/messages")
+    expect(transport.requests[0].headers).not.toHaveProperty("anthropic-beta")
+    const events = await eventText(projectDir)
+    expect(events.match(/"kind":"external_api_request_executed"/g)).toHaveLength(1)
+    expect(events).not.toContain("external_api_request_failed")
+  })
+
+  test("connector-backed Anthropic adapter snapshots registry and request-service authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-immutable-connector-adapter-"))
+    const modelId = "claude-sonnet-4-5-20250929"
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ ...JSON.parse(anthropicMessageText("immutable connector authority")), model: modelId }) }])
+    const registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_immutable_connector_adapter",
+    })
+    const options = {
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: modelId }),
+      registry,
+      requestService,
+    }
+    const adapter = new ConnectorBackedCommanderModelStepAdapter(options)
+    let replacementServiceCalls = 0
+    options.registry = new ExternalApiConnectorRegistry([{ ...anthropicConnector(), base_url: "https://attacker.example.test/v1", allowed_hosts: ["attacker.example.test"] }])
+    options.requestService = { executeForInternalUse: async () => {
+      replacementServiceCalls += 1
+      throw new Error("replacement request service must remain unreachable")
+    } } as unknown as ExternalApiRequestService
+
+    const result = await adapter.executeOneStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: modelId,
+      max_output_tokens: 4096,
+    })
+
+    expect(result).toMatchObject({ status: "final", text: "immutable connector authority", request_count: 1 })
+    expect(replacementServiceCalls).toBe(0)
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].url).toBe("https://api.anthropic.com/v1/messages")
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("Anthropic adapter snapshots request tool authority before provider dispatch", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-immutable-request-"))
+    const modelId = "claude-sonnet-4-5-20250929"
+    let markTransportStarted!: () => void
+    let releaseTransport!: () => void
+    const transportStarted = new Promise<void>((resolve) => { markTransportStarted = resolve })
+    const transportReleased = new Promise<void>((resolve) => { releaseTransport = resolve })
+    const transport: ExternalApiTransport & { requests: number } = {
+      requests: 0,
+      async request() {
+        transport.requests += 1
+        markTransportStarted()
+        await transportReleased
+        return {
+          status_code: 200,
+          body: JSON.stringify({ ...JSON.parse(anthropicMessageToolUse("toolu_snapshot_1", "memory__search", { query: "bounded evidence" })), model: modelId }),
+        }
+      },
+    }
+    const registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_immutable_request",
+    })
+    const adapter = new ConnectorBackedCommanderModelStepAdapter({
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: modelId }),
+      registry,
+      requestService,
+    })
+    const request: CommanderModelStepRequest = {
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      request_id: "req_anthropic_immutable_request",
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: modelId,
+      max_output_tokens: 4096,
+    }
+    const originalTool = request.tools.find((item) => item.tool_id === "memory.search")!
+
+    const execution = adapter.executeOneStep(request)
+    await transportStarted
+    request.request_id = "req_mutated_after_dispatch"
+    request.provider_id = "mutated_provider"
+    request.tools = [{ ...structuredClone(originalTool), tool_id: "repo.read_lines", provider_tool_name: "memory__search" }]
+    releaseTransport()
+    const result = await execution
+
+    expect(result).toMatchObject({
+      request_id: "req_anthropic_immutable_request",
+      provider_id: "anthropic_provider",
+      status: "tool_call",
+      request_count: 1,
+      tool_calls: [{ tool_call_id: "toolu_snapshot_1", tool_id: "memory.search", arguments_valid: true }],
+    })
+    expect(result.tool_calls[0].tool_id).not.toBe("repo.read_lines")
+    expect(transport.requests).toBe(1)
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native Anthropic low-level adapter does not advertise or attempt connector streaming", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-no-streaming-"))
+    const modelId = "claude-sonnet-4-5-20250929"
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ ...JSON.parse(anthropicMessageText("immutable audited fetch")), model: modelId }) }])
+    const registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    const bridge = createExternalApiConnectorFetch({
+      registry,
+      requestService,
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: modelId }),
+      context: { commander_model_request_id: "req_anthropic_stream", requested_by: "tester", provider_id: "anthropic_provider", model_id: modelId },
+    })
+    let replacementFetchCalls = 0
+    const adapterOptions = {
+      transport_kind: "anthropic_messages_connector",
+      provider_name: "anthropic_provider",
+      base_url: "https://api.anthropic.com/v1",
+      credential_mode: "connector_managed",
+      fetch: bridge.fetch,
+    } as const
+    const adapter = new AiSdkCommanderModelStepAdapter(adapterOptions)
+    ;(adapterOptions as { fetch: typeof fetch }).fetch = (async () => {
+      replacementFetchCalls += 1
+      return new Response(anthropicMessageText("unaudited replacement"), { status: 200, headers: { "Content-Type": "application/json" } })
+    }) as unknown as typeof fetch
+    expect(() => new AiSdkCommanderModelStepAdapter({
+      transport_kind: "anthropic_messages_connector",
+      provider_name: "different_anthropic_provider",
+      base_url: "https://api.anthropic.com/v1",
+      credential_mode: "connector_managed",
+      fetch: bridge.fetch,
+    })).toThrow("does not match provider authority")
+
+    expect(adapter.supports_streaming).toBe(false)
+    await expect(adapter.executeOneStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: modelId,
+      max_output_tokens: 4096,
+    })).resolves.toMatchObject({ status: "final", text: "immutable audited fetch", request_count: 1 })
+    expect(replacementFetchCalls).toBe(0)
+    expect(transport.requests).toHaveLength(1)
+    await expect(adapter.executeOneStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: "claude-sonnet-5",
+      max_output_tokens: 4096,
+    })).resolves.toMatchObject({ status: "failed", request_count: 0, error: "Anthropic connector fetch authority does not match request identity" })
+    const events = []
+    for await (const event of adapter.executeOneStreamedStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: modelId,
+      max_output_tokens: 4096,
+    })) events.push(event)
+    expect(events).toEqual([{ type: "error", error: "Anthropic Messages connector streaming is not enabled" }])
+    expect(transport.requests).toHaveLength(1)
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native Anthropic tool choices malformed arguments and JSON fallback remain bounded without beta", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-semantics-"))
+    const config = connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" })
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "anthropic_provider", provider_kind: "anthropic", model_id: "claude-fixture" }
+    const choiceTransport = new FakeExternalApiTransport([
+      { status_code: 200, body: anthropicMessageText("auto") },
+      { status_code: 200, body: anthropicMessageText("none") },
+      { status_code: 200, body: anthropicMessageToolUse("toolu_required", "memory__search", { query: "required" }) },
+    ])
+    const choiceAdapter = connectorBackedAdapter(projectDir, choiceTransport, "api_anthropic_choices", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    await expect(choiceAdapter.executeOneStep({ ...request, tool_choice: "auto" })).resolves.toMatchObject({ status: "final" })
+    await expect(choiceAdapter.executeOneStep({ ...request, tool_choice: "none" })).resolves.toMatchObject({ status: "final" })
+    await expect(choiceAdapter.executeOneStep({ ...request, tool_choice: "required" })).resolves.toMatchObject({ status: "tool_call", tool_calls: [{ tool_call_id: "toolu_required", arguments_valid: true }] })
+    const choiceBodies = choiceTransport.requests.map((item) => JSON.parse(String(item.body)) as Record<string, unknown>)
+    expect(choiceBodies[0].tool_choice).toEqual({ type: "auto" })
+    expect(choiceBodies[1].tools).toBeUndefined()
+    expect(choiceBodies[1].tool_choice).toBeUndefined()
+    expect(choiceBodies[2].tool_choice).toEqual({ type: "any" })
+
+    const malformedTransport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageToolUse("toolu_malformed", "memory__search", { query: 42 }) }])
+    const malformedAdapter = connectorBackedAdapter(projectDir, malformedTransport, "api_anthropic_malformed", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    const malformed = await malformedAdapter.executeOneStep(request)
+    expect(malformed).toMatchObject({ status: "tool_call", request_count: 1, tool_calls: [{ arguments_valid: false }] })
+    expect(malformed.tool_calls[0].execution_arguments).toBeUndefined()
+
+    const fallbackTransport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText(JSON.stringify({ type: "final", final: { summary: "fallback complete" } })) }])
+    const fallbackAdapter = connectorBackedAdapter(projectDir, fallbackTransport, "api_anthropic_fallback", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    await expect(fallbackAdapter.executeOneStep({ ...request, tool_protocol: "json_fallback", tool_choice: "auto" })).resolves.toMatchObject({ status: "final", text: "fallback complete", request_count: 1 })
+    expect(fallbackTransport.requests[0].headers).not.toHaveProperty("anthropic-beta")
+    expect(String(fallbackTransport.requests[0].body)).not.toContain("output_format")
+
+    const refusalTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({ ...JSON.parse(anthropicMessageText("refused")), stop_reason: "refusal" }) }])
+    const refusalAdapter = connectorBackedAdapter(projectDir, refusalTransport, "api_anthropic_refusal", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    await expect(refusalAdapter.executeOneStep(request)).resolves.toMatchObject({ status: "refusal", finish_reason: "content-filter", request_count: 1 })
+
+    const serverToolTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
+      ...JSON.parse(anthropicMessageText("")),
+      content: [{ type: "server_tool_use", id: "server_tool_1", name: "memory__search", input: { query: "forbidden collision" } }],
+      stop_reason: "tool_use",
+    }) }])
+    const serverToolAdapter = connectorBackedAdapter(projectDir, serverToolTransport, "api_anthropic_server_tool", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    const serverToolResult = await serverToolAdapter.executeOneStep(request)
+    expect(serverToolResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(serverToolResult.error).toContain("forbidden or unsupported content block")
+    expect(JSON.stringify(serverToolResult)).not.toContain("forbidden collision")
+
+    const pauseTurnTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
+      ...JSON.parse(anthropicMessageText("server-side work remains pending")),
+      stop_reason: "pause_turn",
+    }) }])
+    const pauseTurnAdapter = connectorBackedAdapter(projectDir, pauseTurnTransport, "api_anthropic_pause_turn", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    const pauseTurnResult = await pauseTurnAdapter.executeOneStep(request)
+    expect(pauseTurnTransport.requests).toHaveLength(1)
+    expect(pauseTurnResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(pauseTurnResult.error).toContain("stop reason is forbidden or unsupported")
+    expect(JSON.stringify(pauseTurnResult)).not.toContain("server-side work remains pending")
+
+    const maxTokensTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
+      ...JSON.parse(anthropicMessageText("truncated answer must not become final")),
+      stop_reason: "max_tokens",
+    }) }])
+    const maxTokensAdapter = connectorBackedAdapter(projectDir, maxTokensTransport, "api_anthropic_max_tokens", { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+    const maxTokensResult = await maxTokensAdapter.executeOneStep(request)
+    expect(maxTokensTransport.requests).toHaveLength(1)
+    expect(maxTokensResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(maxTokensResult.error).toContain("stop reason is forbidden or unsupported")
+    expect(JSON.stringify(maxTokensResult)).not.toContain("truncated answer must not become final")
+
+    for (const [name, body, error] of [
+      ["wrong_model", { ...JSON.parse(anthropicMessageText("wrong model evidence")), model: "claude-unconfigured" }, "response model does not match configured authority"],
+      ["stop_sequence", { ...JSON.parse(anthropicMessageText("unrequested early stop")), stop_reason: "stop_sequence", stop_sequence: "forbidden" }, "response stop sequence is forbidden or unsupported"],
+      ["hidden_stop_sequence", { ...JSON.parse(anthropicMessageText("hidden early stop")), stop_sequence: "forbidden" }, "response stop sequence is forbidden or unsupported"],
+      ["empty_final", { ...JSON.parse(anthropicMessageText("")), content: [] }, "response content is invalid"],
+    ] as const) {
+      const identityTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(body) }])
+      const identityAdapter = connectorBackedAdapter(projectDir, identityTransport, `api_anthropic_${name}`, { config, connector: anthropicConnector(), env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" } })
+      const identityResult = await identityAdapter.executeOneStep(request)
+      expect(identityTransport.requests).toHaveLength(1)
+      expect(identityResult).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+      expect(identityResult.error).toContain(error)
+      expect(JSON.stringify(identityResult)).not.toContain(name === "wrong_model" ? "wrong model evidence" : "unrequested early stop")
+    }
+  })
+
+  test("Anthropic connector retries zero times and synthesizes bounded native error envelopes", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-errors-"))
+    for (const status of [429, 500]) {
+      const transport = new FakeExternalApiTransport([{ status_code: status, body: JSON.stringify({ error: { type: "overloaded_error", message: `secret ${"x".repeat(10_000)}` } }) }])
+      const adapter = connectorBackedAdapter(projectDir, transport, `api_anthropic_${status}`, {
+        config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" }),
+        connector: anthropicConnector(),
+        env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      })
+      const result = await adapter.executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "anthropic_provider", model_id: "claude-fixture" })
+      expect(result.status).toBe("failed")
+      expect(result.request_count).toBe(1)
+      expect(transport.requests).toHaveLength(1)
+      expect(result.error!.length).toBeLessThanOrEqual(300)
+      expect(result.error).not.toContain("x".repeat(500))
+    }
+  })
+
+  test("Anthropic model evidence is withheld when the external API audit cannot persist", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-audit-failure-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("must remain unavailable") }])
+    const eventStore = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    eventStore.append = async (): Promise<string> => {
+      throw new Error("simulated durable audit failure")
+    }
+    const registry = new ExternalApiConnectorRegistry([anthropicConnector()])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore,
+      env: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      requestId: () => "api_anthropic_audit_failure",
+    })
+    const adapter = new ConnectorBackedCommanderModelStepAdapter({
+      config: connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" }),
+      registry,
+      requestService,
+    })
+
+    const result = await adapter.executeOneStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: "claude-fixture",
+    })
+    expect(transport.requests).toHaveLength(1)
+    expect(result).toMatchObject({ status: "failed", request_count: 1 })
+    expect(result.text).toBeUndefined()
+    expect(result.tool_calls).toEqual([])
+    expect(result.error).toContain("audit failure")
+    expect(JSON.stringify(result)).not.toContain("must remain unavailable")
+    expect(await eventText(projectDir)).toBe("")
+  })
+
   test("connector-managed AI SDK credential mode rejects real credentials and uses a non-secret sentinel only internally", () => {
+    let fetchCalls = 0
+    const unreachableFetch = (async () => {
+      fetchCalls += 1
+      throw new Error("must remain unreachable")
+    }) as unknown as typeof fetch
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("api_key is required")
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", api_key: "real-secret", fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("must not receive api_key")
     expect(() => new AiSdkCommanderModelStepAdapter({ provider_name: "fixture", base_url: "http://127.0.0.1:1/v1", credential_mode: "connector_managed", default_headers: { Authorization: "Bearer real-secret" }, fetch: loopbackFetch("http://127.0.0.1:1") })).toThrow("credential-like header")
+    expect(() => new AiSdkCommanderModelStepAdapter({ transport_kind: "anthropic_messages_connector", provider_name: "fixture", base_url: "https://api.anthropic.com/v1", api_key: "real-secret", fetch: unreachableFetch })).toThrow("requires connector_managed credential mode")
+    expect(() => new AiSdkCommanderModelStepAdapter({ transport_kind: "anthropic_messages_connector", provider_name: "fixture", base_url: "https://api.anthropic.com/v1", credential_mode: "explicit_api_key", api_key: "real-secret", fetch: unreachableFetch })).toThrow("requires connector_managed credential mode")
+    expect(() => new AiSdkCommanderModelStepAdapter({ transport_kind: "anthropic_messages_connector", provider_name: "fixture", base_url: "https://api.anthropic.com/v1", credential_mode: "connector_managed", fetch: unreachableFetch })).toThrow("audited connector fetch authority")
+    expect(fetchCalls).toBe(0)
     expect(CONNECTOR_MANAGED_API_KEY_SENTINEL).not.toMatch(/sk-|Bearer|token|secret/i)
   })
 
@@ -785,6 +1304,7 @@ describe("Commander AI SDK model adapter", () => {
     const malformedResult = await baseRequest({ baseUrl: malformed.url, content: "malformed tool" }).adapter.executeOneStep(baseRequest({ baseUrl: malformed.url, content: "malformed tool" }).request)
     expect(malformedResult.status).toBe("tool_call")
     expect(malformedResult.tool_calls[0].arguments_valid).toBe(false)
+    expect(malformedResult.tool_calls[0].execution_arguments).toBeUndefined()
 
     const fallback = startMockServer("json_fallback")
     const nativeRequest = baseRequest({ baseUrl: fallback.url, content: "fallback", overrides: { tool_protocol: "native" } })
@@ -2142,6 +2662,10 @@ describe("Commander in-memory investigation controller", () => {
     expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, provider_id: "https://api.example.test" })).toThrow("URLs")
     expect(() => validateCommanderInvestigationProviderConfig({ ...options.commanderInvestigationProviderConfig, provider_kind: "sk-provider-secret" })).toThrow("credential-looking")
     expect(() => readRuntimeServerLaunchOptionsFromEnv({ ...providerEnv(), NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND: "Bearer provider-secret" })).toThrow("credential-looking")
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "anthropic_messages_connector", provider_kind: "openai" }))).toThrow("requires provider_kind anthropic")
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "openai_compatible_connector", provider_kind: "anthropic" }))).toThrow("requires anthropic_messages_connector")
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "anthropic_messages_connector", provider_kind: "anthropic", supports_json_schema: true }))).toThrow("structured output")
+    expect(validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "anthropic_messages_connector", provider_kind: "anthropic", supports_json_schema: false }))).toMatchObject({ transport_kind: "anthropic_messages_connector", provider_kind: "anthropic", supports_json_schema: false })
     expect(() => new RuntimeServer({ projectDir: "/tmp/nxl-conflict", commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "x" }]), commanderInvestigationProviderConfig: options.commanderInvestigationProviderConfig })).toThrow("cannot be combined")
     expect(() => readRuntimeServerLaunchOptionsFromEnv(providerEnv(), { commanderModelStepAdapter: new ScriptedCommanderModelStepAdapter([{ status: "final", text: "x" }]) })).toThrow("cannot be combined")
   })
@@ -2242,6 +2766,64 @@ describe("Commander in-memory investigation controller", () => {
     const ready = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "fixture_provider", provider_kind: "openai", model_id: "fixture-model" })
     expect(ready.runtime_lifecycle_state).toBe("ready")
     expect(ready.execution_ready).toBe(true)
+  })
+
+  test("native Anthropic readiness and recovery envelope bind exact protocol authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-authority-"))
+    await writeApprovedSpec(projectDir)
+    const config = validateCommanderInvestigationProviderConfig(providerConfig({
+      transport_kind: "anthropic_messages_connector",
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      connector_id: "anthropic-test",
+      model_id: "claude-fixture",
+      supports_json_schema: false,
+    }))
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: config,
+      externalApiConnectors: [anthropicConnector()],
+      externalApiTransport: new FakeExternalApiTransport([{ status_code: 200, body: anthropicMessageText("configured final") }]),
+      externalApiEnv: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    const readiness = server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "anthropic_provider", provider_kind: "anthropic", model_id: "claude-fixture" })
+    expect(readiness).toMatchObject({ status: "ready", configuration_ready: true, execution_ready: true, default_tool_protocol: "native" })
+    expect(readiness.checks).toContainEqual(expect.objectContaining({ name: "provider_request_policy", ok: true }))
+    const envelope = (server as unknown as { commanderInvestigationRecoveryExecutionEnvelope(input: Record<string, unknown>): CommanderInvestigationRecoveryExecutionEnvelope }).commanderInvestigationRecoveryExecutionEnvelope({})
+    expect(envelope).toMatchObject({
+      transport_kind: "anthropic_messages_connector",
+      provider_kind: "anthropic",
+      provider_adapter_version: "ai@7.0.29/@ai-sdk/anthropic@4.0.15",
+      request_shape_policy_version: "anthropic_messages_v1",
+      supports_json_schema: false,
+    })
+    expect(JSON.stringify(envelope)).not.toContain("NXL_TEST_ANTHROPIC_KEY")
+    expect(JSON.stringify(envelope)).not.toContain("real-anthropic-key")
+
+    const invalidCredentials: Array<{ label: string; credential_refs: ExternalApiConnector["credential_refs"]; expected: string }> = [
+      { label: "missing", credential_refs: [], expected: "exactly one credential reference" },
+      { label: "duplicate", credential_refs: [...anthropicConnector().credential_refs!, ...anthropicConnector().credential_refs!], expected: "exactly one credential reference" },
+      { label: "wrong-header", credential_refs: [{ name: "bad", source: "env", env_name: "NXL_TEST_ANTHROPIC_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }], expected: "x-api-key" },
+      { label: "prefixed", credential_refs: [{ ...anthropicConnector().credential_refs![0], prefix: "Bearer " }], expected: "x-api-key" },
+      { label: "query", credential_refs: [{ ...anthropicConnector().credential_refs![0], inject_as: "query", target_name: "api_key" }], expected: "x-api-key" },
+    ]
+    for (const fixture of invalidCredentials) {
+      const blockedServer = new RuntimeServer({
+        projectDir: await mkdtemp(join(tmpdir(), `nxl-9w4a-anthropic-${fixture.label}-credential-`)),
+        adapter: new FakeOpenCodeAdapter(),
+        commanderInvestigationProviderConfig: config,
+        externalApiConnectors: [{ ...anthropicConnector(), credential_refs: fixture.credential_refs }],
+        externalApiTransport: new FakeExternalApiTransport([]),
+        externalApiEnv: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+      })
+      const blocked = blockedServer.previewCommanderInvestigationProviderReadiness({ provider_kind: "anthropic" })
+      expect(blocked.configuration_ready).toBe(false)
+      expect(blocked.blockers.join(" ")).toContain("provider request policy")
+      expect(blocked.checks.find((check) => check.name === "provider_request_policy")?.redacted_detail).toContain(fixture.expected)
+    }
   })
 
   test("provider audit policy fails closed before tool execution when metadata is missing or malformed", async () => {
@@ -2446,6 +3028,51 @@ describe("Commander in-memory investigation controller", () => {
     expect(events).not.toContain("memory__search")
     expect(events).not.toContain("real-provider-key")
     expect(events).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+  })
+
+  test("native Anthropic configured work is aborted and audited before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4a-anthropic-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let releaseTransport!: () => void
+    const released = new Promise<void>((resolve) => { releaseTransport = resolve })
+    const transport = delayedAbortTransport(released)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig({
+        transport_kind: "anthropic_messages_connector",
+        provider_id: "anthropic_provider",
+        provider_kind: "anthropic",
+        connector_id: "anthropic-test",
+        model_id: "claude-fixture",
+        supports_json_schema: false,
+      })),
+      externalApiConnectors: [anthropicConnector()],
+      externalApiTransport: transport,
+      externalApiResolveHostAddresses: async () => [{ address: "160.79.104.10" }],
+      externalApiEnv: { NXL_TEST_ANTHROPIC_KEY: "real-anthropic-key" },
+    })
+    await server.start()
+    const investigation = server.runCommanderInvestigationInMemory(baseInvestigation({
+      investigation_id: "inv_anthropic_shutdown",
+      provider_id: "anthropic_provider",
+      provider_kind: "anthropic",
+      model_id: "claude-fixture",
+      tool_protocol: "native",
+    }))
+    await waitFor(() => transport.requests === 1)
+    const shutdown = server.shutdown("shutdown during Anthropic Messages request")
+    await waitFor(() => transport.aborted)
+    releaseTransport()
+    const result = await investigation
+    await shutdown
+    expect(result).toMatchObject({ status: "cancelled", provider_request_count: 1, external_api_audit_events_appended: 1 })
+    const events = await eventText(projectDir)
+    const kinds = eventKinds(events)
+    expect((events.match(/external_api_request_failed/g) ?? [])).toHaveLength(1)
+    expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    expect(events).not.toContain("real-anthropic-key")
   })
 
   test("configured provider shutdown retains run lock until active investigation drain completes", async () => {
@@ -6015,6 +6642,8 @@ describe("Commander in-memory investigation controller", () => {
     expect(validPreview.recovery_packet?.evidence_pointers[0]).toMatchObject({ evidence_id: "evidence_recovery_pointer", source_id: "evidence_recovery_pointer", summary_preview: "bounded evidence evidence_recovery_pointer" })
     expect(validPreview.recovery_packet?.provider_execution_envelope_hash).toBe(validPreview.provider_compatibility.execution_envelope?.execution_envelope_hash)
     expect(validPreview.provider_compatibility.execution_envelope).toMatchObject({ connector_id: "openai-test", max_output_tokens: 1024, supports_tools: true })
+    expect(validPreview.provider_compatibility.execution_envelope?.provider_adapter_version).toBeUndefined()
+    expect(validPreview.provider_compatibility.execution_envelope?.request_shape_policy_version).toBeUndefined()
     expect(JSON.stringify(validPreview)).not.toContain("raw tool")
     expect(JSON.stringify(validPreview)).not.toContain("https://api.example.test")
     expect(JSON.stringify(validPreview)).not.toContain("trace-fixture")
@@ -6131,7 +6760,17 @@ describe("Commander in-memory investigation controller", () => {
     expect(JSON.stringify(missingCredentialPreview)).not.toContain("NXL_TEST_MODEL_KEY")
     expect(JSON.stringify(missingCredentialPreview)).not.toContain("real-provider-key")
 
+    const protocolDriftEnvelope = {
+      ...recoveryExecutionEnvelope(),
+      transport_kind: "anthropic_messages_connector" as const,
+      provider_adapter_version: "ai@7.0.29/@ai-sdk/anthropic@4.0.15",
+      request_shape_policy_version: "anthropic_messages_v1",
+      connector_policy_hash: stableHash({ protocol: "anthropic_messages_v1" }),
+      execution_envelope_hash: "",
+    }
+    protocolDriftEnvelope.execution_envelope_hash = stableHash({ ...protocolDriftEnvelope, execution_envelope_hash: "" })
     for (const [label, envelope] of [
+      ["provider_protocol", protocolDriftEnvelope],
       ["connector_id", recoveryExecutionEnvelope({ connector_id: "openai-alt" })],
       ["base_url", recoveryExecutionEnvelope({ base_url: "https://api-alt.example.test/v1" })],
       ["allowed_hosts", recoveryExecutionEnvelope({ allowed_hosts: ["api-alt.example.test"] })],
@@ -12594,6 +13233,21 @@ function connector(id: string, baseUrl: string, overrides: { allowLocalHttp?: bo
   }
 }
 
+function anthropicConnector(): ExternalApiConnector {
+  return {
+    connector_id: "anthropic-test",
+    title: "Anthropic Messages test connector",
+    base_url: "https://api.anthropic.com/v1",
+    allowed_hosts: ["api.anthropic.com"],
+    allowed_methods: ["POST"],
+    credential_refs: [{ name: "anthropic-key", source: "env", env_name: "NXL_TEST_ANTHROPIC_KEY", inject_as: "header", target_name: "x-api-key" }],
+    timeout_ms: 5000,
+    max_response_bytes: 65_536,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+  }
+}
+
 function githubTestConnector(): ExternalApiConnector {
   return {
     connector_id: "github-read-test",
@@ -12860,17 +13514,21 @@ function controllerWithBootstrapHash(bootstrapHash: string) {
   })
 }
 
-function connectorBackedAdapter(projectDir: string, transport: FakeExternalApiTransport, requestId = "api_connector_1") {
-  const registry = new ExternalApiConnectorRegistry([connector("openai-test", "https://api.example.test/v1")])
+function connectorBackedAdapter(projectDir: string, transport: FakeExternalApiTransport, requestId = "api_connector_1", overrides: {
+  config?: ReturnType<typeof validateCommanderConnectorModelTransportConfig>
+  connector?: ExternalApiConnector
+  env?: Record<string, string | undefined>
+} = {}) {
+  const registry = new ExternalApiConnectorRegistry([overrides.connector ?? connector("openai-test", "https://api.example.test/v1")])
   const requestService = new ExternalApiRequestService({
     registry,
     transport,
     eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
-    env: { NXL_TEST_MODEL_KEY: "real-provider-key" },
+    env: overrides.env ?? { NXL_TEST_MODEL_KEY: "real-provider-key" },
     requestId: () => requestId,
     now: () => new Date("2026-07-21T00:00:00.000Z"),
   })
-  return new ConnectorBackedCommanderModelStepAdapter({ config: connectorConfig(), registry, requestService })
+  return new ConnectorBackedCommanderModelStepAdapter({ config: overrides.config ?? connectorConfig(), registry, requestService })
 }
 
 class LateSettlingCommanderModelStepAdapter implements CommanderModelStepAdapter {
@@ -12921,6 +13579,32 @@ function chatCompletionText(text: string) {
     created: 1784160000,
     model: "fixture-model",
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }],
+  })
+}
+
+function anthropicMessageText(text: string): string {
+  return JSON.stringify({
+    id: "msg_fixture",
+    type: "message",
+    role: "assistant",
+    model: "claude-fixture",
+    content: [{ type: "text", text }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 31, output_tokens: 7 },
+  })
+}
+
+function anthropicMessageToolUse(id: string, name: string, input: Record<string, unknown>): string {
+  return JSON.stringify({
+    id: "msg_tool_fixture",
+    type: "message",
+    role: "assistant",
+    model: "claude-fixture",
+    content: [{ type: "tool_use", id, name, input }],
+    stop_reason: "tool_use",
+    stop_sequence: null,
+    usage: { input_tokens: 41, output_tokens: 11 },
   })
 }
 

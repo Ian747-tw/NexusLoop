@@ -148,3 +148,8 @@ Branch 9XA binds current GitHub descriptor, binding, allowlist, and transport
 policy identity into recovery compatibility. A loaded GitHub tool whose gateway
 is unavailable blocks recovery; changed gateway authority stales approval and
 requires a new preview rather than replaying any historical request.
+
+Branch 9W4A binds the closed model protocol into the recovery execution
+envelope. Anthropic recovery records carry native Messages endpoint, package,
+request-policy, capability, connector, and credential-shape authority without
+credentials. Existing OpenAI-compatible envelope semantics remain unchanged.

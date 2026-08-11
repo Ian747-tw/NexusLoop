@@ -121,3 +121,9 @@ persisted external API audit per configured provider request. Direct AI SDK
 adapter construction remains useful for loopback tests, but production
 connector mode supplies only a non-secret sentinel credential to the SDK and
 routes every HTTP attempt through `ExternalApiRequestService`.
+
+Branch 9W4A separates the shared AI SDK step engine from provider construction.
+The existing OpenAI-compatible provider remains unchanged, while a closed
+native Anthropic Messages factory uses the same message conversion, curated
+client tools, validation, result normalization, cancellation, and hashing.
+Dynamic providers and provider-defined tools remain outside this kernel.
