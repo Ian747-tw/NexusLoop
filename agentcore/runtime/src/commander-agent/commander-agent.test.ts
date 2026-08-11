@@ -148,6 +148,12 @@ describe("Commander AI SDK model adapter", () => {
       now: () => new Date("2026-08-10T00:00:00.000Z"),
     })
     const config = connectorConfig({ transport_kind: "anthropic_messages_connector", provider_id: "anthropic_provider", connector_id: "anthropic-test", model_id: "claude-fixture" })
+    for (const invalidConnector of [
+      { ...anthropicConnector(), default_headers: { "anthropic-beta": "unsafe" } },
+      { ...anthropicConnector(), credential_refs: [...(anthropicConnector().credential_refs ?? []), { name: "extra", source: "env" as const, env_name: "NXL_EXTRA_KEY", inject_as: "header" as const, target_name: "Authorization", prefix: "Bearer " }] },
+    ]) {
+      expect(() => createExternalApiConnectorFetch({ registry: new ExternalApiConnectorRegistry([invalidConnector]), requestService, config, context: { commander_model_request_id: "req_invalid", requested_by: "tester", provider_id: "anthropic_provider", model_id: "claude-fixture" } })).toThrow()
+    }
     const { fetch: bridgeFetch, metadata } = createExternalApiConnectorFetch({
       registry,
       requestService,

@@ -3,7 +3,7 @@ import type { ExternalApiConnectorRegistry } from "../external-api/api-connector
 import type { ExternalApiPersistedAuditRecord } from "../external-api/api-connector-types"
 import type { ExternalApiRequestService } from "../external-api/api-request-service"
 import { CONNECTOR_MANAGED_API_KEY_SENTINEL } from "./ai-sdk-commander-model-adapter"
-import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, connectorModelRequestUrl, type CommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
+import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, connectorModelRequestUrl, validateCommanderConnectorProtocolPolicy, type CommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
 
 export type ExternalApiConnectorFetchContext = {
   commander_model_request_id: string
@@ -35,6 +35,7 @@ const MAX_DROPPED_HEADER_NAME_LENGTH = 80
 export function createExternalApiConnectorFetch(options: ExternalApiConnectorFetchOptions): { fetch: typeof fetch; metadata: ExternalApiConnectorFetchMetadata } {
   const connector = options.registry.get(options.config.connector_id)
   if (!connector) throw new Error(`unknown connector: ${redactText(options.config.connector_id)}`)
+  validateCommanderConnectorProtocolPolicy(options.config, connector)
   const expectedUrl = connectorModelRequestUrl(connector, options.config.transport_kind)
   const dropped = new Set<string>()
   const auditRecords: ExternalApiPersistedAuditRecord[] = []
