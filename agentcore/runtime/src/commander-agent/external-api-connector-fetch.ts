@@ -337,6 +337,7 @@ function validateAnthropicMessagesResponseBody(body: string, expectedModelId: st
     throw new Error("Anthropic Messages response content is invalid")
   }
   if (payload.model !== expectedModelId) throw new Error("Anthropic Messages response model does not match configured authority")
+  if (payload.stop_sequence !== null) throw new Error("Anthropic Messages response stop sequence is forbidden or unsupported")
   if (payload.stop_reason !== "end_turn" && payload.stop_reason !== "tool_use" && payload.stop_reason !== "refusal") {
     throw new Error("Anthropic Messages response stop reason is forbidden or unsupported")
   }

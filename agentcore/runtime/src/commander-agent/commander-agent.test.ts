@@ -308,7 +308,8 @@ describe("Commander AI SDK model adapter", () => {
 
     for (const [name, body, error] of [
       ["wrong_model", { ...JSON.parse(anthropicMessageText("wrong model evidence")), model: "claude-unconfigured" }, "response model does not match configured authority"],
-      ["stop_sequence", { ...JSON.parse(anthropicMessageText("unrequested early stop")), stop_reason: "stop_sequence", stop_sequence: "forbidden" }, "stop reason is forbidden or unsupported"],
+      ["stop_sequence", { ...JSON.parse(anthropicMessageText("unrequested early stop")), stop_reason: "stop_sequence", stop_sequence: "forbidden" }, "response stop sequence is forbidden or unsupported"],
+      ["hidden_stop_sequence", { ...JSON.parse(anthropicMessageText("hidden early stop")), stop_sequence: "forbidden" }, "response stop sequence is forbidden or unsupported"],
       ["empty_final", { ...JSON.parse(anthropicMessageText("")), content: [] }, "response content is invalid"],
     ] as const) {
       const identityTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(body) }])
