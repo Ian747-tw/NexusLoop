@@ -121,3 +121,10 @@ external-research execution, server tool, failover, retry, automatic recovery,
 proposal, governance, or mutation authority is added.
 `resume_supported=false`, `provider_tool_loop_enabled=false`, and
 `external_read_execution_enabled=false` remain unchanged.
+
+Branch 9W4B0 adds a pure, disconnected model-profile vocabulary above this
+transport boundary. A Commander projection must still select one exact 9W4A
+protocol through a NexusLoop-owned conformance entry; OpenCode model support,
+catalog data, plugins, or authentication do not authorize either protocol.
+There is no RuntimeServer activation and existing 9W4A configuration and
+recovery identities are unchanged.

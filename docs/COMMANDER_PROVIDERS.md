@@ -3,6 +3,36 @@
 Commander provider authority is explicit RuntimeServer configuration. OpenCode
 provider settings do not authorize Commander.
 
+## Internal Model-Profile Contract
+
+Branch 9W4B0 defines an internal configuration vocabulary; it is not yet a CLI,
+TUI, or RuntimeServer feature. A model connection contains only bounded
+provider/account authority identifiers, a model profile selects an exact model,
+and independent role bindings select profiles for `commander` and `executor`.
+The Executor role means the primary tactical OpenCode model only, not small,
+title, summary, compaction, agent, command, or subagent models.
+
+One profile may be selected for both roles, but this shares only selection
+intent. Commander still requires a NexusLoop connector and exact static
+conformance entry. Executor catalog presence, `provider.list` connectivity,
+OpenCode configuration, plugins, environment discovery, and `auth.json` never
+authorize Commander. Role readiness and credential resolution are deferred to
+9W4B1.
+
+Executor projection also requires a static NexusLoop provider-mapping entry
+that binds the exact OpenCode provider ID, including any explicit aliases, to
+the connection's provider kind. Its policy identity is part of the Executor
+projection hash. OpenCode discovery and authentication cannot populate this
+registry.
+
+The kernel accepts no endpoint, base-URL, header, package, plugin, provider
+option, environment-variable, OAuth, credential, or catalog authority field.
+An exact model ID is inert external identifier data and is never parsed as an
+endpoint, package, protocol, or capability; values such as URI-like catalog IDs
+cannot create those absent authority fields. Hashes exclude display labels and
+secret rotation behind an unchanged opaque credential authority, while exact
+model, credential authority, and role-specific mappings are semantic.
+
 ## Support Taxonomy
 
 - **Verified native protocols:** Anthropic Messages through
