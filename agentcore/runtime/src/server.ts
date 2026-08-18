@@ -250,6 +250,8 @@ import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-to
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactText, redactValue } from "./security/redaction"
+import { adaptLegacyCommanderModelAuthority } from "./model-configuration/model-profile-legacy-commander-adapter"
+import { ModelProfileRuntimeRegistry } from "./model-configuration/model-profile-runtime-registry"
 import {
   ResearchDb,
   type ListResearchEventsOptions,
@@ -340,6 +342,7 @@ export interface RuntimeServerOptions {
   commanderQueueNow?: () => Date
   commanderModelStepAdapter?: CommanderModelStepAdapter
   commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
+  modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
   commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
 }
@@ -435,6 +438,7 @@ export class RuntimeServer {
   private readonly commanderQueueNow?: () => Date
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
   private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
+  private readonly modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
   private readonly ownsResearchDb: boolean
@@ -571,6 +575,11 @@ export class RuntimeServer {
     this.externalApiRequestId = options.externalApiRequestId
     if (options.commanderModelStepAdapter && options.commanderInvestigationProviderConfig) throw new Error("commanderModelStepAdapter cannot be combined with commanderInvestigationProviderConfig")
     this.commanderInvestigationProviderConfig = options.commanderInvestigationProviderConfig ? validateCommanderInvestigationProviderConfig(options.commanderInvestigationProviderConfig) : undefined
+    this.modelProfileRuntimeRegistry = options.modelProfileRuntimeRegistry
+      ?? (this.commanderInvestigationProviderConfig ? adaptLegacyCommanderModelAuthority(this.commanderInvestigationProviderConfig).registry : undefined)
+    if (options.modelProfileRuntimeRegistry && this.commanderInvestigationProviderConfig) {
+      requireCommanderRegistryAssertion(options.modelProfileRuntimeRegistry, this.commanderInvestigationProviderConfig)
+    }
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
     this.modelCapabilityRegistry = new ModelCapabilityRegistry({
       reasoningProviderConfig: this.reasoningProviderConfig,
@@ -6121,6 +6130,23 @@ function providerReadinessResult(input: {
   }
   result.readiness_hash = stableHash({ ...result, generated_at: "", readiness_hash: "" })
   return redactValue(result)
+}
+
+function requireCommanderRegistryAssertion(
+  registry: ModelProfileRuntimeRegistry,
+  config: CommanderInvestigationProviderConfig,
+): void {
+  const selection = registry.commanderSelection()
+  if (!selection) throw new Error("explicit model-profile registry has no Commander role binding")
+  if (
+    selection.transport_kind !== config.transport_kind
+    || selection.provider_id !== config.provider_id
+    || selection.provider_kind !== config.provider_kind
+    || selection.connector_id !== config.connector_id
+    || selection.model_id !== config.model_id
+  ) {
+    throw new Error("Commander provider configuration assertion does not match explicit model-profile authority")
+  }
 }
 
 class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {

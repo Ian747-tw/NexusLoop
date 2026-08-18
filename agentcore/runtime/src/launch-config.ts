@@ -14,6 +14,9 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   baseOptions: RuntimeServerOptions = {},
 ): RuntimeServerOptions {
   const options: RuntimeServerOptions = { ...baseOptions }
+  if (options.modelProfileRuntimeRegistry && Object.keys(env).some((key) => key.startsWith("NXL_COMMANDER_INVESTIGATION_"))) {
+    throw new Error("explicit model-profile registry cannot be combined with legacy Commander environment authority")
+  }
   if (!options.externalApiConnectorRegistry && !options.externalApiConnectors) {
     options.externalApiConnectors = readExternalApiConnectorsFromEnv(env)
   }
