@@ -5,8 +5,9 @@ provider settings do not authorize Commander.
 
 ## Internal Model-Profile Contract
 
-Branch 9W4B0 defines an internal configuration vocabulary; it is not yet a CLI,
-TUI, or RuntimeServer feature. A model connection contains only bounded
+Branch 9W4B0 defines the internal configuration vocabulary, and 9W4B1 activates
+validated snapshots in an immutable RuntimeServer registry. It is still not a
+CLI, TUI, persistent configuration, or discovery feature. A model connection contains only bounded
 provider/account authority identifiers, a model profile selects an exact model,
 and independent role bindings select profiles for `commander` and `executor`.
 The Executor role means the primary tactical OpenCode model only, not small,
@@ -16,8 +17,21 @@ One profile may be selected for both roles, but this shares only selection
 intent. Commander still requires a NexusLoop connector and exact static
 conformance entry. Executor catalog presence, `provider.list` connectivity,
 OpenCode configuration, plugins, environment discovery, and `auth.json` never
-authorize Commander. Role readiness and credential resolution are deferred to
-9W4B1.
+authorize Commander.
+
+The validated `NXL_COMMANDER_INVESTIGATION_*` path is adapted to a deterministic
+Commander-only compatibility registry while retaining the 9W4A connector and
+readiness path. Explicit registry authority and legacy environment authority
+cannot be merged. Under explicit authority, direct provider fields are exact
+assertions; mismatches block. An injected Commander adapter is not connector,
+credential, or conformance readiness evidence.
+
+Executor availability and connection are resolved independently for the exact
+selected projection. These observations cannot create provider mapping or
+selection authority. A ready selection is supplied only to the primary
+tactical `opencode run --model provider/model` seam. Conflicting existing
+primary-model arguments block, while small, title, summary, compaction,
+command, agent, and subagent model settings remain untouched.
 
 Executor projection also requires a static NexusLoop provider-mapping entry
 that binds the exact OpenCode provider ID, including any explicit aliases, to

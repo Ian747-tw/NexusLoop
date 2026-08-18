@@ -71,6 +71,12 @@ export type OpenCodeLaunchReadinessPreview = {
   research_memory_status?: string
   novelty_risk?: string
   selected_launch_surface: OpenCodeLaunchSurface
+  executor_model_selection?: {
+    provider_id: string
+    model_id: string
+    selection_projection_hash: string
+  }
+  executor_role_readiness_hash?: string
   checks: OpenCodeLaunchReadinessCheck[]
   blockers: string[]
   warnings: string[]

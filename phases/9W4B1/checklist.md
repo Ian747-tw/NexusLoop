@@ -7,7 +7,7 @@
 - [x] 5. Implement immutable runtime registry and independent readiness evidence.
 - [x] 6. Add red legacy Commander adaptation and authority-conflict tests.
 - [x] 7. Implement legacy Commander adaptation and compose existing readiness.
-- [ ] 8. Add red Executor primary-launch projection and isolation tests.
-- [ ] 9. Implement exact Executor primary-model launch projection.
-- [ ] 10. Add ADR-036 and update architecture/provider documentation.
-- [ ] 11. Run complete final validation and scope checks.
+- [x] 8. Add red Executor primary-launch projection and isolation tests.
+- [x] 9. Implement exact Executor primary-model launch projection.
+- [x] 10. Add ADR-036 and update architecture/provider documentation.
+- [x] 11. Run complete final validation and scope checks.

@@ -251,7 +251,8 @@ import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactText, redactValue } from "./security/redaction"
 import { adaptLegacyCommanderModelAuthority } from "./model-configuration/model-profile-legacy-commander-adapter"
-import { ModelProfileRuntimeRegistry } from "./model-configuration/model-profile-runtime-registry"
+import { evaluateCommanderModelRoleReadiness, evaluateExecutorModelRoleReadiness, ModelProfileRuntimeRegistry } from "./model-configuration/model-profile-runtime-registry"
+import type { ExecutorModelReadinessResolver, ModelRoleReadinessEvidence } from "./model-configuration/model-profile-runtime-registry-types"
 import {
   ResearchDb,
   type ListResearchEventsOptions,
@@ -343,6 +344,7 @@ export interface RuntimeServerOptions {
   commanderModelStepAdapter?: CommanderModelStepAdapter
   commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
+  executorModelReadinessResolver?: ExecutorModelReadinessResolver
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
   commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
 }
@@ -439,6 +441,7 @@ export class RuntimeServer {
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
   private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   private readonly modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
+  private readonly executorModelReadinessResolver?: ExecutorModelReadinessResolver
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
   private readonly ownsResearchDb: boolean
@@ -577,8 +580,12 @@ export class RuntimeServer {
     this.commanderInvestigationProviderConfig = options.commanderInvestigationProviderConfig ? validateCommanderInvestigationProviderConfig(options.commanderInvestigationProviderConfig) : undefined
     this.modelProfileRuntimeRegistry = options.modelProfileRuntimeRegistry
       ?? (this.commanderInvestigationProviderConfig ? adaptLegacyCommanderModelAuthority(this.commanderInvestigationProviderConfig).registry : undefined)
+    this.executorModelReadinessResolver = options.executorModelReadinessResolver
     if (options.modelProfileRuntimeRegistry && this.commanderInvestigationProviderConfig) {
       requireCommanderRegistryAssertion(options.modelProfileRuntimeRegistry, this.commanderInvestigationProviderConfig)
+    }
+    if (options.modelProfileRuntimeRegistry?.commanderSelection() && options.commanderModelStepAdapter && !this.commanderInvestigationProviderConfig) {
+      throw new Error("injected Commander adapter cannot satisfy explicit model-profile connector authority")
     }
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
     this.modelCapabilityRegistry = new ModelCapabilityRegistry({
@@ -3424,6 +3431,24 @@ export class RuntimeServer {
     })
   }
 
+  previewCommanderModelRoleReadiness(input: CommanderInvestigationProviderReadinessInput = {}): ModelRoleReadinessEvidence | undefined {
+    if (!this.modelProfileRuntimeRegistry) return undefined
+    return evaluateCommanderModelRoleReadiness(
+      this.modelProfileRuntimeRegistry,
+      this.previewCommanderInvestigationProviderReadiness(input),
+      this.researchSynthesisNow,
+    )
+  }
+
+  async previewExecutorModelRoleReadiness(): Promise<ModelRoleReadinessEvidence | undefined> {
+    if (!this.modelProfileRuntimeRegistry) return undefined
+    return evaluateExecutorModelRoleReadiness(
+      this.modelProfileRuntimeRegistry,
+      this.executorModelReadinessResolver,
+      this.opencodeLaunchNow,
+    )
+  }
+
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
     return this.commanderContinuityService().proposal(input)
   }
@@ -4596,6 +4621,10 @@ export class RuntimeServer {
       contextPacketCompilerService: this.contextPacketCompilerService(),
       researchNoveltyService: this.researchNoveltyService(),
       nativeLaunchSurface: this.openCodeAdapterConfig?.kind === "process" ? "process_adapter" : "unknown",
+      executorModelSelection: this.modelProfileRuntimeRegistry?.executorSelection(),
+      executorRoleReadiness: this.modelProfileRuntimeRegistry?.executorSelection()
+        ? () => evaluateExecutorModelRoleReadiness(this.modelProfileRuntimeRegistry!, this.executorModelReadinessResolver, this.opencodeLaunchNow)
+        : undefined,
     })
     return this.opencodeLaunchReadinessServiceInstance
   }

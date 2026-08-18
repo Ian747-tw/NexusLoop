@@ -176,3 +176,10 @@ The sequence is:
 provider authority, fallback, MCP, proposals, governance, and mutation remain
 excluded. `resume_supported=false`, `provider_tool_loop_enabled=false`, and
 `external_read_execution_enabled=false` remain unchanged.
+
+Branch 9W4B1 closes the planned integration boundary in ADR-036. RuntimeServer
+now owns one immutable registry, adapts the validated legacy Commander
+environment path without changing 9W4A execution identity, resolves role
+readiness independently, and scopes Executor selection to the primary
+`opencode run --model` seam. No CLI/TUI model selection or persistent profile
+configuration was added.

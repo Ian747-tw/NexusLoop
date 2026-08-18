@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { readdir, readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { readRuntimeServerLaunchOptionsFromEnv } from "../launch-config"
+import { RuntimeServer } from "../server"
 import { validateCommanderInvestigationProviderConfig } from "../commander-agent/commander-investigation-provider-config"
 import { adaptLegacyCommanderModelAuthority } from "./model-profile-legacy-commander-adapter"
 
@@ -82,5 +85,31 @@ describe("9W4B1 legacy Commander model authority adapter", () => {
     expect(() => readRuntimeServerLaunchOptionsFromEnv({
       NXL_COMMANDER_INVESTIGATION_MODEL_ID: "partial-legacy-authority",
     }, { modelProfileRuntimeRegistry: explicit })).toThrow("explicit model-profile registry cannot be combined with legacy Commander environment authority")
+  })
+
+  test("explicit Commander selection treats provider values as assertions and rejects injected adapter evidence", () => {
+    const explicit = adaptLegacyCommanderModelAuthority(config()).registry
+    expect(() => new RuntimeServer({
+      projectDir: process.cwd(),
+      modelProfileRuntimeRegistry: explicit,
+      commanderInvestigationProviderConfig: { ...config(), model_id: "claude-other" },
+    })).toThrow("does not match explicit model-profile authority")
+    expect(() => new RuntimeServer({
+      projectDir: process.cwd(),
+      modelProfileRuntimeRegistry: explicit,
+      commanderModelStepAdapter: {
+        adapter_id: "injected-test",
+        supports_streaming: false,
+        executeOneStep: async () => { throw new Error("must not execute") },
+      } as unknown as NonNullable<ConstructorParameters<typeof RuntimeServer>[0]>["commanderModelStepAdapter"],
+    })).toThrow("injected Commander adapter cannot satisfy explicit model-profile connector authority")
+  })
+
+  test("Commander production modules have no OpenCode auth provider config catalog or upstream dependency", async () => {
+    const commanderDir = join(import.meta.dir, "..", "commander-agent")
+    const files = (await readdir(commanderDir)).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+    const source = (await Promise.all(files.map((name) => readFile(join(commanderDir, name), "utf8")))).join("\n")
+    expect(source).not.toMatch(/from\s+["'][^"']*(?:opencode|upstream\/packages\/opencode)/)
+    expect(source).not.toMatch(/auth\.json|provider\.list|models\.dev|Provider\.Service/)
   })
 })

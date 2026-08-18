@@ -38,6 +38,12 @@ export type OpenCodeLaunchPreview = {
   packet_hash?: string
   budget_id?: string
   target_dir?: string
+  executor_model_selection?: {
+    provider_id: string
+    model_id: string
+    selection_projection_hash: string
+  }
+  executor_role_readiness_hash?: string
   command_preview?: string
   env_preview?: string
   instruction_files: string[]
