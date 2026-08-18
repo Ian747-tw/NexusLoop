@@ -87,6 +87,30 @@ describe("9W4B1 legacy Commander model authority adapter", () => {
     }, { modelProfileRuntimeRegistry: explicit })).toThrow("explicit model-profile registry cannot be combined with legacy Commander environment authority")
   })
 
+  test("explicit model registry accepts an absent or explicitly disabled legacy environment only", () => {
+    const explicit = adaptLegacyCommanderModelAuthority(config()).registry
+    for (const env of [
+      {},
+      { NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "0" },
+      {
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "0",
+        NXL_COMMANDER_INVESTIGATION_MODEL_ID: undefined,
+      },
+      {
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: undefined,
+        NXL_COMMANDER_INVESTIGATION_MODEL_ID: undefined,
+      },
+    ] as Array<Record<string, string | undefined>>) {
+      const options = readRuntimeServerLaunchOptionsFromEnv(env, { modelProfileRuntimeRegistry: explicit })
+      expect(options.modelProfileRuntimeRegistry).toBe(explicit)
+      expect(options.commanderInvestigationProviderConfig).toBeUndefined()
+    }
+    expect(() => readRuntimeServerLaunchOptionsFromEnv({
+      NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "0",
+      NXL_COMMANDER_INVESTIGATION_MODEL_ID: "conflicting-model",
+    }, { modelProfileRuntimeRegistry: explicit })).toThrow("explicit model-profile registry cannot be combined with legacy Commander environment authority")
+  })
+
   test("explicit Commander selection treats provider values as assertions and rejects injected adapter evidence", () => {
     const explicit = adaptLegacyCommanderModelAuthority(config()).registry
     expect(() => new RuntimeServer({

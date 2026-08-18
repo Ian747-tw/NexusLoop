@@ -14,7 +14,7 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   baseOptions: RuntimeServerOptions = {},
 ): RuntimeServerOptions {
   const options: RuntimeServerOptions = { ...baseOptions }
-  if (options.modelProfileRuntimeRegistry && Object.keys(env).some((key) => key.startsWith("NXL_COMMANDER_INVESTIGATION_"))) {
+  if (options.modelProfileRuntimeRegistry && hasLegacyCommanderEnvironmentAuthority(env)) {
     throw new Error("explicit model-profile registry cannot be combined with legacy Commander environment authority")
   }
   if (!options.externalApiConnectorRegistry && !options.externalApiConnectors) {
@@ -44,6 +44,15 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   const openCodeAdapterConfig = readOpenCodeAdapterConfigFromEnv(env)
   if (!openCodeAdapterConfig) return options
   return { ...options, openCodeAdapterConfig }
+}
+
+function hasLegacyCommanderEnvironmentAuthority(env: Record<string, string | undefined>): boolean {
+  const enabledKey = "NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED"
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith("NXL_COMMANDER_INVESTIGATION_") || env[key] === undefined) continue
+    if (key !== enabledKey || env[key] !== "0") return true
+  }
+  return false
 }
 
 export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchConfig = {}): RuntimeServer {
