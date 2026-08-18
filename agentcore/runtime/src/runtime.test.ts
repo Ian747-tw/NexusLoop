@@ -102,11 +102,11 @@ function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
       policy_version: MODEL_CONFIGURATION_POLICY_VERSION,
       connections: [{
         connection_id: "executor-primary",
-        provider_kind: "local",
+        provider_kind: "anthropic",
         credential_binding_id: "credential-executor-primary",
-        executor: { provider_id: "local" },
+        executor: { provider_id: "anthropic" },
       }],
-      profiles: [{ profile_id: "executor-primary", connection_id: "executor-primary", model_id: "local-medium" }],
+      profiles: [{ profile_id: "executor-primary", connection_id: "executor-primary", model_id: "claude-sonnet-4-5-20250929" }],
       role_bindings: [{ role: "executor", profile_id: "executor-primary" }],
     }),
     commander_conformance: validateCommanderModelConformanceRegistry({
@@ -117,7 +117,7 @@ function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
     executor_provider_mapping: validateExecutorProviderMappingRegistry({
       registry_version: 1,
       policy_version: EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION,
-      entries: [{ mapping_version: 1, mapping_id: "local-primary", provider_kind: "local", provider_ids: ["local"] }],
+      entries: [{ mapping_version: 1, mapping_id: "anthropic-primary", provider_kind: "anthropic", provider_ids: ["anthropic"] }],
     }),
   })
 }
@@ -21206,21 +21206,38 @@ describe("OpenCode launch readiness", () => {
     })
     expect(server.previewCommanderModelRoleReadiness()).toMatchObject({ role: "commander", selection_status: "unconfigured", ready: false })
     const session = await server.command("runtime.create_opencode_session_plan", { objective: "profile selected launch" }) as { session_id: string }
-    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id, providerKind: "local", modelId: "local-medium" }) as { pack_id: string }
+    await expect(server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      providerKind: "local",
+      modelId: "local-medium",
+    })).resolves.toMatchObject({
+      status: "blocked",
+      error: "caller provider/model assertion does not match Executor model-profile authority",
+    })
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string }
+    await expect(server.command("runtime.get_opencode_session_instruction_pack", {
+      packId: pack.pack_id,
+    })).resolves.toMatchObject({ status: "written" })
     await expect(server.command("runtime.preview_opencode_session_launch", {
       sessionId: session.session_id,
       packId: pack.pack_id,
       providerKind: "openai",
       modelId: "gpt-5",
     })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["caller provider/model assertion does not match Executor model-profile authority"]) })
+    await expect(server.command("runtime.preview_opencode_session_launch", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+    })).resolves.toMatchObject({ status: "ready", blockers: [] })
     const launched = await server.command("runtime.launch_opencode_session", {
       sessionId: session.session_id,
       packId: pack.pack_id,
-    }) as { status: string }
-    expect(launched.status).toBe("launch_started")
+    }) as { status: string; blockers?: string[] }
+    expect(launched).toMatchObject({ status: "launch_started" })
     expect(spawnedArgs).toHaveLength(1)
-    expect(spawnedArgs[0]).toContain("--model")
-    expect(spawnedArgs[0]).toContain("local/local-medium")
+    expect(spawnedArgs[0].filter((argument) => argument === "--model")).toHaveLength(1)
+    expect(spawnedArgs[0][spawnedArgs[0].indexOf("--model") + 1]).toBe("anthropic/claude-sonnet-4-5-20250929")
     await server.shutdown()
   })
 

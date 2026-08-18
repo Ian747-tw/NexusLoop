@@ -4609,6 +4609,7 @@ export class RuntimeServer {
       eventStore: this.eventStore,
       opencodeSessionService: this.opencodeSessionService(),
       contextPacketCompilerService: this.contextPacketCompilerService(),
+      executorModelSelection: this.modelProfileRuntimeRegistry?.executorSelection(),
     })
     return this.opencodeSessionInstructionPackServiceInstance
   }
