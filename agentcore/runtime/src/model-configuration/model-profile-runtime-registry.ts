@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto"
 import { types as nodeUtilTypes } from "node:util"
 import { redactText } from "../security/redaction"
-import { projectCommanderModelSelection, projectExecutorModelSelection } from "./model-configuration-kernel"
+import {
+  projectCommanderModelSelection,
+  projectExecutorModelSelection,
+  revalidateCommanderModelConformanceRegistrySnapshot,
+  revalidateExecutorProviderMappingRegistrySnapshot,
+  revalidateModelConfigurationSnapshot,
+  validateAuthoritySafeIdentifier,
+  validateAuthoritySafeText,
+} from "./model-configuration-kernel"
 import type {
   CommanderModelConformanceRegistry,
   CommanderModelSelectionProjection,
@@ -44,20 +52,23 @@ export class ModelProfileRuntimeRegistry {
     assertDeeplyFrozen(input.configuration, "validated model configuration snapshot")
     assertDeeplyFrozen(input.commander_conformance, "validated Commander conformance snapshot")
     assertDeeplyFrozen(input.executor_provider_mapping, "validated Executor provider mapping snapshot")
+    const configuration = revalidateModelConfigurationSnapshot(input.configuration)
+    const commanderConformance = revalidateCommanderModelConformanceRegistrySnapshot(input.commander_conformance)
+    const executorProviderMapping = revalidateExecutorProviderMappingRegistrySnapshot(input.executor_provider_mapping)
 
-    const commander = hasRole(input.configuration, "commander")
-      ? projectCommanderModelSelection(input.configuration, input.commander_conformance)
+    const commander = hasRole(configuration, "commander")
+      ? projectCommanderModelSelection(configuration, commanderConformance)
       : undefined
-    const executor = hasRole(input.configuration, "executor")
-      ? projectExecutorModelSelection(input.configuration, input.executor_provider_mapping)
+    const executor = hasRole(configuration, "executor")
+      ? projectExecutorModelSelection(configuration, executorProviderMapping)
       : undefined
     const stable = {
       registry_version: MODEL_PROFILE_RUNTIME_REGISTRY_VERSION,
       policy_version: MODEL_PROFILE_RUNTIME_REGISTRY_POLICY_VERSION,
       authority_source: input.authority_source,
-      configuration_hash: input.configuration.configuration_hash,
-      commander_conformance_registry_hash: input.commander_conformance.registry_hash,
-      executor_provider_mapping_registry_hash: input.executor_provider_mapping.registry_hash,
+      configuration_hash: configuration.configuration_hash,
+      commander_conformance_registry_hash: commanderConformance.registry_hash,
+      executor_provider_mapping_registry_hash: executorProviderMapping.registry_hash,
       ...(commander ? { commander_selection: detachedJson(commander) } : {}),
       ...(executor ? { executor_selection: detachedJson(executor) } : {}),
     }
@@ -110,8 +121,8 @@ export async function evaluateExecutorModelRoleReadiness(
     const pending = resolver.observe(selection)
     rejectProxy(pending, "Executor readiness observation")
     observation = parseExecutorObservation(await pending)
-  } catch (error) {
-    return readiness("executor", now, { selection_projection_hash: selection.projection_hash, blockers: [boundedError(error)] })
+  } catch {
+    return readiness("executor", now, { selection_projection_hash: selection.projection_hash, blockers: ["Executor readiness observation failed"] })
   }
   const exact = observation.selection_projection_hash === selection.projection_hash
     && observation.provider_id === selection.provider_id
@@ -141,8 +152,7 @@ function parseExecutorObservation(value: unknown): ExecutorModelReadinessObserva
     "provider_availability_status", "credential_connection_status", "evidence_id",
   ])
   if (input.observation_version !== 1) fail("Executor readiness observation_version must be 1")
-  const evidenceId = identifier(input.evidence_id, "evidence_id", 200)
-  if (/sk-|api[_-]?key|token|secret|credential/i.test(evidenceId)) fail("Executor readiness evidence_id is credential-shaped")
+  const evidenceId = validateAuthoritySafeIdentifier(input.evidence_id, "Executor readiness evidence_id", 200)
   return deepFreeze({
     observation_version: 1,
     selection_projection_hash: hash(input.selection_projection_hash, "selection_projection_hash"),
@@ -276,10 +286,17 @@ function enumValue<const T extends readonly string[]>(value: unknown, label: str
 }
 function boundedMessages(value: readonly string[]): readonly string[] {
   const output: string[] = []
-  for (let index = 0; index < Math.min(value.length, 16); index += 1) output.push(redactText(String(value[index])).slice(0, MAX_ERROR))
+  for (let index = 0; index < Math.min(value.length, 16); index += 1) {
+    const message = typeof value[index] === "string" ? value[index]!.slice(0, MAX_ERROR) : ""
+    try {
+      const accepted = validateAuthoritySafeText(message, "Commander provider readiness detail", MAX_ERROR)
+      output.push(redactText(accepted).slice(0, MAX_ERROR))
+    } catch {
+      output.push("Commander provider readiness detail withheld")
+    }
+  }
   return output
 }
-function boundedError(error: unknown): string { return redactText(error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR) || "Executor readiness observation failed" }
 function rejectProxy(value: unknown, label: string): void {
   if ((typeof value === "object" && value !== null || typeof value === "function") && nodeUtilTypes.isProxy(value)) fail(`${label} must not be a Proxy`)
 }

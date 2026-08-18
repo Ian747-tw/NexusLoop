@@ -193,6 +193,75 @@ describe("9W4B1 runtime model-profile registry", () => {
     })).toThrow()
   })
 
+  test("revalidates configuration and both authority registries even when their roles are unbound", () => {
+    const authority = validatedAuthority()
+    const noBindings = validateModelConfiguration({
+      schema_version: 1,
+      policy_version: MODEL_CONFIGURATION_POLICY_VERSION,
+      connections: [{
+        connection_id: "primary",
+        provider_kind: "anthropic",
+        credential_binding_id: "credential-primary",
+        commander: { connector_id: "anthropic-main", conformance_id: "anthropic-native-v1" },
+      }],
+      profiles: [{ profile_id: "primary", connection_id: "primary", model_id: "claude-sonnet-4-5-20250929" }],
+      role_bindings: [],
+    })
+    const forgedConfiguration = structuredClone(noBindings)
+    ;(forgedConfiguration as { configuration_hash: string }).configuration_hash = "f".repeat(64)
+    deepFreeze(forgedConfiguration)
+    expect(() => new ModelProfileRuntimeRegistry({
+      authority_source: "explicit",
+      configuration: forgedConfiguration,
+      commander_conformance: authority.commanderConformance,
+      executor_provider_mapping: authority.executorMappings,
+    })).toThrow("validated model configuration snapshot")
+
+    const executorOnly = validateModelConfiguration({
+      schema_version: 1,
+      policy_version: MODEL_CONFIGURATION_POLICY_VERSION,
+      connections: [{
+        connection_id: "executor",
+        provider_kind: "anthropic",
+        credential_binding_id: "credential-executor",
+        executor: { provider_id: "anthropic" },
+      }],
+      profiles: [{ profile_id: "executor", connection_id: "executor", model_id: "claude-sonnet-4-5-20250929" }],
+      role_bindings: [{ role: "executor", profile_id: "executor" }],
+    })
+    const forgedCommander = structuredClone(authority.commanderConformance)
+    ;(forgedCommander as { registry_hash: string }).registry_hash = "f".repeat(64)
+    deepFreeze(forgedCommander)
+    expect(() => new ModelProfileRuntimeRegistry({
+      authority_source: "explicit",
+      configuration: executorOnly,
+      commander_conformance: forgedCommander,
+      executor_provider_mapping: authority.executorMappings,
+    })).toThrow("validated Commander conformance snapshot")
+
+    const commanderOnly = validateModelConfiguration({
+      schema_version: 1,
+      policy_version: MODEL_CONFIGURATION_POLICY_VERSION,
+      connections: [{
+        connection_id: "commander",
+        provider_kind: "anthropic",
+        credential_binding_id: "credential-commander",
+        commander: { connector_id: "anthropic-main", conformance_id: "anthropic-native-v1" },
+      }],
+      profiles: [{ profile_id: "commander", connection_id: "commander", model_id: "claude-sonnet-4-5-20250929" }],
+      role_bindings: [{ role: "commander", profile_id: "commander" }],
+    })
+    const forgedExecutor = structuredClone(authority.executorMappings)
+    ;(forgedExecutor as { registry_hash: string }).registry_hash = "f".repeat(64)
+    deepFreeze(forgedExecutor)
+    expect(() => new ModelProfileRuntimeRegistry({
+      authority_source: "explicit",
+      configuration: commanderOnly,
+      commander_conformance: authority.commanderConformance,
+      executor_provider_mapping: forgedExecutor,
+    })).toThrow("validated Executor provider mapping snapshot")
+  })
+
   test("rejects inherited fields, accessors, symbols, sparse arrays, and proxies without executing caller code", () => {
     const authority = validatedAuthority()
     let getterCalls = 0
@@ -401,6 +470,56 @@ describe("9W4B1 runtime model-profile registry", () => {
       observe: () => ({ ...executorObservation(value, "readiness-ok-v1"), evidence_id: "readiness-sk-secretvalue123456" }),
     })
     expect(secret.ready).toBe(false)
+  })
+
+  test("resolver failures disclose only one fixed public blocker", async () => {
+    const value = registry()
+    for (const detail of [
+      "https://secret.example/v1",
+      "NXL_EXECUTOR_API_KEY",
+      "Authorization: Bearer credential-value",
+      "x-api-key: sk-secretvalue123456",
+      "AWS_SECRET_ACCESS_KEY=secret-material",
+    ]) {
+      const result = await evaluateExecutorModelRoleReadiness(value, { observe: () => { throw new Error(detail) } })
+      expect(result.blockers).toEqual(["Executor readiness observation failed"])
+      expect(JSON.stringify(result)).not.toContain(detail)
+    }
+  })
+
+  test("readiness evidence IDs reuse the complete authority forbidden-shape policy", async () => {
+    const value = registry()
+    for (const evidenceId of [
+      "AWS_PROFILE",
+      "AUTH_JSON",
+      "NXL_REGION",
+      "https://secret.example",
+      "Authorization:Bearer-value",
+      "x-api-key:value",
+      "npm:@scope/package",
+      "plugin:provider-loader",
+    ]) {
+      const result = await evaluateExecutorModelRoleReadiness(value, {
+        observe: () => executorObservation(value, evidenceId),
+      })
+      expect(result).toMatchObject({ ready: false, blockers: ["Executor readiness observation failed"] })
+      expect(JSON.stringify(result)).not.toContain(evidenceId)
+    }
+  })
+
+  test("Commander readiness details cannot forward forbidden authority material", () => {
+    const value = registry()
+    const forbidden = [
+      "https://secret.example/v1",
+      "NXL_COMMANDER_API_KEY",
+      "Authorization: Bearer credential-value",
+      "x-api-key: sk-secretvalue123456",
+      "npm:@scope/provider",
+    ]
+    const result = evaluateCommanderModelRoleReadiness(value, commanderReadiness({ blockers: forbidden, warnings: forbidden }))
+    expect(result.blockers).toEqual(forbidden.map(() => "Commander provider readiness detail withheld"))
+    expect(result.warnings).toEqual(forbidden.map(() => "Commander provider readiness detail withheld"))
+    for (const detail of forbidden) expect(JSON.stringify(result)).not.toContain(detail)
   })
 })
 

@@ -189,8 +189,8 @@ export function projectCommanderModelSelection(
   configuration: ModelConfiguration,
   registry: CommanderModelConformanceRegistry,
 ): CommanderModelSelectionProjection {
-  configuration = authoritativeConfigurationSnapshot(configuration)
-  registry = authoritativeConformanceSnapshot(registry)
+  configuration = revalidateModelConfigurationSnapshot(configuration)
+  registry = revalidateCommanderModelConformanceRegistrySnapshot(registry)
   const binding = requiredBinding(configuration, "commander")
   const profile = requiredProfile(configuration, binding.profile_id)
   const connection = requiredConnection(configuration, profile.connection_id)
@@ -232,8 +232,8 @@ export function projectExecutorModelSelection(
   configuration: ModelConfiguration,
   registry: ExecutorProviderMappingRegistry,
 ): ExecutorModelSelectionProjection {
-  configuration = authoritativeConfigurationSnapshot(configuration)
-  registry = authoritativeExecutorProviderMappingSnapshot(registry)
+  configuration = revalidateModelConfigurationSnapshot(configuration)
+  registry = revalidateExecutorProviderMappingRegistrySnapshot(registry)
   const binding = requiredBinding(configuration, "executor")
   const profile = requiredProfile(configuration, binding.profile_id)
   const connection = requiredConnection(configuration, profile.connection_id)
@@ -454,16 +454,23 @@ function collectField<T extends Record<K, string>, K extends string>(items: read
 }
 
 function identifier(value: unknown, label: string, max: number): string {
-  const raw = requiredString(value, label, max)
-  rejectForbiddenValue(raw, label)
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(raw)) fail(`${label} must use bounded ASCII identifier characters`)
-  return raw.toLowerCase()
+  return validateAuthoritySafeIdentifier(value, label, max).toLowerCase()
 }
 
 function exactExternalIdentifier(value: unknown, label: string, max: number): string {
+  return validateAuthoritySafeIdentifier(value, label, max)
+}
+
+export function validateAuthoritySafeIdentifier(value: unknown, label: string, max: number): string {
   const raw = requiredString(value, label, max)
   rejectForbiddenValue(raw, label)
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(raw)) fail(`${label} must use bounded ASCII identifier characters`)
+  return raw
+}
+
+export function validateAuthoritySafeText(value: unknown, label: string, max: number): string {
+  const raw = requiredString(value, label, max)
+  rejectForbiddenValue(raw, label)
   return raw
 }
 
@@ -588,7 +595,7 @@ function semanticHash(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex")
 }
 
-function authoritativeConfigurationSnapshot(value: ModelConfiguration): ModelConfiguration {
+export function revalidateModelConfigurationSnapshot(value: ModelConfiguration): ModelConfiguration {
   const source = record(value, "validated model configuration snapshot")
   const connections = boundedArray(source.connections, "validated model configuration connections", MAX_CONNECTIONS)
   const profiles = boundedArray(source.profiles, "validated model configuration profiles", MAX_PROFILES)
@@ -633,7 +640,7 @@ function authoritativeConfigurationSnapshot(value: ModelConfiguration): ModelCon
   return accepted
 }
 
-function authoritativeConformanceSnapshot(value: CommanderModelConformanceRegistry): CommanderModelConformanceRegistry {
+export function revalidateCommanderModelConformanceRegistrySnapshot(value: CommanderModelConformanceRegistry): CommanderModelConformanceRegistry {
   const source = record(value, "validated Commander conformance snapshot")
   const entries = boundedArray(source.entries, "validated Commander conformance entries", MAX_CONFORMANCE_ENTRIES)
   const rawEntries: unknown[] = []
@@ -658,7 +665,7 @@ function authoritativeConformanceSnapshot(value: CommanderModelConformanceRegist
   return accepted
 }
 
-function authoritativeExecutorProviderMappingSnapshot(value: ExecutorProviderMappingRegistry): ExecutorProviderMappingRegistry {
+export function revalidateExecutorProviderMappingRegistrySnapshot(value: ExecutorProviderMappingRegistry): ExecutorProviderMappingRegistry {
   const source = record(value, "validated Executor provider mapping snapshot")
   const entries = boundedArray(source.entries, "validated Executor provider mapping entries", MAX_EXECUTOR_PROVIDER_MAPPINGS)
   const rawEntries: unknown[] = []
