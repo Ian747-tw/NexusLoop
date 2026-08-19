@@ -150,7 +150,7 @@ describe("Commander AI SDK model adapter", () => {
     })
     expect(config.transport_kind).toBe("google_generative_ai_connector")
     expect(connectorGoogleGenerateContentUrl(googleConnector(), "gemini-2.5-flash").toString()).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
-    for (const modelId of ["/", "..", "%2f", "model?x", "model#x", "model\\x", "models/gemini", "news:comp.lang.misc", "sip:user@host", "gateway:443", "service:8080", "modelhost:8080", "gemini\u0000model"]) {
+    for (const modelId of ["/", "..", "%2f", "model?x", "model#x", "model\\x", "models/gemini", "news:comp.lang.misc", "sip:user@host", "gateway:443", "service:8080", "modelhost:8080", "gemini\u0000model", "gemma-3-27b-it", "text-bison"]) {
       expect(() => validateCommanderConnectorModelTransportConfig({ ...config, model_id: modelId })).toThrow("Gemini model_id")
     }
     expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "anthropic" }))).toThrow("provider_kind google")
@@ -170,6 +170,7 @@ describe("Commander AI SDK model adapter", () => {
       serviceTier: "STANDARD",
       promptTokensDetails: [{ modality: "TEXT", tokenCount: 17 }],
       candidatesTokensDetails: [{ modality: "TEXT", tokenCount: 5 }],
+      cacheTokensDetails: [{ modality: "TEXT", tokenCount: 0 }],
     }
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }])
     const adapter = connectorBackedAdapter(projectDir, transport, "api_gemini_final", {
@@ -184,6 +185,29 @@ describe("Commander AI SDK model adapter", () => {
     expect(transport.requests[0].headers["x-goog-api-key"]).toBe("real-google-key")
     expect(JSON.stringify(transport.requests[0])).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
     expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native Gemini treats returned modelVersion as optional bounded non-authoritative metadata", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-model-version-"))
+    const selectedModel = "gemini-2.5-flash-latest"
+    const options = {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: selectedModel }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: selectedModel, max_output_tokens: 1024 }
+    const resolved = JSON.parse(geminiText("resolved alias"))
+    resolved.modelVersion = "gemini-2.5-flash-001"
+    const resolvedTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(resolved) }])
+    const resolvedResult = await connectorBackedAdapter(projectDir, resolvedTransport, "api_gemini_resolved_alias", options).executeOneStep(request)
+    expect(resolvedResult).toMatchObject({ status: "final", text: "resolved alias", request_count: 1 })
+    expect(resolvedTransport.requests[0].url).toEndWith("/models/gemini-2.5-flash-latest:generateContent")
+    expect(JSON.stringify(resolvedResult)).not.toContain("gemini-2.5-flash-001")
+
+    const omitted = JSON.parse(geminiText("omitted version"))
+    delete omitted.modelVersion
+    const omittedResult = await connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(omitted) }]), "api_gemini_omitted_version", options).executeOneStep(request)
+    expect(omittedResult).toMatchObject({ status: "final", text: "omitted version", request_count: 1 })
   })
 
   test("native Gemini bridge drops the pinned SDK version header and audits one exact request", async () => {
@@ -386,7 +410,7 @@ describe("Commander AI SDK model adapter", () => {
       ["multiple", JSON.stringify({ ...JSON.parse(geminiText("one")), candidates: [...JSON.parse(geminiText("one")).candidates, ...JSON.parse(geminiText("two")).candidates] })],
       ["truncated", JSON.stringify({ ...JSON.parse(geminiText("partial must remain unavailable")), candidates: [{ content: { role: "model", parts: [{ text: "partial must remain unavailable" }] }, finishReason: "MAX_TOKENS", index: 0 }] })],
       ["server_tool", JSON.stringify({ ...JSON.parse(geminiText("")), candidates: [{ content: { role: "model", parts: [{ executableCode: { language: "PYTHON", code: "print(1)" } }] }, finishReason: "STOP", index: 0 }] })],
-      ["wrong_model", JSON.stringify({ ...JSON.parse(geminiText("wrong model evidence")), modelVersion: "gemini-unconfigured" })],
+      ["oversized_model_version", JSON.stringify({ ...JSON.parse(geminiText("oversized model version evidence")), modelVersion: `gemini-${"x".repeat(200)}` })],
       ["oversized_response_id", JSON.stringify({ ...JSON.parse(geminiText("oversized response identity")), responseId: "r".repeat(201) })],
       ["malformed_token_details", JSON.stringify({ ...JSON.parse(geminiText("malformed usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, promptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
       ["oversized_candidate_metadata", JSON.stringify({ ...JSON.parse(geminiText("oversized candidate metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], finishMessage: "x".repeat(501) }] })],
@@ -401,7 +425,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
       expect(result.text).toBeUndefined()
       expect(JSON.stringify(result)).not.toContain("partial must remain unavailable")
-      expect(JSON.stringify(result)).not.toContain("wrong model evidence")
+      expect(JSON.stringify(result)).not.toContain("oversized model version evidence")
     }
     for (const status of [429, 500]) {
       const transport = new FakeExternalApiTransport([{ status_code: status, body: JSON.stringify({ error: { message: `AIza${"x".repeat(10_000)}` } }) }])

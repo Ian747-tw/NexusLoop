@@ -113,7 +113,7 @@ export function validateCommanderConnectorProtocolPolicy(config: CommanderConnec
 }
 
 export function validateGeminiModelId(value: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(value)) throw new Error("Gemini model_id must be one safe path segment")
+  if (!/^gemini-[A-Za-z0-9][A-Za-z0-9._-]{0,112}$/.test(value)) throw new Error("Gemini model_id must be one safe path segment beginning with gemini-")
   if (value === "." || value === "..") throw new Error("Gemini model_id must be one safe path segment")
 }
 
