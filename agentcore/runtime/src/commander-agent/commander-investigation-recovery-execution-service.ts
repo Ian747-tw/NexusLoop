@@ -78,6 +78,8 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
     const contextWorkingSet = gate.snapshot
       ? { ...restored.workingSet!, current_warnings: [...restored.workingSet!.current_warnings, ...gate.snapshot.human_control_warnings, ...gate.snapshot.provider_preflight_warnings] }
       : restored.workingSet!
+    const freshRecoveryReplay = checkpoint.tool_protocol === "native"
+      && preview.provider_compatibility.execution_envelope?.transport_kind === "google_generative_ai_connector"
     const context = this.options.contextService.build({
       bootstrap: currentBootstrap,
       workingSet: contextWorkingSet,
@@ -87,6 +89,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       latestAssistant: replay.latest_assistant,
       latestToolResults: replay.latest_tool_results,
       recoveryNotice: notice,
+      freshRecoveryReplay,
     })
     if (context.blocked) blockers.push(...context.blockers)
     warnings.push(...context.warnings)
@@ -172,6 +175,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       replay_exchange: replay.replay_exchange,
       replay_exchange_hash: replay.summary.replay_exchange_hash,
       replay_message_hash: replayMessageHash,
+      ...(freshRecoveryReplay ? { fresh_recovery_replay: true as const } : {}),
       recovery_notice_hash: notice.notice_hash,
       pre_model_gate_snapshot_hash: gate.snapshot?.gate_snapshot_hash,
       next_turn_index: nextTurn,
@@ -214,6 +218,7 @@ export class CommanderInvestigationRecoveryContinuationBuilder {
       replay_exchange: replay.replay_exchange,
       replay_exchange_hash: replay.summary.replay_exchange_hash,
       replay_message_hash: replayMessageHash,
+      ...(freshRecoveryReplay ? { fresh_recovery_replay: true as const } : {}),
       recovery_notice: notice,
       recovery_notice_hash: notice.notice_hash,
       pre_model_gate_snapshot: gate.snapshot!,

@@ -119,9 +119,13 @@ client function tools only. Search, URL context, code execution, media, Files,
 cache/thinking/safety authority, provider options, multiple candidates,
 Interactions, streaming, retained state, retries, and all Google server tools
 are rejected. Function-call thought signatures are carried only in transient
-in-memory continuation state and are never persisted or hashed. Native Gemini
-JSON-schema output is not claimed; bounded NexusLoop JSON fallback remains in
-use.
+in-memory continuation state for matching live turns and are never persisted or
+hashed. Native Gemini turn-complete recovery renders the bounded checkpoint
+tool exchange as fresh summary context instead of replaying a native function
+call that would require unavailable transient metadata. Existing
+OpenAI-compatible and Anthropic recovery message envelopes remain unchanged.
+Native Gemini JSON-schema output is not claimed; bounded NexusLoop JSON
+fallback remains in use.
 
 ## OpenAI-Compatible Transport
 

@@ -8720,6 +8720,23 @@ describe("Commander in-memory investigation controller", () => {
     expect(tamperedLoadedTool).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(tamperedLoadedTool.blockers).toContain("recovery continuation loaded tool actual schema did not verify")
     expect(tamperedLoadedToolAdapter.request_summaries).toHaveLength(0)
+    const tamperedFreshReplaySeed = structuredClone(built.seed!)
+    tamperedFreshReplaySeed.fresh_recovery_replay = true
+    const tamperedFreshReplayAdapter = new ScriptedCommanderModelStepAdapter([{ status: "final", text: "tampered fresh replay should not run" }])
+    const tamperedFreshReplay = await new CommanderInvestigationController({
+      modelAdapter: tamperedFreshReplayAdapter,
+      toolExecutor: executorFixture().executor,
+      toolService: new CommanderToolService({ contextBudgetService: new ContextBudgetService({ registry }) }),
+      descriptors: COMMANDER_TOOL_REGISTRY,
+      boundToolIds: COMMANDER_BOUND_TOOL_IDS,
+      bootstrapService: (server as any).commanderInvestigationBootstrapService(),
+      contextService: new CommanderInvestigationContextService(),
+      capabilityRegistry: registry,
+      contextBudgetService: new ContextBudgetService({ registry }),
+      recoverySource: async () => source!,
+    }).runFromRecoverySeed(tamperedFreshReplaySeed)
+    expect(tamperedFreshReplay.blockers).toContain("recovery continuation seed hash did not verify")
+    expect(tamperedFreshReplayAdapter.request_summaries).toHaveLength(0)
     const controllerForDescriptors = (descriptors: typeof COMMANDER_TOOL_REGISTRY, adapter: ScriptedCommanderModelStepAdapter) => new CommanderInvestigationController({
       modelAdapter: adapter,
       toolExecutor: executorFixture().executor,
@@ -8903,6 +8920,7 @@ describe("Commander in-memory investigation controller", () => {
     expect(changedWarning).toMatchObject({ status: "blocked", stop_reason: "controller_error", provider_request_count: 0 })
     expect(changedWarning.blockers).toContain("recovery pre-model gate snapshot changed since approval")
     expect(changedWarningAdapter.request_summaries).toHaveLength(0)
+    let nativeRecoveryMessages: CommanderModelStepRequest["messages"] | undefined
     for (const protocol of ["native", "json_fallback"] as const) {
       const replayCheckpoint = structuredClone(source!.latest_checkpoint!)
       replayCheckpoint.checkpoint_kind = "turn_complete"
@@ -8910,6 +8928,8 @@ describe("Commander in-memory investigation controller", () => {
       replayCheckpoint.turn_index = 1
       replayCheckpoint.next_turn_index = 2
       replayCheckpoint.tool_protocol = protocol
+      replayCheckpoint.working_set.model_turn_count = 1
+      replayCheckpoint.working_set.working_set_hash = stableHash(stableCommanderInvestigationWorkingSet(replayCheckpoint.working_set as CommanderInvestigationWorkingSet))
       const exchange: CommanderInvestigationReplayExchange = {
         turn_index: 1,
         assistant_message: {
@@ -8917,8 +8937,22 @@ describe("Commander in-memory investigation controller", () => {
           content: [{
             ...toolCall("large_replay_arguments", "commander.tool_profile", {
               phase: "proposal_investigation",
+              api_key: "github_pat_recoveryargumentssecret1234567890",
+              client_key_data: "YmFzZTY0LWNyZWRlbnRpYWwtbWF0ZXJpYWw=",
+              authorization: "opaque-credential-material",
+              maxTokens: 1024,
+              promptTokenCount: 88,
+              accessTokens: "opaque-access-material",
+              nestedNumericCredentials: {
+                accessTokens: 8675309,
+                refreshTokenCount: 7,
+                apiKeyTokenCount: 6,
+                passwordTokens: 5,
+                maxTokens: 2048,
+                promptTokenCount: 99,
+              },
               oversized: "x".repeat(5000),
-              nested: { a: { b: { c: ["secret sk-replayargumentsecret12345", ...Array.from({ length: 40 }, (_, index) => ({ index, value: "v".repeat(200) }))] } } },
+              nested: { a: { b: { c: ["secret sk-replayargumentsecret12345", ...Array.from({ length: 40 }, (_, index) => ({ index, value: "v".repeat(160) }))] } } },
             }),
             raw_arguments: undefined,
           }],
@@ -8946,7 +8980,84 @@ describe("Commander in-memory investigation controller", () => {
       expect(replay.latest_assistant?.content[0].type).toBe("tool_call")
       expect(JSON.stringify(replay.latest_assistant)).not.toContain("sk-replayargumentsecret12345")
       expect(JSON.stringify(replay.latest_assistant)).toContain("omitted")
+      const openAiReplayBuilt = await builder.build({ source: source!, preview: after, checkpoint: replayCheckpoint })
+      expect(openAiReplayBuilt.blockers).toEqual([])
+      expect(openAiReplayBuilt.seed!.fresh_recovery_replay).toBeUndefined()
+      if (protocol === "native") {
+        expect(openAiReplayBuilt.seed!.first_model_request_preview.message_roles).toContain("assistant")
+        expect(openAiReplayBuilt.seed!.first_model_request_preview.message_roles).toContain("tool")
+      }
+      const geminiPreview = structuredClone(after)
+      geminiPreview.provider_compatibility.execution_envelope!.transport_kind = "google_generative_ai_connector"
+      const geminiReplayBuilt = await builder.build({ source: source!, preview: geminiPreview, checkpoint: replayCheckpoint })
+      expect(geminiReplayBuilt.blockers).toEqual([])
+      if (protocol === "native") {
+        expect(geminiReplayBuilt.seed!.fresh_recovery_replay).toBe(true)
+        expect(geminiReplayBuilt.seed!.first_model_request_preview.message_roles).not.toContain("assistant")
+        expect(geminiReplayBuilt.seed!.first_model_request_preview.message_roles).not.toContain("tool")
+      } else {
+        expect(geminiReplayBuilt.seed!.fresh_recovery_replay).toBeUndefined()
+      }
+      const recoveryContext = new CommanderInvestigationContextService().build({
+        bootstrap: built.seed!.current_bootstrap,
+        workingSet: built.seed!.working_set,
+        loadedTools: [toolProfile!],
+        toolProtocol: protocol,
+        budget: built.seed!.effective_budget.effective_budget,
+        latestAssistant: replay.latest_assistant,
+        latestToolResults: replay.latest_tool_results,
+        recoveryNotice: built.seed!.recovery_notice,
+        freshRecoveryReplay: true,
+      })
+      expect(recoveryContext.messages.some((message) => message.role === "assistant" || message.role === "tool")).toBe(false)
+      const recoverySummary = recoveryContext.messages.find((message) => message.role === "user" && message.content.includes("previous_tool_exchange_summary"))?.content
+      expect(recoverySummary).toContain("fresh_recovery_summary")
+      expect(recoverySummary).toContain('"arguments":')
+      expect(recoverySummary).toContain('"phase":"proposal_investigation"')
+      expect(recoverySummary).toContain("[REDACTED]")
+      expect(recoverySummary).not.toContain("github_pat_recoveryargumentssecret1234567890")
+      if (typeof recoverySummary !== "string") throw new Error("fresh recovery summary must be a string-valued user message")
+      const parsedRecoverySummary = JSON.parse(recoverySummary) as { tool_calls: Array<{ arguments: Record<string, unknown> }> }
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.api_key).toBe("[REDACTED]")
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.client_key_data).toBe("[REDACTED]")
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.authorization).toBe("[REDACTED]")
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.maxTokens).toBe(1024)
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.promptTokenCount).toBe(88)
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.accessTokens).toBe("[REDACTED]")
+      expect(parsedRecoverySummary.tool_calls[0]?.arguments.nestedNumericCredentials).toEqual({
+        accessTokens: "[REDACTED]",
+        refreshTokenCount: "[REDACTED]",
+        apiKeyTokenCount: "[REDACTED]",
+        passwordTokens: "[REDACTED]",
+        maxTokens: 2048,
+        promptTokenCount: 99,
+      })
+      if (protocol === "native") nativeRecoveryMessages = recoveryContext.messages
     }
+    expect(nativeRecoveryMessages).toBeDefined()
+    const geminiRecoveryTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("Gemini 3 recovered from fresh summary context") }])
+    const geminiRecovery = await connectorBackedAdapter(projectDir, geminiRecoveryTransport, "api_gemini_3_durable_recovery", {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-3-pro-preview" }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }).executeOneStep({
+      ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request,
+      provider_id: "google_provider",
+      provider_kind: "google",
+      model_id: "gemini-3-pro-preview",
+      messages: nativeRecoveryMessages!,
+      tools: [modelTool("commander.tool_profile")],
+      max_output_tokens: 1024,
+      metadata: { investigation_id: "inv_gemini_3_durable_recovery", phase: "proposal_investigation" },
+    })
+    expect(geminiRecovery).toMatchObject({ status: "final", request_count: 1 })
+    expect(geminiRecovery.provider_metadata.nexusloop_transport).toMatchObject({ audit_event_count: 1, successful_audit_count: 1, failed_audit_count: 0 })
+    expect(geminiRecoveryTransport.requests).toHaveLength(1)
+    const geminiRecoveryBody = String(geminiRecoveryTransport.requests[0].body)
+    const geminiRecoveryContents = JSON.stringify((JSON.parse(geminiRecoveryBody) as { contents: unknown[] }).contents)
+    expect(geminiRecoveryBody).toContain("fresh_recovery_summary")
+    expect(geminiRecoveryContents).not.toContain("functionCall")
+    expect(geminiRecoveryBody).not.toContain("skip_thought_signature_validator")
     const tamperedWorkingSetSeed = {
       ...built.seed!,
       working_set: {
@@ -14673,6 +14784,7 @@ function recoverySeedPreparationHash(seed: CommanderInvestigationRecoveryContinu
     replay_exchange: seed.replay_exchange,
     replay_exchange_hash: seed.replay_exchange_hash,
     replay_message_hash: seed.replay_message_hash,
+    ...(seed.fresh_recovery_replay ? { fresh_recovery_replay: true } : {}),
     recovery_notice_hash: seed.recovery_notice_hash,
     pre_model_gate_snapshot_hash: seed.pre_model_gate_snapshot.gate_snapshot_hash,
     next_turn_index: seed.next_turn_index,

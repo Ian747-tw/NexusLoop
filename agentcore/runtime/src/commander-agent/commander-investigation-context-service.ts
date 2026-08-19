@@ -1,4 +1,4 @@
-import { redactText } from "../security/redaction"
+import { redactText, redactValue } from "../security/redaction"
 import type { CommanderToolDescriptor, CommanderToolJsonSchema } from "../commander-tools/commander-tool-types"
 import type { CommanderInvestigationBootstrap, CommanderInvestigationContext, CommanderInvestigationExecutionDigest, CommanderInvestigationWorkingSet } from "./commander-investigation-types"
 import type { CommanderInvestigationRecoveryNotice } from "./commander-investigation-recovery-execution-types"
@@ -14,13 +14,14 @@ export class CommanderInvestigationContextService {
     latestAssistant?: CommanderModelAssistantMessage
     latestToolResults: CommanderModelToolResultMessage[]
     recoveryNotice?: CommanderInvestigationRecoveryNotice
+    freshRecoveryReplay?: boolean
   }): CommanderInvestigationContext {
     const warnings: string[] = []
     const blockers: string[] = []
     let evidence = input.workingSet.evidence_cards
     let digests = input.workingSet.recent_execution_digests
     let bootstrap = input.bootstrap
-    let messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
+    let messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice, input.freshRecoveryReplay)
     let bytes = measure(messages, input.loadedTools, input.toolProtocol)
     let tokens = Math.ceil(bytes / 4)
     const byteCap = input.budget.max_context_bytes
@@ -30,21 +31,21 @@ export class CommanderInvestigationContextService {
     while (over() && evidence.length > 0) {
       evidence = evidence.slice(1)
       warnings.push("oldest evidence card omitted during deterministic context compaction")
-      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
+      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice, input.freshRecoveryReplay)
       bytes = measure(messages, input.loadedTools, input.toolProtocol)
       tokens = Math.ceil(bytes / 4)
     }
     while (over() && digests.length > 0) {
       digests = digests.slice(1)
       warnings.push("oldest execution digest omitted during deterministic context compaction")
-      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
+      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice, input.freshRecoveryReplay)
       bytes = measure(messages, input.loadedTools, input.toolProtocol)
       tokens = Math.ceil(bytes / 4)
     }
     if (over() && bootstrap.source_refs.length > 0) {
       bootstrap = { ...bootstrap, source_refs: [] }
       warnings.push("optional bootstrap source refs omitted during deterministic context compaction")
-      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice)
+      messages = buildMessages(bootstrap, input.workingSet, evidence, digests, input.loadedTools, input.toolProtocol, input.latestAssistant, input.latestToolResults, input.recoveryNotice, input.freshRecoveryReplay)
       bytes = measure(messages, input.loadedTools, input.toolProtocol)
       tokens = Math.ceil(bytes / 4)
     }
@@ -53,7 +54,7 @@ export class CommanderInvestigationContextService {
   }
 }
 
-function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: CommanderInvestigationWorkingSet, evidence: typeof workingSet.evidence_cards, digests: CommanderInvestigationExecutionDigest[], loadedTools: CommanderToolDescriptor[], toolProtocol: CommanderModelToolProtocol, latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[], recoveryNotice?: CommanderInvestigationRecoveryNotice): CommanderModelMessage[] {
+function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: CommanderInvestigationWorkingSet, evidence: typeof workingSet.evidence_cards, digests: CommanderInvestigationExecutionDigest[], loadedTools: CommanderToolDescriptor[], toolProtocol: CommanderModelToolProtocol, latestAssistant: CommanderModelAssistantMessage | undefined, latestToolResults: CommanderModelToolResultMessage[], recoveryNotice?: CommanderInvestigationRecoveryNotice, freshRecoveryReplay = false): CommanderModelMessage[] {
   const messages: CommanderModelMessage[] = [
     { role: "system", content: bootstrap.authority_kernel },
     { role: "user", content: JSON.stringify({
@@ -123,22 +124,39 @@ function buildMessages(bootstrap: CommanderInvestigationBootstrap, workingSet: C
     }) },
   ]
   if (latestAssistant && latestToolResults.length > 0) {
-    if (toolProtocol === "json_fallback") {
-      messages.push({ role: "user", content: JSON.stringify(fallbackLatestExchange(latestAssistant, latestToolResults)) })
+    if (toolProtocol === "json_fallback" || freshRecoveryReplay) {
+      messages.push({ role: "user", content: JSON.stringify(fallbackLatestExchange(
+        latestAssistant,
+        latestToolResults,
+        freshRecoveryReplay ? "fresh_recovery_summary" : "text_only_json_fallback",
+      )) })
     } else {
       messages.push(latestAssistant, ...latestToolResults)
     }
   }
-  return messages.map((message) => message.role === "system" || message.role === "user" ? { ...message, content: redactText(message.content) } : message)
+  return messages.map((message) => message.role === "system" || message.role === "user" ? { ...message, content: redactMessageContent(message.content) } : message)
 }
 
-function fallbackLatestExchange(latestAssistant: CommanderModelAssistantMessage, latestToolResults: CommanderModelToolResultMessage[]): unknown {
-  return {
+function redactMessageContent(content: string): string {
+  try {
+    return JSON.stringify(redactValue(JSON.parse(content)))
+  } catch {
+    return redactText(content)
+  }
+}
+
+function fallbackLatestExchange(
+  latestAssistant: CommanderModelAssistantMessage,
+  latestToolResults: CommanderModelToolResultMessage[],
+  replayMode: "fresh_recovery_summary" | "text_only_json_fallback",
+): unknown {
+  const summary = {
     kind: "previous_tool_exchange_summary",
     assistant_text: latestAssistant.content.filter((part) => part.type === "text").map((part) => part.text).join("\n").slice(0, 1000),
     tool_calls: latestAssistant.content.filter((part) => part.type === "tool_call").map((part) => ({
       tool_call_id: part.tool_call_id,
       tool_id: part.tool_id,
+      ...(replayMode === "fresh_recovery_summary" ? { arguments: boundedSummaryArguments(part.arguments) } : {}),
       arguments_valid: part.arguments_valid,
       validation_errors: part.validation_errors.slice(0, 6),
     })),
@@ -149,8 +167,19 @@ function fallbackLatestExchange(latestAssistant: CommanderModelAssistantMessage,
       truncated: result.truncated,
       content_preview: result.content.slice(0, 2000),
     })),
-    replay_mode: "text_only_json_fallback",
+    replay_mode: replayMode,
   }
+  return replayMode === "fresh_recovery_summary"
+    ? { ...summary, exact_replay_supported: false, provider_continuation_metadata_available: false }
+    : summary
+}
+
+function boundedSummaryArguments(argumentsValue: Record<string, unknown>): unknown {
+  const redacted = redactValue(argumentsValue)
+  const serialized = JSON.stringify(redacted)
+  return typeof serialized === "string" && Buffer.byteLength(serialized) <= 4_000
+    ? redacted
+    : { omitted: "tool arguments exceeded the recovery summary bound" }
 }
 
 function fallbackInstructionBlock(tools: CommanderToolDescriptor[]): { response_contract: unknown; loaded_tool_schemas: Array<{ tool_id: string; description: string; input_schema: CommanderToolJsonSchema }> } {

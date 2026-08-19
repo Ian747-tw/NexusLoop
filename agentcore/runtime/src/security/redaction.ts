@@ -6,6 +6,76 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b(?:aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|aws[_-]?security[_-]?token|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|client[_-]?key[_-]?data|private[_-]?key|auth)["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^"',\s}]+)/gi,
 ]
 
+const CREDENTIAL_FIELD_PATTERN = /(?:secret|token|api[_-]?key|password|aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|aws[_-]?security[_-]?token|access[_-]?token|refresh[_-]?token|oauth[_-]?token|client[_-]?secret|client[_-]?key[_-]?data|private[_-]?key|authorization|^auth$)/i
+
+const SAFE_NUMERIC_TOKEN_METADATA_FIELDS = new Set([
+  "availableTokens",
+  "bootstrapTokens",
+  "cacheReadTokens",
+  "cacheTokens",
+  "cacheWriteTokens",
+  "cache_read_tokens",
+  "cache_write_tokens",
+  "cachedContentTokenCount",
+  "cachedInputTokens",
+  "cached_input_tokens",
+  "cached_tokens",
+  "candidatesTokenCount",
+  "candidatesTokens",
+  "completion_tokens",
+  "currentInputContextTokens",
+  "currentMaxContextTokens",
+  "currentTokens",
+  "current_bootstrap_tokens",
+  "current_input_context_tokens",
+  "effectiveSchemaAllocationTokens",
+  "estimatedInputTokens",
+  "estimatedTokens",
+  "estimated_catalog_tokens",
+  "estimated_input_tokens",
+  "estimated_recovery_packet_tokens",
+  "estimated_schema_tokens",
+  "estimated_token_count",
+  "estimated_tokens",
+  "explicitTokens",
+  "initial_schema_tokens",
+  "inputContextTokens",
+  "inputTokens",
+  "input_context_tokens",
+  "input_estimated_tokens",
+  "input_tokens",
+  "loadedSchemaTokens",
+  "loaded_schema_tokens",
+  "maxContextTokens",
+  "maxOutputTokens",
+  "maxTokens",
+  "max_context_tokens",
+  "max_initial_schema_tokens",
+  "max_output_tokens",
+  "max_tokens",
+  "modelOutputTokens",
+  "outputTokens",
+  "output_tokens",
+  "promptTokenCount",
+  "promptTokens",
+  "prompt_tokens",
+  "requestedOutputTokens",
+  "safetyMarginTokens",
+  "safetyTokens",
+  "safety_margin_tokens",
+  "sessionDerivedTokens",
+  "storedMaxContextTokens",
+  "target_input_tokens",
+  "thoughtsTokenCount",
+  "toolTokens",
+  "toolUsePromptTokenCount",
+  "toolUsePromptTokens",
+  "tool_schema_allocation_tokens",
+  "totalTokenCount",
+  "totalTokens",
+  "total_tokens",
+])
+
 export function redactText(value: string): string {
   return SECRET_PATTERNS.reduce((text, pattern) => text.replace(pattern, "[REDACTED]"), value)
 }
@@ -20,8 +90,8 @@ export function redactValue<T>(value: T): T {
   if (value && typeof value === "object") {
     const output: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value)) {
-      const safeNumericTokenMetadata = typeof item === "number" && /(?:_tokens|_token_count)$/i.test(key)
-      output[key] = /secret|token|api[_-]?key|password|aws[_-]?access[_-]?key[_-]?id|^auth$|private[_-]?key/i.test(key) && !safeNumericTokenMetadata ? "[REDACTED]" : redactValue(item)
+      const safeNumericTokenMetadata = typeof item === "number" && SAFE_NUMERIC_TOKEN_METADATA_FIELDS.has(key)
+      output[key] = CREDENTIAL_FIELD_PATTERN.test(key) && !safeNumericTokenMetadata ? "[REDACTED]" : redactValue(item)
     }
     return output as T
   }

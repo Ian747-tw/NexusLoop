@@ -30,7 +30,7 @@ def test_commander_recovers_through_native_gemini_via_real_tui(sandbox) -> None:
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
-            assert self.path == "/v1beta/models/gemini-2.5-flash:generateContent"
+            assert self.path == "/v1beta/models/gemini-3-pro-preview:generateContent"
             request = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))))
             requests.append(request)
             observed_headers.append({key.lower(): value for key, value in self.headers.items()})
@@ -38,10 +38,15 @@ def test_commander_recovers_through_native_gemini_via_real_tui(sandbox) -> None:
             assert request["generationConfig"]["maxOutputTokens"] == 1024
             forbidden = {"cachedContent", "safetySettings", "thinkingConfig", "responseModalities", "googleSearch", "codeExecution", "urlContext", "mcp_servers"}
             assert forbidden.isdisjoint(request)
+            contents = json.dumps(request["contents"])
+            recovery_text = "\n".join(str(part.get("text", "")) for content in request["contents"] for part in content.get("parts", []))
+            assert "fresh_recovery_summary" in contents
+            assert '"arguments":{"phase":"proposal_investigation"}' in recovery_text
+            assert "functionCall" not in contents
             response = json.dumps({
                 "candidates": [{"content": {"role": "model", "parts": [{"text": "native Gemini recovery completed"}]}, "finishReason": "STOP", "index": 0}],
                 "usageMetadata": {"promptTokenCount": 31, "candidatesTokenCount": 7, "totalTokenCount": 38},
-                "modelVersion": "gemini-2.5-flash",
+                "modelVersion": "gemini-3-pro-preview",
             }).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
@@ -65,7 +70,7 @@ def test_commander_recovers_through_native_gemini_via_real_tui(sandbox) -> None:
         "NXL_TUI_HEADLESS": "1", "NXL_RUNTIME_CLIENT": "real", "NXL_OPENCODE_ADAPTER": "fake",
         "NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED": "1", "NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND": "google_generative_ai_connector",
         "NXL_COMMANDER_INVESTIGATION_PROVIDER_ID": "google_fixture_provider", "NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND": "google",
-        "NXL_COMMANDER_INVESTIGATION_CONNECTOR_ID": "google-test", "NXL_COMMANDER_INVESTIGATION_MODEL_ID": "gemini-2.5-flash",
+        "NXL_COMMANDER_INVESTIGATION_CONNECTOR_ID": "google-test", "NXL_COMMANDER_INVESTIGATION_MODEL_ID": "gemini-3-pro-preview",
         "NXL_COMMANDER_INVESTIGATION_ENABLED_PHASES": "proposal_investigation", "NXL_COMMANDER_INVESTIGATION_TIMEOUT_MS": "5000",
         "NXL_COMMANDER_INVESTIGATION_MAX_REQUEST_BYTES": "65536", "NXL_COMMANDER_INVESTIGATION_MAX_RESPONSE_BYTES": "65536",
         "NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_BYTES": "65536", "NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_TOKENS": "16384",
@@ -100,7 +105,7 @@ def test_commander_recovers_through_native_gemini_via_real_tui(sandbox) -> None:
     assert "approval=recorded" in approved.stdout
     current = run([f"/commander-recovery-preview {investigation_id}"])
     executed = run([f"/commander-recovery-execute investigation_id={investigation_id} approval_id={field(current.stdout, 'approval_id')} approval_hash={field(current.stdout, 'approval_hash')} recovery_plan_hash={field(current.stdout, 'recovery_plan_hash')} execution_preparation_hash={field(current.stdout, 'execution_preparation_hash')} confirm=EXECUTE", *[f"/commander-recovery-show {investigation_id}" for _ in range(12)]])
-    assert "terminal=true" in executed.stdout or "status=completed" in executed.stdout
+    assert "status=completed" in executed.stdout
     assert len(requests) == 1
     assert observed_headers[0]["x-goog-api-key"] == "google-e2e-secret"
     assert "authorization" not in observed_headers[0]
@@ -109,8 +114,12 @@ def test_commander_recovers_through_native_gemini_via_real_tui(sandbox) -> None:
     events = [json.loads(line) for line in events_text.splitlines() if line.strip()]
     kinds = [event["kind"] for event in events if event.get("investigation_id") == investigation_id]
     assert kinds.count("runtime_commander_investigation_recovery_started") == 1
-    assert kinds.count("runtime_commander_investigation_model_step_started") == 1
+    model_steps = [event for event in events if event.get("investigation_id") == investigation_id and event["kind"] == "runtime_commander_investigation_model_step_started"]
+    assert len(model_steps) == 2
+    assert sum("recovery_attempt_id" in event for event in model_steps) == 1
     assert kinds.count("runtime_commander_investigation_finished") == 1
+    terminal = next(event for event in events if event.get("investigation_id") == investigation_id and event["kind"] == "runtime_commander_investigation_finished")
+    assert terminal["terminal"]["status"] == "final"
     assert sum(event["kind"] == "external_api_request_executed" for event in events) == 1
     assert events[-1]["kind"] == "runtime_shutdown"
     for forbidden in ["google-e2e-secret", "NXL_TEST_GOOGLE_KEY"]:

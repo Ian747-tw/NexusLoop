@@ -46,9 +46,15 @@ The audited dependency is `@ai-sdk/google@4.0.15` on the existing
    multiple candidates, or malformed usage fail closed.
 7. Gemini function-call thought signatures are transient continuation data.
    A module-private identity map carries a bounded signature from one normalized
-   call into only its matching next request. Signatures are non-enumerable,
+   call into only its matching next live request. Signatures are non-enumerable,
    investigation-local, provider-local, and excluded from events, audits,
-   logs, errors, results, hashes, recovery authority, and durable state.
+   logs, errors, results, hashes, recovery authority, and durable state. A
+   recovered native Gemini turn-complete checkpoint therefore renders its
+   summary-only tool exchange as fresh user context; it never reconstructs a
+   native function call or fabricates a missing thought signature. Existing
+   OpenAI-compatible and Anthropic recovery message envelopes remain unchanged.
+   New Gemini tool calls made during that recovery use ordinary live transient
+   continuation.
 8. Commander conformance policy v2 admits Gemini. Existing v1 OpenAI-compatible
    and Anthropic entries and their effective hashes remain unchanged. The model
    configuration schema and Executor mapping policy remain v1.
