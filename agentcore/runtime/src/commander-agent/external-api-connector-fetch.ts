@@ -470,11 +470,19 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   }
   if (!Array.isArray(payload.candidates) || payload.candidates.length !== 1) throw new Error("Google generateContent requires exactly one candidate")
   const candidate = payload.candidates[0]
-  if (!isRecord(candidate) || !hasOnlyKeys(candidate, ["content", "finishReason", "finishMessage", "index", "safetyRatings", "avgLogprobs", "citationMetadata", "tokenCount"]) || !("content" in candidate) || !("finishReason" in candidate) || !("index" in candidate) || candidate.index !== 0 || !validGoogleCandidateMetadata(candidate) || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
+  if (!isRecord(candidate) || !hasOnlyKeys(candidate, ["content", "finishReason", "finishMessage", "index", "safetyRatings", "avgLogprobs", "citationMetadata", "tokenCount"]) || !("finishReason" in candidate) || !("index" in candidate) || candidate.index !== 0 || !validGoogleCandidateMetadata(candidate)) throw new Error("Google generateContent candidate is invalid")
   if (candidate.finishReason !== "STOP" && candidate.finishReason !== "SAFETY" && candidate.finishReason !== "RECITATION" && candidate.finishReason !== "BLOCKLIST" && candidate.finishReason !== "PROHIBITED_CONTENT" && candidate.finishReason !== "SPII" && candidate.finishReason !== "IMAGE_SAFETY") throw new Error("Google generateContent finish reason is forbidden, ambiguous, or truncated")
+  const blocked = candidate.finishReason !== "STOP"
+  let parts: unknown[] = []
+  if (candidate.content !== undefined) {
+    if (!isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length > 128 || !blocked && candidate.content.parts.length === 0) throw new Error("Google generateContent candidate content is invalid")
+    parts = candidate.content.parts
+  } else if (!blocked) {
+    throw new Error("Google final response requires candidate content")
+  }
   let calls = 0
   let texts = 0
-  for (const part of candidate.content.parts) {
+  for (const part of parts) {
     if (!isRecord(part)) throw new Error("Google generateContent response part is invalid")
     if (hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text.trim()) { texts += 1; continue }
     if (hasOnlyKeys(part, ["functionCall", "thoughtSignature"]) && "functionCall" in part) {
@@ -487,8 +495,8 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
     throw new Error("Google response contains unsupported content, reasoning, media, grounding, or server tools")
   }
   if (candidate.finishReason === "STOP" && calls === 0 && texts === 0) throw new Error("Google final response requires bounded text or client function calls")
-  if (candidate.finishReason !== "STOP" && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
-  if (candidate.finishReason !== "STOP") {
+  if (blocked && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
+  if (blocked) {
     return JSON.stringify({
       ...payload,
       candidates: [{ ...candidate, content: { role: "model", parts: [] } }],

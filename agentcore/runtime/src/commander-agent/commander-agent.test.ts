@@ -265,9 +265,11 @@ describe("Commander AI SDK model adapter", () => {
 
   test("native Gemini normalizes bounded candidate safety finishes into refusals", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-candidate-block-"))
-    for (const finishReason of ["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY"]) {
+    for (const [index, finishReason] of ["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY"].entries()) {
       const payload = JSON.parse(geminiText("blocked candidate text"))
       payload.candidates[0].finishReason = finishReason
+      if (index % 2 === 0) delete payload.candidates[0].content
+      else payload.candidates[0].content.parts = []
       const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(payload) }])
       const result = await connectorBackedAdapter(projectDir, transport, `api_gemini_candidate_${finishReason.toLowerCase()}`, {
         config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
