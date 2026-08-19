@@ -21,7 +21,13 @@ export type AiSdkCommanderModelAdapterOptions = {
   now?: () => Date
 }
 
-const GEMINI_CONTINUATIONS = new WeakMap<object, Readonly<{ thought_signature: string }>>()
+const GEMINI_CONTINUATIONS = new WeakMap<object, Readonly<{
+  thought_signature: string
+  transport_kind: "google_generative_ai_connector"
+  provider_id: string
+  model_id: string
+  investigation_id: string
+}>>()
 const MAX_GEMINI_THOUGHT_SIGNATURE_BYTES = 4096
 
 export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter {
@@ -66,7 +72,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       const result = await generateText({
         model: measured.model(boundIdentifier(request.model_id, "model_id")),
         instructions: instructionsFromRequest(request),
-        messages: toAiSdkMessages(request),
+        messages: toAiSdkMessages(request, this.transportKind),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
         output: this.transportKind === "openai_compatible_connector" ? structuredOutput(request) : undefined,
@@ -115,7 +121,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       const result = streamText({
         model: measured.model(boundIdentifier(request.model_id, "model_id")),
         instructions: instructionsFromRequest(request),
-        messages: toAiSdkMessages(request),
+        messages: toAiSdkMessages(request, this.transportKind),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
         output: this.transportKind === "openai_compatible_connector" ? structuredOutput(request) : undefined,
@@ -325,7 +331,14 @@ function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ t
       if (googleModelRequiresThoughtSignature(request.model_id) && index === 0 && !hasSignature || hasSignature && (Buffer.byteLength(signature) > MAX_GEMINI_THOUGHT_SIGNATURE_BYTES || signature === "skip_thought_signature_validator")) {
         throw new Error("Gemini client function call requires a bounded provider thought signature")
       }
-      if (hasSignature) GEMINI_CONTINUATIONS.set(normalized, Object.freeze({ thought_signature: signature }))
+      const investigationId = continuationInvestigationId(request)
+      if (hasSignature && investigationId) GEMINI_CONTINUATIONS.set(normalized, Object.freeze({
+        thought_signature: signature,
+        transport_kind: "google_generative_ai_connector",
+        provider_id: request.provider_id,
+        model_id: request.model_id,
+        investigation_id: investigationId,
+      }))
     }
     return normalized
   })
@@ -369,7 +382,7 @@ function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { t
   return { status: "malformed", result: finalizeStep(request, "malformed", { text: input.text.slice(0, 256), usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, error: fallback.error, streamed: input.streamed }) }
 }
 
-function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
+function toAiSdkMessages(request: CommanderModelStepRequest, transportKind: CommanderConnectorModelTransportKind): ModelMessage[] {
   const messages: ModelMessage[] = []
   let pendingToolCalls = new Map<string, string>()
   for (const message of request.messages) {
@@ -386,6 +399,9 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
         if (part.type === "text") return { type: "text", text: part.text }
         pendingToolCalls.set(part.tool_call_id, part.tool_id)
         const continuation = GEMINI_CONTINUATIONS.get(part)
+        if (continuation && (transportKind !== continuation.transport_kind || request.provider_id !== continuation.provider_id || request.model_id !== continuation.model_id || continuationInvestigationId(request) !== continuation.investigation_id)) {
+          throw new Error("Gemini continuation authority does not match the current request")
+        }
         return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments, args: part.arguments, ...(continuation ? { providerOptions: { google: { thoughtSignature: continuation.thought_signature } } } : {}) }
       })
       messages.push({ role: "assistant", content } as ModelMessage)
@@ -401,6 +417,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   }
   if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
   return messages
+}
+
+function continuationInvestigationId(request: CommanderModelStepRequest): string | undefined {
+  const value = request.metadata?.investigation_id
+  return typeof value === "string" && value.length > 0 && value.length <= 200 ? value : undefined
 }
 
 function instructionsFromRequest(request: CommanderModelStepRequest): string | undefined {

@@ -292,7 +292,7 @@ describe("Commander AI SDK model adapter", () => {
       connector: googleConnector(),
       env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
     }
-    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024, metadata: { investigation_id: "investigation_single_continuation", phase: "general_read" } }
     const first = await connectorBackedAdapter(projectDir, firstTransport, "api_gemini_tool", options).executeOneStep(request)
     expect(first).toMatchObject({ status: "tool_call", tool_calls: [{ tool_call_id: "call_exact_1", tool_id: "memory.search", arguments: { query: "bounded evidence" } }] })
     expect(JSON.stringify(first)).not.toContain(signature)
@@ -335,7 +335,7 @@ describe("Commander AI SDK model adapter", () => {
       connector: googleConnector(),
       env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
     }
-    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: modelId, max_output_tokens: 1024 }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: modelId, max_output_tokens: 1024, metadata: { investigation_id: "investigation_parallel", phase: "general_read" } }
     const firstTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }])
     const first = await connectorBackedAdapter(projectDir, firstTransport, "api_gemini_parallel_tool", options).executeOneStep(request)
     expect(first).toMatchObject({ status: "tool_call", tool_calls: [
@@ -363,6 +363,33 @@ describe("Commander AI SDK model adapter", () => {
     const events = await eventText(projectDir)
     expect(events.match(/external_api_request_executed/g)).toHaveLength(2)
     expect(events).not.toContain(signature)
+
+    for (const authority of [
+      { provider_id: "google_provider_other", model_id: modelId },
+      { provider_id: "google_provider", model_id: "gemini-3-flash-preview" },
+      { provider_id: "google_provider", model_id: modelId, investigation_id: "investigation_other" },
+    ]) {
+      const mismatchTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("must not dispatch") }])
+      const mismatch = await connectorBackedAdapter(projectDir, mismatchTransport, `api_gemini_parallel_mismatch_${authority.provider_id}_${authority.model_id}`, {
+        config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: authority.provider_id, connector_id: "google-test", model_id: authority.model_id }),
+        connector: googleConnector(),
+        env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+      }).executeOneStep({
+        ...request,
+        provider_id: authority.provider_id,
+        model_id: authority.model_id,
+        metadata: { ...request.metadata, investigation_id: authority.investigation_id ?? request.metadata.investigation_id },
+        messages: [
+          ...request.messages,
+          first.assistant_message!,
+          { role: "tool", tool_call_id: "call_parallel_1", tool_id: "memory.search", content: "first result", content_hash: "first_hash", truncated: false },
+          { role: "tool", tool_call_id: "call_parallel_2", tool_id: "continuity.search", content: "second result", content_hash: "second_hash", truncated: false },
+        ],
+      })
+      expect(mismatchTransport.requests).toHaveLength(0)
+      expect(mismatch).toMatchObject({ status: "failed", request_count: 0, tool_calls: [] })
+      expect(mismatch.error).toContain("continuation authority")
+    }
   })
 
   test("native Gemini accepts bounded passive candidate metadata and synthesizes a stable missing function-call ID", async () => {
