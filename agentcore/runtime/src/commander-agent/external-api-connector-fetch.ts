@@ -392,6 +392,11 @@ function hasExactKeys(value: Record<string, unknown>, allowedKeys: string[]): bo
   return Object.keys(value).every((key) => allowed.has(key)) && allowedKeys.every((key) => key in value)
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: string[]): boolean {
+  const allowed = new Set(allowedKeys)
+  return Object.keys(value).every((key) => allowed.has(key))
+}
+
 function boundedIdentifier(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max
 }
@@ -451,7 +456,7 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
 function validateGoogleGenerateContentResponseBody(body: string, expectedModelId: string): void {
   let payload: unknown
   try { payload = JSON.parse(body) } catch { throw new Error("Google generateContent response must be valid JSON") }
-  if (!isRecord(payload) || !hasExactKeys(payload, ["candidates", "usageMetadata", "modelVersion"]) || payload.modelVersion !== expectedModelId) throw new Error("Google generateContent response identity or shape is invalid")
+  if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "usageMetadata", "modelVersion", "responseId"]) || !("candidates" in payload) || !("usageMetadata" in payload) || !("modelVersion" in payload) || payload.modelVersion !== expectedModelId || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200)) throw new Error("Google generateContent response identity or shape is invalid")
   if (!Array.isArray(payload.candidates) || payload.candidates.length !== 1) throw new Error("Google generateContent requires exactly one candidate")
   const candidate = payload.candidates[0]
   if (!isRecord(candidate) || !hasExactKeys(candidate, ["content", "finishReason", "index"]) || candidate.index !== 0 || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
@@ -461,8 +466,10 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   for (const part of candidate.content.parts) {
     if (!isRecord(part)) throw new Error("Google generateContent response part is invalid")
     if (hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text.trim()) { texts += 1; continue }
-    if (hasExactKeys(part, ["functionCall", "thoughtSignature"])) {
-      if (!isRecord(part.functionCall) || !hasExactKeys(part.functionCall, ["id", "name", "args"]) || !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args) || !boundedIdentifier(part.thoughtSignature, 4096) || part.thoughtSignature === "skip_thought_signature_validator") throw new Error("Google client function call response is invalid")
+    if (hasOnlyKeys(part, ["functionCall", "thoughtSignature"]) && "functionCall" in part) {
+      const signatureRequired = calls === 0
+      const signatureValid = boundedIdentifier(part.thoughtSignature, 4096) && part.thoughtSignature !== "skip_thought_signature_validator"
+      if (!isRecord(part.functionCall) || !hasExactKeys(part.functionCall, ["id", "name", "args"]) || !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args) || signatureRequired && !signatureValid || part.thoughtSignature !== undefined && !signatureValid) throw new Error("Google client function call response is invalid")
       calls += 1
       continue
     }
@@ -470,7 +477,26 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   }
   if (candidate.finishReason === "STOP" && calls === 0 && texts === 0) throw new Error("Google final response requires bounded text or client function calls")
   if (candidate.finishReason !== "STOP" && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
-  if (!isRecord(payload.usageMetadata) || !hasExactKeys(payload.usageMetadata, ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]) || !nonnegativeInteger(payload.usageMetadata.promptTokenCount) || !nonnegativeInteger(payload.usageMetadata.candidatesTokenCount) || !nonnegativeInteger(payload.usageMetadata.totalTokenCount)) throw new Error("Google usage metadata is invalid")
+  if (!validGoogleUsageMetadata(payload.usageMetadata)) throw new Error("Google usage metadata is invalid")
+}
+
+function validGoogleUsageMetadata(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["cachedContentTokenCount", "thoughtsTokenCount", "promptTokenCount", "candidatesTokenCount", "totalTokenCount", "trafficType", "serviceTier", "promptTokensDetails", "candidatesTokensDetails"])) return false
+  for (const required of ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]) {
+    if (!(required in value) || !nonnegativeInteger(value[required])) return false
+  }
+  for (const optional of ["cachedContentTokenCount", "thoughtsTokenCount"]) {
+    if (value[optional] !== undefined && value[optional] !== null && !nonnegativeInteger(value[optional])) return false
+  }
+  for (const optional of ["trafficType", "serviceTier"]) {
+    if (value[optional] !== undefined && value[optional] !== null && !boundedIdentifier(value[optional], 80)) return false
+  }
+  return validGoogleTokenDetails(value.promptTokensDetails) && validGoogleTokenDetails(value.candidatesTokensDetails)
+}
+
+function validGoogleTokenDetails(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  return Array.isArray(value) && value.length <= 16 && value.every((item) => isRecord(item) && hasExactKeys(item, ["modality", "tokenCount"]) && boundedIdentifier(item.modality, 80) && nonnegativeInteger(item.tokenCount))
 }
 
 function nonnegativeInteger(value: unknown): boolean {

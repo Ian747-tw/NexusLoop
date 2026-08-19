@@ -160,14 +160,25 @@ describe("Commander AI SDK model adapter", () => {
 
   test("connector-backed native Gemini dispatches one audited request with exact endpoint and credential policy", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-final-"))
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("native Gemini final") }])
+    const response = JSON.parse(geminiText("native Gemini final"))
+    response.responseId = "response_gemini_final"
+    response.usageMetadata = {
+      ...response.usageMetadata,
+      cachedContentTokenCount: 0,
+      thoughtsTokenCount: 3,
+      trafficType: "ON_DEMAND",
+      serviceTier: "STANDARD",
+      promptTokensDetails: [{ modality: "TEXT", tokenCount: 17 }],
+      candidatesTokensDetails: [{ modality: "TEXT", tokenCount: 5 }],
+    }
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }])
     const adapter = connectorBackedAdapter(projectDir, transport, "api_gemini_final", {
       config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
       connector: googleConnector(),
       env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
     })
     const result = await adapter.executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 })
-    expect(result).toMatchObject({ status: "final", text: "native Gemini final", request_count: 1, usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, provider_reported: true } })
+    expect(result).toMatchObject({ status: "final", text: "native Gemini final", request_count: 1, usage: { input_tokens: 17, output_tokens: 8, total_tokens: 25, provider_reported: true } })
     expect(transport.requests).toHaveLength(1)
     expect(transport.requests[0].url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
     expect(transport.requests[0].headers["x-goog-api-key"]).toBe("real-google-key")
@@ -205,6 +216,53 @@ describe("Commander AI SDK model adapter", () => {
     expect(await eventText(projectDir)).not.toContain(signature)
   })
 
+  test("native Gemini accepts unsigned later parallel calls and preserves only observed signatures", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-parallel-continuation-"))
+    const signature = "parallel-first-call-signature"
+    const response = {
+      candidates: [{
+        content: { role: "model", parts: [
+          { functionCall: { id: "call_parallel_1", name: "memory__search", args: { query: "first" } }, thoughtSignature: signature },
+          { functionCall: { id: "call_parallel_2", name: "continuity__search", args: { query: "second" } } },
+        ] },
+        finishReason: "STOP",
+        index: 0,
+      }],
+      usageMetadata: { promptTokenCount: 18, candidatesTokenCount: 6, totalTokenCount: 24, thoughtsTokenCount: 2 },
+      modelVersion: "gemini-2.5-flash",
+      responseId: "response_parallel_calls",
+    }
+    const options = {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 }
+    const firstTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }])
+    const first = await connectorBackedAdapter(projectDir, firstTransport, "api_gemini_parallel_tool", options).executeOneStep(request)
+    expect(first).toMatchObject({ status: "tool_call", tool_calls: [
+      { tool_call_id: "call_parallel_1", tool_id: "memory.search" },
+      { tool_call_id: "call_parallel_2", tool_id: "continuity.search" },
+    ] })
+    expect(JSON.stringify(first)).not.toContain(signature)
+
+    const secondTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("parallel continuation complete") }])
+    const second = await connectorBackedAdapter(projectDir, secondTransport, "api_gemini_parallel_continuation", options).executeOneStep({
+      ...request,
+      messages: [
+        ...request.messages,
+        first.assistant_message!,
+        { role: "tool", tool_call_id: "call_parallel_1", tool_id: "memory.search", content: "first result", content_hash: "first_hash", truncated: false },
+        { role: "tool", tool_call_id: "call_parallel_2", tool_id: "continuity.search", content: "second result", content_hash: "second_hash", truncated: false },
+      ],
+    })
+    expect(second).toMatchObject({ status: "final", text: "parallel continuation complete" })
+    const continuationBody = String(secondTransport.requests[0].body)
+    expect(continuationBody.match(new RegExp(signature, "g"))).toHaveLength(1)
+    expect(JSON.stringify(second)).not.toContain(signature)
+    expect(await eventText(projectDir)).not.toContain(signature)
+  })
+
   test("recognized Gemini 3 client tools dispatch without server-tool activation and require exact thought signatures", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini3-tools-"))
     const modelId = "gemini-3-pro-preview"
@@ -238,6 +296,8 @@ describe("Commander AI SDK model adapter", () => {
       ["truncated", JSON.stringify({ ...JSON.parse(geminiText("partial must remain unavailable")), candidates: [{ content: { role: "model", parts: [{ text: "partial must remain unavailable" }] }, finishReason: "MAX_TOKENS", index: 0 }] })],
       ["server_tool", JSON.stringify({ ...JSON.parse(geminiText("")), candidates: [{ content: { role: "model", parts: [{ executableCode: { language: "PYTHON", code: "print(1)" } }] }, finishReason: "STOP", index: 0 }] })],
       ["wrong_model", JSON.stringify({ ...JSON.parse(geminiText("wrong model evidence")), modelVersion: "gemini-unconfigured" })],
+      ["oversized_response_id", JSON.stringify({ ...JSON.parse(geminiText("oversized response identity")), responseId: "r".repeat(201) })],
+      ["malformed_token_details", JSON.stringify({ ...JSON.parse(geminiText("malformed usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, promptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
       ["malformed", "{"],
     ] as const) {
       const transport = new FakeExternalApiTransport([{ status_code: 200, body }])
@@ -257,7 +317,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("AIza")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(5)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(7)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("AIza")
     expect(events).not.toContain("partial must remain unavailable")

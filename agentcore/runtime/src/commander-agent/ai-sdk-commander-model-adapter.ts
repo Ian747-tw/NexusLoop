@@ -315,14 +315,15 @@ function structuredOutput(request: CommanderModelStepRequest) {
 
 function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ toolName: string; input?: unknown; toolCallId: string; providerMetadata?: Record<string, unknown> }>, transportKind: CommanderConnectorModelTransportKind = "openai_compatible_connector"): CommanderModelToolCallPart[] {
   const map = buildProviderToolMap(request.tools)
-  return calls.map((call) => {
+  return calls.map((call, index) => {
     const normalized = makeCommanderToolCall(map.get(call.toolName), call.toolName, call.input ?? {}, call.toolCallId, "native")
     if (transportKind === "google_generative_ai_connector") {
       const signature = (call.providerMetadata?.google as { thoughtSignature?: unknown } | undefined)?.thoughtSignature
-      if (typeof signature !== "string" || !signature || Buffer.byteLength(signature) > MAX_GEMINI_THOUGHT_SIGNATURE_BYTES || signature === "skip_thought_signature_validator") {
+      const hasSignature = typeof signature === "string" && signature.length > 0
+      if (index === 0 && !hasSignature || hasSignature && (Buffer.byteLength(signature) > MAX_GEMINI_THOUGHT_SIGNATURE_BYTES || signature === "skip_thought_signature_validator")) {
         throw new Error("Gemini client function call requires a bounded provider thought signature")
       }
-      GEMINI_CONTINUATIONS.set(normalized, Object.freeze({ thought_signature: signature }))
+      if (hasSignature) GEMINI_CONTINUATIONS.set(normalized, Object.freeze({ thought_signature: signature }))
     }
     return normalized
   })
