@@ -61,7 +61,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     if (this.connectorFetchAuthority && (request.provider_id !== this.connectorFetchAuthority.provider_id || request.model_id !== this.connectorFetchAuthority.model_id)) {
       return finalizeStep(request, "failed", { usage: { provider_reported: false }, requestCount: 0, durationMs: Date.now() - started, error: this.transportKind === "anthropic_messages_connector" ? "Anthropic connector fetch authority does not match request identity" : "Google connector fetch authority does not match request identity" })
     }
-    const measured = this.providerForCall()
+    const measured = this.providerForCall(request.request_id)
     try {
       const result = await generateText({
         model: measured.model(boundIdentifier(request.model_id, "model_id")),
@@ -109,7 +109,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       return
     }
     const started = Date.now()
-    const measured = this.providerForCall()
+    const measured = this.providerForCall(request.request_id)
     let completed = false
     try {
       const result = streamText({
@@ -225,8 +225,9 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     }
   }
 
-  private providerForCall() {
+  private providerForCall(requestId: string) {
     let requestCount = 0
+    let generatedIdIndex = 0
     const guardedFetch = (async (input, init) => {
       requestCount += 1
       const safeInit = this.transportKind === "google_generative_ai_connector" ? sanitizeGoogleSdkRequest(init) : redactRequestInit(init)
@@ -258,6 +259,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         baseURL: canonicalProviderBaseUrl(this.options.base_url),
         apiKey: CONNECTOR_MANAGED_API_KEY_SENTINEL,
         fetch: guardedFetch,
+        generateId: () => `commander_google_call_${stableHash({ request_id: requestId }).slice(0, 16)}_${generatedIdIndex++}`,
       })
       return { model: (modelId: string) => provider.chat(modelId), requestCount: () => requestCount }
     }
@@ -320,13 +322,17 @@ function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ t
     if (transportKind === "google_generative_ai_connector") {
       const signature = (call.providerMetadata?.google as { thoughtSignature?: unknown } | undefined)?.thoughtSignature
       const hasSignature = typeof signature === "string" && signature.length > 0
-      if (index === 0 && !hasSignature || hasSignature && (Buffer.byteLength(signature) > MAX_GEMINI_THOUGHT_SIGNATURE_BYTES || signature === "skip_thought_signature_validator")) {
+      if (googleModelRequiresThoughtSignature(request.model_id) && index === 0 && !hasSignature || hasSignature && (Buffer.byteLength(signature) > MAX_GEMINI_THOUGHT_SIGNATURE_BYTES || signature === "skip_thought_signature_validator")) {
         throw new Error("Gemini client function call requires a bounded provider thought signature")
       }
       if (hasSignature) GEMINI_CONTINUATIONS.set(normalized, Object.freeze({ thought_signature: signature }))
     }
     return normalized
   })
+}
+
+function googleModelRequiresThoughtSignature(modelId: string): boolean {
+  return /^gemini-3(?:[.-]|$)/i.test(modelId)
 }
 
 function finalizeNativeStep(request: CommanderModelStepRequest, toolCalls: CommanderModelToolCallPart[], textForError: string, finalText: string | undefined, usage: CommanderModelUsage, finishReason: string | undefined, requestCount: number, durationMs: number, streamed = false): CommanderModelStepResult {

@@ -263,6 +263,47 @@ describe("Commander AI SDK model adapter", () => {
     expect(await eventText(projectDir)).not.toContain(signature)
   })
 
+  test("native Gemini accepts bounded passive candidate metadata and synthesizes a stable missing function-call ID", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-optional-call-id-"))
+    const response = {
+      candidates: [{
+        content: { role: "model", parts: [{ functionCall: { name: "memory__search", args: { query: "bounded" } } }] },
+        finishReason: "STOP",
+        finishMessage: "completed tool selection",
+        index: 0,
+        safetyRatings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", probability: "NEGLIGIBLE", probabilityScore: 0.01, blocked: false }],
+        avgLogprobs: -0.125,
+        citationMetadata: { citationSources: [{ startIndex: 0, endIndex: 7, uri: "https://example.test/source", license: "CC-BY-4.0" }] },
+      }],
+      usageMetadata: { promptTokenCount: 18, candidatesTokenCount: 6, totalTokenCount: 24 },
+      modelVersion: "gemini-2.5-flash",
+    }
+    const options = {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, request_id: "req_gemini_optional_call_id", provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 }
+    const first = await connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }]), "api_gemini_optional_call_id", options).executeOneStep(request)
+    expect(first).toMatchObject({ status: "tool_call", request_count: 1, tool_calls: [{ tool_id: "memory.search", arguments: { query: "bounded" } }] })
+    const generatedId = first.tool_calls[0]?.tool_call_id
+    expect(generatedId).toMatch(/^commander_google_call_[a-f0-9]{16}_0$/)
+
+    const repeated = await connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }]), "api_gemini_optional_call_id_repeat", options).executeOneStep(request)
+    expect(repeated.tool_calls[0]?.tool_call_id).toBe(generatedId)
+
+    const continuationTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("unsigned Gemini 2.5 continuation") }])
+    const continued = await connectorBackedAdapter(projectDir, continuationTransport, "api_gemini_optional_call_continuation", options).executeOneStep({
+      ...request,
+      messages: [
+        ...request.messages,
+        first.assistant_message!,
+        { role: "tool", tool_call_id: generatedId!, tool_id: "memory.search", content: "bounded result", content_hash: "bounded_hash", truncated: false },
+      ],
+    })
+    expect(continued).toMatchObject({ status: "final", text: "unsigned Gemini 2.5 continuation", request_count: 1 })
+  })
+
   test("recognized Gemini 3 client tools dispatch without server-tool activation and require exact thought signatures", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini3-tools-"))
     const modelId = "gemini-3-pro-preview"
@@ -298,6 +339,8 @@ describe("Commander AI SDK model adapter", () => {
       ["wrong_model", JSON.stringify({ ...JSON.parse(geminiText("wrong model evidence")), modelVersion: "gemini-unconfigured" })],
       ["oversized_response_id", JSON.stringify({ ...JSON.parse(geminiText("oversized response identity")), responseId: "r".repeat(201) })],
       ["malformed_token_details", JSON.stringify({ ...JSON.parse(geminiText("malformed usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, promptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
+      ["oversized_candidate_metadata", JSON.stringify({ ...JSON.parse(geminiText("oversized candidate metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], finishMessage: "x".repeat(501) }] })],
+      ["malformed_citation_metadata", JSON.stringify({ ...JSON.parse(geminiText("malformed citation metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], citationMetadata: { citationSources: [{ startIndex: 8, endIndex: 1, uri: "https://example.test/source" }] } }] })],
       ["malformed", "{"],
     ] as const) {
       const transport = new FakeExternalApiTransport([{ status_code: 200, body }])
@@ -317,7 +360,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("AIza")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(7)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(9)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("AIza")
     expect(events).not.toContain("partial must remain unavailable")

@@ -459,7 +459,7 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "usageMetadata", "modelVersion", "responseId"]) || !("candidates" in payload) || !("usageMetadata" in payload) || !("modelVersion" in payload) || payload.modelVersion !== expectedModelId || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200)) throw new Error("Google generateContent response identity or shape is invalid")
   if (!Array.isArray(payload.candidates) || payload.candidates.length !== 1) throw new Error("Google generateContent requires exactly one candidate")
   const candidate = payload.candidates[0]
-  if (!isRecord(candidate) || !hasExactKeys(candidate, ["content", "finishReason", "index"]) || candidate.index !== 0 || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
+  if (!isRecord(candidate) || !hasOnlyKeys(candidate, ["content", "finishReason", "finishMessage", "index", "safetyRatings", "avgLogprobs", "citationMetadata", "tokenCount"]) || !("content" in candidate) || !("finishReason" in candidate) || !("index" in candidate) || candidate.index !== 0 || !validGoogleCandidateMetadata(candidate) || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
   if (candidate.finishReason !== "STOP" && candidate.finishReason !== "SAFETY" && candidate.finishReason !== "RECITATION" && candidate.finishReason !== "PROHIBITED_CONTENT") throw new Error("Google generateContent finish reason is forbidden, ambiguous, or truncated")
   let calls = 0
   let texts = 0
@@ -467,9 +467,9 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
     if (!isRecord(part)) throw new Error("Google generateContent response part is invalid")
     if (hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text.trim()) { texts += 1; continue }
     if (hasOnlyKeys(part, ["functionCall", "thoughtSignature"]) && "functionCall" in part) {
-      const signatureRequired = calls === 0
+      const signatureRequired = googleModelRequiresThoughtSignature(expectedModelId) && calls === 0
       const signatureValid = boundedIdentifier(part.thoughtSignature, 4096) && part.thoughtSignature !== "skip_thought_signature_validator"
-      if (!isRecord(part.functionCall) || !hasExactKeys(part.functionCall, ["id", "name", "args"]) || !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args) || signatureRequired && !signatureValid || part.thoughtSignature !== undefined && !signatureValid) throw new Error("Google client function call response is invalid")
+      if (!isRecord(part.functionCall) || !hasOnlyKeys(part.functionCall, ["id", "name", "args"]) || !("name" in part.functionCall) || !("args" in part.functionCall) || part.functionCall.id !== undefined && !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args) || signatureRequired && !signatureValid || part.thoughtSignature !== undefined && !signatureValid) throw new Error("Google client function call response is invalid")
       calls += 1
       continue
     }
@@ -478,6 +478,51 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   if (candidate.finishReason === "STOP" && calls === 0 && texts === 0) throw new Error("Google final response requires bounded text or client function calls")
   if (candidate.finishReason !== "STOP" && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
   if (!validGoogleUsageMetadata(payload.usageMetadata)) throw new Error("Google usage metadata is invalid")
+}
+
+function googleModelRequiresThoughtSignature(modelId: string): boolean {
+  return /^gemini-3(?:[.-]|$)/i.test(modelId)
+}
+
+function validGoogleCandidateMetadata(candidate: Record<string, unknown>): boolean {
+  if (candidate.finishMessage !== undefined && candidate.finishMessage !== null && (typeof candidate.finishMessage !== "string" || candidate.finishMessage.length > 500)) return false
+  if (candidate.avgLogprobs !== undefined && candidate.avgLogprobs !== null && (typeof candidate.avgLogprobs !== "number" || !Number.isFinite(candidate.avgLogprobs))) return false
+  if (candidate.tokenCount !== undefined && candidate.tokenCount !== null && !nonnegativeInteger(candidate.tokenCount)) return false
+  if (candidate.safetyRatings !== undefined && candidate.safetyRatings !== null && !validGoogleSafetyRatings(candidate.safetyRatings)) return false
+  return candidate.citationMetadata === undefined || candidate.citationMetadata === null || validGoogleCitationMetadata(candidate.citationMetadata)
+}
+
+function validGoogleSafetyRatings(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 32) return false
+  return value.every((rating) => {
+    if (!isRecord(rating) || !hasOnlyKeys(rating, ["category", "probability", "probabilityScore", "severity", "severityScore", "blocked"])) return false
+    for (const key of ["category", "probability", "severity"]) {
+      if (rating[key] !== undefined && rating[key] !== null && !boundedIdentifier(rating[key], 80)) return false
+    }
+    for (const key of ["probabilityScore", "severityScore"]) {
+      if (rating[key] !== undefined && rating[key] !== null && (typeof rating[key] !== "number" || !Number.isFinite(rating[key]))) return false
+    }
+    return rating.blocked === undefined || rating.blocked === null || typeof rating.blocked === "boolean"
+  })
+}
+
+function validGoogleCitationMetadata(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["citationSources"]) || !Array.isArray(value.citationSources) || value.citationSources.length > 32) return false
+  return value.citationSources.every((source) => {
+    if (!isRecord(source) || !hasOnlyKeys(source, ["startIndex", "endIndex", "uri", "license"])) return false
+    if (source.startIndex !== undefined && !nonnegativeInteger(source.startIndex)) return false
+    if (source.endIndex !== undefined && !nonnegativeInteger(source.endIndex)) return false
+    if (typeof source.startIndex === "number" && typeof source.endIndex === "number" && source.endIndex < source.startIndex) return false
+    if (source.license !== undefined && source.license !== null && !boundedIdentifier(source.license, 200)) return false
+    if (source.uri === undefined || source.uri === null) return true
+    if (typeof source.uri !== "string" || source.uri.length === 0 || source.uri.length > 2048) return false
+    try {
+      const parsed = new URL(source.uri)
+      return (parsed.protocol === "https:" || parsed.protocol === "http:") && !parsed.username && !parsed.password
+    } catch {
+      return false
+    }
+  })
 }
 
 function validGoogleUsageMetadata(value: unknown): boolean {
