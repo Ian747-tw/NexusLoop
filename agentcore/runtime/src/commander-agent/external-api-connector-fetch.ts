@@ -37,7 +37,7 @@ export type ExternalApiConnectorFetchAuthority = Readonly<{
 const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key"])
 const ANTHROPIC_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk"])
 const ANTHROPIC_REQUEST_KEYS = new Set(["model", "max_tokens", "messages", "system", "tools", "tool_choice", "temperature", "stream"])
-const GOOGLE_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk"])
+const GOOGLE_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk", "x-vercel-ai-sdk-version"])
 const GOOGLE_REQUEST_KEYS = new Set(["contents", "systemInstruction", "generationConfig", "tools", "toolConfig"])
 const MAX_DROPPED_HEADER_NAME_LENGTH = 80
 const AUDITED_CONNECTOR_FETCHES = new WeakMap<typeof fetch, ExternalApiConnectorFetchAuthority>()
@@ -427,7 +427,7 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
   if (result.ok) {
     const body = result.response_body_for_internal_use ?? ""
     if (transportKind === "anthropic_messages_connector") validateAnthropicMessagesResponseBody(body, expectedModelId)
-    if (transportKind === "google_generative_ai_connector") validateGoogleGenerateContentResponseBody(body, expectedModelId)
+    if (transportKind === "google_generative_ai_connector") return validateGoogleGenerateContentResponseBody(body, expectedModelId)
     return body
   }
   const status = typeof result.status_code === "number" ? result.status_code : 500
@@ -453,10 +453,19 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
   })
 }
 
-function validateGoogleGenerateContentResponseBody(body: string, expectedModelId: string): void {
+function validateGoogleGenerateContentResponseBody(body: string, expectedModelId: string): string {
   let payload: unknown
   try { payload = JSON.parse(body) } catch { throw new Error("Google generateContent response must be valid JSON") }
-  if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "usageMetadata", "modelVersion", "responseId"]) || !("candidates" in payload) || !("usageMetadata" in payload) || !("modelVersion" in payload) || payload.modelVersion !== expectedModelId || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200)) throw new Error("Google generateContent response identity or shape is invalid")
+  if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "promptFeedback", "usageMetadata", "modelVersion", "responseId"]) || !("usageMetadata" in payload) || !("modelVersion" in payload) || payload.modelVersion !== expectedModelId || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200) || payload.promptFeedback !== undefined && !validGooglePromptFeedback(payload.promptFeedback)) throw new Error("Google generateContent response identity or shape is invalid")
+  if (!validGoogleUsageMetadata(payload.usageMetadata)) throw new Error("Google usage metadata is invalid")
+  if (payload.candidates === undefined || Array.isArray(payload.candidates) && payload.candidates.length === 0) {
+    const finishReason = googlePromptBlockFinishReason(payload.promptFeedback)
+    if (!finishReason) throw new Error("Google generateContent requires exactly one candidate or a bounded prompt block")
+    return JSON.stringify({
+      ...payload,
+      candidates: [{ content: { role: "model", parts: [] }, finishReason, index: 0 }],
+    })
+  }
   if (!Array.isArray(payload.candidates) || payload.candidates.length !== 1) throw new Error("Google generateContent requires exactly one candidate")
   const candidate = payload.candidates[0]
   if (!isRecord(candidate) || !hasOnlyKeys(candidate, ["content", "finishReason", "finishMessage", "index", "safetyRatings", "avgLogprobs", "citationMetadata", "tokenCount"]) || !("content" in candidate) || !("finishReason" in candidate) || !("index" in candidate) || candidate.index !== 0 || !validGoogleCandidateMetadata(candidate) || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
@@ -477,7 +486,19 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   }
   if (candidate.finishReason === "STOP" && calls === 0 && texts === 0) throw new Error("Google final response requires bounded text or client function calls")
   if (candidate.finishReason !== "STOP" && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
-  if (!validGoogleUsageMetadata(payload.usageMetadata)) throw new Error("Google usage metadata is invalid")
+  return body
+}
+
+function validGooglePromptFeedback(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["blockReason", "safetyRatings"])) return false
+  if (value.blockReason !== undefined && value.blockReason !== null && !boundedIdentifier(value.blockReason, 80)) return false
+  return value.safetyRatings === undefined || value.safetyRatings === null || validGoogleSafetyRatings(value.safetyRatings)
+}
+
+function googlePromptBlockFinishReason(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  const reason = value.blockReason
+  return reason === "SAFETY" || reason === "BLOCKLIST" || reason === "PROHIBITED_CONTENT" || reason === "IMAGE_SAFETY" || reason === "SPII" || reason === "RECITATION" ? reason : undefined
 }
 
 function googleModelRequiresThoughtSignature(modelId: string): boolean {

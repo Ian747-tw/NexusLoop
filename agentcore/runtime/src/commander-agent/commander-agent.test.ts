@@ -186,6 +186,56 @@ describe("Commander AI SDK model adapter", () => {
     expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
   })
 
+  test("native Gemini bridge drops the pinned SDK version header and audits one exact request", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-sdk-header-"))
+    const registry = new ExternalApiConnectorRegistry([googleConnector()])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("header accepted") }])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+      requestId: () => "api_gemini_sdk_header",
+      now: () => new Date("2026-08-19T00:00:00.000Z"),
+    })
+    const config = connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" })
+    const { fetch: bridgeFetch, metadata } = createExternalApiConnectorFetch({
+      registry,
+      requestService,
+      config,
+      context: { commander_model_request_id: "req_gemini_sdk_header", requested_by: "tester", provider_id: "google_provider", model_id: "gemini-2.5-flash" },
+    })
+    const response = await bridgeFetch(connectorGoogleGenerateContentUrl(googleConnector(), "gemini-2.5-flash"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": CONNECTOR_MANAGED_API_KEY_SENTINEL, "x-vercel-ai-sdk-version": "7.0.29" },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "bounded prompt" }] }], generationConfig: { maxOutputTokens: 1024 } }),
+    })
+    expect(response.status).toBe(200)
+    expect(transport.requests).toHaveLength(1)
+    expect(metadata.dropped_header_names).toContain("x-vercel-ai-sdk-version")
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native Gemini normalizes a bounded prompt block into refusal without model evidence", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-prompt-block-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
+      promptFeedback: { blockReason: "SAFETY", safetyRatings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", probability: "HIGH", blocked: true }] },
+      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 },
+      modelVersion: "gemini-2.5-flash",
+      responseId: "response_prompt_blocked",
+    }) }])
+    const result = await connectorBackedAdapter(projectDir, transport, "api_gemini_prompt_block", {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }).executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 })
+    expect(transport.requests).toHaveLength(1)
+    expect(result).toMatchObject({ status: "refusal", finish_reason: "content-filter", request_count: 1, tool_calls: [] })
+    expect(result.text).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain("promptFeedback")
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
   test("native Gemini preserves transient thought signatures across one tool continuation without persistence", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-continuation-"))
     const signature = "bounded-thought-signature-fixture"
@@ -341,6 +391,8 @@ describe("Commander AI SDK model adapter", () => {
       ["malformed_token_details", JSON.stringify({ ...JSON.parse(geminiText("malformed usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, promptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
       ["oversized_candidate_metadata", JSON.stringify({ ...JSON.parse(geminiText("oversized candidate metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], finishMessage: "x".repeat(501) }] })],
       ["malformed_citation_metadata", JSON.stringify({ ...JSON.parse(geminiText("malformed citation metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], citationMetadata: { citationSources: [{ startIndex: 8, endIndex: 1, uri: "https://example.test/source" }] } }] })],
+      ["unknown_prompt_block", JSON.stringify({ promptFeedback: { blockReason: "OTHER" }, usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 }, modelVersion: "gemini-2.5-flash" })],
+      ["oversized_prompt_feedback", JSON.stringify({ promptFeedback: { blockReason: "SAFETY", safetyRatings: [{ category: "x".repeat(81), probability: "HIGH", blocked: true }] }, usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 }, modelVersion: "gemini-2.5-flash" })],
       ["malformed", "{"],
     ] as const) {
       const transport = new FakeExternalApiTransport([{ status_code: 200, body }])
@@ -360,7 +412,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("AIza")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(9)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(11)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("AIza")
     expect(events).not.toContain("partial must remain unavailable")
