@@ -1,12 +1,15 @@
 import { redactText } from "../security/redaction"
 import type { ExternalApiConnector } from "../external-api/api-connector-types"
 
-export type CommanderConnectorModelTransportKind = "openai_compatible_connector" | "anthropic_messages_connector"
+export type CommanderConnectorModelTransportKind = "openai_compatible_connector" | "anthropic_messages_connector" | "google_generative_ai_connector"
 
 export const CONNECTOR_MANAGED_API_KEY_SENTINEL = "NEXUSLOOP_CONNECTOR_MANAGED_CREDENTIAL"
 export const ANTHROPIC_MESSAGES_PROTOCOL_VERSION = "2023-06-01" as const
 export const ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION = "ai@7.0.29/@ai-sdk/anthropic@4.0.15" as const
 export const ANTHROPIC_MESSAGES_REQUEST_SHAPE_POLICY_VERSION = "anthropic_messages_v1" as const
+export const GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION = "ai@7.0.29/@ai-sdk/google@4.0.15" as const
+export const GOOGLE_GENERATIVE_AI_REQUEST_SHAPE_POLICY_VERSION = "google_generate_content_v1" as const
+export const GOOGLE_GENERATIVE_AI_TRANSIENT_CONTINUATION_POLICY_VERSION = "google_thought_signature_weakmap_v1" as const
 
 type CommanderConnectorModelTransportConfigBase = {
   provider_id: string
@@ -20,6 +23,7 @@ type CommanderConnectorModelTransportConfigBase = {
 export type CommanderConnectorModelTransportConfig = CommanderConnectorModelTransportConfigBase & (
   | { transport_kind: "openai_compatible_connector" }
   | { transport_kind: "anthropic_messages_connector" }
+  | { transport_kind: "google_generative_ai_connector" }
 )
 
 export type CommanderConnectorModelTransportMetadata = {
@@ -46,8 +50,8 @@ export function validateCommanderConnectorModelTransportConfig(value: unknown): 
     if (!CONFIG_KEYS.has(key)) throw new Error(`unknown Commander connector transport config key: ${redactText(key)}`)
     if (CREDENTIAL_OR_URL_KEYS.some((pattern) => pattern.test(key)) && !CONFIG_KEYS.has(key)) throw new Error(`credential or URL config key is not allowed: ${redactText(key)}`)
   }
-  if (value.transport_kind !== "openai_compatible_connector" && value.transport_kind !== "anthropic_messages_connector") {
-    throw new Error("transport_kind must be openai_compatible_connector or anthropic_messages_connector")
+  if (value.transport_kind !== "openai_compatible_connector" && value.transport_kind !== "anthropic_messages_connector" && value.transport_kind !== "google_generative_ai_connector") {
+    throw new Error("transport_kind must be openai_compatible_connector, anthropic_messages_connector, or google_generative_ai_connector")
   }
   const config: CommanderConnectorModelTransportConfig = {
     transport_kind: value.transport_kind,
@@ -61,6 +65,7 @@ export function validateCommanderConnectorModelTransportConfig(value: unknown): 
   for (const item of Object.values(config)) {
     if (typeof item === "string" && /https?:\/\//i.test(item)) throw new Error("Commander connector transport config must not contain URLs")
   }
+  if (config.transport_kind === "google_generative_ai_connector") validateGeminiModelId(config.model_id)
   return config
 }
 
@@ -75,27 +80,41 @@ export function connectorAnthropicMessagesUrl(connector: ExternalApiConnector): 
   return connectorProtocolUrl(connector, "messages")
 }
 
-export function connectorModelRequestUrl(connector: ExternalApiConnector, transportKind: CommanderConnectorModelTransportKind): URL {
-  return transportKind === "anthropic_messages_connector" ? connectorAnthropicMessagesUrl(connector) : connectorChatCompletionsUrl(connector)
+export function connectorGoogleGenerateContentUrl(connector: ExternalApiConnector, modelId: string): URL {
+  validateGeminiModelId(modelId)
+  return connectorProtocolUrl(connector, `models/${modelId}:generateContent`)
+}
+
+export function connectorModelRequestUrl(connector: ExternalApiConnector, transportKind: CommanderConnectorModelTransportKind, modelId?: string): URL {
+  if (transportKind === "anthropic_messages_connector") return connectorAnthropicMessagesUrl(connector)
+  if (transportKind === "google_generative_ai_connector") return connectorGoogleGenerateContentUrl(connector, modelId ?? "")
+  return connectorChatCompletionsUrl(connector)
 }
 
 export function validateCommanderConnectorProtocolPolicy(config: CommanderConnectorModelTransportConfig, connector: ExternalApiConnector): void {
-  connectorModelRequestUrl(connector, config.transport_kind)
+  connectorModelRequestUrl(connector, config.transport_kind, config.model_id)
   if (!connector.allowed_methods.includes("POST")) throw new Error("connector must permit POST")
   if (config.timeout_ms > connector.timeout_ms) throw new Error(`transport timeout_ms exceeds connector limit: ${connector.timeout_ms}`)
   if (config.max_response_bytes > connector.max_response_bytes) throw new Error(`transport max_response_bytes exceeds connector limit: ${connector.max_response_bytes}`)
-  if (config.transport_kind !== "anthropic_messages_connector") return
+  if (config.transport_kind === "openai_compatible_connector") return
   const base = new URL(connector.base_url)
   const allowedHosts = connector.allowed_hosts.map((host) => host.trim().toLowerCase())
-  if (allowedHosts.length !== 1 || allowedHosts[0] !== base.hostname.toLowerCase()) throw new Error("Anthropic connector must allow exactly its configured base host")
-  if (connector.allowed_methods.length !== 1 || connector.allowed_methods[0] !== "POST") throw new Error("Anthropic connector method policy must be exactly POST")
-  if (Object.keys(connector.default_headers ?? {}).length > 0) throw new Error("Anthropic connector default headers are not allowed")
+  const label = config.transport_kind === "anthropic_messages_connector" ? "Anthropic" : "Google Generative AI"
+  if (allowedHosts.length !== 1 || allowedHosts[0] !== base.hostname.toLowerCase()) throw new Error(`${label} connector must allow exactly its configured base host`)
+  if (connector.allowed_methods.length !== 1 || connector.allowed_methods[0] !== "POST") throw new Error(`${label} connector method policy must be exactly POST`)
+  if (Object.keys(connector.default_headers ?? {}).length > 0) throw new Error(`${label} connector default headers are not allowed`)
   const refs = connector.credential_refs ?? []
-  if (refs.length !== 1) throw new Error("Anthropic connector requires exactly one credential reference")
+  if (refs.length !== 1) throw new Error(`${label} connector requires exactly one credential reference`)
   const ref = refs[0]
-  if (ref.source !== "env" || ref.inject_as !== "header" || ref.target_name.toLowerCase() !== "x-api-key" || (ref.prefix ?? "") !== "") {
-    throw new Error("Anthropic connector credential reference must inject exactly one unprefixed x-api-key header")
+  const target = config.transport_kind === "anthropic_messages_connector" ? "x-api-key" : "x-goog-api-key"
+  if (ref.source !== "env" || ref.inject_as !== "header" || ref.target_name.toLowerCase() !== target || (ref.prefix ?? "") !== "") {
+    throw new Error(`${label} connector credential reference must inject exactly one unprefixed ${target} header`)
   }
+}
+
+export function validateGeminiModelId(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(value)) throw new Error("Gemini model_id must be one safe path segment")
+  if (value === "." || value === "..") throw new Error("Gemini model_id must be one safe path segment")
 }
 
 function connectorProtocolUrl(connector: ExternalApiConnector, suffix: string): URL {

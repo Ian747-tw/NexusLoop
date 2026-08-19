@@ -3,6 +3,7 @@ import { validateCommanderInvestigationProviderConfig } from "../commander-agent
 import type { CommanderInvestigationProviderConfig } from "../commander-agent/commander-investigation-provider-types"
 import {
   COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+  COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2,
   EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION,
   MODEL_CONFIGURATION_POLICY_VERSION,
   validateCommanderModelConformanceRegistry,
@@ -42,7 +43,7 @@ export function adaptLegacyCommanderModelAuthority(value: unknown): LegacyComman
   })
   const commanderConformance = validateCommanderModelConformanceRegistry({
     registry_version: 1,
-    policy_version: COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+    policy_version: providerConfig.transport_kind === "google_generative_ai_connector" ? COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2 : COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
     entries: [{
       conformance_version: 1,
       conformance_id: conformanceId,

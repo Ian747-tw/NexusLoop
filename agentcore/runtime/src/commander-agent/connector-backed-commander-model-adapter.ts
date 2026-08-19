@@ -3,7 +3,7 @@ import type { ExternalApiConnectorRegistry } from "../external-api/api-connector
 import type { ExternalApiRequestService } from "../external-api/api-request-service"
 import { AiSdkCommanderModelStepAdapter } from "./ai-sdk-commander-model-adapter"
 import type { CommanderConnectorModelTransportMetadata, CommanderConnectorModelTransportConfig } from "./commander-connector-transport-types"
-import { ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, validateCommanderConnectorModelTransportConfig, validateCommanderConnectorProtocolPolicy } from "./commander-connector-transport-types"
+import { ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION, validateCommanderConnectorModelTransportConfig, validateCommanderConnectorProtocolPolicy } from "./commander-connector-transport-types"
 import type { CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelUsage } from "./commander-model-types"
 import { stableHash } from "./commander-model-schema"
 import { createExternalApiConnectorFetch } from "./external-api-connector-fetch"
@@ -36,6 +36,8 @@ export class ConnectorBackedCommanderModelStepAdapter implements CommanderModelS
     this.requestService = options.requestService
     this.adapter_version = this.config.transport_kind === "anthropic_messages_connector"
       ? `${ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION}/external-api-connector`
+      : this.config.transport_kind === "google_generative_ai_connector"
+        ? `${GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION}/external-api-connector`
       : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11/external-api-connector"
     this.supports_structured_output = this.config.transport_kind === "openai_compatible_connector"
     this.supports_openai_compatible = this.config.transport_kind === "openai_compatible_connector"

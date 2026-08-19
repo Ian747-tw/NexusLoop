@@ -50,6 +50,7 @@ import {
   commanderProviderVisibleDescriptionHash,
 	  commanderToolSchemaFromDescriptor,
 	  connectorAnthropicMessagesUrl,
+	  connectorGoogleGenerateContentUrl,
 	  connectorChatCompletionsUrl,
 	  createExternalApiConnectorFetch,
 	  createCommanderToolBindingRegistry,
@@ -90,6 +91,7 @@ describe("Commander AI SDK model adapter", () => {
     expect(pkg.dependencies?.ai).toBe("7.0.29")
     expect(pkg.dependencies?.["@ai-sdk/openai-compatible"]).toBe("3.0.11")
     expect(pkg.dependencies?.["@ai-sdk/anthropic"]).toBe("4.0.15")
+    expect(pkg.dependencies?.["@ai-sdk/google"]).toBe("4.0.15")
     expect(pkg.dependencies?.["@openai/agents"]).toBeUndefined()
     const grep = await $`bash -lc "rg -n 'commander-agent-runtime-sdk-fit|@openai/agents' src package.json -g '!src/commander-agent/commander-agent.test.ts' || true"`.cwd(process.cwd()).text()
     expect(grep.trim()).toBe("")
@@ -104,7 +106,7 @@ describe("Commander AI SDK model adapter", () => {
       connector_id: "connector",
       model_id: "model",
       timeout_ms: 5000,
-      max_request_bytes: 4096,
+      max_request_bytes: 65_536,
       max_response_bytes: 8192,
     })
     expect(config.transport_kind).toBe("openai_compatible_connector")
@@ -125,7 +127,7 @@ describe("Commander AI SDK model adapter", () => {
       connector_id: "anthropic-connector",
       model_id: "claude-fixture",
       timeout_ms: 5000,
-      max_request_bytes: 4096,
+      max_request_bytes: 65_536,
       max_response_bytes: 8192,
     })
     expect(config.transport_kind).toBe("anthropic_messages_connector")
@@ -134,6 +136,131 @@ describe("Commander AI SDK model adapter", () => {
     expect(() => connectorAnthropicMessagesUrl(connector("anthropic-credentials", "https://user:secret@api.anthropic.com/v1"))).toThrow("credentials")
     expect(() => validateCommanderConnectorModelTransportConfig({ ...config, transport_kind: "arbitrary_provider" })).toThrow("transport_kind")
     expect(() => validateCommanderConnectorModelTransportConfig({ ...config, headers: { "anthropic-beta": "unsafe" } })).toThrow("unknown")
+  })
+
+  test("native Gemini transport is closed, provider-bound, and path-safe", () => {
+    const config = validateCommanderConnectorModelTransportConfig({
+      transport_kind: "google_generative_ai_connector",
+      provider_id: "google_provider",
+      connector_id: "google-test",
+      model_id: "gemini-2.5-flash",
+      timeout_ms: 5000,
+      max_request_bytes: 65_536,
+      max_response_bytes: 8192,
+    })
+    expect(config.transport_kind).toBe("google_generative_ai_connector")
+    expect(connectorGoogleGenerateContentUrl(googleConnector(), "gemini-2.5-flash").toString()).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+    for (const modelId of ["/", "..", "%2f", "model?x", "model#x", "model\\x", "models/gemini", "news:comp.lang.misc", "sip:user@host", "gateway:443", "service:8080", "modelhost:8080", "gemini\u0000model"]) {
+      expect(() => validateCommanderConnectorModelTransportConfig({ ...config, model_id: modelId })).toThrow("Gemini model_id")
+    }
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "anthropic" }))).toThrow("provider_kind google")
+    expect(validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "google", supports_json_schema: false }))).toMatchObject({ transport_kind: "google_generative_ai_connector", provider_kind: "google", supports_json_schema: false })
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "google", supports_json_schema: true }))).toThrow("structured output")
+  })
+
+  test("connector-backed native Gemini dispatches one audited request with exact endpoint and credential policy", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-final-"))
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("native Gemini final") }])
+    const adapter = connectorBackedAdapter(projectDir, transport, "api_gemini_final", {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    })
+    const result = await adapter.executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 })
+    expect(result).toMatchObject({ status: "final", text: "native Gemini final", request_count: 1, usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, provider_reported: true } })
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+    expect(transport.requests[0].headers["x-goog-api-key"]).toBe("real-google-key")
+    expect(JSON.stringify(transport.requests[0])).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native Gemini preserves transient thought signatures across one tool continuation without persistence", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-continuation-"))
+    const signature = "bounded-thought-signature-fixture"
+    const firstTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiToolCall("call_exact_1", "memory__search", { query: "bounded evidence" }, signature) }])
+    const options = {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 }
+    const first = await connectorBackedAdapter(projectDir, firstTransport, "api_gemini_tool", options).executeOneStep(request)
+    expect(first).toMatchObject({ status: "tool_call", tool_calls: [{ tool_call_id: "call_exact_1", tool_id: "memory.search", arguments: { query: "bounded evidence" } }] })
+    expect(JSON.stringify(first)).not.toContain(signature)
+
+    const secondTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiText("continued Gemini final") }])
+    const second = await connectorBackedAdapter(projectDir, secondTransport, "api_gemini_continuation", options).executeOneStep({
+      ...request,
+      messages: [
+        ...request.messages,
+        first.assistant_message!,
+        { role: "tool", tool_call_id: "call_exact_1", tool_id: "memory.search", content: "summary-only result", content_hash: "result_hash", truncated: false },
+      ],
+    })
+    expect(second).toMatchObject({ status: "final", text: "continued Gemini final", request_count: 1 })
+    const body = JSON.parse(String(secondTransport.requests[0].body)) as { contents: unknown[] }
+    expect(JSON.stringify(body.contents)).toContain(signature)
+    expect(JSON.stringify(second)).not.toContain(signature)
+    expect(await eventText(projectDir)).not.toContain(signature)
+  })
+
+  test("recognized Gemini 3 client tools dispatch without server-tool activation and require exact thought signatures", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini3-tools-"))
+    const modelId = "gemini-3-pro-preview"
+    const signature = "gemini3-required-signature"
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: geminiToolCall("call_gemini3", "memory__search", { query: "exact" }, signature, modelId) }])
+    const result = await connectorBackedAdapter(projectDir, transport, "api_gemini3_tool", {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: modelId }),
+      connector: googleConnector(),
+      env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }).executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: modelId, max_output_tokens: 1024 })
+    expect(result).toMatchObject({ status: "tool_call", request_count: 1, tool_calls: [{ tool_call_id: "call_gemini3" }] })
+    const requestBody = JSON.parse(String(transport.requests[0].body)) as Record<string, unknown>
+    expect(JSON.stringify(requestBody)).not.toContain("includeServerSideToolInvocations")
+    expect(JSON.stringify(requestBody)).not.toContain("googleSearch")
+    expect(JSON.stringify(result)).not.toContain(signature)
+
+    const missingSignatureTransport = new FakeExternalApiTransport([{ status_code: 200, body: geminiToolCall("call_missing", "memory__search", { query: "exact" }, "", modelId) }])
+    const missing = await connectorBackedAdapter(projectDir, missingSignatureTransport, "api_gemini3_missing_signature", {
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: modelId }), connector: googleConnector(), env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    }).executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: modelId, max_output_tokens: 1024 })
+    expect(missing).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(missing.error).toContain("function call response is invalid")
+  })
+
+  test("Gemini failures are strict, bounded, audited once, and never retried", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-failures-"))
+    const config = connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" })
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 }
+    for (const [name, body] of [
+      ["multiple", JSON.stringify({ ...JSON.parse(geminiText("one")), candidates: [...JSON.parse(geminiText("one")).candidates, ...JSON.parse(geminiText("two")).candidates] })],
+      ["truncated", JSON.stringify({ ...JSON.parse(geminiText("partial must remain unavailable")), candidates: [{ content: { role: "model", parts: [{ text: "partial must remain unavailable" }] }, finishReason: "MAX_TOKENS", index: 0 }] })],
+      ["server_tool", JSON.stringify({ ...JSON.parse(geminiText("")), candidates: [{ content: { role: "model", parts: [{ executableCode: { language: "PYTHON", code: "print(1)" } }] }, finishReason: "STOP", index: 0 }] })],
+      ["wrong_model", JSON.stringify({ ...JSON.parse(geminiText("wrong model evidence")), modelVersion: "gemini-unconfigured" })],
+      ["malformed", "{"],
+    ] as const) {
+      const transport = new FakeExternalApiTransport([{ status_code: 200, body }])
+      const result = await connectorBackedAdapter(projectDir, transport, `api_gemini_${name}`, { config, connector: googleConnector(), env: { NXL_TEST_GOOGLE_KEY: "real-google-key" } }).executeOneStep(request)
+      expect(transport.requests).toHaveLength(1)
+      expect(result).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+      expect(result.text).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain("partial must remain unavailable")
+      expect(JSON.stringify(result)).not.toContain("wrong model evidence")
+    }
+    for (const status of [429, 500]) {
+      const transport = new FakeExternalApiTransport([{ status_code: status, body: JSON.stringify({ error: { message: `AIza${"x".repeat(10_000)}` } }) }])
+      const result = await connectorBackedAdapter(projectDir, transport, `api_gemini_http_${status}`, { config, connector: googleConnector(), env: { NXL_TEST_GOOGLE_KEY: "real-google-key" } }).executeOneStep(request)
+      expect(transport.requests).toHaveLength(1)
+      expect(result).toMatchObject({ status: "failed", request_count: 1 })
+      expect(result.error!.length).toBeLessThanOrEqual(300)
+      expect(result.error).not.toContain("AIza")
+    }
+    const events = await eventText(projectDir)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(5)
+    expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
+    expect(events).not.toContain("AIza")
+    expect(events).not.toContain("partial must remain unavailable")
   })
 
   test("native Anthropic bridge enforces exact headers body and connector credential boundary", async () => {
@@ -2826,6 +2953,79 @@ describe("Commander in-memory investigation controller", () => {
     }
   })
 
+  test("native Gemini readiness and recovery envelope bind exact protocol and transient continuation authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-authority-"))
+    await writeApprovedSpec(projectDir)
+    const config = validateCommanderInvestigationProviderConfig(providerConfig({
+      transport_kind: "google_generative_ai_connector",
+      provider_id: "google_provider",
+      provider_kind: "google",
+      connector_id: "google-test",
+      model_id: "gemini-2.5-flash",
+      supports_json_schema: false,
+    }))
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: config,
+      externalApiConnectors: [googleConnector()],
+      externalApiTransport: new FakeExternalApiTransport([{ status_code: 200, body: geminiText("configured final") }]),
+      externalApiEnv: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    })
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    expect(server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash" })).toMatchObject({ status: "ready", configuration_ready: true, execution_ready: true, default_tool_protocol: "native" })
+    const envelope = (server as unknown as { commanderInvestigationRecoveryExecutionEnvelope(input: Record<string, unknown>): CommanderInvestigationRecoveryExecutionEnvelope }).commanderInvestigationRecoveryExecutionEnvelope({})
+    expect(envelope).toMatchObject({
+      transport_kind: "google_generative_ai_connector",
+      provider_kind: "google",
+      provider_adapter_version: "ai@7.0.29/@ai-sdk/google@4.0.15",
+      request_shape_policy_version: "google_generate_content_v1",
+      transient_continuation_policy_version: "google_thought_signature_weakmap_v1",
+      supports_json_schema: false,
+    })
+    expect(JSON.stringify(envelope)).not.toContain("NXL_TEST_GOOGLE_KEY")
+    expect(JSON.stringify(envelope)).not.toContain("real-google-key")
+
+    for (const connectorFixture of [
+      { ...googleConnector(), credential_refs: [] },
+      { ...googleConnector(), credential_refs: [{ ...googleConnector().credential_refs![0], target_name: "Authorization", prefix: "Bearer " }] },
+      { ...googleConnector(), default_headers: { "x-goog-user-project": "forbidden" } },
+    ]) {
+      const blocked = new RuntimeServer({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-blocked-")), adapter: new FakeOpenCodeAdapter(), commanderInvestigationProviderConfig: config, externalApiConnectors: [connectorFixture], externalApiTransport: new FakeExternalApiTransport([]), externalApiEnv: { NXL_TEST_GOOGLE_KEY: "real-google-key" } }).previewCommanderInvestigationProviderReadiness({ provider_kind: "google" })
+      expect(blocked.configuration_ready).toBe(false)
+      expect(blocked.checks.find((check) => check.name === "provider_request_policy")?.ok).toBe(false)
+    }
+  })
+
+  test("configured Gemini controller executes a client tool and carries transient continuation into the next audited request", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-controller-"))
+    await writeApprovedSpec(projectDir)
+    const signature = "controller-only-thought-signature"
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: geminiToolCall("call_search", "commander__tool_search", { query: "memory" }, signature) },
+      { status_code: 200, body: geminiText("controller Gemini final") },
+    ])
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", provider_kind: "google", connector_id: "google-test", model_id: "gemini-2.5-flash", supports_json_schema: false })),
+      externalApiConnectors: [googleConnector()],
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    })
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", tool_protocol: "native" }))
+    expect(result).toMatchObject({ status: "final", final_summary: "controller Gemini final", provider_request_count: 2, external_api_audit_events_appended: 2, tool_call_count: 1 })
+    expect(transport.requests).toHaveLength(2)
+    expect(JSON.stringify(transport.requests[1].body)).toContain(signature)
+    expect(JSON.stringify(result)).not.toContain(signature)
+    const events = await eventText(projectDir)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(2)
+    expect(events).not.toContain(signature)
+  })
+
   test("provider audit policy fails closed before tool execution when metadata is missing or malformed", async () => {
     const calls: string[] = []
     const controller = new CommanderInvestigationController({
@@ -3073,6 +3273,38 @@ describe("Commander in-memory investigation controller", () => {
     expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
     expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
     expect(events).not.toContain("real-anthropic-key")
+  })
+
+  test("native Gemini configured work is aborted and audited before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let releaseTransport!: () => void
+    const released = new Promise<void>((resolve) => { releaseTransport = resolve })
+    const transport = delayedAbortTransport(released)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", provider_kind: "google", connector_id: "google-test", model_id: "gemini-2.5-flash", supports_json_schema: false })),
+      externalApiConnectors: [googleConnector()],
+      externalApiTransport: transport,
+      externalApiResolveHostAddresses: async () => [{ address: "142.250.72.42" }],
+      externalApiEnv: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+    })
+    await server.start()
+    const investigation = server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_gemini_shutdown", provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", tool_protocol: "native" }))
+    await waitFor(() => transport.requests === 1)
+    const shutdown = server.shutdown("shutdown during Gemini generateContent request")
+    await waitFor(() => transport.aborted)
+    releaseTransport()
+    const result = await investigation
+    await shutdown
+    expect(result).toMatchObject({ status: "cancelled", provider_request_count: 1, external_api_audit_events_appended: 1 })
+    const events = await eventText(projectDir)
+    const kinds = eventKinds(events)
+    expect(events.match(/external_api_request_failed/g)).toHaveLength(1)
+    expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    expect(events).not.toContain("real-google-key")
   })
 
   test("configured provider shutdown retains run lock until active investigation drain completes", async () => {
@@ -13248,6 +13480,21 @@ function anthropicConnector(): ExternalApiConnector {
   }
 }
 
+function googleConnector(): ExternalApiConnector {
+  return {
+    connector_id: "google-test",
+    title: "Google Generative AI test connector",
+    base_url: "https://generativelanguage.googleapis.com/v1beta",
+    allowed_hosts: ["generativelanguage.googleapis.com"],
+    allowed_methods: ["POST"],
+    credential_refs: [{ name: "google-key", source: "env", env_name: "NXL_TEST_GOOGLE_KEY", inject_as: "header", target_name: "x-goog-api-key" }],
+    timeout_ms: 5000,
+    max_response_bytes: 65_536,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+  }
+}
+
 function githubTestConnector(): ExternalApiConnector {
   return {
     connector_id: "github-read-test",
@@ -13592,6 +13839,22 @@ function anthropicMessageText(text: string): string {
     stop_reason: "end_turn",
     stop_sequence: null,
     usage: { input_tokens: 31, output_tokens: 7 },
+  })
+}
+
+function geminiText(text: string): string {
+  return JSON.stringify({
+    candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason: "STOP", index: 0 }],
+    usageMetadata: { promptTokenCount: 17, candidatesTokenCount: 5, totalTokenCount: 22 },
+    modelVersion: "gemini-2.5-flash",
+  })
+}
+
+function geminiToolCall(id: string, name: string, args: Record<string, unknown>, thoughtSignature: string, modelVersion = "gemini-2.5-flash"): string {
+  return JSON.stringify({
+    candidates: [{ content: { role: "model", parts: [{ functionCall: { id, name, args }, thoughtSignature }] }, finishReason: "STOP", index: 0 }],
+    usageMetadata: { promptTokenCount: 18, candidatesTokenCount: 6, totalTokenCount: 24 },
+    modelVersion,
   })
 }
 

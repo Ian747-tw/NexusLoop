@@ -37,6 +37,8 @@ export type ExternalApiConnectorFetchAuthority = Readonly<{
 const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key"])
 const ANTHROPIC_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk"])
 const ANTHROPIC_REQUEST_KEYS = new Set(["model", "max_tokens", "messages", "system", "tools", "tool_choice", "temperature", "stream"])
+const GOOGLE_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk"])
+const GOOGLE_REQUEST_KEYS = new Set(["contents", "systemInstruction", "generationConfig", "tools", "toolConfig"])
 const MAX_DROPPED_HEADER_NAME_LENGTH = 80
 const AUDITED_CONNECTOR_FETCHES = new WeakMap<typeof fetch, ExternalApiConnectorFetchAuthority>()
 
@@ -53,7 +55,7 @@ export function createExternalApiConnectorFetch(options: ExternalApiConnectorFet
   const connector = registry.get(config.connector_id)
   if (!connector) throw new Error(`unknown connector: ${redactText(config.connector_id)}`)
   validateCommanderConnectorProtocolPolicy(config, connector)
-  const expectedUrl = connectorModelRequestUrl(connector, config.transport_kind)
+  const expectedUrl = connectorModelRequestUrl(connector, config.transport_kind, config.model_id)
   const dropped = new Set<string>()
   const auditRecords: ExternalApiPersistedAuditRecord[] = []
   let attempts = 0
@@ -146,7 +148,9 @@ function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, c
   if (request.url.origin !== expectedUrl.origin || request.url.pathname !== expectedUrl.pathname) {
     throw new Error(config.transport_kind === "anthropic_messages_connector"
       ? "connector model transport URL does not match Anthropic Messages endpoint"
-      : "connector model transport URL does not match chat completions endpoint")
+      : config.transport_kind === "google_generative_ai_connector"
+        ? "connector model transport URL does not match Google generateContent endpoint"
+        : "connector model transport URL does not match chat completions endpoint")
   }
   if (request.url.search) throw new Error("connector model transport query parameters are not allowed")
   if (request.url.hash) throw new Error("connector model transport fragments are not allowed")
@@ -155,13 +159,17 @@ function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, c
   if (bytes > config.max_request_bytes) throw new Error(`connector model request exceeds max_request_bytes: ${config.max_request_bytes}`)
   const payload = JSON.parse(request.body) as unknown
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("connector model transport body must be a JSON object")
-  const model = (payload as { model?: unknown }).model
-  if (typeof model !== "string" || model !== config.model_id) throw new Error("connector model transport model does not match configured model_id")
-  if (config.transport_kind === "anthropic_messages_connector") validateAnthropicMessagesBody(payload as Record<string, unknown>)
+  if (config.transport_kind === "google_generative_ai_connector") validateGoogleGenerateContentBody(payload as Record<string, unknown>)
+  else {
+    const model = (payload as { model?: unknown }).model
+    if (typeof model !== "string" || model !== config.model_id) throw new Error("connector model transport model does not match configured model_id")
+    if (config.transport_kind === "anthropic_messages_connector") validateAnthropicMessagesBody(payload as Record<string, unknown>)
+  }
 }
 
 function filterHeaders(headers: Headers, dropped: Set<string>, config: CommanderConnectorModelTransportConfig): Record<string, string> {
   if (config.transport_kind === "anthropic_messages_connector") return filterAnthropicHeaders(headers, dropped)
+  if (config.transport_kind === "google_generative_ai_connector") return filterGoogleHeaders(headers, dropped)
   const out: Record<string, string> = {}
   headers.forEach((value, key) => {
     const normalized = key.toLowerCase()
@@ -184,6 +192,91 @@ function filterHeaders(headers: Headers, dropped: Set<string>, config: Commander
   })
   if (!out["Content-Type"]) throw new Error("connector model transport requires application/json content type")
   return out
+}
+
+function filterGoogleHeaders(headers: Headers, dropped: Set<string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  headers.forEach((value, key) => {
+    const normalized = key.toLowerCase()
+    if (normalized === "content-type") {
+      if (!/^application\/json\b/i.test(value)) throw new Error("Google Generative AI transport requires application/json content type")
+      out["Content-Type"] = "application/json"
+      return
+    }
+    if (normalized === "accept") {
+      if (!/(^|,\s*)application\/json\b|^\*\/\*$/i.test(value)) throw new Error("Google Generative AI transport accepts only JSON responses")
+      out.Accept = "application/json"
+      return
+    }
+    if (normalized === "x-goog-api-key") {
+      if (value !== CONNECTOR_MANAGED_API_KEY_SENTINEL) throw new Error("Google x-goog-api-key must contain the exact connector-managed sentinel")
+      return
+    }
+    if (normalized === "authorization" || normalized === "cookie") throw new Error("authorization and cookies are not allowed for Google Generative AI transport")
+    if (isCredentialLikeHeaderName(normalized)) throw new Error(`credential header is not allowed: ${redactText(key)}`)
+    if (!GOOGLE_DROPPED_SDK_HEADERS.has(normalized)) throw new Error(`Google Generative AI header is not allowed: ${redactText(key)}`)
+    dropped.add(boundedHeaderName(key))
+  })
+  if (!out["Content-Type"]) throw new Error("Google Generative AI transport requires application/json content type")
+  return out
+}
+
+function validateGoogleGenerateContentBody(payload: Record<string, unknown>): void {
+  if (Object.keys(payload).some((key) => !GOOGLE_REQUEST_KEYS.has(key))) throw new Error("Google generateContent request contains a forbidden field")
+  if (!Array.isArray(payload.contents) || payload.contents.length === 0 || payload.contents.length > 256) throw new Error("Google generateContent contents must be a bounded nonempty array")
+  for (const content of payload.contents) validateGoogleContent(content)
+  if (payload.systemInstruction !== undefined) validateGoogleSystemInstruction(payload.systemInstruction)
+  if (!isRecord(payload.generationConfig)) throw new Error("Google generateContent generationConfig is required")
+  const generationKeys = new Set(["maxOutputTokens", "temperature"])
+  if (Object.keys(payload.generationConfig).some((key) => !generationKeys.has(key))) throw new Error("Google generateContent generationConfig contains a forbidden feature")
+  if (!Number.isInteger(payload.generationConfig.maxOutputTokens) || Number(payload.generationConfig.maxOutputTokens) < 1 || Number(payload.generationConfig.maxOutputTokens) > 32_768) throw new Error("Google generateContent maxOutputTokens is invalid")
+  if (payload.generationConfig.temperature !== undefined && (typeof payload.generationConfig.temperature !== "number" || !Number.isFinite(payload.generationConfig.temperature) || payload.generationConfig.temperature < 0 || payload.generationConfig.temperature > 2)) throw new Error("Google generateContent temperature is invalid")
+  if (payload.tools !== undefined) validateGoogleClientTools(payload.tools)
+  if (payload.toolConfig !== undefined) validateGoogleToolConfig(payload.toolConfig)
+}
+
+function validateGoogleSystemInstruction(value: unknown): void {
+  if (!isRecord(value) || !hasExactKeys(value, ["parts"]) || !isTextParts(value.parts, 16)) throw new Error("Google systemInstruction must contain bounded text only")
+}
+
+function validateGoogleContent(value: unknown): void {
+  if (!isRecord(value) || !hasExactKeys(value, ["role", "parts"]) || value.role !== "user" && value.role !== "model" || !Array.isArray(value.parts) || value.parts.length === 0 || value.parts.length > 128) throw new Error("Google content shape is invalid")
+  for (const part of value.parts) {
+    if (!isRecord(part)) throw new Error("Google content part is invalid")
+    if (hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text) continue
+    if (value.role === "model" && (hasExactKeys(part, ["functionCall", "thoughtSignature"]) || hasExactKeys(part, ["functionCall"]))) {
+      if (!isRecord(part.functionCall) || !hasExactKeys(part.functionCall, ["id", "name", "args"]) || !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args)) throw new Error("Google client functionCall part is invalid")
+      if (part.thoughtSignature !== undefined && (!boundedIdentifier(part.thoughtSignature, 4096) || part.thoughtSignature === "skip_thought_signature_validator")) throw new Error("Google thought signature is invalid")
+      continue
+    }
+    if (value.role === "user" && hasExactKeys(part, ["functionResponse"])) {
+      if (!isRecord(part.functionResponse) || !hasExactKeys(part.functionResponse, ["id", "name", "response"]) || !boundedIdentifier(part.functionResponse.id, 200) || !boundedIdentifier(part.functionResponse.name, 200) || !isRecord(part.functionResponse.response) || !hasExactKeys(part.functionResponse.response, ["name", "content"]) || part.functionResponse.response.name !== part.functionResponse.name || typeof part.functionResponse.response.content !== "string") throw new Error("Google client functionResponse part is invalid")
+      continue
+    }
+    throw new Error("Google content contains a forbidden multimodal, reasoning, or server-tool part")
+  }
+}
+
+function validateGoogleClientTools(value: unknown): void {
+  if (!Array.isArray(value) || value.length !== 1 || !isRecord(value[0]) || !hasExactKeys(value[0], ["functionDeclarations"]) || !Array.isArray(value[0].functionDeclarations) || value[0].functionDeclarations.length === 0 || value[0].functionDeclarations.length > 64) throw new Error("Google tools must contain one bounded client function declaration set")
+  for (const declaration of value[0].functionDeclarations) {
+    if (!isRecord(declaration)) throw new Error("Google client function declaration is invalid")
+    const keys = declaration.parameters === undefined ? ["name", "description"] : ["name", "description", "parameters"]
+    if (!hasExactKeys(declaration, keys) || !boundedIdentifier(declaration.name, 200) || typeof declaration.description !== "string" || declaration.parameters !== undefined && !isRecord(declaration.parameters)) throw new Error("Google client function declaration is invalid")
+  }
+}
+
+function validateGoogleToolConfig(value: unknown): void {
+  if (!isRecord(value) || !hasExactKeys(value, ["functionCallingConfig"]) || !isRecord(value.functionCallingConfig)) throw new Error("Google toolConfig is invalid")
+  const config = value.functionCallingConfig
+  if (config.mode !== "AUTO" && config.mode !== "NONE" && config.mode !== "ANY") throw new Error("Google function calling mode is invalid")
+  const keys = config.mode === "ANY" && config.allowedFunctionNames !== undefined ? ["mode", "allowedFunctionNames"] : ["mode"]
+  if (!hasExactKeys(config, keys)) throw new Error("Google function calling config is invalid")
+  if (config.allowedFunctionNames !== undefined && (!Array.isArray(config.allowedFunctionNames) || config.allowedFunctionNames.length === 0 || config.allowedFunctionNames.some((item) => !boundedIdentifier(item, 200)))) throw new Error("Google allowed function names are invalid")
+}
+
+function isTextParts(value: unknown, max: number): boolean {
+  return Array.isArray(value) && value.length > 0 && value.length <= max && value.every((part) => isRecord(part) && hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text.length > 0)
 }
 
 function filterAnthropicHeaders(headers: Headers, dropped: Set<string>): Record<string, string> {
@@ -329,6 +422,7 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
   if (result.ok) {
     const body = result.response_body_for_internal_use ?? ""
     if (transportKind === "anthropic_messages_connector") validateAnthropicMessagesResponseBody(body, expectedModelId)
+    if (transportKind === "google_generative_ai_connector") validateGoogleGenerateContentResponseBody(body, expectedModelId)
     return body
   }
   const status = typeof result.status_code === "number" ? result.status_code : 500
@@ -341,6 +435,9 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
       },
     })
   }
+  if (transportKind === "google_generative_ai_connector") {
+    return JSON.stringify({ error: { code: status, message: `connector-backed Google request failed with HTTP ${status}`, status: "UNKNOWN" } })
+  }
   return JSON.stringify({
     error: {
       message: `connector-backed provider request failed with HTTP ${status}`,
@@ -349,6 +446,35 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
       request_id: result.request_id,
     },
   })
+}
+
+function validateGoogleGenerateContentResponseBody(body: string, expectedModelId: string): void {
+  let payload: unknown
+  try { payload = JSON.parse(body) } catch { throw new Error("Google generateContent response must be valid JSON") }
+  if (!isRecord(payload) || !hasExactKeys(payload, ["candidates", "usageMetadata", "modelVersion"]) || payload.modelVersion !== expectedModelId) throw new Error("Google generateContent response identity or shape is invalid")
+  if (!Array.isArray(payload.candidates) || payload.candidates.length !== 1) throw new Error("Google generateContent requires exactly one candidate")
+  const candidate = payload.candidates[0]
+  if (!isRecord(candidate) || !hasExactKeys(candidate, ["content", "finishReason", "index"]) || candidate.index !== 0 || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
+  if (candidate.finishReason !== "STOP" && candidate.finishReason !== "SAFETY" && candidate.finishReason !== "RECITATION" && candidate.finishReason !== "PROHIBITED_CONTENT") throw new Error("Google generateContent finish reason is forbidden, ambiguous, or truncated")
+  let calls = 0
+  let texts = 0
+  for (const part of candidate.content.parts) {
+    if (!isRecord(part)) throw new Error("Google generateContent response part is invalid")
+    if (hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text.trim()) { texts += 1; continue }
+    if (hasExactKeys(part, ["functionCall", "thoughtSignature"])) {
+      if (!isRecord(part.functionCall) || !hasExactKeys(part.functionCall, ["id", "name", "args"]) || !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args) || !boundedIdentifier(part.thoughtSignature, 4096) || part.thoughtSignature === "skip_thought_signature_validator") throw new Error("Google client function call response is invalid")
+      calls += 1
+      continue
+    }
+    throw new Error("Google response contains unsupported content, reasoning, media, grounding, or server tools")
+  }
+  if (candidate.finishReason === "STOP" && calls === 0 && texts === 0) throw new Error("Google final response requires bounded text or client function calls")
+  if (candidate.finishReason !== "STOP" && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
+  if (!isRecord(payload.usageMetadata) || !hasExactKeys(payload.usageMetadata, ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]) || !nonnegativeInteger(payload.usageMetadata.promptTokenCount) || !nonnegativeInteger(payload.usageMetadata.candidatesTokenCount) || !nonnegativeInteger(payload.usageMetadata.totalTokenCount)) throw new Error("Google usage metadata is invalid")
+}
+
+function nonnegativeInteger(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) >= 0
 }
 
 function validateAnthropicMessagesResponseBody(body: string, expectedModelId: string): void {
