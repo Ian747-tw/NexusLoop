@@ -136,6 +136,11 @@ export class OpenCodeLaunchGateService {
         project_dir: this.options.projectDir,
         target_dir: preview.target_dir,
         instruction_files: preview.instruction_files,
+        primary_model_selection: preview.executor_model_selection ? {
+          selection_version: 1,
+          role: "executor",
+          ...preview.executor_model_selection,
+        } : undefined,
         launch_id: launchId,
         session_id: preview.session_id,
       })
@@ -202,7 +207,10 @@ export class OpenCodeLaunchGateService {
       provider_kind: optional(input.provider_kind),
       model_id: optional(input.model_id),
     }) : undefined
-    if (readiness && readiness.status !== "ready") blockers.push(`OpenCode launch readiness must be ready; current status is ${readiness.status}`)
+    if (readiness && readiness.status !== "ready") {
+      blockers.push(`OpenCode launch readiness must be ready; current status is ${readiness.status}`)
+      blockers.push(...readiness.blockers)
+    }
     if (readiness && input.readiness_hash && readiness.readiness_hash !== input.readiness_hash) blockers.push("readiness_hash does not match rebuilt readiness preview")
     if (readiness && !readiness.pack_id) blockers.push("instruction pack is required before launch")
     const pack = readiness?.pack_id ? await this.options.instructionPackService.get(readiness.pack_id) : null
@@ -210,7 +218,16 @@ export class OpenCodeLaunchGateService {
     const requestedKind = input.adapter_kind
     const adapter = this.adapterFor(requestedKind ?? this.defaultAdapterKind(input.allow_real_launch === true || this.env.NXL_REAL_OPENCODE_LAUNCH === "1"))
     const adapterPreview = adapter
-      ? await adapter.preview({ project_dir: this.options.projectDir, target_dir: readiness?.target_dir, instruction_files: pack?.files.map((file) => file.relative_path) ?? [] })
+      ? await adapter.preview({
+          project_dir: this.options.projectDir,
+          target_dir: readiness?.target_dir,
+          instruction_files: pack?.files.map((file) => file.relative_path) ?? [],
+          primary_model_selection: readiness?.executor_model_selection ? {
+            selection_version: 1,
+            role: "executor",
+            ...readiness.executor_model_selection,
+          } : undefined,
+        })
       : { adapter_kind: "disabled" as const, blockers: ["OpenCode launch adapter is unavailable"], warnings: [] }
     blockers.push(...adapterPreview.blockers)
     for (const warning of adapterPreview.warnings) warnings.add(warning)
@@ -227,6 +244,8 @@ export class OpenCodeLaunchGateService {
       adapter_kind: adapterPreview.adapter_kind,
       launch_mode: launchMode,
       instruction_files: pack?.files.map((file) => file.sha256) ?? [],
+      executor_selection_hash: readiness?.executor_model_selection?.selection_projection_hash,
+      executor_readiness_hash: readiness?.executor_role_readiness_hash,
     }))
     const canLaunch = blockers.length === 0
     return {
@@ -245,6 +264,8 @@ export class OpenCodeLaunchGateService {
         packet_hash: pack?.packet_hash,
         budget_id: readiness?.budget_id,
         target_dir: readiness?.target_dir,
+        executor_model_selection: readiness?.executor_model_selection,
+        executor_role_readiness_hash: readiness?.executor_role_readiness_hash,
         command_preview: adapterPreview.command_preview,
         env_preview: adapterPreview.env_preview,
         instruction_files: pack?.files.map((file) => file.relative_path) ?? [],

@@ -3,6 +3,8 @@ import { lstat, readFile } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
 import type { ContextPacketCompilerService } from "../context/context-packet-compiler-service"
 import type { ResearchNoveltyService } from "../research-memory/research-novelty-service"
+import type { ExecutorModelSelectionProjection } from "../model-configuration/model-configuration-types"
+import type { ModelRoleReadinessEvidence } from "../model-configuration/model-profile-runtime-registry-types"
 import { redactText, redactValue } from "../security/redaction"
 import type { OpenCodeSessionInstructionPackService } from "./opencode-session-instruction-pack-service"
 import type { OpenCodeSessionInstructionPackFilePreview, OpenCodeSessionInstructionPackResult } from "./opencode-session-instruction-pack-types"
@@ -39,6 +41,8 @@ export type OpenCodeLaunchReadinessServiceOptions = {
   contextPacketCompilerService: ContextPacketCompilerService
   researchNoveltyService: ResearchNoveltyService
   nativeLaunchSurface?: OpenCodeLaunchSurface
+  executorModelSelection?: ExecutorModelSelectionProjection
+  executorRoleReadiness?: () => Promise<ModelRoleReadinessEvidence>
   now?: () => Date
 }
 
@@ -67,11 +71,33 @@ export class OpenCodeLaunchReadinessService {
     if (session && session.status !== "planned") blockers.push("OpenCode session status must be planned for future launch readiness")
     if (session && !session.max_context_bytes) blockers.push("planned session is missing bounded max_context_bytes metadata")
 
+    const executorSelection = this.options.executorModelSelection
+    let executorReadiness: ModelRoleReadinessEvidence | undefined
+    if (executorSelection) {
+      if ((input.provider_kind !== undefined && input.provider_kind !== executorSelection.provider_kind)
+        || (input.model_id !== undefined && input.model_id !== executorSelection.model_id)) {
+        blockers.push("caller provider/model assertion does not match Executor model-profile authority")
+      }
+      executorReadiness = this.options.executorRoleReadiness ? await this.options.executorRoleReadiness() : undefined
+      if (!executorReadiness?.ready || executorReadiness.selection_projection_hash !== executorSelection.projection_hash) {
+        blockers.push("Executor role readiness is not ready for the selected model profile")
+      }
+      checks.push(check(
+        "executor_model_profile",
+        "Executor model profile",
+        executorReadiness?.ready ? "pass" : "fail",
+        executorReadiness?.ready ? "exact primary Executor model selection is ready" : "primary Executor model selection is not ready",
+        executorReadiness?.ready ? [] : ["Executor role readiness is not ready for the selected model profile"],
+        [],
+        [ref("authority", executorSelection.projection_hash, "Executor model selection", `${executorSelection.provider_id}/${executorSelection.model_id}`)],
+      ))
+    }
+
     const packet = session ? await this.options.contextPacketCompilerService.preview({
       purpose: "opencode_executor_session",
       session_id: session.session_id,
-      provider_kind: input.provider_kind,
-      model_id: input.model_id,
+      provider_kind: executorSelection?.provider_kind ?? input.provider_kind,
+      model_id: executorSelection?.model_id ?? input.model_id,
       max_context_tokens: input.max_context_tokens,
       max_context_bytes: input.max_context_bytes,
     }) : null
@@ -120,6 +146,8 @@ export class OpenCodeLaunchReadinessService {
       pack_id: pack?.pack_id ?? requestedPackId,
       packet_id: packet?.packet_id,
       checks: checks.map((item) => [item.check_id, item.status, item.blockers]),
+      executor_selection_hash: executorSelection?.projection_hash,
+      executor_readiness_hash: executorReadiness?.readiness_hash,
     }))
     return redactValue({
       preview_id: `opencode_launch_readiness_${readinessHash.slice(0, 16)}`,
@@ -144,6 +172,12 @@ export class OpenCodeLaunchReadinessService {
       research_memory_status: novelty?.status,
       novelty_risk: novelty?.duplicate_risk,
       selected_launch_surface: surface,
+      executor_model_selection: executorSelection ? {
+        provider_id: executorSelection.provider_id,
+        model_id: executorSelection.model_id,
+        selection_projection_hash: executorSelection.projection_hash,
+      } : undefined,
+      executor_role_readiness_hash: executorReadiness?.readiness_hash,
       checks,
       blockers: allBlockers,
       warnings: boundList(unique([...Array.from(warnings), ...checks.flatMap((item) => item.warnings)])),

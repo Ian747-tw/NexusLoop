@@ -39,6 +39,15 @@ import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCode
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
 import { ProcessOpenCodeLaunchAdapter } from "./opencode-session/opencode-native-launch-adapter"
+import { ModelProfileRuntimeRegistry } from "./model-configuration/model-profile-runtime-registry"
+import {
+  EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION,
+  MODEL_CONFIGURATION_POLICY_VERSION,
+  validateCommanderModelConformanceRegistry,
+  validateExecutorProviderMappingRegistry,
+  validateModelConfiguration,
+  COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+} from "./model-configuration/model-configuration-kernel"
 import { OpenCodeWakeSupervisorService } from "./opencode-session/opencode-wake-supervisor-service"
 import { OpenCodeWakeSupervisorExecutionService } from "./opencode-session/opencode-wake-supervisor-execution-service"
 import { buildContinuityDelta, continuitySectionHash, type PreviousRefreshSnapshot } from "./opencode-session/opencode-session-continuity-service"
@@ -83,6 +92,34 @@ async function tempProject(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nxl-runtime-"))
   cleanup.push(dir)
   return dir
+}
+
+function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
+  return new ModelProfileRuntimeRegistry({
+    authority_source: "explicit",
+    configuration: validateModelConfiguration({
+      schema_version: 1,
+      policy_version: MODEL_CONFIGURATION_POLICY_VERSION,
+      connections: [{
+        connection_id: "executor-primary",
+        provider_kind: "anthropic",
+        credential_binding_id: "credential-executor-primary",
+        executor: { provider_id: "anthropic" },
+      }],
+      profiles: [{ profile_id: "executor-primary", connection_id: "executor-primary", model_id: "claude-sonnet-4-5-20250929" }],
+      role_bindings: [{ role: "executor", profile_id: "executor-primary" }],
+    }),
+    commander_conformance: validateCommanderModelConformanceRegistry({
+      registry_version: 1,
+      policy_version: COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+      entries: [],
+    }),
+    executor_provider_mapping: validateExecutorProviderMappingRegistry({
+      registry_version: 1,
+      policy_version: EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION,
+      entries: [{ mapping_version: 1, mapping_id: "anthropic-primary", provider_kind: "anthropic", provider_ids: ["anthropic"] }],
+    }),
+  })
 }
 
 afterEach(async () => {
@@ -21126,6 +21163,82 @@ describe("OpenCode launch readiness", () => {
       ".nxl/opencode/sessions/session_launch/CONTEXT.md",
       "Run the NexusLoop OpenCode session using the attached instruction-pack files. Read TASK.md, CONTEXT.md, GUIDANCE.md, SESSION_MEMORY.md, POLICY.md, and MANIFEST.json before making changes.",
     ]])
+  })
+
+  test("runtime registry scopes exact Executor selection to primary OpenCode launch and rejects caller override", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const spawnedArgs: string[][] = []
+    const registry = executorOnlyRuntimeRegistry()
+    const selection = registry.executorSelection()!
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+      modelProfileRuntimeRegistry: registry,
+      executorModelReadinessResolver: {
+        observe: () => ({
+          observation_version: 1,
+          selection_projection_hash: selection.projection_hash,
+          provider_id: selection.provider_id,
+          model_id: selection.model_id,
+          credential_binding_id: selection.credential_binding_id,
+          provider_availability_status: "available",
+          credential_connection_status: "connected",
+          evidence_id: "readiness-opencode-primary-v1",
+        }),
+      },
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["--format", "json"] },
+      opencodeLaunchEnv: { NXL_REAL_OPENCODE_LAUNCH: "1" },
+      opencodeLaunchSpawn: (_command, args) => {
+        spawnedArgs.push(args)
+        return new FakeSpawnedProcess(6262)
+      },
+      opencodeLaunchId: () => "launch_profile_executor",
+    })
+    await server.start()
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({
+      role: "executor",
+      selection_status: "selected",
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+      ready: true,
+    })
+    expect(server.previewCommanderModelRoleReadiness()).toMatchObject({ role: "commander", selection_status: "unconfigured", ready: false })
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "profile selected launch" }) as { session_id: string }
+    await expect(server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+      providerKind: "local",
+      modelId: "local-medium",
+    })).resolves.toMatchObject({
+      status: "blocked",
+      error: "caller provider/model assertion does not match Executor model-profile authority",
+    })
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", {
+      sessionId: session.session_id,
+    }) as { pack_id: string }
+    await expect(server.command("runtime.get_opencode_session_instruction_pack", {
+      packId: pack.pack_id,
+    })).resolves.toMatchObject({ status: "written" })
+    await expect(server.command("runtime.preview_opencode_session_launch", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+      providerKind: "openai",
+      modelId: "gpt-5",
+    })).resolves.toMatchObject({ status: "blocked", blockers: expect.arrayContaining(["caller provider/model assertion does not match Executor model-profile authority"]) })
+    await expect(server.command("runtime.preview_opencode_session_launch", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+    })).resolves.toMatchObject({ status: "ready", blockers: [] })
+    const launched = await server.command("runtime.launch_opencode_session", {
+      sessionId: session.session_id,
+      packId: pack.pack_id,
+    }) as { status: string; blockers?: string[] }
+    expect(launched).toMatchObject({ status: "launch_started" })
+    expect(spawnedArgs).toHaveLength(1)
+    expect(spawnedArgs[0].filter((argument) => argument === "--model")).toHaveLength(1)
+    expect(spawnedArgs[0][spawnedArgs[0].indexOf("--model") + 1]).toBe("anthropic/claude-sonnet-4-5-20250929")
+    await server.shutdown()
   })
 
   test("RuntimeServerClient no-start covers launch gate preview list get and dry-run", async () => {

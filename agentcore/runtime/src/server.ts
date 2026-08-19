@@ -250,6 +250,9 @@ import type { ExecutorToolCall, ExecutorToolResult } from "./missions/mission-to
 import { PolicyService } from "./spec/policy-service"
 import { SpecService, type SpecSummary } from "./spec/spec-service"
 import { redactText, redactValue } from "./security/redaction"
+import { adaptLegacyCommanderModelAuthority } from "./model-configuration/model-profile-legacy-commander-adapter"
+import { evaluateCommanderModelRoleReadiness, evaluateExecutorModelRoleReadiness, ModelProfileRuntimeRegistry } from "./model-configuration/model-profile-runtime-registry"
+import type { ExecutorModelReadinessResolver, ModelRoleReadinessEvidence } from "./model-configuration/model-profile-runtime-registry-types"
 import {
   ResearchDb,
   type ListResearchEventsOptions,
@@ -340,6 +343,8 @@ export interface RuntimeServerOptions {
   commanderQueueNow?: () => Date
   commanderModelStepAdapter?: CommanderModelStepAdapter
   commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
+  modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
+  executorModelReadinessResolver?: ExecutorModelReadinessResolver
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
   commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
 }
@@ -435,6 +440,8 @@ export class RuntimeServer {
   private readonly commanderQueueNow?: () => Date
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
   private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
+  private readonly modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
+  private readonly executorModelReadinessResolver?: ExecutorModelReadinessResolver
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
   private readonly ownsResearchDb: boolean
@@ -571,6 +578,15 @@ export class RuntimeServer {
     this.externalApiRequestId = options.externalApiRequestId
     if (options.commanderModelStepAdapter && options.commanderInvestigationProviderConfig) throw new Error("commanderModelStepAdapter cannot be combined with commanderInvestigationProviderConfig")
     this.commanderInvestigationProviderConfig = options.commanderInvestigationProviderConfig ? validateCommanderInvestigationProviderConfig(options.commanderInvestigationProviderConfig) : undefined
+    this.modelProfileRuntimeRegistry = options.modelProfileRuntimeRegistry
+      ?? (this.commanderInvestigationProviderConfig ? adaptLegacyCommanderModelAuthority(this.commanderInvestigationProviderConfig).registry : undefined)
+    this.executorModelReadinessResolver = options.executorModelReadinessResolver
+    if (options.modelProfileRuntimeRegistry && this.commanderInvestigationProviderConfig) {
+      requireCommanderRegistryAssertion(options.modelProfileRuntimeRegistry, this.commanderInvestigationProviderConfig)
+    }
+    if (options.modelProfileRuntimeRegistry?.commanderSelection() && options.commanderModelStepAdapter && !this.commanderInvestigationProviderConfig) {
+      throw new Error("injected Commander adapter cannot satisfy explicit model-profile connector authority")
+    }
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
     this.modelCapabilityRegistry = new ModelCapabilityRegistry({
       reasoningProviderConfig: this.reasoningProviderConfig,
@@ -3415,6 +3431,24 @@ export class RuntimeServer {
     })
   }
 
+  previewCommanderModelRoleReadiness(input: CommanderInvestigationProviderReadinessInput = {}): ModelRoleReadinessEvidence | undefined {
+    if (!this.modelProfileRuntimeRegistry) return undefined
+    return evaluateCommanderModelRoleReadiness(
+      this.modelProfileRuntimeRegistry,
+      this.previewCommanderInvestigationProviderReadiness(input),
+      this.researchSynthesisNow,
+    )
+  }
+
+  async previewExecutorModelRoleReadiness(): Promise<ModelRoleReadinessEvidence | undefined> {
+    if (!this.modelProfileRuntimeRegistry) return undefined
+    return evaluateExecutorModelRoleReadiness(
+      this.modelProfileRuntimeRegistry,
+      this.executorModelReadinessResolver,
+      this.opencodeLaunchNow,
+    )
+  }
+
   previewCommanderProposalContinuity(input: Parameters<CommanderContinuityService["proposal"]>[0] = {}): Promise<CommanderProposalContinuityPacket> {
     return this.commanderContinuityService().proposal(input)
   }
@@ -4575,6 +4609,7 @@ export class RuntimeServer {
       eventStore: this.eventStore,
       opencodeSessionService: this.opencodeSessionService(),
       contextPacketCompilerService: this.contextPacketCompilerService(),
+      executorModelSelection: this.modelProfileRuntimeRegistry?.executorSelection(),
     })
     return this.opencodeSessionInstructionPackServiceInstance
   }
@@ -4587,6 +4622,10 @@ export class RuntimeServer {
       contextPacketCompilerService: this.contextPacketCompilerService(),
       researchNoveltyService: this.researchNoveltyService(),
       nativeLaunchSurface: this.openCodeAdapterConfig?.kind === "process" ? "process_adapter" : "unknown",
+      executorModelSelection: this.modelProfileRuntimeRegistry?.executorSelection(),
+      executorRoleReadiness: this.modelProfileRuntimeRegistry?.executorSelection()
+        ? () => evaluateExecutorModelRoleReadiness(this.modelProfileRuntimeRegistry!, this.executorModelReadinessResolver, this.opencodeLaunchNow)
+        : undefined,
     })
     return this.opencodeLaunchReadinessServiceInstance
   }
@@ -6121,6 +6160,23 @@ function providerReadinessResult(input: {
   }
   result.readiness_hash = stableHash({ ...result, generated_at: "", readiness_hash: "" })
   return redactValue(result)
+}
+
+function requireCommanderRegistryAssertion(
+  registry: ModelProfileRuntimeRegistry,
+  config: CommanderInvestigationProviderConfig,
+): void {
+  const selection = registry.commanderSelection()
+  if (!selection) throw new Error("explicit model-profile registry has no Commander role binding")
+  if (
+    selection.transport_kind !== config.transport_kind
+    || selection.provider_id !== config.provider_id
+    || selection.provider_kind !== config.provider_kind
+    || selection.connector_id !== config.connector_id
+    || selection.model_id !== config.model_id
+  ) {
+    throw new Error("Commander provider configuration assertion does not match explicit model-profile authority")
+  }
 }
 
 class UnavailableReasoningProvider implements ResearchSynthesisProvider, CommanderCycleProvider, CommanderExecutorReviewProvider {

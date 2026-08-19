@@ -5,6 +5,7 @@ import type { ContextPacketCompilerService } from "../context/context-packet-com
 import type { ContextPacketPreview, ContextPacketSection, ContextPacketSourceRef } from "../context/context-packet-types"
 import type { EventStore } from "../events/event-store"
 import type { JsonlEvent } from "../events/event-types"
+import type { ExecutorModelSelectionProjection } from "../model-configuration/model-configuration-types"
 import { redactText, redactValue } from "../security/redaction"
 import type { OpenCodeSessionService } from "./opencode-session-service"
 import type { OpenCodeSessionPlan } from "./opencode-session-types"
@@ -39,6 +40,7 @@ export type OpenCodeSessionInstructionPackServiceOptions = {
   eventStore: EventStore
   opencodeSessionService: OpenCodeSessionService
   contextPacketCompilerService: ContextPacketCompilerService
+  executorModelSelection?: ExecutorModelSelectionProjection
   now?: () => Date
 }
 
@@ -216,11 +218,16 @@ export class OpenCodeSessionInstructionPackService {
     if (sessionId && !safeSessionId) blockers.push("session_id contains unsafe path characters")
     const session = sessionId && safeSessionId ? await this.options.opencodeSessionService.get(sessionId) : null
     if (sessionId && !session) blockers.push("planned OpenCode session was not found")
+    const executorSelection = this.options.executorModelSelection
+    if (executorSelection && ((input.provider_kind !== undefined && input.provider_kind !== executorSelection.provider_kind)
+      || (input.model_id !== undefined && input.model_id !== executorSelection.model_id))) {
+      blockers.push("caller provider/model assertion does not match Executor model-profile authority")
+    }
     const packet = session ? await this.options.contextPacketCompilerService.preview({
       purpose: "opencode_executor_session",
       session_id: sessionId,
-      provider_kind: input.provider_kind,
-      model_id: input.model_id,
+      provider_kind: executorSelection?.provider_kind ?? input.provider_kind,
+      model_id: executorSelection?.model_id ?? input.model_id,
       max_context_tokens: input.max_context_tokens,
       max_context_bytes: input.max_context_bytes,
     }) : null

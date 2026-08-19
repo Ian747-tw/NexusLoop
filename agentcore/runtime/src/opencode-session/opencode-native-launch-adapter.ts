@@ -31,6 +31,13 @@ export class ProcessOpenCodeLaunchAdapter implements OpenCodeLaunchAdapter {
   }
 
   preview(input: OpenCodeLaunchAdapterPreviewInput): OpenCodeLaunchAdapterPreview {
+    if (input.primary_model_selection && hasConfiguredModelArgument(this.args)) {
+      return {
+        adapter_kind: this.kind,
+        blockers: ["preconfigured OpenCode primary model conflicts with runtime model-profile authority"],
+        warnings: [],
+      }
+    }
     return {
       adapter_kind: this.kind,
       command_preview: this.commandPreview(input),
@@ -42,6 +49,9 @@ export class ProcessOpenCodeLaunchAdapter implements OpenCodeLaunchAdapter {
 
   async launch(input: OpenCodeLaunchAdapterLaunchInput): Promise<OpenCodeLaunchAdapterResult> {
     try {
+      if (input.primary_model_selection && hasConfiguredModelArgument(this.args)) {
+        return { status: "launch_failed", error: "preconfigured OpenCode primary model conflicts with runtime model-profile authority" }
+      }
       const child = this.spawn(this.command, this.commandArgs(input), { cwd: this.cwd ?? input.project_dir, env: this.env })
       await waitForSpawn(child, this.spawnTimeoutMs)
       return {
@@ -67,10 +77,19 @@ export class ProcessOpenCodeLaunchAdapter implements OpenCodeLaunchAdapter {
     const args = this.args[0] === "run" ? this.args : ["run", ...this.args]
     return [
       ...args,
+      ...(input.primary_model_selection ? ["--model", `${input.primary_model_selection.provider_id}/${input.primary_model_selection.model_id}`] : []),
       ...input.instruction_files.flatMap((file) => ["--file", input.target_dir ? join(input.target_dir, file) : file]),
       launchMessage(),
     ]
   }
+}
+
+function hasConfiguredModelArgument(args: readonly string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index]!
+    if (value === "--model" || value.startsWith("--model=") || value === "-m" || /^-m.+/.test(value)) return true
+  }
+  return false
 }
 
 function launchMessage(): string {

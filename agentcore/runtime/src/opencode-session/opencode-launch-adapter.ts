@@ -5,7 +5,16 @@ export type OpenCodeLaunchAdapterPreviewInput = {
   project_dir: string
   target_dir?: string
   instruction_files: string[]
+  primary_model_selection?: OpenCodePrimaryModelSelection
 }
+
+export type OpenCodePrimaryModelSelection = Readonly<{
+  selection_version: 1
+  role: "executor"
+  provider_id: string
+  model_id: string
+  selection_projection_hash: string
+}>
 
 export type OpenCodeLaunchAdapterLaunchInput = OpenCodeLaunchAdapterPreviewInput & {
   launch_id: string
