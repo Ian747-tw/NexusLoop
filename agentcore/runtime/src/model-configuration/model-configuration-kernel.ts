@@ -347,7 +347,6 @@ function parseConformanceEntry(value: unknown, index: number, policyVersion: typ
   if (transportKind === "google_generative_ai_connector" && providerKind !== "google") fail("google_generative_ai_connector conformance requires provider_kind google")
   if (transportKind === "google_generative_ai_connector" && policyVersion !== COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2) fail("Gemini conformance requires Commander policy v2")
   if (transportKind === "openai_compatible_connector" && providerKind === "anthropic") fail("provider_kind anthropic requires anthropic_messages_connector conformance")
-  if (policyVersion === COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2 && transportKind !== "google_generative_ai_connector" && providerKind === "google") fail("Commander policy v2 requires provider_kind google to use google_generative_ai_connector conformance")
   const stable = {
     conformance_version: 1 as const,
     conformance_id: identifier(input.conformance_id, `Commander conformance entries[${index}].conformance_id`, 160),
