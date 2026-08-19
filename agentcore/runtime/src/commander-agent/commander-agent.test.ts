@@ -246,7 +246,6 @@ describe("Commander AI SDK model adapter", () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-prompt-block-"))
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
       promptFeedback: { blockReason: "SAFETY", blockReasonMessage: "bounded provider safety explanation", safetyRatings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", probability: "HIGH", blocked: true }] },
-      usageMetadata: { promptTokenCount: 8, totalTokenCount: 8 },
       modelVersion: "gemini-2.5-flash",
       responseId: "response_prompt_blocked",
     }) }])
@@ -443,6 +442,7 @@ describe("Commander AI SDK model adapter", () => {
       ["oversized_response_id", JSON.stringify({ ...JSON.parse(geminiText("oversized response identity")), responseId: "r".repeat(201) })],
       ["malformed_token_details", JSON.stringify({ ...JSON.parse(geminiText("malformed usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, promptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
       ["malformed_tool_usage", JSON.stringify({ ...JSON.parse(geminiText("malformed tool usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, toolUsePromptTokenCount: -1, toolUsePromptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
+      ["missing_usage", JSON.stringify({ ...JSON.parse(geminiText("missing usage evidence")), usageMetadata: undefined })],
       ["oversized_candidate_metadata", JSON.stringify({ ...JSON.parse(geminiText("oversized candidate metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], finishMessage: "x".repeat(501) }] })],
       ["malformed_citation_metadata", JSON.stringify({ ...JSON.parse(geminiText("malformed citation metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], citationMetadata: { citationSources: [{ startIndex: 8, endIndex: 1, uri: "https://example.test/source" }] } }] })],
       ["unknown_prompt_block", JSON.stringify({ promptFeedback: { blockReason: "OTHER" }, usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 }, modelVersion: "gemini-2.5-flash" })],
@@ -466,7 +466,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("AIza")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(12)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(13)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("AIza")
     expect(events).not.toContain("partial must remain unavailable")

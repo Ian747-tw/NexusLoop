@@ -464,10 +464,12 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
 function validateGoogleGenerateContentResponseBody(body: string, expectedModelId: string): string {
   let payload: unknown
   try { payload = JSON.parse(body) } catch { throw new Error("Google generateContent response must be valid JSON") }
-  if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "promptFeedback", "usageMetadata", "modelVersion", "responseId"]) || !("usageMetadata" in payload) || payload.modelVersion !== undefined && !boundedSafeMetadataString(payload.modelVersion, 200) || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200) || payload.promptFeedback !== undefined && !validGooglePromptFeedback(payload.promptFeedback)) throw new Error("Google generateContent response identity or shape is invalid")
+  if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "promptFeedback", "usageMetadata", "modelVersion", "responseId"]) || payload.modelVersion !== undefined && !boundedSafeMetadataString(payload.modelVersion, 200) || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200) || payload.promptFeedback !== undefined && !validGooglePromptFeedback(payload.promptFeedback)) throw new Error("Google generateContent response identity or shape is invalid")
   const candidatesMissing = payload.candidates === undefined || Array.isArray(payload.candidates) && payload.candidates.length === 0
   const promptBlockFinishReason = candidatesMissing ? googlePromptBlockFinishReason(payload.promptFeedback) : undefined
-  if (!validGoogleUsageMetadata(payload.usageMetadata, promptBlockFinishReason !== undefined)) throw new Error("Google usage metadata is invalid")
+  if (payload.usageMetadata === undefined) {
+    if (promptBlockFinishReason === undefined) throw new Error("Google usage metadata is required")
+  } else if (!validGoogleUsageMetadata(payload.usageMetadata, promptBlockFinishReason !== undefined)) throw new Error("Google usage metadata is invalid")
   if (candidatesMissing) {
     const finishReason = promptBlockFinishReason
     if (!finishReason) throw new Error("Google generateContent requires exactly one candidate or a bounded prompt block")
