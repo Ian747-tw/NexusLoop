@@ -171,6 +171,8 @@ describe("Commander AI SDK model adapter", () => {
       promptTokensDetails: [{ modality: "TEXT", tokenCount: 17 }],
       candidatesTokensDetails: [{ modality: "TEXT", tokenCount: 5 }],
       cacheTokensDetails: [{ modality: "TEXT", tokenCount: 0 }],
+      toolUsePromptTokenCount: 2,
+      toolUsePromptTokensDetails: [{ modality: "TEXT", tokenCount: 2 }],
     }
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }])
     const adapter = connectorBackedAdapter(projectDir, transport, "api_gemini_final", {
@@ -243,8 +245,8 @@ describe("Commander AI SDK model adapter", () => {
   test("native Gemini normalizes a bounded prompt block into refusal without model evidence", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-prompt-block-"))
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify({
-      promptFeedback: { blockReason: "SAFETY", safetyRatings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", probability: "HIGH", blocked: true }] },
-      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 },
+      promptFeedback: { blockReason: "SAFETY", blockReasonMessage: "bounded provider safety explanation", safetyRatings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", probability: "HIGH", blocked: true }] },
+      usageMetadata: { promptTokenCount: 8, totalTokenCount: 8 },
       modelVersion: "gemini-2.5-flash",
       responseId: "response_prompt_blocked",
     }) }])
@@ -257,6 +259,7 @@ describe("Commander AI SDK model adapter", () => {
     expect(result).toMatchObject({ status: "refusal", finish_reason: "content-filter", request_count: 1, tool_calls: [] })
     expect(result.text).toBeUndefined()
     expect(JSON.stringify(result)).not.toContain("promptFeedback")
+    expect(JSON.stringify(result)).not.toContain("bounded provider safety explanation")
     expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
   })
 
@@ -413,6 +416,7 @@ describe("Commander AI SDK model adapter", () => {
       ["oversized_model_version", JSON.stringify({ ...JSON.parse(geminiText("oversized model version evidence")), modelVersion: `gemini-${"x".repeat(200)}` })],
       ["oversized_response_id", JSON.stringify({ ...JSON.parse(geminiText("oversized response identity")), responseId: "r".repeat(201) })],
       ["malformed_token_details", JSON.stringify({ ...JSON.parse(geminiText("malformed usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, promptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
+      ["malformed_tool_usage", JSON.stringify({ ...JSON.parse(geminiText("malformed tool usage evidence")), usageMetadata: { ...JSON.parse(geminiText("usage")).usageMetadata, toolUsePromptTokenCount: -1, toolUsePromptTokensDetails: [{ modality: "TEXT", tokenCount: -1 }] } })],
       ["oversized_candidate_metadata", JSON.stringify({ ...JSON.parse(geminiText("oversized candidate metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], finishMessage: "x".repeat(501) }] })],
       ["malformed_citation_metadata", JSON.stringify({ ...JSON.parse(geminiText("malformed citation metadata")), candidates: [{ ...JSON.parse(geminiText("candidate")).candidates[0], citationMetadata: { citationSources: [{ startIndex: 8, endIndex: 1, uri: "https://example.test/source" }] } }] })],
       ["unknown_prompt_block", JSON.stringify({ promptFeedback: { blockReason: "OTHER" }, usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 }, modelVersion: "gemini-2.5-flash" })],
@@ -436,7 +440,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("AIza")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(11)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(12)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("AIza")
     expect(events).not.toContain("partial must remain unavailable")

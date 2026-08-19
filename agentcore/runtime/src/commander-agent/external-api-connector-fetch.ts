@@ -457,9 +457,11 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   let payload: unknown
   try { payload = JSON.parse(body) } catch { throw new Error("Google generateContent response must be valid JSON") }
   if (!isRecord(payload) || !hasOnlyKeys(payload, ["candidates", "promptFeedback", "usageMetadata", "modelVersion", "responseId"]) || !("usageMetadata" in payload) || payload.modelVersion !== undefined && !boundedSafeMetadataString(payload.modelVersion, 200) || payload.responseId !== undefined && !boundedIdentifier(payload.responseId, 200) || payload.promptFeedback !== undefined && !validGooglePromptFeedback(payload.promptFeedback)) throw new Error("Google generateContent response identity or shape is invalid")
-  if (!validGoogleUsageMetadata(payload.usageMetadata)) throw new Error("Google usage metadata is invalid")
-  if (payload.candidates === undefined || Array.isArray(payload.candidates) && payload.candidates.length === 0) {
-    const finishReason = googlePromptBlockFinishReason(payload.promptFeedback)
+  const candidatesMissing = payload.candidates === undefined || Array.isArray(payload.candidates) && payload.candidates.length === 0
+  const promptBlockFinishReason = candidatesMissing ? googlePromptBlockFinishReason(payload.promptFeedback) : undefined
+  if (!validGoogleUsageMetadata(payload.usageMetadata, promptBlockFinishReason !== undefined)) throw new Error("Google usage metadata is invalid")
+  if (candidatesMissing) {
+    const finishReason = promptBlockFinishReason
     if (!finishReason) throw new Error("Google generateContent requires exactly one candidate or a bounded prompt block")
     return JSON.stringify({
       ...payload,
@@ -490,8 +492,9 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
 }
 
 function validGooglePromptFeedback(value: unknown): boolean {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["blockReason", "safetyRatings"])) return false
+  if (!isRecord(value) || !hasOnlyKeys(value, ["blockReason", "blockReasonMessage", "safetyRatings"])) return false
   if (value.blockReason !== undefined && value.blockReason !== null && !boundedIdentifier(value.blockReason, 80)) return false
+  if (value.blockReasonMessage !== undefined && value.blockReasonMessage !== null && (typeof value.blockReasonMessage !== "string" || value.blockReasonMessage.length === 0 || Buffer.byteLength(value.blockReasonMessage) > 1000)) return false
   return value.safetyRatings === undefined || value.safetyRatings === null || validGoogleSafetyRatings(value.safetyRatings)
 }
 
@@ -546,18 +549,20 @@ function validGoogleCitationMetadata(value: unknown): boolean {
   })
 }
 
-function validGoogleUsageMetadata(value: unknown): boolean {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["cachedContentTokenCount", "thoughtsTokenCount", "promptTokenCount", "candidatesTokenCount", "totalTokenCount", "trafficType", "serviceTier", "promptTokensDetails", "candidatesTokensDetails", "cacheTokensDetails"])) return false
-  for (const required of ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]) {
+function validGoogleUsageMetadata(value: unknown, allowMissingCandidateCount = false): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["cachedContentTokenCount", "thoughtsTokenCount", "toolUsePromptTokenCount", "promptTokenCount", "candidatesTokenCount", "totalTokenCount", "trafficType", "serviceTier", "promptTokensDetails", "candidatesTokensDetails", "cacheTokensDetails", "toolUsePromptTokensDetails"])) return false
+  for (const required of ["promptTokenCount", "totalTokenCount"]) {
     if (!(required in value) || !nonnegativeInteger(value[required])) return false
   }
-  for (const optional of ["cachedContentTokenCount", "thoughtsTokenCount"]) {
+  if (!allowMissingCandidateCount && (!("candidatesTokenCount" in value) || !nonnegativeInteger(value.candidatesTokenCount))) return false
+  if (allowMissingCandidateCount && value.candidatesTokenCount !== undefined && value.candidatesTokenCount !== null && !nonnegativeInteger(value.candidatesTokenCount)) return false
+  for (const optional of ["cachedContentTokenCount", "thoughtsTokenCount", "toolUsePromptTokenCount"]) {
     if (value[optional] !== undefined && value[optional] !== null && !nonnegativeInteger(value[optional])) return false
   }
   for (const optional of ["trafficType", "serviceTier"]) {
     if (value[optional] !== undefined && value[optional] !== null && !boundedIdentifier(value[optional], 80)) return false
   }
-  return validGoogleTokenDetails(value.promptTokensDetails) && validGoogleTokenDetails(value.candidatesTokensDetails) && validGoogleTokenDetails(value.cacheTokensDetails)
+  return validGoogleTokenDetails(value.promptTokensDetails) && validGoogleTokenDetails(value.candidatesTokensDetails) && validGoogleTokenDetails(value.cacheTokensDetails) && validGoogleTokenDetails(value.toolUsePromptTokensDetails)
 }
 
 function boundedSafeMetadataString(value: unknown, max: number): value is string {
