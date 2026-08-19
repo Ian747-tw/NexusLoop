@@ -20,9 +20,9 @@ The audited dependency is `@ai-sdk/google@4.0.15` on the existing
 1. Add the closed transport `google_generative_ai_connector` with
    `provider_kind=google`. It selects only NexusLoop's built-in, stateless,
    unary Google Generative AI `generateContent` policy.
-2. Accept a Gemini model for activation only when it is one safe path segment:
-   1-120 ASCII letters, digits, `.`, `_`, or `-`, beginning with a letter or
-   digit. The endpoint is exactly
+2. Accept a Gemini model for activation only when it begins with `gemini-` and
+   is one safe path segment: 1-120 ASCII letters, digits, `.`, `_`, or `-`,
+   beginning with a letter or digit. The endpoint is exactly
    `<connector.base_url>/models/<model>:generateContent` using `POST`, with no
    query, fragment, URL credentials, alternate RPC, or streaming.
 3. Give the Google SDK a fixed non-secret sentinel. The strict connector bridge

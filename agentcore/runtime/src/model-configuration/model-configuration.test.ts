@@ -130,6 +130,11 @@ describe("unified model profiles and role-binding authority", () => {
     })
     expect(projectCommanderModelSelection(config, gemini)).toMatchObject({ provider_kind: "google", transport_kind: "google_generative_ai_connector", model_id: "gemini-2.5-flash" })
     expect(() => validateCommanderModelConformanceRegistry({ registry_version: 1, policy_version: "nexusloop_commander_conformance_policy_v1", entries: [{ conformance_version: 1, conformance_id: "google-gemini-native-v1", provider_kind: "google", transport_kind: "google_generative_ai_connector", provider_id: "google-primary", model_id: "gemini-2.5-flash" }] })).toThrow("policy v2")
+    expect(validateCommanderModelConformanceRegistry({
+      registry_version: 1,
+      policy_version: "nexusloop_commander_conformance_policy_v1",
+      entries: [{ conformance_version: 1, conformance_id: "google-openai-compatible-v1", provider_kind: "google", transport_kind: "openai_compatible_connector", provider_id: "google-compatible", model_id: "legacy-google-model" }],
+    })).toMatchObject({ entries: [{ provider_kind: "google", transport_kind: "openai_compatible_connector" }] })
     expect(validateCommanderModelConformanceRegistry(conformanceInput()).registry_hash).toBe(projections().conformance.registry_hash)
   })
 

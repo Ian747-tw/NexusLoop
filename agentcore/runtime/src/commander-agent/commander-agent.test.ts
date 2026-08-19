@@ -263,6 +263,25 @@ describe("Commander AI SDK model adapter", () => {
     expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
   })
 
+  test("native Gemini normalizes bounded candidate safety finishes into refusals", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-candidate-block-"))
+    for (const finishReason of ["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY"]) {
+      const payload = JSON.parse(geminiText("blocked candidate text"))
+      payload.candidates[0].finishReason = finishReason
+      const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(payload) }])
+      const result = await connectorBackedAdapter(projectDir, transport, `api_gemini_candidate_${finishReason.toLowerCase()}`, {
+        config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+        connector: googleConnector(),
+        env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
+      }).executeOneStep({ ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 })
+      expect(transport.requests).toHaveLength(1)
+      expect(result).toMatchObject({ status: "refusal", finish_reason: "content-filter", request_count: 1, tool_calls: [] })
+      expect(result.text).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain("blocked candidate text")
+    }
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(6)
+  })
+
   test("native Gemini preserves transient thought signatures across one tool continuation without persistence", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-continuation-"))
     const signature = "bounded-thought-signature-fixture"

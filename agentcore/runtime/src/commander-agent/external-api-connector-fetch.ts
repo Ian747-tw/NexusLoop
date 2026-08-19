@@ -471,7 +471,7 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   if (!Array.isArray(payload.candidates) || payload.candidates.length !== 1) throw new Error("Google generateContent requires exactly one candidate")
   const candidate = payload.candidates[0]
   if (!isRecord(candidate) || !hasOnlyKeys(candidate, ["content", "finishReason", "finishMessage", "index", "safetyRatings", "avgLogprobs", "citationMetadata", "tokenCount"]) || !("content" in candidate) || !("finishReason" in candidate) || !("index" in candidate) || candidate.index !== 0 || !validGoogleCandidateMetadata(candidate) || !isRecord(candidate.content) || !hasExactKeys(candidate.content, ["role", "parts"]) || candidate.content.role !== "model" || !Array.isArray(candidate.content.parts) || candidate.content.parts.length === 0 || candidate.content.parts.length > 128) throw new Error("Google generateContent candidate is invalid")
-  if (candidate.finishReason !== "STOP" && candidate.finishReason !== "SAFETY" && candidate.finishReason !== "RECITATION" && candidate.finishReason !== "PROHIBITED_CONTENT") throw new Error("Google generateContent finish reason is forbidden, ambiguous, or truncated")
+  if (candidate.finishReason !== "STOP" && candidate.finishReason !== "SAFETY" && candidate.finishReason !== "RECITATION" && candidate.finishReason !== "BLOCKLIST" && candidate.finishReason !== "PROHIBITED_CONTENT" && candidate.finishReason !== "SPII" && candidate.finishReason !== "IMAGE_SAFETY") throw new Error("Google generateContent finish reason is forbidden, ambiguous, or truncated")
   let calls = 0
   let texts = 0
   for (const part of candidate.content.parts) {
@@ -488,6 +488,12 @@ function validateGoogleGenerateContentResponseBody(body: string, expectedModelId
   }
   if (candidate.finishReason === "STOP" && calls === 0 && texts === 0) throw new Error("Google final response requires bounded text or client function calls")
   if (candidate.finishReason !== "STOP" && calls > 0) throw new Error("Google blocked response cannot contain executable function calls")
+  if (candidate.finishReason !== "STOP") {
+    return JSON.stringify({
+      ...payload,
+      candidates: [{ ...candidate, content: { role: "model", parts: [] } }],
+    })
+  }
   return body
 }
 
