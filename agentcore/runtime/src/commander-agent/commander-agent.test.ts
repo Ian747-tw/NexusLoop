@@ -316,6 +316,7 @@ describe("Commander AI SDK model adapter", () => {
 
   test("native Gemini accepts unsigned later parallel calls and preserves only observed signatures", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-parallel-continuation-"))
+    const modelId = "gemini-3-pro-preview"
     const signature = "parallel-first-call-signature"
     const response = {
       candidates: [{
@@ -327,15 +328,15 @@ describe("Commander AI SDK model adapter", () => {
         index: 0,
       }],
       usageMetadata: { promptTokenCount: 18, candidatesTokenCount: 6, totalTokenCount: 24, thoughtsTokenCount: 2 },
-      modelVersion: "gemini-2.5-flash",
+      modelVersion: modelId,
       responseId: "response_parallel_calls",
     }
     const options = {
-      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: "gemini-2.5-flash" }),
+      config: connectorConfig({ transport_kind: "google_generative_ai_connector", provider_id: "google_provider", connector_id: "google-test", model_id: modelId }),
       connector: googleConnector(),
       env: { NXL_TEST_GOOGLE_KEY: "real-google-key" },
     }
-    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: "gemini-2.5-flash", max_output_tokens: 1024 }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "google_provider", provider_kind: "google", model_id: modelId, max_output_tokens: 1024 }
     const firstTransport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(response) }])
     const first = await connectorBackedAdapter(projectDir, firstTransport, "api_gemini_parallel_tool", options).executeOneStep(request)
     expect(first).toMatchObject({ status: "tool_call", tool_calls: [
@@ -355,10 +356,14 @@ describe("Commander AI SDK model adapter", () => {
       ],
     })
     expect(second).toMatchObject({ status: "final", text: "parallel continuation complete" })
+    expect(secondTransport.requests).toHaveLength(1)
     const continuationBody = String(secondTransport.requests[0].body)
     expect(continuationBody.match(new RegExp(signature, "g"))).toHaveLength(1)
+    expect(continuationBody).not.toContain("skip_thought_signature_validator")
     expect(JSON.stringify(second)).not.toContain(signature)
-    expect(await eventText(projectDir)).not.toContain(signature)
+    const events = await eventText(projectDir)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(2)
+    expect(events).not.toContain(signature)
   })
 
   test("native Gemini accepts bounded passive candidate metadata and synthesizes a stable missing function-call ID", async () => {

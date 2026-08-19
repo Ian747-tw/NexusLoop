@@ -159,7 +159,11 @@ function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, c
   if (bytes > config.max_request_bytes) throw new Error(`connector model request exceeds max_request_bytes: ${config.max_request_bytes}`)
   const payload = JSON.parse(request.body) as unknown
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("connector model transport body must be a JSON object")
-  if (config.transport_kind === "google_generative_ai_connector") validateGoogleGenerateContentBody(payload as Record<string, unknown>)
+  if (config.transport_kind === "google_generative_ai_connector") {
+    validateGoogleGenerateContentBody(payload as Record<string, unknown>, config.model_id)
+    request.body = JSON.stringify(payload)
+    if (new TextEncoder().encode(request.body).byteLength > config.max_request_bytes) throw new Error(`connector model request exceeds max_request_bytes: ${config.max_request_bytes}`)
+  }
   else {
     const model = (payload as { model?: unknown }).model
     if (typeof model !== "string" || model !== config.model_id) throw new Error("connector model transport model does not match configured model_id")
@@ -221,10 +225,10 @@ function filterGoogleHeaders(headers: Headers, dropped: Set<string>): Record<str
   return out
 }
 
-function validateGoogleGenerateContentBody(payload: Record<string, unknown>): void {
+function validateGoogleGenerateContentBody(payload: Record<string, unknown>, modelId: string): void {
   if (Object.keys(payload).some((key) => !GOOGLE_REQUEST_KEYS.has(key))) throw new Error("Google generateContent request contains a forbidden field")
   if (!Array.isArray(payload.contents) || payload.contents.length === 0 || payload.contents.length > 256) throw new Error("Google generateContent contents must be a bounded nonempty array")
-  for (const content of payload.contents) validateGoogleContent(content)
+  for (const content of payload.contents) validateGoogleContent(content, modelId)
   if (payload.systemInstruction !== undefined) validateGoogleSystemInstruction(payload.systemInstruction)
   if (!isRecord(payload.generationConfig)) throw new Error("Google generateContent generationConfig is required")
   const generationKeys = new Set(["maxOutputTokens", "temperature"])
@@ -239,14 +243,18 @@ function validateGoogleSystemInstruction(value: unknown): void {
   if (!isRecord(value) || !hasExactKeys(value, ["parts"]) || !isTextParts(value.parts, 16)) throw new Error("Google systemInstruction must contain bounded text only")
 }
 
-function validateGoogleContent(value: unknown): void {
+function validateGoogleContent(value: unknown, modelId: string): void {
   if (!isRecord(value) || !hasExactKeys(value, ["role", "parts"]) || value.role !== "user" && value.role !== "model" || !Array.isArray(value.parts) || value.parts.length === 0 || value.parts.length > 128) throw new Error("Google content shape is invalid")
+  let modelFunctionCalls = 0
   for (const part of value.parts) {
     if (!isRecord(part)) throw new Error("Google content part is invalid")
     if (hasExactKeys(part, ["text"]) && typeof part.text === "string" && part.text) continue
     if (value.role === "model" && (hasExactKeys(part, ["functionCall", "thoughtSignature"]) || hasExactKeys(part, ["functionCall"]))) {
       if (!isRecord(part.functionCall) || !hasExactKeys(part.functionCall, ["id", "name", "args"]) || !boundedIdentifier(part.functionCall.id, 200) || !boundedIdentifier(part.functionCall.name, 200) || !isRecord(part.functionCall.args)) throw new Error("Google client functionCall part is invalid")
+      if (googleModelRequiresThoughtSignature(modelId) && modelFunctionCalls === 0 && (!boundedIdentifier(part.thoughtSignature, 4096) || part.thoughtSignature === "skip_thought_signature_validator")) throw new Error("Google first Gemini 3 function call requires an observed thought signature")
+      if (googleModelRequiresThoughtSignature(modelId) && modelFunctionCalls > 0 && part.thoughtSignature === "skip_thought_signature_validator") delete part.thoughtSignature
       if (part.thoughtSignature !== undefined && (!boundedIdentifier(part.thoughtSignature, 4096) || part.thoughtSignature === "skip_thought_signature_validator")) throw new Error("Google thought signature is invalid")
+      modelFunctionCalls += 1
       continue
     }
     if (value.role === "user" && hasExactKeys(part, ["functionResponse"])) {

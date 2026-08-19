@@ -64,8 +64,10 @@ continuation.
 
 The package can inject `skip_thought_signature_validator` for Gemini 3 when
 metadata is missing. NexusLoop does not accept that behavior as proof of native
-continuation: the strict body validator rejects the skip sentinel and requires
-the observed signature on the first function call of a Gemini 3 step.
+continuation: the strict body validator requires the observed signature on the
+first function call of each Gemini 3 model turn. For later parallel calls only,
+the bridge removes the package sentinel before dispatch; it neither persists
+nor treats that sentinel as observed continuation metadata.
 
 ## Response Contract
 
