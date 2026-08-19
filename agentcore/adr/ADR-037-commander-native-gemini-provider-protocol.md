@@ -37,9 +37,13 @@ The audited dependency is `@ai-sdk/google@4.0.15` on the existing
    state, retries, fallback, and automatic tool execution.
 5. Native JSON-schema output remains unsupported. Commander uses the existing
    bounded JSON fallback and publishes `supports_json_schema=false`.
-6. Require exactly one candidate and an exact configured `modelVersion`.
-   Unsupported parts, malformed calls, ambiguous finish reasons, blocking,
-   truncation, empty/multiple candidates, or malformed usage fail closed.
+6. Require exactly one candidate for ordinary responses. A bounded
+   zero-candidate `promptFeedback` block is normalized only into a refusal;
+   unknown or malformed prompt-block shapes fail closed. Returned
+   `modelVersion` is optional, bounded, and non-authoritative: the configured
+   model path remains the selection authority. Unsupported parts, malformed
+   calls, ambiguous finish reasons, truncation, unblocked empty candidates,
+   multiple candidates, or malformed usage fail closed.
 7. Gemini function-call thought signatures are transient continuation data.
    A module-private identity map carries a bounded signature from one normalized
    call into only its matching next request. Signatures are non-enumerable,
