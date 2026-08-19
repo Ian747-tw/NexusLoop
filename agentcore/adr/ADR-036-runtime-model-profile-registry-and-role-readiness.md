@@ -75,7 +75,8 @@ command, CLI/TUI selector, provider discovery, provider execution protocol,
 fallback, or upstream edit. Existing 9W4A Commander execution and recovery
 identity remain unchanged.
 
-9W4C adds Gemini through this authority, 9W4D adds OpenAI Responses and the
+9W4C adds native Gemini `generateContent` through this authority without
+changing Executor selection or readiness. 9W4D adds OpenAI Responses and the
 verified compatibility matrix, and 9W4E owns first-run setup and role-model
 selection UX. External research MCP remains post-v1.
 

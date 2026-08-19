@@ -183,3 +183,9 @@ environment path without changing 9W4A execution identity, resolves role
 readiness independently, and scopes Executor selection to the primary
 `opencode run --model` seam. No CLI/TUI model selection or persistent profile
 configuration was added.
+
+Branch 9W4C adds Gemini as a Commander conformance-policy-v2 selection without
+changing the model-configuration schema or Executor mapping policy. Generic
+model IDs remain inert; Gemini's stricter one-path-segment grammar is checked
+only when activating its native transport. Executor selection and readiness
+remain independent.

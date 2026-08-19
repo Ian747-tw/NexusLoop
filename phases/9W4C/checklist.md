@@ -6,6 +6,6 @@
 - [x] 4. Add red transport, profile, recovery, and continuation tests.
 - [x] 5. Add the exact runtime dependency and strict audited Gemini transport.
 - [x] 6. Bind Gemini to unified profile, readiness, and recovery authority.
-- [ ] 7. Add red real headless-TUI Gemini recovery E2E and production-path fixture.
-- [ ] 8. Add ADR-037 and update implemented architecture/provider consequences.
-- [ ] 9. Run complete final validation and mechanical scope checks.
+- [x] 7. Add red real headless-TUI Gemini recovery E2E and production-path fixture.
+- [x] 8. Add ADR-037 and update implemented architecture/provider consequences.
+- [x] 9. Run complete final validation and mechanical scope checks.

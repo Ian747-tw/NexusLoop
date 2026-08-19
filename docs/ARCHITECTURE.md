@@ -131,6 +131,15 @@ bounded evidence, and its exact selection reaches only the primary tactical
 `opencode run --model provider/model` argument. Conflicting primary-model
 arguments fail closed; auxiliary OpenCode models remain untouched. See ADR-036.
 
+Branch 9W4C adds the third closed Commander protocol,
+`google_generative_ai_connector`, through that registry. It uses native unary
+Google Generative AI `generateContent`, one path-safe model segment, connector-
+owned `x-goog-api-key` injection, one audited request per model step, strict
+single-candidate response validation, and transient in-memory thought
+signatures for client-tool continuation. Google server tools, Interactions,
+streaming, retries, discovery, and cross-role authority remain excluded. See
+ADR-037.
+
 ```text
 NexusLoop domain control plane
 -> RuntimeServer provider config
@@ -339,7 +348,7 @@ Follow-on sequencing:
   mapping registry; OpenCode catalog/auth observations are not that authority.
 - 9W4B1: immutable runtime registry, legacy Commander environment adapter,
   scoped primary Executor projection, and independent role readiness.
-- 9W4C: native Gemini through unified model profiles.
+- 9W4C: native Gemini `generateContent` through unified model profiles.
 - 9W4D: native OpenAI Responses and verified compatibility matrix.
 - 9W4E: first-run provider setup and TUI role-model selection.
 - post-v1 9XB1: first exact external-research descriptor only after fresh

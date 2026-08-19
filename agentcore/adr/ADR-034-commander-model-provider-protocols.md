@@ -17,10 +17,13 @@ separate from ambient OpenCode provider configuration.
 
 ### Closed Protocol Authority
 
-Commander transport configuration is a closed discriminated union:
+Commander transport configuration was initially a closed discriminated union:
 
 - `openai_compatible_connector` retains its existing meaning and request shape.
 - `anthropic_messages_connector` selects native Anthropic Messages.
+
+ADR-037 extends that same closed architecture with
+`google_generative_ai_connector`; it does not reinterpret either 9W4A value.
 
 The discriminant selects only a built-in provider factory and request policy.
 It cannot select a module, callback, arbitrary path, remote model list, or
@@ -128,3 +131,8 @@ protocol through a NexusLoop-owned conformance entry; OpenCode model support,
 catalog data, plugins, or authentication do not authorize either protocol.
 There is no RuntimeServer activation and existing 9W4A configuration and
 recovery identities are unchanged.
+
+Branch 9W4C proves the extension point with native, unary Google Generative AI
+`generateContent`. Gemini uses the same controller and audit boundary, while
+its path-safe model activation, request policy, response policy, and transient
+thought-signature continuation remain protocol-specific. See ADR-037.
