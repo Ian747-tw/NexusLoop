@@ -11,4 +11,3 @@
 - Vertex AI, external MCP/research, proposal, governance, or mutation authority.
 - Changes to `resume_supported=false`, `provider_tool_loop_enabled=false`, or
   `external_read_execution_enabled=false`.
-

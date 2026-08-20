@@ -19,4 +19,3 @@
 9. Add a real headless-TUI recovery scenario using a deterministic local
    Responses server through the production connector path.
 10. Add ADR-038 and update architecture/provider documentation with implemented facts.
-

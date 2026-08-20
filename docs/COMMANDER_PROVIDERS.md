@@ -52,7 +52,9 @@ model, credential authority, and role-specific mappings are semantic.
 - **Verified native protocols:** Anthropic Messages through
   `anthropic_messages_connector` and `@ai-sdk/anthropic@4.0.15`; Google
   Generative AI unary `generateContent` through
-  `google_generative_ai_connector` and `@ai-sdk/google@4.0.15`.
+  `google_generative_ai_connector` and `@ai-sdk/google@4.0.15`; OpenAI
+  Responses through `openai_responses_connector` and
+  `@ai-sdk/openai@4.0.15`.
 - **Verified OpenAI-compatible providers:** endpoints with deterministic
   NexusLoop conformance coverage through `openai_compatible_connector`.
 - **Compatible but unverified endpoints:** not supported merely because they
@@ -126,6 +128,40 @@ call that would require unavailable transient metadata. Existing
 OpenAI-compatible and Anthropic recovery message envelopes remain unchanged.
 Native Gemini JSON-schema output is not claimed; bounded NexusLoop JSON
 fallback remains in use.
+
+## OpenAI Responses
+
+Use:
+
+```text
+NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND=openai_responses_connector
+NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND=openai
+NXL_COMMANDER_INVESTIGATION_SUPPORTS_JSON_SCHEMA=0
+```
+
+The connector base is normally `https://api.openai.com/v1`; NexusLoop derives
+exactly `/responses` and requires `POST`. The connector defines no default
+headers and owns exactly one environment credential reference injected as
+`Authorization` with the exact `Bearer ` prefix. The SDK receives only a fixed
+non-secret sentinel. Ambient OpenAI/OpenCode credentials, organization/project
+headers, cookies, query authentication, alternate paths, and caller headers are
+rejected.
+
+The transport is unary and stateless. It forces `store=false` and permits only
+bounded messages, text, ordinary NexusLoop client functions and results,
+generic tool choice, output limits, and proven sampling fields. Previous-
+response chaining, conversations, background execution, retrieval, prompt
+templates, include expansion, service-tier authority, hosted tools, reasoning
+continuation, streaming, retries, and fallback are rejected. Successful raw
+responses are reduced to bounded text, refusal, client function calls, and
+usage before SDK normalization; response IDs and provider metadata are
+discarded. Native Responses JSON-schema output is not claimed.
+
+Commander conformance policy v3 is required for native Responses and also
+admits every protocol valid under v1/v2. The pure compatibility matrix records
+the four executable protocol contracts as static evidence only; it cannot
+select a model, establish readiness, resolve credentials, or authorize an
+endpoint.
 
 ## OpenAI-Compatible Transport
 

@@ -59,4 +59,3 @@ readiness, resolve credentials, discover models, or choose fallback.
 ## Unresolved
 
 None. Implementation must stop if the package or tests contradict these answers.
-

@@ -136,3 +136,9 @@ Branch 9W4C proves the extension point with native, unary Google Generative AI
 `generateContent`. Gemini uses the same controller and audit boundary, while
 its path-safe model activation, request policy, response policy, and transient
 thought-signature continuation remain protocol-specific. See ADR-037.
+
+Branch 9W4D adds native OpenAI Responses under conformance policy v3. It forces
+stateless `store=false` execution, rejects server tools and remote response
+state, and validates a narrow raw response before SDK normalization. Existing
+OpenAI-compatible, Anthropic, and Gemini protocol behavior remains unchanged.
+See ADR-038.

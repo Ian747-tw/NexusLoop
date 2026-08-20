@@ -11,4 +11,3 @@
 | Response ID or alias rewrites selection | IDs are bounded non-authoritative and discarded; response model must match configured authority exactly. |
 | Matrix becomes selection/readiness authority | Matrix is pure, immutable, credential-free evidence with no runtime activation or lookup side effects. |
 | Recovery replays network state | Protocol policy enters the execution envelope; no response ID, request body, result body, or provider continuation is persisted or replayed. |
-

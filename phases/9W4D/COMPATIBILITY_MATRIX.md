@@ -15,4 +15,3 @@ profiles, conformance, readiness, fallback, or execution.
 Executable tests must cover every claimed transport's current golden request,
 tool, audit, retry, and recovery behavior. A matrix entry may say native
 structured output is unavailable even when a provider advertises it.
-

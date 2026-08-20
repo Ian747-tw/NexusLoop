@@ -8,4 +8,4 @@
 - [x] 6. Prove recovery, lifecycle, and unchanged-provider behavior.
 - [x] 7. Prove production path through deterministic real CLI/TUI recovery.
 - [x] 8. Document implemented architecture and decisions.
-- [ ] 9. Run final local-only validation and produce exhaustive handoff evidence.
+- [x] 9. Run final local-only validation and produce exhaustive handoff evidence.

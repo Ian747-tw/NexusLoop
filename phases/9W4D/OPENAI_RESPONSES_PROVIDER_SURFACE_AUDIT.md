@@ -53,4 +53,3 @@ stored responses, previous-response chaining, conversations, background mode,
 and hosted tools. OpenAI's data-controls documentation states Responses are
 stored by default unless `store:false`; therefore explicit stateless validation
 is mandatory rather than relying on SDK defaults.
-
