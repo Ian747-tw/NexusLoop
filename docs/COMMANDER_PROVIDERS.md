@@ -50,7 +50,9 @@ model, credential authority, and role-specific mappings are semantic.
 ## Support Taxonomy
 
 - **Verified native protocols:** Anthropic Messages through
-  `anthropic_messages_connector` and `@ai-sdk/anthropic@4.0.15`.
+  `anthropic_messages_connector` and `@ai-sdk/anthropic@4.0.15`; Google
+  Generative AI unary `generateContent` through
+  `google_generative_ai_connector` and `@ai-sdk/google@4.0.15`.
 - **Verified OpenAI-compatible providers:** endpoints with deterministic
   NexusLoop conformance coverage through `openai_compatible_connector`.
 - **Compatible but unverified endpoints:** not supported merely because they
@@ -95,11 +97,41 @@ Native Anthropic JSON-schema output is not claimed. Commander uses its bounded
 JSON fallback when a phase requires structured text. Client retries remain
 zero.
 
+## Google Generative AI
+
+Use:
+
+```text
+NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND=google_generative_ai_connector
+NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND=google
+NXL_COMMANDER_INVESTIGATION_SUPPORTS_JSON_SCHEMA=0
+```
+
+The connector base is normally `https://generativelanguage.googleapis.com/v1beta`.
+NexusLoop derives exactly `/models/<model>:generateContent`, requires `POST`,
+and accepts only a single safe ASCII model segment. The connector owns exactly
+one unprefixed `x-goog-api-key` credential reference. Query credentials,
+bearer auth, cookies, arbitrary headers, ambient Google/OpenCode auth, and URL
+or path authority in the model ID are rejected.
+
+The transport is stateless and unary. It permits bounded text and NexusLoop
+client function tools only. Search, URL context, code execution, media, Files,
+cache/thinking/safety authority, provider options, multiple candidates,
+Interactions, streaming, retained state, retries, and all Google server tools
+are rejected. Function-call thought signatures are carried only in transient
+in-memory continuation state for matching live turns and are never persisted or
+hashed. Native Gemini turn-complete recovery renders the bounded checkpoint
+tool exchange as fresh summary context instead of replaying a native function
+call that would require unavailable transient metadata. Existing
+OpenAI-compatible and Anthropic recovery message envelopes remain unchanged.
+Native Gemini JSON-schema output is not claimed; bounded NexusLoop JSON
+fallback remains in use.
+
 ## OpenAI-Compatible Transport
 
 `openai_compatible_connector` retains the existing `/chat/completions`
 contract, connector-managed sentinel credential bridge, response
-normalization, and recovery identity. This branch does not reinterpret or
+normalization, and recovery identity. Gemini support does not reinterpret or
 migrate existing OpenAI-compatible records.
 
 ## Retained Boundaries

@@ -1,10 +1,11 @@
 import { AnthropicLanguageModel } from "@ai-sdk/anthropic/internal"
+import { createGoogleGenerativeAI } from "@ai-sdk/google"
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { generateText, InvalidToolInputError, jsonSchema, NoSuchToolError, Output, streamText, tool, type ModelMessage } from "ai"
 import { redactText, redactValue } from "../security/redaction"
 import { buildProviderToolMap, makeCommanderToolCall, parseJsonFallback, providerJsonSchema, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelToolCallPart, CommanderModelUsage } from "./commander-model-types"
-import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, CONNECTOR_MANAGED_API_KEY_SENTINEL, type CommanderConnectorModelTransportKind } from "./commander-connector-transport-types"
+import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, CONNECTOR_MANAGED_API_KEY_SENTINEL, GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION, type CommanderConnectorModelTransportKind } from "./commander-connector-transport-types"
 import { externalApiConnectorFetchAuthority, type ExternalApiConnectorFetchAuthority } from "./external-api-connector-fetch"
 
 export type AiSdkCommanderCredentialMode = "explicit_api_key" | "connector_managed"
@@ -19,6 +20,15 @@ export type AiSdkCommanderModelAdapterOptions = {
   default_headers?: Record<string, string>
   now?: () => Date
 }
+
+const GEMINI_CONTINUATIONS = new WeakMap<object, Readonly<{
+  thought_signature: string
+  transport_kind: "google_generative_ai_connector"
+  provider_id: string
+  model_id: string
+  investigation_id: string
+}>>()
+const MAX_GEMINI_THOUGHT_SIGNATURE_BYTES = 4096
 
 export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter {
   readonly adapter_id = "ai_sdk_core" as const
@@ -42,7 +52,9 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     this.transportKind = this.options.transport_kind ?? "openai_compatible_connector"
     this.adapter_version = this.transportKind === "anthropic_messages_connector"
       ? ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION
-      : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11"
+      : this.transportKind === "google_generative_ai_connector"
+        ? GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION
+        : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11"
     this.supports_structured_output = this.transportKind === "openai_compatible_connector"
     this.supports_openai_compatible = this.transportKind === "openai_compatible_connector"
     this.supports_streaming = this.transportKind === "openai_compatible_connector"
@@ -53,14 +65,14 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     request = snapshotModelStepRequest(request)
     const started = Date.now()
     if (this.connectorFetchAuthority && (request.provider_id !== this.connectorFetchAuthority.provider_id || request.model_id !== this.connectorFetchAuthority.model_id)) {
-      return finalizeStep(request, "failed", { usage: { provider_reported: false }, requestCount: 0, durationMs: Date.now() - started, error: "Anthropic connector fetch authority does not match request identity" })
+      return finalizeStep(request, "failed", { usage: { provider_reported: false }, requestCount: 0, durationMs: Date.now() - started, error: this.transportKind === "anthropic_messages_connector" ? "Anthropic connector fetch authority does not match request identity" : "Google connector fetch authority does not match request identity" })
     }
-    const measured = this.providerForCall()
+    const measured = this.providerForCall(request.request_id)
     try {
       const result = await generateText({
         model: measured.model(boundIdentifier(request.model_id, "model_id")),
         instructions: instructionsFromRequest(request),
-        messages: toAiSdkMessages(request),
+        messages: toAiSdkMessages(request, this.transportKind),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
         output: this.transportKind === "openai_compatible_connector" ? structuredOutput(request) : undefined,
@@ -69,7 +81,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         abortSignal: request.abort_signal,
         maxRetries: 0,
       })
-      const toolCalls = request.tool_protocol === "native" ? normalizeToolCalls(request, result.toolCalls ?? []) : []
+      const toolCalls = request.tool_protocol === "native" ? normalizeToolCalls(request, result.toolCalls ?? [], this.transportKind) : []
       if (request.tool_protocol === "json_fallback" && toolCalls.length === 0) {
         const fallback = finalizeJsonFallbackStep(request, {
           text: result.text ?? "",
@@ -98,18 +110,18 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
 
   async *executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
     request = snapshotModelStepRequest(request)
-    if (this.transportKind === "anthropic_messages_connector") {
-      yield { type: "error", error: "Anthropic Messages connector streaming is not enabled" }
+    if (this.transportKind !== "openai_compatible_connector") {
+      yield { type: "error", error: this.transportKind === "anthropic_messages_connector" ? "Anthropic Messages connector streaming is not enabled" : "Google generateContent connector streaming is not enabled" }
       return
     }
     const started = Date.now()
-    const measured = this.providerForCall()
+    const measured = this.providerForCall(request.request_id)
     let completed = false
     try {
       const result = streamText({
         model: measured.model(boundIdentifier(request.model_id, "model_id")),
         instructions: instructionsFromRequest(request),
-        messages: toAiSdkMessages(request),
+        messages: toAiSdkMessages(request, this.transportKind),
         tools: request.tool_protocol === "native" ? aiSdkTools(request) : undefined,
         toolChoice: request.tool_protocol === "native" ? toolChoice(request) : undefined,
         output: this.transportKind === "openai_compatible_connector" ? structuredOutput(request) : undefined,
@@ -219,11 +231,13 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     }
   }
 
-  private providerForCall() {
+  private providerForCall(requestId: string) {
     let requestCount = 0
+    let generatedIdIndex = 0
     const guardedFetch = (async (input, init) => {
       requestCount += 1
-      return this.options.fetch(input, redactRequestInit(init))
+      const safeInit = this.transportKind === "google_generative_ai_connector" ? sanitizeGoogleSdkRequest(init) : redactRequestInit(init)
+      return this.options.fetch(input, safeInit)
     }) as typeof fetch
     const apiKey = this.options.credential_mode === "connector_managed" ? CONNECTOR_MANAGED_API_KEY_SENTINEL : this.options.api_key
     if (this.transportKind === "anthropic_messages_connector") {
@@ -245,6 +259,16 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         requestCount: () => requestCount,
       }
     }
+    if (this.transportKind === "google_generative_ai_connector") {
+      const provider = createGoogleGenerativeAI({
+        name: "nexusloop-commander-google",
+        baseURL: canonicalProviderBaseUrl(this.options.base_url),
+        apiKey: CONNECTOR_MANAGED_API_KEY_SENTINEL,
+        fetch: guardedFetch,
+        generateId: () => `commander_google_call_${stableHash({ request_id: requestId }).slice(0, 16)}_${generatedIdIndex++}`,
+      })
+      return { model: (modelId: string) => provider.chat(modelId), requestCount: () => requestCount }
+    }
     const provider = createOpenAICompatible({
         name: boundIdentifier(this.options.provider_name, "provider_name"),
         baseURL: this.options.base_url,
@@ -261,7 +285,27 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
   }
 }
 
+function sanitizeGoogleSdkRequest(init: RequestInit | undefined): RequestInit | undefined {
+  const safe = redactRequestInit(init)
+  if (!safe || typeof safe.body !== "string") return safe
+  let parsed: unknown
+  try { parsed = JSON.parse(safe.body) } catch { return safe }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return safe
+  const payload = parsed as Record<string, unknown>
+  if (!payload.toolConfig || typeof payload.toolConfig !== "object" || Array.isArray(payload.toolConfig)) return safe
+  const toolConfig = payload.toolConfig as Record<string, unknown>
+  if (toolConfig.includeServerSideToolInvocations !== true) return safe
+  const { includeServerSideToolInvocations: _discarded, ...boundedToolConfig } = toolConfig
+  return { ...safe, body: JSON.stringify({ ...payload, toolConfig: boundedToolConfig }) }
+}
+
 function canonicalAnthropicProviderBaseUrl(value: string): string {
+  const parsed = new URL(value)
+  const pathname = parsed.pathname.replace(/\/+$/, "")
+  return `${parsed.origin}${pathname}`
+}
+
+function canonicalProviderBaseUrl(value: string): string {
   const parsed = new URL(value)
   const pathname = parsed.pathname.replace(/\/+$/, "")
   return `${parsed.origin}${pathname}`
@@ -277,9 +321,31 @@ function structuredOutput(request: CommanderModelStepRequest) {
   return request.structured_output_schema ? Output.object({ schema: jsonSchema(providerJsonSchema(request.structured_output_schema)), name: "nexusloop_structured_output" }) : undefined
 }
 
-function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ toolName: string; input?: unknown; toolCallId: string }>): CommanderModelToolCallPart[] {
+function normalizeToolCalls(request: CommanderModelStepRequest, calls: Array<{ toolName: string; input?: unknown; toolCallId: string; providerMetadata?: Record<string, unknown> }>, transportKind: CommanderConnectorModelTransportKind = "openai_compatible_connector"): CommanderModelToolCallPart[] {
   const map = buildProviderToolMap(request.tools)
-  return calls.map((call) => makeCommanderToolCall(map.get(call.toolName), call.toolName, call.input ?? {}, call.toolCallId, "native"))
+  return calls.map((call, index) => {
+    const normalized = makeCommanderToolCall(map.get(call.toolName), call.toolName, call.input ?? {}, call.toolCallId, "native")
+    if (transportKind === "google_generative_ai_connector") {
+      const signature = (call.providerMetadata?.google as { thoughtSignature?: unknown } | undefined)?.thoughtSignature
+      const hasSignature = typeof signature === "string" && signature.length > 0
+      if (googleModelRequiresThoughtSignature(request.model_id) && index === 0 && !hasSignature || hasSignature && (Buffer.byteLength(signature) > MAX_GEMINI_THOUGHT_SIGNATURE_BYTES || signature === "skip_thought_signature_validator")) {
+        throw new Error("Gemini client function call requires a bounded provider thought signature")
+      }
+      const investigationId = continuationInvestigationId(request)
+      if (hasSignature && investigationId) GEMINI_CONTINUATIONS.set(normalized, Object.freeze({
+        thought_signature: signature,
+        transport_kind: "google_generative_ai_connector",
+        provider_id: request.provider_id,
+        model_id: request.model_id,
+        investigation_id: investigationId,
+      }))
+    }
+    return normalized
+  })
+}
+
+function googleModelRequiresThoughtSignature(modelId: string): boolean {
+  return /^gemini-3(?:[.-]|$)/i.test(modelId)
 }
 
 function finalizeNativeStep(request: CommanderModelStepRequest, toolCalls: CommanderModelToolCallPart[], textForError: string, finalText: string | undefined, usage: CommanderModelUsage, finishReason: string | undefined, requestCount: number, durationMs: number, streamed = false): CommanderModelStepResult {
@@ -316,7 +382,7 @@ function finalizeJsonFallbackStep(request: CommanderModelStepRequest, input: { t
   return { status: "malformed", result: finalizeStep(request, "malformed", { text: input.text.slice(0, 256), usage: input.usage, finishReason: input.finishReason, requestCount: input.requestCount, durationMs: input.durationMs, error: fallback.error, streamed: input.streamed }) }
 }
 
-function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
+function toAiSdkMessages(request: CommanderModelStepRequest, transportKind: CommanderConnectorModelTransportKind): ModelMessage[] {
   const messages: ModelMessage[] = []
   let pendingToolCalls = new Map<string, string>()
   for (const message of request.messages) {
@@ -332,7 +398,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
       const content = message.content.map((part) => {
         if (part.type === "text") return { type: "text", text: part.text }
         pendingToolCalls.set(part.tool_call_id, part.tool_id)
-        return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments, args: part.arguments }
+        const continuation = GEMINI_CONTINUATIONS.get(part)
+        if (continuation && (transportKind !== continuation.transport_kind || request.provider_id !== continuation.provider_id || request.model_id !== continuation.model_id || continuationInvestigationId(request) !== continuation.investigation_id)) {
+          throw new Error("Gemini continuation authority does not match the current request")
+        }
+        return { type: "tool-call", toolCallId: part.tool_call_id, toolName: providerToolNameFromRequest(request, part.tool_id), input: part.arguments, args: part.arguments, ...(continuation ? { providerOptions: { google: { thoughtSignature: continuation.thought_signature } } } : {}) }
       })
       messages.push({ role: "assistant", content } as ModelMessage)
     }
@@ -347,6 +417,11 @@ function toAiSdkMessages(request: CommanderModelStepRequest): ModelMessage[] {
   }
   if (pendingToolCalls.size > 0) throw new Error("assistant tool call message has unanswered tool results")
   return messages
+}
+
+function continuationInvestigationId(request: CommanderModelStepRequest): string | undefined {
+  const value = request.metadata?.investigation_id
+  return typeof value === "string" && value.length > 0 && value.length <= 200 ? value : undefined
 }
 
 function instructionsFromRequest(request: CommanderModelStepRequest): string | undefined {
@@ -402,6 +477,8 @@ function redactedToolCallWithExecutionArguments(call: CommanderModelToolCallPart
       writable: false,
     })
   }
+  const continuation = GEMINI_CONTINUATIONS.get(call)
+  if (continuation) GEMINI_CONTINUATIONS.set(safeCall, continuation)
   return safeCall
 }
 
@@ -441,14 +518,14 @@ function validateOptions(options: AiSdkCommanderModelAdapterOptions): ExternalAp
   const parsed = new URL(options.base_url)
   if (parsed.username || parsed.password) throw new Error("AI SDK base_url credentials are not allowed")
   boundIdentifier(options.provider_name, "provider_name")
-  if (options.transport_kind !== undefined && options.transport_kind !== "openai_compatible_connector" && options.transport_kind !== "anthropic_messages_connector") throw new Error("AI SDK transport_kind is invalid")
+  if (options.transport_kind !== undefined && options.transport_kind !== "openai_compatible_connector" && options.transport_kind !== "anthropic_messages_connector" && options.transport_kind !== "google_generative_ai_connector") throw new Error("AI SDK transport_kind is invalid")
   const credentialMode = options.credential_mode ?? "explicit_api_key"
   if (credentialMode !== "explicit_api_key" && credentialMode !== "connector_managed") throw new Error("AI SDK credential_mode is invalid")
-  if (options.transport_kind === "anthropic_messages_connector" && credentialMode !== "connector_managed") throw new Error("Anthropic Messages requires connector_managed credential mode")
-  const connectorAuthority = options.transport_kind === "anthropic_messages_connector" ? externalApiConnectorFetchAuthority(options.fetch) : undefined
-  if (options.transport_kind === "anthropic_messages_connector" && !connectorAuthority) throw new Error("Anthropic Messages requires audited connector fetch authority")
+  if ((options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector") && credentialMode !== "connector_managed") throw new Error("native provider transport requires connector_managed credential mode")
+  const connectorAuthority = options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector" ? externalApiConnectorFetchAuthority(options.fetch) : undefined
+  if ((options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector") && !connectorAuthority) throw new Error("native provider transport requires audited connector fetch authority")
   if (connectorAuthority && (connectorAuthority.transport_kind !== options.transport_kind || connectorAuthority.provider_id !== options.provider_name || connectorAuthority.base_url !== parsed.toString())) {
-    throw new Error("Anthropic audited connector fetch does not match provider authority")
+    throw new Error("audited connector fetch does not match provider authority")
   }
   if (credentialMode === "explicit_api_key" && (!options.api_key || options.api_key.length > 4096)) throw new Error("AI SDK api_key is required and bounded")
   if (credentialMode === "connector_managed") {
@@ -479,7 +556,7 @@ function snapshotModelStepRequest(request: CommanderModelStepRequest): Commander
     provider_id: request.provider_id,
     provider_kind: request.provider_kind,
     model_id: request.model_id,
-    messages: structuredClone(request.messages),
+    messages: snapshotMessages(request.messages),
     tools: structuredClone(request.tools),
     tool_protocol: request.tool_protocol,
     tool_choice: request.tool_choice,
@@ -490,6 +567,23 @@ function snapshotModelStepRequest(request: CommanderModelStepRequest): Commander
     metadata: request.metadata ? { ...request.metadata } : undefined,
     requested_at: request.requested_at,
   })
+}
+
+function snapshotMessages(messages: CommanderModelStepRequest["messages"]): CommanderModelStepRequest["messages"] {
+  const snapshot = structuredClone(messages)
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const source = messages[messageIndex]
+    const target = snapshot[messageIndex]
+    if (source.role !== "assistant" || target.role !== "assistant") continue
+    for (let partIndex = 0; partIndex < source.content.length; partIndex += 1) {
+      const sourcePart = source.content[partIndex]
+      const targetPart = target.content[partIndex]
+      if (sourcePart?.type !== "tool_call" || targetPart?.type !== "tool_call") continue
+      const continuation = GEMINI_CONTINUATIONS.get(sourcePart)
+      if (continuation) GEMINI_CONTINUATIONS.set(targetPart, continuation)
+    }
+  }
+  return snapshot
 }
 
 function boundIdentifier(value: string, name: string): string {

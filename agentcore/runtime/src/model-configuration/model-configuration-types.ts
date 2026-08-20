@@ -4,6 +4,8 @@ export const MODEL_CONFIGURATION_SCHEMA_VERSION = 1 as const
 export const MODEL_CONFIGURATION_POLICY_VERSION = "nexusloop_model_profile_policy_v1" as const
 export const COMMANDER_MODEL_CONFORMANCE_REGISTRY_VERSION = 1 as const
 export const COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION = "nexusloop_commander_conformance_policy_v1" as const
+export const COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2 = "nexusloop_commander_conformance_policy_v2" as const
+export type CommanderModelConformancePolicyVersion = typeof COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION | typeof COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2
 export const EXECUTOR_PROVIDER_MAPPING_REGISTRY_VERSION = 1 as const
 export const EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION = "nexusloop_executor_provider_mapping_policy_v1" as const
 
@@ -78,7 +80,7 @@ export type CommanderModelConformanceEntry = Readonly<{
 
 export type CommanderModelConformanceRegistry = Readonly<{
   registry_version: 1
-  policy_version: typeof COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION
+  policy_version: CommanderModelConformancePolicyVersion
   entries: readonly CommanderModelConformanceEntry[]
   policy_hash: string
   registry_hash: string

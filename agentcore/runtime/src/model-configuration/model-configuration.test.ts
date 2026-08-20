@@ -117,6 +117,34 @@ describe("unified model profiles and role-binding authority", () => {
     expect("transport_kind" in executor).toBe(false)
   })
 
+  test("policy v2 admits native Gemini without invalidating Google OpenAI-compatible conformance", () => {
+    const input = configurationInput()
+    input.connections[0].provider_kind = "google"
+    input.connections[0].commander = { connector_id: "google-main", conformance_id: "google-gemini-native-v1" }
+    input.profiles[0].model_id = "gemini-2.5-flash"
+    const config = validateModelConfiguration(input)
+    const gemini = validateCommanderModelConformanceRegistry({
+      registry_version: 1,
+      policy_version: "nexusloop_commander_conformance_policy_v2",
+      entries: [
+        { conformance_version: 1, conformance_id: "google-openai-compatible-v1", provider_kind: "google", transport_kind: "openai_compatible_connector", provider_id: "google-compatible", model_id: "legacy-google-model" },
+        { conformance_version: 1, conformance_id: "google-gemini-native-v1", provider_kind: "google", transport_kind: "google_generative_ai_connector", provider_id: "google-primary", model_id: "gemini-2.5-flash" },
+      ],
+    })
+    expect(projectCommanderModelSelection(config, gemini)).toMatchObject({ provider_kind: "google", transport_kind: "google_generative_ai_connector", model_id: "gemini-2.5-flash" })
+    expect(gemini.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider_kind: "google", transport_kind: "openai_compatible_connector" }),
+      expect.objectContaining({ provider_kind: "google", transport_kind: "google_generative_ai_connector" }),
+    ]))
+    expect(() => validateCommanderModelConformanceRegistry({ registry_version: 1, policy_version: "nexusloop_commander_conformance_policy_v1", entries: [{ conformance_version: 1, conformance_id: "google-gemini-native-v1", provider_kind: "google", transport_kind: "google_generative_ai_connector", provider_id: "google-primary", model_id: "gemini-2.5-flash" }] })).toThrow("policy v2")
+    expect(validateCommanderModelConformanceRegistry({
+      registry_version: 1,
+      policy_version: "nexusloop_commander_conformance_policy_v1",
+      entries: [{ conformance_version: 1, conformance_id: "google-openai-compatible-v1", provider_kind: "google", transport_kind: "openai_compatible_connector", provider_id: "google-compatible", model_id: "legacy-google-model" }],
+    })).toMatchObject({ entries: [{ provider_kind: "google", transport_kind: "openai_compatible_connector" }] })
+    expect(validateCommanderModelConformanceRegistry(conformanceInput()).registry_hash).toBe("b71f6cf8b0a8c9801af693ad2f05ef48c6359b927d0fa12da8cb22f5a410318a")
+  })
+
   test("different profiles remain independently bound and missing roles never fall back", () => {
     const { commander, executor } = projections(configurationInput({ shared: false }))
     expect(commander.profile_id).toBe("shared")

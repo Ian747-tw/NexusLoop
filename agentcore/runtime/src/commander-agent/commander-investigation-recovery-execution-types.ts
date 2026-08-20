@@ -168,6 +168,7 @@ export type CommanderInvestigationRecoveryContinuationSeed = {
   replay_exchange?: CommanderInvestigationReplayExchange
   replay_exchange_hash?: string
   replay_message_hash: string
+  fresh_recovery_replay?: true
   recovery_notice: CommanderInvestigationRecoveryNotice
   recovery_notice_hash: string
   pre_model_gate_snapshot: CommanderInvestigationRecoveryPreModelGateSnapshot

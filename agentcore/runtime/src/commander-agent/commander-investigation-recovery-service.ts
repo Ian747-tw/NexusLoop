@@ -695,6 +695,7 @@ export class CommanderInvestigationRecoveryService {
       recovery_kind: recoveryKind,
       recovery_packet: { packet_hash: "preparation_probe" },
       budget_compatibility: compat.budgetCompatibility,
+      provider_compatibility: compat.providerCompatibility,
     } as CommanderInvestigationRecoveryPreview, checkpoint })
     warnings.push(...built.warnings.map((item) => `recovery preparation warning: ${item}`))
     if (!built.seed) {

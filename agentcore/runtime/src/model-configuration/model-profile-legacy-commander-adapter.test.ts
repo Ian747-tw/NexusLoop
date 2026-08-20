@@ -28,6 +28,20 @@ function config() {
 }
 
 describe("9W4B1 legacy Commander model authority adapter", () => {
+  test("native Gemini legacy authority deterministically activates Commander conformance v2 only", () => {
+    const authority = adaptLegacyCommanderModelAuthority(validateCommanderInvestigationProviderConfig({
+      ...config(),
+      transport_kind: "google_generative_ai_connector",
+      provider_id: "google-primary",
+      provider_kind: "google",
+      connector_id: "google-main",
+      model_id: "gemini-2.5-flash",
+      supports_json_schema: false,
+    }))
+    expect(authority.registry.commanderSelection()).toMatchObject({ provider_kind: "google", transport_kind: "google_generative_ai_connector", model_id: "gemini-2.5-flash" })
+    expect(authority.registry.snapshot().commander_selection?.conformance_policy_hash).not.toBe(adaptLegacyCommanderModelAuthority(config()).registry.snapshot().commander_selection?.conformance_policy_hash)
+    expect(authority.registry.executorSelection()).toBeUndefined()
+  })
   test("deterministically maps validated legacy authority to an exact Commander selection", () => {
     const first = adaptLegacyCommanderModelAuthority(config())
     const second = adaptLegacyCommanderModelAuthority(structuredClone(config()))

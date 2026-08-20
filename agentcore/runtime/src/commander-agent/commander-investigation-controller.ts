@@ -136,6 +136,7 @@ export class CommanderInvestigationController {
       replay_exchange: seed.replay_exchange,
       replay_exchange_hash: seed.replay_exchange_hash,
       replay_message_hash: seed.replay_message_hash,
+      ...(seed.fresh_recovery_replay ? { fresh_recovery_replay: true } : {}),
       recovery_notice_hash: seed.recovery_notice_hash,
       pre_model_gate_snapshot_hash: seed.pre_model_gate_snapshot.gate_snapshot_hash,
       next_turn_index: seed.next_turn_index,
@@ -220,6 +221,7 @@ export class CommanderInvestigationController {
       requestIdForTurn: (turn) => `${expectedRecoveryRequestPrefix(seed, authoritativeCheckpoint.checkpoint!)}_turn_${turn}`,
       abortSignal: options.abort_signal,
       recoveryNotice: seed.recovery_notice,
+      freshRecoveryReplay: seed.fresh_recovery_replay === true,
       firstRequestPreview: seed.first_model_request_preview,
       preModelGateSnapshot: seed.pre_model_gate_snapshot,
       persistCheckpoints: Boolean(this.options.persistenceObserver),
@@ -359,7 +361,17 @@ export class CommanderInvestigationController {
       if (elapsedWallMs(wallStartedMs) >= budget.max_wall_time_ms) return finish("budget_exhausted", "wall_time_exhausted", ["Commander investigation wall-time budget exhausted"], preModelWarnings)
 
       const contextWorkingSet = workingSetWithAdditionalWarnings(workingSet, preModelWarnings)
-      const context = this.options.contextService.build({ bootstrap, workingSet: contextWorkingSet, loadedTools: Array.from(loaded.values()), toolProtocol, budget, latestAssistant, latestToolResults, recoveryNotice })
+      const context = this.options.contextService.build({
+        bootstrap,
+        workingSet: contextWorkingSet,
+        loadedTools: Array.from(loaded.values()),
+        toolProtocol,
+        budget,
+        latestAssistant,
+        latestToolResults,
+        recoveryNotice,
+        freshRecoveryReplay: Boolean(recoveryNotice && state.freshRecoveryReplay && turn === state.nextTurnIndex),
+      })
       const deferredPreModelWarnings = [...preModelWarnings]
       if (context.blocked) return finish("budget_exhausted", "context_budget_exhausted", context.blockers, [...preModelWarnings, ...context.warnings])
       if (context.warnings.length) deferredPreModelWarnings.push(...context.warnings)
@@ -840,6 +852,7 @@ type CommanderInvestigationPreparedLoopState = {
   requestIdForTurn(turn: number): string
   abortSignal?: AbortSignal
   recoveryNotice?: CommanderInvestigationRecoveryContinuationSeed["recovery_notice"]
+  freshRecoveryReplay?: boolean
   firstRequestPreview?: CommanderInvestigationRecoveryFirstModelRequestPreview
   preModelGateSnapshot?: CommanderInvestigationRecoveryContinuationSeed["pre_model_gate_snapshot"]
   persistCheckpoints: boolean

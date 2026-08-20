@@ -4,6 +4,7 @@ import { types as nodeUtilTypes } from "node:util"
 import { redactText } from "../security/redaction"
 import {
   COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+  COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2,
   COMMANDER_MODEL_CONFORMANCE_REGISTRY_VERSION,
   EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION,
   EXECUTOR_PROVIDER_MAPPING_REGISTRY_VERSION,
@@ -28,6 +29,7 @@ import type {
 
 export {
   COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+  COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2,
   COMMANDER_MODEL_CONFORMANCE_REGISTRY_VERSION,
   EXECUTOR_PROVIDER_MAPPING_POLICY_VERSION,
   EXECUTOR_PROVIDER_MAPPING_REGISTRY_VERSION,
@@ -131,19 +133,20 @@ export function validateCommanderModelConformanceRegistry(value: unknown): Comma
   const input = record(value, "Commander conformance registry")
   exactKeys(input, CONFORMANCE_REGISTRY_KEYS, "Commander conformance registry")
   if (input.registry_version !== COMMANDER_MODEL_CONFORMANCE_REGISTRY_VERSION) fail("Commander conformance registry_version must be 1")
-  if (input.policy_version !== COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION) fail(`Commander conformance policy_version must be ${COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION}`)
+  if (input.policy_version !== COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION && input.policy_version !== COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2) fail("Commander conformance policy_version is unsupported")
+  const policyVersion = input.policy_version
   const rawEntries = boundedArray(input.entries, "Commander conformance entries", MAX_CONFORMANCE_ENTRIES)
   const entries: CommanderModelConformanceEntry[] = []
-  for (let index = 0; index < rawEntries.length; index += 1) entries.push(parseConformanceEntry(rawEntries[index], index))
+  for (let index = 0; index < rawEntries.length; index += 1) entries.push(parseConformanceEntry(rawEntries[index], index, policyVersion))
   unique(entries, (item) => item.conformance_id, "conformance_id")
   entries.sort((left, right) => asciiCompare(left.conformance_id, right.conformance_id))
   const policyHash = semanticHash({
     registry_version: COMMANDER_MODEL_CONFORMANCE_REGISTRY_VERSION,
-    policy_version: COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+    policy_version: policyVersion,
   })
   return deepFreeze({
     registry_version: COMMANDER_MODEL_CONFORMANCE_REGISTRY_VERSION,
-    policy_version: COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION,
+    policy_version: policyVersion,
     entries,
     policy_hash: policyHash,
     registry_hash: semanticHash({
@@ -331,16 +334,18 @@ function parseBinding(value: unknown, index: number): RoleModelBinding {
   return deepFreeze({ ...stable, binding_hash: semanticHash(stable) })
 }
 
-function parseConformanceEntry(value: unknown, index: number): CommanderModelConformanceEntry {
+function parseConformanceEntry(value: unknown, index: number, policyVersion: typeof COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION | typeof COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2): CommanderModelConformanceEntry {
   const input = record(value, `Commander conformance entries[${index}]`)
   exactKeys(input, CONFORMANCE_ENTRY_KEYS, `Commander conformance entries[${index}]`)
   if (input.conformance_version !== 1) fail(`Commander conformance entries[${index}].conformance_version must be 1`)
-  if (input.transport_kind !== "openai_compatible_connector" && input.transport_kind !== "anthropic_messages_connector") {
+  if (input.transport_kind !== "openai_compatible_connector" && input.transport_kind !== "anthropic_messages_connector" && input.transport_kind !== "google_generative_ai_connector") {
     fail(`Commander conformance entries[${index}].transport_kind is unsupported`)
   }
   const transportKind = input.transport_kind as CommanderModelConformanceEntry["transport_kind"]
   const providerKind = identifier(input.provider_kind, `Commander conformance entries[${index}].provider_kind`, 80)
   if (transportKind === "anthropic_messages_connector" && providerKind !== "anthropic") fail("anthropic_messages_connector conformance requires provider_kind anthropic")
+  if (transportKind === "google_generative_ai_connector" && providerKind !== "google") fail("google_generative_ai_connector conformance requires provider_kind google")
+  if (transportKind === "google_generative_ai_connector" && policyVersion !== COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V2) fail("Gemini conformance requires Commander policy v2")
   if (transportKind === "openai_compatible_connector" && providerKind === "anthropic") fail("provider_kind anthropic requires anthropic_messages_connector conformance")
   const stable = {
     conformance_version: 1 as const,

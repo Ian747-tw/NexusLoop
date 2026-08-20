@@ -360,7 +360,7 @@ export type CommanderInvestigationControllerOptions = {
   descriptors: CommanderToolDescriptor[]
   boundToolIds: readonly string[]
   bootstrapService: { compile(input: CommanderInvestigationInput): Promise<CommanderInvestigationBootstrap> }
-  contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; toolProtocol: CommanderModelToolProtocol; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; recoveryNotice?: CommanderInvestigationRecoveryNotice }): CommanderInvestigationContext }
+  contextService: { build(input: { bootstrap: CommanderInvestigationBootstrap; workingSet: CommanderInvestigationWorkingSet; loadedTools: CommanderToolDescriptor[]; toolProtocol: CommanderModelToolProtocol; budget: CommanderInvestigationBudget; latestAssistant?: CommanderModelAssistantMessage; latestToolResults: CommanderModelToolResultMessage[]; recoveryNotice?: CommanderInvestigationRecoveryNotice; freshRecoveryReplay?: boolean }): CommanderInvestigationContext }
   controlGate?: CommanderInvestigationControlGate
   providerGate?: CommanderInvestigationProviderGate
   providerAuditPolicy?: CommanderInvestigationProviderAuditPolicy
