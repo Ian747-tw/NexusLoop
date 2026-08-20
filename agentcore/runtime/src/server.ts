@@ -202,6 +202,9 @@ import {
   GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION,
   GOOGLE_GENERATIVE_AI_REQUEST_SHAPE_POLICY_VERSION,
   GOOGLE_GENERATIVE_AI_TRANSIENT_CONTINUATION_POLICY_VERSION,
+  OPENAI_RESPONSES_PROVIDER_ADAPTER_VERSION,
+  OPENAI_RESPONSES_REQUEST_SHAPE_POLICY_VERSION,
+  OPENAI_RESPONSES_TRANSIENT_CONTINUATION_POLICY_VERSION,
   connectorChatCompletionsUrl,
   connectorModelRequestUrl,
   normalizeCommanderInvestigationRecoveryTransactionInput,
@@ -5756,7 +5759,24 @@ export class RuntimeServer {
       server_tools_allowed: false,
       structured_output_supported: false,
     }
-    const connectorPolicyHash = stableHash(config.transport_kind === "openai_compatible_connector" ? openAiConnectorPolicy : config.transport_kind === "anthropic_messages_connector" ? anthropicConnectorPolicy : googleConnectorPolicy)
+    const openAIResponsesConnectorPolicy = {
+      connector_id: config.connector_id,
+      responses_url: connector ? connectorModelRequestUrl(connector, config.transport_kind, config.model_id).toString() : undefined,
+      allowed_hosts: connector?.allowed_hosts.slice().sort() ?? [],
+      allowed_methods: connector?.allowed_methods.slice().sort() ?? [],
+      default_headers: Object.entries(connector?.default_headers ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+      credential_ref_injection_shape: (connector?.credential_refs ?? []).map((ref) => ({ source: ref.source, inject_as: ref.inject_as, target_name: ref.target_name, prefix: ref.prefix })).sort((a, b) => `${a.inject_as}:${a.target_name}`.localeCompare(`${b.inject_as}:${b.target_name}`)),
+      connector_timeout_ms: connector?.timeout_ms,
+      connector_max_response_bytes: connector?.max_response_bytes,
+      allow_local_http: connector?.allow_local_http === true,
+      provider_adapter_version: OPENAI_RESPONSES_PROVIDER_ADAPTER_VERSION,
+      request_shape_policy_version: OPENAI_RESPONSES_REQUEST_SHAPE_POLICY_VERSION,
+      transient_continuation_policy_version: OPENAI_RESPONSES_TRANSIENT_CONTINUATION_POLICY_VERSION,
+      store: false,
+      server_tools_allowed: false,
+      structured_output_supported: false,
+    }
+    const connectorPolicyHash = stableHash(config.transport_kind === "openai_compatible_connector" ? openAiConnectorPolicy : config.transport_kind === "anthropic_messages_connector" ? anthropicConnectorPolicy : config.transport_kind === "google_generative_ai_connector" ? googleConnectorPolicy : openAIResponsesConnectorPolicy)
     const capabilityEnvelopeHash = stableHash({
       provider_kind: capability.provider_kind,
       provider_id: capability.provider_id,
@@ -5800,6 +5820,10 @@ export class RuntimeServer {
         provider_adapter_version: GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION,
         request_shape_policy_version: GOOGLE_GENERATIVE_AI_REQUEST_SHAPE_POLICY_VERSION,
         transient_continuation_policy_version: GOOGLE_GENERATIVE_AI_TRANSIENT_CONTINUATION_POLICY_VERSION,
+      } : config.transport_kind === "openai_responses_connector" ? {
+        provider_adapter_version: OPENAI_RESPONSES_PROVIDER_ADAPTER_VERSION,
+        request_shape_policy_version: OPENAI_RESPONSES_REQUEST_SHAPE_POLICY_VERSION,
+        transient_continuation_policy_version: OPENAI_RESPONSES_TRANSIENT_CONTINUATION_POLICY_VERSION,
       } : {}),
       github_gateway_policy_hash: this.commanderGithubGatewayStatus().transport_policy_hash,
       capability_envelope_hash: capabilityEnvelopeHash,

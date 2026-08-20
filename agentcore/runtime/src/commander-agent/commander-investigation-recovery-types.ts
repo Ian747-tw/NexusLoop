@@ -211,7 +211,7 @@ export type CommanderInvestigationRecoveryProviderCompatibility = {
 
 export type CommanderInvestigationRecoveryExecutionEnvelope = {
   envelope_version: 1
-  transport_kind: "openai_compatible_connector" | "anthropic_messages_connector" | "google_generative_ai_connector"
+  transport_kind: import("./commander-connector-transport-types").CommanderConnectorModelTransportKind
   provider_id: string
   provider_kind: string
   connector_id: string
