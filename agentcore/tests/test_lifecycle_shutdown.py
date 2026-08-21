@@ -71,7 +71,8 @@ def test_sigterm_emits_session_shutdown(tmp_path: Path) -> None:
 
         proc.send_signal(signal.SIGTERM)
         rc = proc.wait(timeout=15)
-        assert rc == 0
+        stderr = proc.stderr.read() if proc.stderr is not None else ""
+        assert rc == 0, f"server shutdown failed with rc={rc}: {stderr}"
 
         events = _read_events(tmp_path)
         shutdown = [event for event in events if event.get("kind") == "session_shutdown"]
@@ -95,7 +96,8 @@ def test_inflight_call_timeout_emits_tool_call_timed_out(tmp_path: Path) -> None
         rc = proc.wait(timeout=15)
         elapsed = time.time() - started
 
-        assert rc == 0
+        stderr = proc.stderr.read() if proc.stderr is not None else ""
+        assert rc == 0, f"server shutdown failed with rc={rc}: {stderr}"
         assert elapsed >= 4.8
 
         events = _read_events(tmp_path)
