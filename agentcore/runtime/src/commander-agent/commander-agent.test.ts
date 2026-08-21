@@ -51,6 +51,7 @@ import {
 	  commanderToolSchemaFromDescriptor,
 	  connectorAnthropicMessagesUrl,
 	  connectorGoogleGenerateContentUrl,
+	  connectorOpenAIResponsesUrl,
 	  connectorChatCompletionsUrl,
 	  createExternalApiConnectorFetch,
 	  createCommanderToolBindingRegistry,
@@ -92,6 +93,7 @@ describe("Commander AI SDK model adapter", () => {
     expect(pkg.dependencies?.["@ai-sdk/openai-compatible"]).toBe("3.0.11")
     expect(pkg.dependencies?.["@ai-sdk/anthropic"]).toBe("4.0.15")
     expect(pkg.dependencies?.["@ai-sdk/google"]).toBe("4.0.15")
+    expect(pkg.dependencies?.["@ai-sdk/openai"]).toBe("4.0.15")
     expect(pkg.dependencies?.["@openai/agents"]).toBeUndefined()
     const grep = await $`bash -lc "rg -n 'commander-agent-runtime-sdk-fit|@openai/agents' src package.json -g '!src/commander-agent/commander-agent.test.ts' || true"`.cwd(process.cwd()).text()
     expect(grep.trim()).toBe("")
@@ -156,6 +158,191 @@ describe("Commander AI SDK model adapter", () => {
     expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "anthropic" }))).toThrow("provider_kind google")
     expect(validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "google", supports_json_schema: false }))).toMatchObject({ transport_kind: "google_generative_ai_connector", provider_kind: "google", supports_json_schema: false })
     expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "google", supports_json_schema: true }))).toThrow("structured output")
+  })
+
+  test("native OpenAI Responses transport is closed and uses one exact endpoint", () => {
+    const config = validateCommanderConnectorModelTransportConfig({
+      transport_kind: "openai_responses_connector",
+      provider_id: "openai_responses_provider",
+      connector_id: "openai-responses-test",
+      model_id: "gpt-4.1-mini",
+      timeout_ms: 5000,
+      max_request_bytes: 65_536,
+      max_response_bytes: 8192,
+    })
+    expect(config.transport_kind).toBe("openai_responses_connector")
+    expect(connectorOpenAIResponsesUrl(connector("responses", "https://api.openai.com/v1")).toString()).toBe("https://api.openai.com/v1/responses")
+    expect(connectorOpenAIResponsesUrl(connector("responses-nested", "https://api.example.test/custom/v1/")).toString()).toBe("https://api.example.test/custom/v1/responses")
+    expect(() => connectorOpenAIResponsesUrl(connector("responses-query", "https://api.openai.com/v1?unsafe=1"))).toThrow("query")
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "google", supports_json_schema: false }))).toThrow("provider_kind openai")
+    expect(validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "openai", supports_json_schema: false }))).toMatchObject({ transport_kind: "openai_responses_connector", provider_kind: "openai", supports_json_schema: false })
+    expect(validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "openai", model_id: "gpt-4.1-mini-2025-04-14", supports_json_schema: false }))).toMatchObject({ model_id: "gpt-4.1-mini-2025-04-14" })
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "openai", model_id: "o3", supports_json_schema: false }))).toThrow("verified non-reasoning model set")
+  })
+
+  test("native OpenAI Responses dispatches one stateless audited request with exact credential policy", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-final-"))
+    const responsePayload = JSON.parse(openAIResponsesText("native Responses final", "gpt-4.1-mini-2025-04-14"))
+    responsePayload.metadata = { fixture: "discarded" }
+    responsePayload.user = "bounded-user"
+    responsePayload.prompt_cache_key = "bounded-cache-key"
+    responsePayload.top_logprobs = 0
+    responsePayload.completed_at = 1784160001
+    responsePayload.input = []
+    responsePayload.max_tool_calls = null
+    responsePayload.safety_identifier = null
+    responsePayload.output[0].content[0].logprobs = []
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(responsePayload) }])
+    const adapter = connectorBackedAdapter(projectDir, transport, "api_responses_final", {
+      config: connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" }),
+      connector: openAIResponsesConnector(),
+      env: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" },
+    })
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", max_output_tokens: 1024 }
+    const result = await adapter.executeOneStep(request)
+    expect(result).toMatchObject({ status: "final", text: "native Responses final", request_count: 1, usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, provider_reported: true } })
+    expect(JSON.stringify(result)).not.toMatch(/discarded|bounded-user|bounded-cache-key|2025-04-14/)
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].url).toBe("https://api.openai.com/v1/responses")
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer real-openai-responses-key")
+    expect(JSON.stringify(transport.requests[0])).not.toContain(CONNECTOR_MANAGED_API_KEY_SENTINEL)
+    expect(transport.requests[0].body).toContain('"store":false')
+    const body = JSON.parse(transport.requests[0]!.body!) as Record<string, unknown>
+    for (const key of ["previous_response_id", "conversation", "background", "include", "service_tier"]) expect(key in body).toBe(false)
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native OpenAI Responses continues ordinary client functions without remote response state", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-tool-"))
+    const firstTransport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesToolCall("call_repo", "repo__git_status", {}) }])
+    const options = {
+      config: connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" }),
+      connector: openAIResponsesConnector(),
+      env: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" },
+    }
+    const initialRequest = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", max_output_tokens: 1024 }
+    const first = await connectorBackedAdapter(projectDir, firstTransport, "api_responses_tool", options).executeOneStep(initialRequest)
+    expect(first).toMatchObject({ status: "tool_call", request_count: 1, tool_calls: [{ tool_call_id: "call_repo", tool_id: "repo.git_status", arguments: {} }] })
+    const secondTransport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("continued Responses final") }])
+    const second = await connectorBackedAdapter(projectDir, secondTransport, "api_responses_continuation", options).executeOneStep({
+      ...initialRequest,
+      request_id: "req_responses_continuation",
+      messages: [
+        ...initialRequest.messages,
+        { role: "assistant", content: first.tool_calls },
+        { role: "tool", tool_call_id: "call_repo", tool_id: "repo.git_status", content: "clean", content_hash: stableHash({ content: "clean" }), truncated: false },
+      ],
+    })
+    expect(second).toMatchObject({ status: "final", text: "continued Responses final", request_count: 1 })
+    const body = JSON.parse(secondTransport.requests[0]!.body!) as { input: Array<Record<string, unknown>>; store: boolean }
+    expect(body.store).toBe(false)
+    expect(body.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "function_call", call_id: "call_repo" }),
+      expect.objectContaining({ type: "function_call_output", call_id: "call_repo", output: "clean" }),
+    ]))
+    expect(JSON.stringify(body)).not.toMatch(/previous_response_id|responseId|conversation/)
+  })
+
+  test("native OpenAI Responses bridge rejects endpoint header state and hosted-tool escalation before dispatch", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-bridge-"))
+    const connector = openAIResponsesConnector()
+    const registry = new ExternalApiConnectorRegistry([connector])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("bridge accepted") }])
+    const requestService = new ExternalApiRequestService({
+      registry,
+      transport,
+      eventStore: new EventStore(join(projectDir, ".nxl", "events.jsonl")),
+      env: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" },
+      requestId: () => "api_responses_bridge",
+      now: () => new Date("2026-08-20T00:00:00.000Z"),
+    })
+    const config = connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" })
+    const { fetch: bridgeFetch, metadata } = createExternalApiConnectorFetch({ registry, requestService, config, context: { commander_model_request_id: "req_responses_bridge", requested_by: "tester", provider_id: "openai_responses_provider", model_id: "gpt-4.1-mini" } })
+    const endpoint = "https://api.openai.com/v1/responses"
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${CONNECTOR_MANAGED_API_KEY_SENTINEL}` }
+    const validBody = { model: "gpt-4.1-mini", input: [{ role: "user", content: [{ type: "input_text", text: "bounded request" }] }], max_output_tokens: 1024, store: false }
+    const rejected: Array<[string, RequestInit, string]> = [
+      [`${endpoint}?api_key=unsafe`, { method: "POST", headers, body: JSON.stringify(validBody) }, "query"],
+      [endpoint.replace("/responses", "/chat/completions"), { method: "POST", headers, body: JSON.stringify(validBody) }, "Responses endpoint"],
+      [endpoint, { method: "GET", headers, body: JSON.stringify(validBody) }, "POST"],
+      [endpoint, { method: "POST", headers: { ...headers, Authorization: "Bearer real-secret" }, body: JSON.stringify(validBody) }, "sentinel"],
+      [endpoint, { method: "POST", headers: { ...headers, "OpenAI-Organization": "org-attacker" }, body: JSON.stringify(validBody) }, "account headers"],
+      [endpoint, { method: "POST", headers, body: JSON.stringify({ ...validBody, previous_response_id: "resp_old" }) }, "forbidden field"],
+      [endpoint, { method: "POST", headers, body: JSON.stringify({ ...validBody, conversation: "conv_old" }) }, "forbidden field"],
+      [endpoint, { method: "POST", headers, body: JSON.stringify({ ...validBody, background: true }) }, "forbidden field"],
+      [endpoint, { method: "POST", headers, body: JSON.stringify({ ...validBody, include: ["reasoning.encrypted_content"] }) }, "forbidden field"],
+      [endpoint, { method: "POST", headers, body: JSON.stringify({ ...validBody, tools: [{ type: "web_search_preview" }] }) }, "malformed tool"],
+    ]
+    for (const [url, init, message] of rejected) await expect(bridgeFetch(url, init)).rejects.toThrow(message)
+    expect(transport.requests).toHaveLength(0)
+
+    const response = await bridgeFetch(endpoint, { method: "POST", headers, body: JSON.stringify(validBody) })
+    expect(response.status).toBe(200)
+    expect(transport.requests).toHaveLength(1)
+    expect(transport.requests[0].headers.Authorization).toBe("Bearer real-openai-responses-key")
+    expect(metadata.request_attempt_count()).toBe(11)
+    expect(metadata.transport_dispatch_count()).toBe(1)
+    expect((await eventText(projectDir)).match(/external_api_request_executed/g)).toHaveLength(1)
+  })
+
+  test("native OpenAI Responses normalizes refusal and fails closed on ambiguous or unsupported output without retries", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-failures-"))
+    const config = connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" })
+    const options = { config, connector: openAIResponsesConnector(), env: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" } }
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", max_output_tokens: 1024 }
+    const refusalPayload = JSON.parse(openAIResponsesText("placeholder"))
+    refusalPayload.output = [{ type: "message", id: "msg_refusal", status: "completed", role: "assistant", content: [{ type: "refusal", refusal: "bounded refusal" }] }]
+    const refusal = await connectorBackedAdapter(projectDir, new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(refusalPayload) }]), "api_responses_refusal", options).executeOneStep(request)
+    expect(refusal).toMatchObject({ status: "refusal", request_count: 1, tool_calls: [] })
+    expect(refusal.text).toBe("bounded refusal")
+    expect(JSON.stringify(refusal)).not.toContain("resp_fixture")
+
+    const invalidBodies: Array<[string, string]> = [
+      ["incomplete", JSON.stringify({ ...JSON.parse(openAIResponsesText("partial must remain unavailable")), status: "incomplete", incomplete_details: { reason: "max_output_tokens" } })],
+      ["wrong_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-other" })],
+      ["prefix_confusable_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-evil-2025-04-14" })],
+      ["invalid_snapshot_date", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-2025-02-31" })],
+      ["malformed_metadata", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad metadata")), metadata: { nested: { forbidden: true } } })],
+      ["nonempty_logprobs", JSON.stringify({ ...JSON.parse(openAIResponsesText("log probabilities must remain unavailable")), output: [{ type: "message", id: "msg_logprobs", status: "completed", role: "assistant", content: [{ type: "output_text", text: "log probabilities must remain unavailable", annotations: [], logprobs: [{ token: "secret", logprob: -0.1, top_logprobs: [] }] }] }] })],
+      ["malformed_completed_at", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad completion timestamp")), completed_at: "later" })],
+      ["oversized_completed_at", JSON.stringify({ ...JSON.parse(openAIResponsesText("oversized completion timestamp")), completed_at: Number.MAX_SAFE_INTEGER })],
+      ["malformed_max_tool_calls", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad tool ceiling")), max_tool_calls: -1 })],
+      ["malformed_safety_identifier", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad safety identity")), safety_identifier: { raw: true } })],
+      ["echoed_input", JSON.stringify({ ...JSON.parse(openAIResponsesText("input must not be accepted")), input: [{ role: "user", content: "raw prompt" }] })],
+      ["hosted_tool", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "web_search_call", id: "ws_1", status: "completed" }] })],
+      ["reasoning", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "reasoning", id: "r_1", summary: [] }] })],
+      ["malformed_call", JSON.stringify({ ...JSON.parse(openAIResponsesToolCall("call_bad", "repo__git_status", {})), output: [{ type: "function_call", id: "fc_bad", call_id: "call_bad", name: "repo__git_status", arguments: "{", status: "completed" }] })],
+      ["mixed_refusal", JSON.stringify({ ...refusalPayload, output: [...refusalPayload.output, ...JSON.parse(openAIResponsesText("must not publish")).output] })],
+      ["unknown_item", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "custom_tool_call", id: "custom_1" }] })],
+      ["malformed_usage", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad usage")), usage: { input_tokens: 17, output_tokens: 5, total_tokens: 999 } })],
+      ["reasoning_usage", JSON.stringify({ ...JSON.parse(openAIResponsesText("reasoning must remain unavailable")), usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, output_tokens_details: { reasoning_tokens: 1 } } })],
+      ["malformed_json", "{"],
+    ]
+    for (const [name, body] of invalidBodies) {
+      const transport = new FakeExternalApiTransport([{ status_code: 200, body }])
+      const result = await connectorBackedAdapter(projectDir, transport, `api_responses_${name}`, options).executeOneStep(request)
+      expect(transport.requests).toHaveLength(1)
+      expect(result).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+      expect(result.text).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain("partial must remain unavailable")
+      expect(JSON.stringify(result)).not.toContain("must not publish")
+      expect(JSON.stringify(result)).not.toContain("reasoning must remain unavailable")
+      expect(JSON.stringify(result)).not.toContain("log probabilities must remain unavailable")
+      expect(JSON.stringify(result)).not.toContain("raw prompt")
+    }
+    for (const status of [429, 500]) {
+      const transport = new FakeExternalApiTransport([{ status_code: status, body: JSON.stringify({ error: { message: `sk-${"x".repeat(10_000)}` } }) }])
+      const result = await connectorBackedAdapter(projectDir, transport, `api_responses_http_${status}`, options).executeOneStep(request)
+      expect(transport.requests).toHaveLength(1)
+      expect(result).toMatchObject({ status: "failed", request_count: 1 })
+      expect(result.error!.length).toBeLessThanOrEqual(300)
+      expect(result.error).not.toContain("sk-")
+    }
+    const events = await eventText(projectDir)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(20)
+    expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
+    expect(events).not.toContain("sk-")
+    expect(events).not.toContain("partial must remain unavailable")
   })
 
   test("connector-backed native Gemini dispatches one audited request with exact endpoint and credential policy", async () => {
@@ -985,6 +1172,33 @@ describe("Commander AI SDK model adapter", () => {
     expect(result.error).toContain("audit failure")
     expect(JSON.stringify(result)).not.toContain("must remain unavailable")
     expect(await eventText(projectDir)).toBe("")
+  })
+
+  test("OpenAI Responses withholds evidence on audit failure and pre-abort dispatches no network request", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-audit-failure-"))
+    const connector = openAIResponsesConnector()
+    const registry = new ExternalApiConnectorRegistry([connector])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("must remain unavailable") }])
+    const eventStore = new EventStore(join(projectDir, ".nxl", "events.jsonl"))
+    eventStore.append = async (): Promise<string> => { throw new Error("simulated durable audit failure") }
+    const requestService = new ExternalApiRequestService({ registry, transport, eventStore, env: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" }, requestId: () => "api_responses_audit_failure" })
+    const config = connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" })
+    const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", max_output_tokens: 1024 }
+    const result = await new ConnectorBackedCommanderModelStepAdapter({ config, registry, requestService }).executeOneStep(request)
+    expect(transport.requests).toHaveLength(1)
+    expect(result).toMatchObject({ status: "failed", request_count: 1, tool_calls: [] })
+    expect(result.text).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain("must remain unavailable")
+    expect(await eventText(projectDir)).toBe("")
+
+    const preAbortDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-pre-abort-"))
+    const preAbortTransport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("must not dispatch") }])
+    const controller = new AbortController()
+    controller.abort("operator pre-abort")
+    const preAbort = await connectorBackedAdapter(preAbortDir, preAbortTransport, "api_responses_pre_abort", { config, connector, env: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" } }).executeOneStep({ ...request, abort_signal: controller.signal })
+    expect(preAbort).toMatchObject({ status: "cancelled", tool_calls: [] })
+    expect(preAbortTransport.requests).toHaveLength(0)
+    expect(await eventText(preAbortDir)).toBe("")
   })
 
   test("connector-managed AI SDK credential mode rejects real credentials and uses a non-secret sentinel only internally", () => {
@@ -3235,6 +3449,84 @@ describe("Commander in-memory investigation controller", () => {
     }
   })
 
+  test("native OpenAI Responses readiness and recovery envelope bind exact stateless protocol authority", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-authority-"))
+    await writeApprovedSpec(projectDir)
+    const config = validateCommanderInvestigationProviderConfig(providerConfig({
+      transport_kind: "openai_responses_connector",
+      provider_id: "openai_responses_provider",
+      provider_kind: "openai",
+      connector_id: "openai-responses-test",
+      model_id: "gpt-4.1-mini",
+      supports_json_schema: false,
+    }))
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: config,
+      externalApiConnectors: [openAIResponsesConnector()],
+      externalApiTransport: new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("configured final") }]),
+      externalApiEnv: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" },
+    })
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    expect(server.previewCommanderInvestigationProviderReadiness({ phase: "proposal_investigation", provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini" })).toMatchObject({ status: "ready", configuration_ready: true, execution_ready: true, default_tool_protocol: "native" })
+    const envelope = (server as unknown as { commanderInvestigationRecoveryExecutionEnvelope(input: Record<string, unknown>): CommanderInvestigationRecoveryExecutionEnvelope }).commanderInvestigationRecoveryExecutionEnvelope({})
+    expect(envelope).toMatchObject({
+      transport_kind: "openai_responses_connector",
+      provider_kind: "openai",
+      provider_adapter_version: "ai@7.0.29/@ai-sdk/openai@4.0.15",
+      request_shape_policy_version: "openai_responses_stateless_v1",
+      transient_continuation_policy_version: "openai_function_call_id_in_memory_v1",
+      supports_json_schema: false,
+    })
+    expect(JSON.stringify(envelope)).not.toContain("NXL_TEST_OPENAI_RESPONSES_KEY")
+    expect(JSON.stringify(envelope)).not.toContain("real-openai-responses-key")
+
+    for (const connectorFixture of [
+      { ...openAIResponsesConnector(), credential_refs: [] },
+      { ...openAIResponsesConnector(), credential_refs: [{ ...openAIResponsesConnector().credential_refs![0], prefix: "" }] },
+      { ...openAIResponsesConnector(), credential_refs: [{ ...openAIResponsesConnector().credential_refs![0], target_name: "x-api-key", prefix: "" }] },
+      { ...openAIResponsesConnector(), default_headers: { "OpenAI-Project": "forbidden" } },
+    ]) {
+      const blocked = new RuntimeServer({ projectDir: await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-blocked-")), adapter: new FakeOpenCodeAdapter(), commanderInvestigationProviderConfig: config, externalApiConnectors: [connectorFixture], externalApiTransport: new FakeExternalApiTransport([]), externalApiEnv: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" } }).previewCommanderInvestigationProviderReadiness({ provider_kind: "openai" })
+      expect(blocked.configuration_ready).toBe(false)
+      expect(blocked.checks.find((check) => check.name === "provider_request_policy")?.ok).toBe(false)
+    }
+  })
+
+  test("configured OpenAI Responses controller executes one client tool with stateless audited continuation", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-controller-"))
+    await writeApprovedSpec(projectDir)
+    const transport = new FakeExternalApiTransport([
+      { status_code: 200, body: openAIResponsesToolCall("call_search", "commander__tool_search", { query: "memory" }) },
+      { status_code: 200, body: openAIResponsesText("controller Responses final") },
+    ])
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", provider_kind: "openai", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini", supports_json_schema: false })),
+      externalApiConnectors: [openAIResponsesConnector()],
+      externalApiTransport: transport,
+      externalApiEnv: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" },
+    })
+    await server.start()
+    servers.push({ stop: () => server.shutdown() })
+    const result = await server.runCommanderInvestigationInMemory(baseInvestigation({ provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", tool_protocol: "native" }))
+    expect(result).toMatchObject({ status: "final", final_summary: "controller Responses final", provider_request_count: 2, external_api_audit_events_appended: 2, tool_call_count: 1 })
+    expect(transport.requests).toHaveLength(2)
+    const continuation = JSON.parse(transport.requests[1]!.body!) as { input: Array<Record<string, unknown>>; store: boolean }
+    expect(continuation.store).toBe(false)
+    expect(continuation.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "function_call", call_id: "call_search" }),
+      expect.objectContaining({ type: "function_call_output", call_id: "call_search" }),
+    ]))
+    expect(JSON.stringify(continuation)).not.toMatch(/previous_response_id|conversation|background/)
+    const events = await eventText(projectDir)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(2)
+    expect(events).not.toContain("resp_fixture")
+  })
+
   test("configured Gemini controller executes a client tool and carries transient continuation into the next audited request", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4c-gemini-controller-"))
     await writeApprovedSpec(projectDir)
@@ -3542,6 +3834,39 @@ describe("Commander in-memory investigation controller", () => {
     expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
     expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
     expect(events).not.toContain("real-google-key")
+  })
+
+  test("native OpenAI Responses configured work is aborted and audited before runtime shutdown", async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-shutdown-"))
+    await writeApprovedSpec(projectDir)
+    let releaseTransport!: () => void
+    const released = new Promise<void>((resolve) => { releaseTransport = resolve })
+    const transport = delayedAbortTransport(released)
+    const server = new RuntimeServer({
+      projectDir,
+      adapter: new FakeOpenCodeAdapter(),
+      commanderInvestigationProviderConfig: validateCommanderInvestigationProviderConfig(providerConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", provider_kind: "openai", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini", supports_json_schema: false })),
+      externalApiConnectors: [openAIResponsesConnector()],
+      externalApiTransport: transport,
+      externalApiResolveHostAddresses: async () => [{ address: "104.18.33.45" }],
+      externalApiEnv: { NXL_TEST_OPENAI_RESPONSES_KEY: "real-openai-responses-key" },
+    })
+    await server.start()
+    const investigation = server.runCommanderInvestigationInMemory(baseInvestigation({ investigation_id: "inv_responses_shutdown", provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", tool_protocol: "native" }))
+    await waitFor(() => transport.requests === 1)
+    const shutdown = server.shutdown("shutdown during OpenAI Responses request")
+    await waitFor(() => transport.aborted)
+    releaseTransport()
+    const result = await investigation
+    await shutdown
+    expect(result).toMatchObject({ status: "cancelled", provider_request_count: 1, external_api_audit_events_appended: 1 })
+    const events = await eventText(projectDir)
+    const kinds = eventKinds(events)
+    expect(events.match(/external_api_request_failed/g)).toHaveLength(1)
+    expect(kinds.indexOf("external_api_request_failed")).toBeLessThan(kinds.indexOf("runtime_shutdown"))
+    expect(kinds[kinds.length - 1]).toBe("runtime_shutdown")
+    expect(events).not.toContain("real-openai-responses-key")
+    expect(events).not.toContain("resp_fixture")
   })
 
   test("configured provider shutdown retains run lock until active investigation drain completes", async () => {
@@ -13843,6 +14168,21 @@ function googleConnector(): ExternalApiConnector {
   }
 }
 
+function openAIResponsesConnector(): ExternalApiConnector {
+  return {
+    connector_id: "openai-responses-test",
+    title: "OpenAI Responses test connector",
+    base_url: "https://api.openai.com/v1",
+    allowed_hosts: ["api.openai.com"],
+    allowed_methods: ["POST"],
+    credential_refs: [{ name: "openai-responses-key", source: "env", env_name: "NXL_TEST_OPENAI_RESPONSES_KEY", inject_as: "header", target_name: "Authorization", prefix: "Bearer " }],
+    timeout_ms: 5000,
+    max_response_bytes: 65_536,
+    created_at: "1970-01-01T00:00:00.000Z",
+    updated_at: "1970-01-01T00:00:00.000Z",
+  }
+}
+
 function githubTestConnector(): ExternalApiConnector {
   return {
     connector_id: "github-read-test",
@@ -14196,6 +14536,32 @@ function geminiText(text: string): string {
     usageMetadata: { promptTokenCount: 17, candidatesTokenCount: 5, totalTokenCount: 22 },
     modelVersion: "gemini-2.5-flash",
   })
+}
+
+function openAIResponsesText(text: string, model = "gpt-4.1-mini"): string {
+  return JSON.stringify({
+    id: "resp_fixture",
+    object: "response",
+    created_at: 1784160000,
+    status: "completed",
+    background: false,
+    error: null,
+    incomplete_details: null,
+    model,
+    output: [{ type: "message", id: "msg_fixture", status: "completed", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] }],
+    previous_response_id: null,
+    reasoning: { effort: null, summary: null },
+    store: false,
+    usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } },
+  })
+}
+
+function openAIResponsesToolCall(callId: string, name: string, args: Record<string, unknown>): string {
+  const payload = JSON.parse(openAIResponsesText("placeholder")) as { output: unknown[]; usage: { output_tokens: number; total_tokens: number } }
+  payload.output = [{ type: "function_call", id: "fc_fixture", call_id: callId, name, arguments: JSON.stringify(args), status: "completed" }]
+  payload.usage.output_tokens = 7
+  payload.usage.total_tokens = 24
+  return JSON.stringify(payload)
 }
 
 function geminiToolCall(id: string, name: string, args: Record<string, unknown>, thoughtSignature: string, modelVersion = "gemini-2.5-flash"): string {

@@ -189,3 +189,8 @@ changing the model-configuration schema or Executor mapping policy. Generic
 model IDs remain inert; Gemini's stricter one-path-segment grammar is checked
 only when activating its native transport. Executor selection and readiness
 remain independent.
+
+Branch 9W4D adds OpenAI Responses as a Commander conformance-policy-v3
+selection. The model-configuration schema and Executor mapping stay v1, and
+the compatibility matrix remains descriptive evidence rather than profile,
+conformance, mapping, or readiness authority.

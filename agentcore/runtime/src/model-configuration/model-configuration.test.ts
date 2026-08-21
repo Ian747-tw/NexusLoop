@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V3,
   MODEL_CONFIGURATION_POLICY_VERSION,
   MODEL_CONFIGURATION_SCHEMA_VERSION,
   projectCommanderModelSelection,
@@ -143,6 +144,38 @@ describe("unified model profiles and role-binding authority", () => {
       entries: [{ conformance_version: 1, conformance_id: "google-openai-compatible-v1", provider_kind: "google", transport_kind: "openai_compatible_connector", provider_id: "google-compatible", model_id: "legacy-google-model" }],
     })).toMatchObject({ entries: [{ provider_kind: "google", transport_kind: "openai_compatible_connector" }] })
     expect(validateCommanderModelConformanceRegistry(conformanceInput()).registry_hash).toBe("b71f6cf8b0a8c9801af693ad2f05ef48c6359b927d0fa12da8cb22f5a410318a")
+  })
+
+  test("policy v3 admits mixed OpenAI-compatible and native Responses without changing v1 or v2 identity", () => {
+    expect(COMMANDER_MODEL_CONFORMANCE_POLICY_VERSION_V3).toBe("nexusloop_commander_conformance_policy_v3")
+    const v1Before = validateCommanderModelConformanceRegistry(conformanceInput()).registry_hash
+    const v2Input = {
+      registry_version: 1,
+      policy_version: "nexusloop_commander_conformance_policy_v2",
+      entries: [{ conformance_version: 1, conformance_id: "google-gemini-native-v1", provider_kind: "google", transport_kind: "google_generative_ai_connector", provider_id: "google-primary", model_id: "gemini-2.5-flash" }],
+    }
+    const v2Before = validateCommanderModelConformanceRegistry(v2Input).registry_hash
+    expect(v1Before).toBe("b71f6cf8b0a8c9801af693ad2f05ef48c6359b927d0fa12da8cb22f5a410318a")
+    expect(v2Before).toBe("821e54c24afcf4c95e8300e1112177ddd4942dc18c2bf0330f47ef7450fb3a26")
+    const mixed = validateCommanderModelConformanceRegistry({
+      registry_version: 1,
+      policy_version: "nexusloop_commander_conformance_policy_v3",
+      entries: [
+        { conformance_version: 1, conformance_id: "openai-chat-compatible-v1", provider_kind: "openai", transport_kind: "openai_compatible_connector", provider_id: "openai-compatible", model_id: "gpt-4.1-mini" },
+        { conformance_version: 1, conformance_id: "openai-responses-native-v1", provider_kind: "openai", transport_kind: "openai_responses_connector", provider_id: "openai-native", model_id: "gpt-4.1-mini" },
+      ],
+    })
+    expect(mixed.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider_kind: "openai", transport_kind: "openai_compatible_connector" }),
+      expect.objectContaining({ provider_kind: "openai", transport_kind: "openai_responses_connector" }),
+    ]))
+    expect(() => validateCommanderModelConformanceRegistry({
+      registry_version: 1,
+      policy_version: "nexusloop_commander_conformance_policy_v2",
+      entries: [{ conformance_version: 1, conformance_id: "openai-responses-native-v1", provider_kind: "openai", transport_kind: "openai_responses_connector", provider_id: "openai-native", model_id: "gpt-4.1-mini" }],
+    })).toThrow("policy v3")
+    expect(validateCommanderModelConformanceRegistry(conformanceInput()).registry_hash).toBe(v1Before)
+    expect(validateCommanderModelConformanceRegistry(v2Input).registry_hash).toBe(v2Before)
   })
 
   test("different profiles remain independently bound and missing roles never fall back", () => {

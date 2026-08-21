@@ -140,6 +140,17 @@ signatures for client-tool continuation. Google server tools, Interactions,
 streaming, retries, discovery, and cross-role authority remain excluded. See
 ADR-037.
 
+Branch 9W4D adds `openai_responses_connector` as a fourth closed protocol. It
+uses native unary OpenAI Responses with `store=false`, exact connector-owned
+bearer injection, one audited request per model step, strict request and raw-
+response validation, and stateless ordinary client-function continuation.
+Stored/background responses, previous-response chaining, retrieval, hosted
+tools, reasoning continuation, streaming, and retries are rejected. Commander
+conformance policy v3 admits all earlier protocols plus Responses without
+changing v1/v2 hashes. A pure immutable four-entry compatibility matrix records
+tested protocol facts but creates no selection or readiness authority. See
+ADR-038.
+
 ```text
 NexusLoop domain control plane
 -> RuntimeServer provider config

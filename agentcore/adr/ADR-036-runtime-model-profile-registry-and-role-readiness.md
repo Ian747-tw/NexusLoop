@@ -76,9 +76,10 @@ fallback, or upstream edit. Existing 9W4A Commander execution and recovery
 identity remain unchanged.
 
 9W4C adds native Gemini `generateContent` through this authority without
-changing Executor selection or readiness. 9W4D adds OpenAI Responses and the
-verified compatibility matrix, and 9W4E owns first-run setup and role-model
-selection UX. External research MCP remains post-v1.
+changing Executor selection or readiness. 9W4D adds stateless OpenAI Responses
+and a pure verified compatibility matrix without changing role readiness or
+Executor projection. 9W4E owns first-run setup and role-model selection UX.
+External research MCP remains post-v1.
 
 `resume_supported=false`, `provider_tool_loop_enabled=false`, and
 `external_read_execution_enabled=false` remain unchanged.

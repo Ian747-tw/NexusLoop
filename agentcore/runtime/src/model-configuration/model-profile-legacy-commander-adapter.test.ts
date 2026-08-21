@@ -42,6 +42,24 @@ describe("9W4B1 legacy Commander model authority adapter", () => {
     expect(authority.registry.snapshot().commander_selection?.conformance_policy_hash).not.toBe(adaptLegacyCommanderModelAuthority(config()).registry.snapshot().commander_selection?.conformance_policy_hash)
     expect(authority.registry.executorSelection()).toBeUndefined()
   })
+  test("native OpenAI Responses legacy authority deterministically activates Commander conformance v3 only", () => {
+    const authority = adaptLegacyCommanderModelAuthority(validateCommanderInvestigationProviderConfig({
+      ...config(),
+      transport_kind: "openai_responses_connector",
+      provider_id: "openai-responses-primary",
+      provider_kind: "openai",
+      connector_id: "openai-responses-main",
+      model_id: "gpt-4.1-mini",
+      supports_json_schema: false,
+    }))
+    expect(authority.registry.commanderSelection()).toMatchObject({ provider_kind: "openai", transport_kind: "openai_responses_connector", model_id: "gpt-4.1-mini" })
+    expect(authority.registry.snapshot().commander_selection?.conformance_policy_hash).not.toBe(adaptLegacyCommanderModelAuthority(config()).registry.snapshot().commander_selection?.conformance_policy_hash)
+    expect(authority.registry.executorSelection()).toBeUndefined()
+    expect(() => validateCommanderInvestigationProviderConfig({
+      ...authority.provider_config,
+      model_id: "o3",
+    })).toThrow("verified non-reasoning model set")
+  })
   test("deterministically maps validated legacy authority to an exact Commander selection", () => {
     const first = adaptLegacyCommanderModelAuthority(config())
     const second = adaptLegacyCommanderModelAuthority(structuredClone(config()))

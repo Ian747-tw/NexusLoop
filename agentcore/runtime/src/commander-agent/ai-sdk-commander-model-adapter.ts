@@ -1,11 +1,12 @@
 import { AnthropicLanguageModel } from "@ai-sdk/anthropic/internal"
 import { createGoogleGenerativeAI } from "@ai-sdk/google"
+import { createOpenAI } from "@ai-sdk/openai"
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { generateText, InvalidToolInputError, jsonSchema, NoSuchToolError, Output, streamText, tool, type ModelMessage } from "ai"
 import { redactText, redactValue } from "../security/redaction"
 import { buildProviderToolMap, makeCommanderToolCall, parseJsonFallback, providerJsonSchema, stableHash, validateCommanderToolArguments } from "./commander-model-schema"
 import type { CommanderModelAssistantMessage, CommanderModelStepAdapter, CommanderModelStepRequest, CommanderModelStepResult, CommanderModelStreamEvent, CommanderModelToolCallPart, CommanderModelUsage } from "./commander-model-types"
-import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, CONNECTOR_MANAGED_API_KEY_SENTINEL, GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION, type CommanderConnectorModelTransportKind } from "./commander-connector-transport-types"
+import { ANTHROPIC_MESSAGES_PROTOCOL_VERSION, ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION, CONNECTOR_MANAGED_API_KEY_SENTINEL, GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION, OPENAI_RESPONSES_PROVIDER_ADAPTER_VERSION, type CommanderConnectorModelTransportKind } from "./commander-connector-transport-types"
 import { externalApiConnectorFetchAuthority, type ExternalApiConnectorFetchAuthority } from "./external-api-connector-fetch"
 
 export type AiSdkCommanderCredentialMode = "explicit_api_key" | "connector_managed"
@@ -54,6 +55,8 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
       ? ANTHROPIC_MESSAGES_PROVIDER_ADAPTER_VERSION
       : this.transportKind === "google_generative_ai_connector"
         ? GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION
+        : this.transportKind === "openai_responses_connector"
+          ? OPENAI_RESPONSES_PROVIDER_ADAPTER_VERSION
         : "ai@7.0.29/@ai-sdk/openai-compatible@3.0.11"
     this.supports_structured_output = this.transportKind === "openai_compatible_connector"
     this.supports_openai_compatible = this.transportKind === "openai_compatible_connector"
@@ -65,7 +68,12 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
     request = snapshotModelStepRequest(request)
     const started = Date.now()
     if (this.connectorFetchAuthority && (request.provider_id !== this.connectorFetchAuthority.provider_id || request.model_id !== this.connectorFetchAuthority.model_id)) {
-      return finalizeStep(request, "failed", { usage: { provider_reported: false }, requestCount: 0, durationMs: Date.now() - started, error: this.transportKind === "anthropic_messages_connector" ? "Anthropic connector fetch authority does not match request identity" : "Google connector fetch authority does not match request identity" })
+      const error = this.transportKind === "anthropic_messages_connector"
+        ? "Anthropic connector fetch authority does not match request identity"
+        : this.transportKind === "google_generative_ai_connector"
+          ? "Google connector fetch authority does not match request identity"
+          : "OpenAI Responses connector fetch authority does not match request identity"
+      return finalizeStep(request, "failed", { usage: { provider_reported: false }, requestCount: 0, durationMs: Date.now() - started, error })
     }
     const measured = this.providerForCall(request.request_id)
     try {
@@ -80,6 +88,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         temperature: request.temperature,
         abortSignal: request.abort_signal,
         maxRetries: 0,
+        providerOptions: this.transportKind === "openai_responses_connector" ? { openai: { store: false } } : undefined,
       })
       const toolCalls = request.tool_protocol === "native" ? normalizeToolCalls(request, result.toolCalls ?? [], this.transportKind) : []
       if (request.tool_protocol === "json_fallback" && toolCalls.length === 0) {
@@ -111,7 +120,7 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
   async *executeOneStreamedStep(request: CommanderModelStepRequest): AsyncIterable<CommanderModelStreamEvent> {
     request = snapshotModelStepRequest(request)
     if (this.transportKind !== "openai_compatible_connector") {
-      yield { type: "error", error: this.transportKind === "anthropic_messages_connector" ? "Anthropic Messages connector streaming is not enabled" : "Google generateContent connector streaming is not enabled" }
+      yield { type: "error", error: this.transportKind === "anthropic_messages_connector" ? "Anthropic Messages connector streaming is not enabled" : this.transportKind === "google_generative_ai_connector" ? "Google generateContent connector streaming is not enabled" : "OpenAI Responses connector streaming is not enabled" }
       return
     }
     const started = Date.now()
@@ -268,6 +277,15 @@ export class AiSdkCommanderModelStepAdapter implements CommanderModelStepAdapter
         generateId: () => `commander_google_call_${stableHash({ request_id: requestId }).slice(0, 16)}_${generatedIdIndex++}`,
       })
       return { model: (modelId: string) => provider.chat(modelId), requestCount: () => requestCount }
+    }
+    if (this.transportKind === "openai_responses_connector") {
+      const provider = createOpenAI({
+        name: "nexusloop-commander-openai-responses",
+        baseURL: canonicalProviderBaseUrl(this.options.base_url),
+        apiKey: CONNECTOR_MANAGED_API_KEY_SENTINEL,
+        fetch: guardedFetch,
+      })
+      return { model: (modelId: string) => provider.responses(modelId), requestCount: () => requestCount }
     }
     const provider = createOpenAICompatible({
         name: boundIdentifier(this.options.provider_name, "provider_name"),
@@ -518,12 +536,13 @@ function validateOptions(options: AiSdkCommanderModelAdapterOptions): ExternalAp
   const parsed = new URL(options.base_url)
   if (parsed.username || parsed.password) throw new Error("AI SDK base_url credentials are not allowed")
   boundIdentifier(options.provider_name, "provider_name")
-  if (options.transport_kind !== undefined && options.transport_kind !== "openai_compatible_connector" && options.transport_kind !== "anthropic_messages_connector" && options.transport_kind !== "google_generative_ai_connector") throw new Error("AI SDK transport_kind is invalid")
+  if (options.transport_kind !== undefined && options.transport_kind !== "openai_compatible_connector" && options.transport_kind !== "anthropic_messages_connector" && options.transport_kind !== "google_generative_ai_connector" && options.transport_kind !== "openai_responses_connector") throw new Error("AI SDK transport_kind is invalid")
   const credentialMode = options.credential_mode ?? "explicit_api_key"
   if (credentialMode !== "explicit_api_key" && credentialMode !== "connector_managed") throw new Error("AI SDK credential_mode is invalid")
-  if ((options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector") && credentialMode !== "connector_managed") throw new Error("native provider transport requires connector_managed credential mode")
-  const connectorAuthority = options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector" ? externalApiConnectorFetchAuthority(options.fetch) : undefined
-  if ((options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector") && !connectorAuthority) throw new Error("native provider transport requires audited connector fetch authority")
+  const nativeTransport = options.transport_kind === "anthropic_messages_connector" || options.transport_kind === "google_generative_ai_connector" || options.transport_kind === "openai_responses_connector"
+  if (nativeTransport && credentialMode !== "connector_managed") throw new Error("native provider transport requires connector_managed credential mode")
+  const connectorAuthority = nativeTransport ? externalApiConnectorFetchAuthority(options.fetch) : undefined
+  if (nativeTransport && !connectorAuthority) throw new Error("native provider transport requires audited connector fetch authority")
   if (connectorAuthority && (connectorAuthority.transport_kind !== options.transport_kind || connectorAuthority.provider_id !== options.provider_name || connectorAuthority.base_url !== parsed.toString())) {
     throw new Error("audited connector fetch does not match provider authority")
   }

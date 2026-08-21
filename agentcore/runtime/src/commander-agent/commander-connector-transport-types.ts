@@ -1,7 +1,7 @@
 import { redactText } from "../security/redaction"
 import type { ExternalApiConnector } from "../external-api/api-connector-types"
 
-export type CommanderConnectorModelTransportKind = "openai_compatible_connector" | "anthropic_messages_connector" | "google_generative_ai_connector"
+export type CommanderConnectorModelTransportKind = "openai_compatible_connector" | "anthropic_messages_connector" | "google_generative_ai_connector" | "openai_responses_connector"
 
 export const CONNECTOR_MANAGED_API_KEY_SENTINEL = "NEXUSLOOP_CONNECTOR_MANAGED_CREDENTIAL"
 export const ANTHROPIC_MESSAGES_PROTOCOL_VERSION = "2023-06-01" as const
@@ -10,6 +10,9 @@ export const ANTHROPIC_MESSAGES_REQUEST_SHAPE_POLICY_VERSION = "anthropic_messag
 export const GOOGLE_GENERATIVE_AI_PROVIDER_ADAPTER_VERSION = "ai@7.0.29/@ai-sdk/google@4.0.15" as const
 export const GOOGLE_GENERATIVE_AI_REQUEST_SHAPE_POLICY_VERSION = "google_generate_content_v1" as const
 export const GOOGLE_GENERATIVE_AI_TRANSIENT_CONTINUATION_POLICY_VERSION = "google_thought_signature_weakmap_v1" as const
+export const OPENAI_RESPONSES_PROVIDER_ADAPTER_VERSION = "ai@7.0.29/@ai-sdk/openai@4.0.15" as const
+export const OPENAI_RESPONSES_REQUEST_SHAPE_POLICY_VERSION = "openai_responses_stateless_v1" as const
+export const OPENAI_RESPONSES_TRANSIENT_CONTINUATION_POLICY_VERSION = "openai_function_call_id_in_memory_v1" as const
 
 type CommanderConnectorModelTransportConfigBase = {
   provider_id: string
@@ -24,6 +27,7 @@ export type CommanderConnectorModelTransportConfig = CommanderConnectorModelTran
   | { transport_kind: "openai_compatible_connector" }
   | { transport_kind: "anthropic_messages_connector" }
   | { transport_kind: "google_generative_ai_connector" }
+  | { transport_kind: "openai_responses_connector" }
 )
 
 export type CommanderConnectorModelTransportMetadata = {
@@ -50,8 +54,8 @@ export function validateCommanderConnectorModelTransportConfig(value: unknown): 
     if (!CONFIG_KEYS.has(key)) throw new Error(`unknown Commander connector transport config key: ${redactText(key)}`)
     if (CREDENTIAL_OR_URL_KEYS.some((pattern) => pattern.test(key)) && !CONFIG_KEYS.has(key)) throw new Error(`credential or URL config key is not allowed: ${redactText(key)}`)
   }
-  if (value.transport_kind !== "openai_compatible_connector" && value.transport_kind !== "anthropic_messages_connector" && value.transport_kind !== "google_generative_ai_connector") {
-    throw new Error("transport_kind must be openai_compatible_connector, anthropic_messages_connector, or google_generative_ai_connector")
+  if (value.transport_kind !== "openai_compatible_connector" && value.transport_kind !== "anthropic_messages_connector" && value.transport_kind !== "google_generative_ai_connector" && value.transport_kind !== "openai_responses_connector") {
+    throw new Error("transport_kind must be openai_compatible_connector, anthropic_messages_connector, google_generative_ai_connector, or openai_responses_connector")
   }
   const config: CommanderConnectorModelTransportConfig = {
     transport_kind: value.transport_kind,
@@ -85,9 +89,14 @@ export function connectorGoogleGenerateContentUrl(connector: ExternalApiConnecto
   return connectorProtocolUrl(connector, `models/${modelId}:generateContent`)
 }
 
+export function connectorOpenAIResponsesUrl(connector: ExternalApiConnector): URL {
+  return connectorProtocolUrl(connector, "responses")
+}
+
 export function connectorModelRequestUrl(connector: ExternalApiConnector, transportKind: CommanderConnectorModelTransportKind, modelId?: string): URL {
   if (transportKind === "anthropic_messages_connector") return connectorAnthropicMessagesUrl(connector)
   if (transportKind === "google_generative_ai_connector") return connectorGoogleGenerateContentUrl(connector, modelId ?? "")
+  if (transportKind === "openai_responses_connector") return connectorOpenAIResponsesUrl(connector)
   return connectorChatCompletionsUrl(connector)
 }
 
@@ -99,16 +108,17 @@ export function validateCommanderConnectorProtocolPolicy(config: CommanderConnec
   if (config.transport_kind === "openai_compatible_connector") return
   const base = new URL(connector.base_url)
   const allowedHosts = connector.allowed_hosts.map((host) => host.trim().toLowerCase())
-  const label = config.transport_kind === "anthropic_messages_connector" ? "Anthropic" : "Google Generative AI"
+  const label = config.transport_kind === "anthropic_messages_connector" ? "Anthropic" : config.transport_kind === "google_generative_ai_connector" ? "Google Generative AI" : "OpenAI Responses"
   if (allowedHosts.length !== 1 || allowedHosts[0] !== base.hostname.toLowerCase()) throw new Error(`${label} connector must allow exactly its configured base host`)
   if (connector.allowed_methods.length !== 1 || connector.allowed_methods[0] !== "POST") throw new Error(`${label} connector method policy must be exactly POST`)
   if (Object.keys(connector.default_headers ?? {}).length > 0) throw new Error(`${label} connector default headers are not allowed`)
   const refs = connector.credential_refs ?? []
   if (refs.length !== 1) throw new Error(`${label} connector requires exactly one credential reference`)
   const ref = refs[0]
-  const target = config.transport_kind === "anthropic_messages_connector" ? "x-api-key" : "x-goog-api-key"
-  if (ref.source !== "env" || ref.inject_as !== "header" || ref.target_name.toLowerCase() !== target || (ref.prefix ?? "") !== "") {
-    throw new Error(`${label} connector credential reference must inject exactly one unprefixed ${target} header`)
+  const target = config.transport_kind === "anthropic_messages_connector" ? "x-api-key" : config.transport_kind === "google_generative_ai_connector" ? "x-goog-api-key" : "authorization"
+  const prefix = config.transport_kind === "openai_responses_connector" ? "Bearer " : ""
+  if (ref.source !== "env" || ref.inject_as !== "header" || ref.target_name.toLowerCase() !== target || (ref.prefix ?? "") !== prefix) {
+    throw new Error(`${label} connector credential reference must inject exactly one ${prefix ? "Bearer " : "unprefixed "}${target} header`)
   }
 }
 

@@ -39,6 +39,8 @@ const ANTHROPIC_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version",
 const ANTHROPIC_REQUEST_KEYS = new Set(["model", "max_tokens", "messages", "system", "tools", "tool_choice", "temperature", "stream"])
 const GOOGLE_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk", "x-vercel-ai-sdk-version"])
 const GOOGLE_REQUEST_KEYS = new Set(["contents", "systemInstruction", "generationConfig", "tools", "toolConfig"])
+const OPENAI_RESPONSES_DROPPED_SDK_HEADERS = new Set(["user-agent", "x-ai-sdk-version", "x-vercel-ai-sdk", "x-vercel-ai-sdk-version"])
+const OPENAI_RESPONSES_REQUEST_KEYS = new Set(["model", "input", "temperature", "top_p", "max_output_tokens", "store", "tools", "tool_choice"])
 const MAX_DROPPED_HEADER_NAME_LENGTH = 80
 const AUDITED_CONNECTOR_FETCHES = new WeakMap<typeof fetch, ExternalApiConnectorFetchAuthority>()
 
@@ -150,6 +152,8 @@ function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, c
       ? "connector model transport URL does not match Anthropic Messages endpoint"
       : config.transport_kind === "google_generative_ai_connector"
         ? "connector model transport URL does not match Google generateContent endpoint"
+        : config.transport_kind === "openai_responses_connector"
+          ? "connector model transport URL does not match OpenAI Responses endpoint"
         : "connector model transport URL does not match chat completions endpoint")
   }
   if (request.url.search) throw new Error("connector model transport query parameters are not allowed")
@@ -168,12 +172,14 @@ function validateBridgeRequest(request: ParsedBridgeRequest, expectedUrl: URL, c
     const model = (payload as { model?: unknown }).model
     if (typeof model !== "string" || model !== config.model_id) throw new Error("connector model transport model does not match configured model_id")
     if (config.transport_kind === "anthropic_messages_connector") validateAnthropicMessagesBody(payload as Record<string, unknown>)
+    if (config.transport_kind === "openai_responses_connector") validateOpenAIResponsesBody(payload as Record<string, unknown>)
   }
 }
 
 function filterHeaders(headers: Headers, dropped: Set<string>, config: CommanderConnectorModelTransportConfig): Record<string, string> {
   if (config.transport_kind === "anthropic_messages_connector") return filterAnthropicHeaders(headers, dropped)
   if (config.transport_kind === "google_generative_ai_connector") return filterGoogleHeaders(headers, dropped)
+  if (config.transport_kind === "openai_responses_connector") return filterOpenAIResponsesHeaders(headers, dropped)
   const out: Record<string, string> = {}
   headers.forEach((value, key) => {
     const normalized = key.toLowerCase()
@@ -196,6 +202,79 @@ function filterHeaders(headers: Headers, dropped: Set<string>, config: Commander
   })
   if (!out["Content-Type"]) throw new Error("connector model transport requires application/json content type")
   return out
+}
+
+function filterOpenAIResponsesHeaders(headers: Headers, dropped: Set<string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  let sentinelCount = 0
+  headers.forEach((value, key) => {
+    const normalized = key.toLowerCase()
+    if (normalized === "content-type") {
+      if (!/^application\/json\b/i.test(value)) throw new Error("OpenAI Responses transport requires application/json content type")
+      out["Content-Type"] = "application/json"
+      return
+    }
+    if (normalized === "accept") {
+      if (!/(^|,\s*)application\/json\b|^\*\/\*$/i.test(value)) throw new Error("OpenAI Responses transport accepts only JSON responses")
+      out.Accept = "application/json"
+      return
+    }
+    if (normalized === "authorization") {
+      if (value !== `Bearer ${CONNECTOR_MANAGED_API_KEY_SENTINEL}`) throw new Error("OpenAI Responses Authorization must contain the exact connector-managed bearer sentinel")
+      sentinelCount += 1
+      return
+    }
+    if (normalized === "cookie" || normalized === "openai-organization" || normalized === "openai-project") throw new Error("OpenAI Responses caller authentication or account headers are not allowed")
+    if (isCredentialLikeHeaderName(normalized)) throw new Error(`credential header is not allowed: ${redactText(key)}`)
+    if (!OPENAI_RESPONSES_DROPPED_SDK_HEADERS.has(normalized)) throw new Error(`OpenAI Responses header is not allowed: ${redactText(key)}`)
+    dropped.add(boundedHeaderName(key))
+  })
+  if (!out["Content-Type"]) throw new Error("OpenAI Responses transport requires application/json content type")
+  if (sentinelCount !== 1) throw new Error("OpenAI Responses transport requires one connector-managed bearer sentinel")
+  return out
+}
+
+function validateOpenAIResponsesBody(payload: Record<string, unknown>): void {
+  if (Object.keys(payload).some((key) => !OPENAI_RESPONSES_REQUEST_KEYS.has(key))) throw new Error("OpenAI Responses request contains a forbidden field")
+  if (payload.store !== false) throw new Error("OpenAI Responses request must set store=false")
+  if (!Number.isInteger(payload.max_output_tokens) || Number(payload.max_output_tokens) < 1 || Number(payload.max_output_tokens) > 1_000_000) throw new Error("OpenAI Responses max_output_tokens is invalid")
+  if (payload.temperature !== undefined && (typeof payload.temperature !== "number" || !Number.isFinite(payload.temperature) || payload.temperature < 0 || payload.temperature > 2)) throw new Error("OpenAI Responses temperature is invalid")
+  if (payload.top_p !== undefined && (typeof payload.top_p !== "number" || !Number.isFinite(payload.top_p) || payload.top_p < 0 || payload.top_p > 1)) throw new Error("OpenAI Responses top_p is invalid")
+  if (!Array.isArray(payload.input) || payload.input.length === 0 || payload.input.length > 256) throw new Error("OpenAI Responses input must be a bounded nonempty array")
+  for (const item of payload.input) validateOpenAIResponsesInputItem(item)
+  if (payload.tools !== undefined) {
+    if (!Array.isArray(payload.tools) || payload.tools.length > 64) throw new Error("OpenAI Responses tools must be a bounded array")
+    for (const tool of payload.tools) {
+      if (!isRecord(tool) || !hasOnlyKeys(tool, ["type", "name", "description", "parameters", "strict"]) || tool.type !== "function" || !boundedIdentifier(tool.name, 200) || tool.description !== undefined && typeof tool.description !== "string" || !isRecord(tool.parameters) || tool.strict !== undefined && typeof tool.strict !== "boolean") throw new Error("OpenAI Responses request contains a forbidden or malformed tool")
+    }
+  }
+  const choice = payload.tool_choice
+  if (choice !== undefined && choice !== "auto" && choice !== "none" && choice !== "required" && (!isRecord(choice) || !hasExactKeys(choice, ["type", "name"]) || choice.type !== "function" || !boundedIdentifier(choice.name, 200))) throw new Error("OpenAI Responses tool_choice is invalid")
+}
+
+function validateOpenAIResponsesInputItem(value: unknown): void {
+  if (!isRecord(value)) throw new Error("OpenAI Responses input item is invalid")
+  if (value.type === "function_call") {
+    if (!hasExactKeys(value, ["type", "call_id", "name", "arguments"]) || !boundedIdentifier(value.call_id, 200) || !boundedIdentifier(value.name, 200) || typeof value.arguments !== "string" || Buffer.byteLength(value.arguments) > 32_768) throw new Error("OpenAI Responses function_call input is invalid")
+    let argumentsValue: unknown
+    try { argumentsValue = JSON.parse(value.arguments) } catch { throw new Error("OpenAI Responses function_call input arguments are malformed") }
+    if (!isRecord(argumentsValue)) throw new Error("OpenAI Responses function_call input arguments must be an object")
+    return
+  }
+  if (value.type === "function_call_output") {
+    if (!hasExactKeys(value, ["type", "call_id", "output"]) || !boundedIdentifier(value.call_id, 200) || typeof value.output !== "string" || Buffer.byteLength(value.output) > 65_536) throw new Error("OpenAI Responses function_call_output input is invalid")
+    return
+  }
+  if (!hasExactKeys(value, ["role", "content"]) || value.role !== "system" && value.role !== "developer" && value.role !== "user" && value.role !== "assistant") throw new Error("OpenAI Responses message input is invalid")
+  if (value.role === "system" || value.role === "developer") {
+    if (typeof value.content !== "string" || !value.content.trim() || Buffer.byteLength(value.content) > 12_000) throw new Error("OpenAI Responses system instruction is invalid")
+    return
+  }
+  if (!Array.isArray(value.content) || value.content.length === 0 || value.content.length > 128) throw new Error("OpenAI Responses message input is invalid")
+  for (const part of value.content) {
+    const expectedType = value.role === "assistant" ? "output_text" : "input_text"
+    if (!isRecord(part) || !hasExactKeys(part, ["type", "text"]) || part.type !== expectedType || typeof part.text !== "string" || Buffer.byteLength(part.text) > 65_536) throw new Error("OpenAI Responses message content is invalid")
+  }
 }
 
 function filterGoogleHeaders(headers: Headers, dropped: Set<string>): Record<string, string> {
@@ -436,6 +515,7 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
     const body = result.response_body_for_internal_use ?? ""
     if (transportKind === "anthropic_messages_connector") validateAnthropicMessagesResponseBody(body, expectedModelId)
     if (transportKind === "google_generative_ai_connector") return validateGoogleGenerateContentResponseBody(body, expectedModelId)
+    if (transportKind === "openai_responses_connector") return validateOpenAIResponsesResponseBody(body, expectedModelId)
     return body
   }
   const status = typeof result.status_code === "number" ? result.status_code : 500
@@ -451,6 +531,9 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
   if (transportKind === "google_generative_ai_connector") {
     return JSON.stringify({ error: { code: status, message: `connector-backed Google request failed with HTTP ${status}`, status: "UNKNOWN" } })
   }
+  if (transportKind === "openai_responses_connector") {
+    return JSON.stringify({ error: { message: `connector-backed OpenAI Responses request failed with HTTP ${status}`, type: "connector_backed_provider_http_error", code: `http_${status}` } })
+  }
   return JSON.stringify({
     error: {
       message: `connector-backed provider request failed with HTTP ${status}`,
@@ -459,6 +542,95 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
       request_id: result.request_id,
     },
   })
+}
+
+function validateOpenAIResponsesResponseBody(body: string, expectedModelId: string): string {
+  let payload: unknown
+  try { payload = JSON.parse(body) } catch { throw new Error("OpenAI Responses response must be valid JSON") }
+  const allowed = ["id", "object", "created_at", "completed_at", "status", "background", "error", "incomplete_details", "input", "instructions", "max_output_tokens", "max_tool_calls", "metadata", "model", "output", "parallel_tool_calls", "previous_response_id", "prompt_cache_key", "reasoning", "safety_identifier", "service_tier", "store", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "usage", "user"]
+  if (!isRecord(payload) || !hasOnlyKeys(payload, allowed) || payload.object !== undefined && payload.object !== "response" || payload.status !== "completed" || payload.error !== null && payload.error !== undefined || payload.incomplete_details !== null && payload.incomplete_details !== undefined || !openAIResponsesModelMatches(expectedModelId, payload.model) || !validOpenAIResponsesInertEnvelope(payload) || !boundedIdentifier(payload.id, 200) || typeof payload.created_at !== "number" || !Number.isFinite(payload.created_at) || payload.background !== undefined && payload.background !== false || payload.previous_response_id !== undefined && payload.previous_response_id !== null || payload.store !== undefined && payload.store !== false) throw new Error("OpenAI Responses response identity or terminal state is invalid")
+  if (payload.reasoning !== undefined && payload.reasoning !== null && (!isRecord(payload.reasoning) || !hasOnlyKeys(payload.reasoning, ["effort", "summary"]) || payload.reasoning.effort !== null && payload.reasoning.effort !== undefined || payload.reasoning.summary !== null && payload.reasoning.summary !== undefined)) throw new Error("OpenAI Responses reasoning output is forbidden")
+  if (!validOpenAIResponsesUsage(payload.usage)) throw new Error("OpenAI Responses usage is invalid")
+  if (!Array.isArray(payload.output) || payload.output.length === 0 || payload.output.length > 128) throw new Error("OpenAI Responses output is invalid")
+  let hasText = false
+  let hasRefusal = false
+  let hasFunctionCall = false
+  const normalizedOutput: unknown[] = []
+  for (const item of payload.output) {
+    if (!isRecord(item)) throw new Error("OpenAI Responses output item is invalid")
+    if (item.type === "function_call") {
+      if (!hasOnlyKeys(item, ["type", "id", "call_id", "name", "arguments", "status"]) || !boundedIdentifier(item.id, 200) || !boundedIdentifier(item.call_id, 200) || !boundedIdentifier(item.name, 200) || typeof item.arguments !== "string" || Buffer.byteLength(item.arguments) > 32_768 || item.status !== "completed") throw new Error("OpenAI Responses function call is invalid")
+      let args: unknown
+      try { args = JSON.parse(item.arguments) } catch { throw new Error("OpenAI Responses function call arguments are malformed") }
+      if (!isRecord(args)) throw new Error("OpenAI Responses function call arguments must be an object")
+      hasFunctionCall = true
+      normalizedOutput.push(item)
+      continue
+    }
+    if (item.type !== "message" || !hasOnlyKeys(item, ["type", "id", "status", "role", "content"]) || !boundedIdentifier(item.id, 200) || item.status !== "completed" || item.role !== "assistant" || !Array.isArray(item.content) || item.content.length === 0 || item.content.length > 64) throw new Error("OpenAI Responses message output is invalid")
+    const content: unknown[] = []
+    for (const part of item.content) {
+      if (!isRecord(part) || part.type !== "output_text" && part.type !== "refusal" || !hasOnlyKeys(part, part.type === "output_text" ? ["type", "text", "annotations", "logprobs"] : ["type", "refusal"])) throw new Error("OpenAI Responses message content is invalid")
+      const text = part.type === "refusal" ? part.refusal : part.text
+      if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > 65_536 || part.type === "output_text" && (!Array.isArray(part.annotations) || part.annotations.length !== 0 || part.logprobs !== undefined && part.logprobs !== null && (!Array.isArray(part.logprobs) || part.logprobs.length !== 0))) throw new Error("OpenAI Responses text or refusal content is invalid")
+      hasRefusal ||= part.type === "refusal"
+      hasText ||= part.type === "output_text"
+      content.push({ type: "output_text", text, annotations: [] })
+    }
+    normalizedOutput.push({ type: "message", id: item.id, role: "assistant", content })
+  }
+  if (hasRefusal && (hasText || hasFunctionCall)) throw new Error("OpenAI Responses refusal cannot be combined with other output")
+  if (!hasRefusal && !hasText && !hasFunctionCall) throw new Error("OpenAI Responses completed output is empty")
+  return JSON.stringify({
+    id: "nexusloop_response",
+    created_at: 0,
+    error: null,
+    model: expectedModelId,
+    output: normalizedOutput,
+    reasoning: null,
+    service_tier: null,
+    incomplete_details: hasRefusal ? { reason: "content_filter" } : null,
+    usage: payload.usage,
+  })
+}
+
+function validOpenAIResponsesInertEnvelope(payload: Record<string, unknown>): boolean {
+  if (payload.completed_at !== undefined && payload.completed_at !== null && (!nonnegativeInteger(payload.completed_at) || Number(payload.completed_at) > 10_000_000_000)) return false
+  if (payload.input !== undefined && payload.input !== null && (!Array.isArray(payload.input) || payload.input.length !== 0)) return false
+  if (payload.max_tool_calls !== undefined && payload.max_tool_calls !== null && (!nonnegativeInteger(payload.max_tool_calls) || Number(payload.max_tool_calls) > 128)) return false
+  if (payload.safety_identifier !== undefined && payload.safety_identifier !== null && !boundedSafeMetadataString(payload.safety_identifier, 64)) return false
+  if (payload.metadata !== undefined && payload.metadata !== null) {
+    if (!isRecord(payload.metadata)) return false
+    const entries = Object.entries(payload.metadata)
+    if (entries.length > 16 || entries.some(([key, value]) => !boundedSafeMetadataString(key, 64) || typeof value !== "string" || value.length > 512)) return false
+  }
+  if (payload.user !== undefined && payload.user !== null && !boundedSafeMetadataString(payload.user, 256)) return false
+  if (payload.prompt_cache_key !== undefined && payload.prompt_cache_key !== null && !boundedSafeMetadataString(payload.prompt_cache_key, 64)) return false
+  if (payload.top_logprobs !== undefined && payload.top_logprobs !== null && (!nonnegativeInteger(payload.top_logprobs) || Number(payload.top_logprobs) > 20)) return false
+  return true
+}
+
+function openAIResponsesModelMatches(expectedModelId: string, returnedModelId: unknown): boolean {
+  if (returnedModelId === expectedModelId) return true
+  if (typeof returnedModelId !== "string" || returnedModelId.length > 200) return false
+  if (/\d{4}-\d{2}-\d{2}$/.test(expectedModelId)) return false
+  const prefix = `${expectedModelId}-`
+  if (!returnedModelId.startsWith(prefix)) return false
+  const snapshot = returnedModelId.slice(prefix.length)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(snapshot)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+}
+
+function validOpenAIResponsesUsage(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["input_tokens", "output_tokens", "total_tokens", "input_tokens_details", "output_tokens_details"]) || !nonnegativeInteger(value.input_tokens) || !nonnegativeInteger(value.output_tokens) || !nonnegativeInteger(value.total_tokens) || Number(value.total_tokens) !== Number(value.input_tokens) + Number(value.output_tokens)) return false
+  if (value.input_tokens_details !== undefined && value.input_tokens_details !== null && (!isRecord(value.input_tokens_details) || !hasOnlyKeys(value.input_tokens_details, ["cached_tokens", "cache_write_tokens"]) || value.input_tokens_details.cached_tokens !== undefined && value.input_tokens_details.cached_tokens !== null && !nonnegativeInteger(value.input_tokens_details.cached_tokens) || value.input_tokens_details.cache_write_tokens !== undefined && value.input_tokens_details.cache_write_tokens !== null && !nonnegativeInteger(value.input_tokens_details.cache_write_tokens))) return false
+  if (value.output_tokens_details !== undefined && value.output_tokens_details !== null && (!isRecord(value.output_tokens_details) || !hasOnlyKeys(value.output_tokens_details, ["reasoning_tokens"]) || value.output_tokens_details.reasoning_tokens !== undefined && value.output_tokens_details.reasoning_tokens !== null && value.output_tokens_details.reasoning_tokens !== 0)) return false
+  return true
 }
 
 function validateGoogleGenerateContentResponseBody(body: string, expectedModelId: string): string {

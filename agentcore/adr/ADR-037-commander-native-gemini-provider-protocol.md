@@ -77,3 +77,7 @@ selection, Executor authority change, MCP, external research, proposal,
 governance, or mutation capability is added. `resume_supported=false`,
 `provider_tool_loop_enabled=false`, and `external_read_execution_enabled=false`
 remain unchanged.
+
+Branch 9W4D adds OpenAI Responses under a separate conformance-policy-v3 entry.
+It does not alter Gemini's v2 authority, request/response policy, transient
+thought-signature handling, recovery identity, or Executor isolation.
