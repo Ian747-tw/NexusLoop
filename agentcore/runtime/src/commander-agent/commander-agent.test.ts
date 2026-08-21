@@ -187,6 +187,11 @@ describe("Commander AI SDK model adapter", () => {
     responsePayload.user = "bounded-user"
     responsePayload.prompt_cache_key = "bounded-cache-key"
     responsePayload.top_logprobs = 0
+    responsePayload.completed_at = 1784160001
+    responsePayload.input = []
+    responsePayload.max_tool_calls = null
+    responsePayload.safety_identifier = null
+    responsePayload.output[0].content[0].logprobs = []
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(responsePayload) }])
     const adapter = connectorBackedAdapter(projectDir, transport, "api_responses_final", {
       config: connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" }),
@@ -298,6 +303,12 @@ describe("Commander AI SDK model adapter", () => {
       ["prefix_confusable_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-evil-2025-04-14" })],
       ["invalid_snapshot_date", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-2025-02-31" })],
       ["malformed_metadata", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad metadata")), metadata: { nested: { forbidden: true } } })],
+      ["nonempty_logprobs", JSON.stringify({ ...JSON.parse(openAIResponsesText("log probabilities must remain unavailable")), output: [{ type: "message", id: "msg_logprobs", status: "completed", role: "assistant", content: [{ type: "output_text", text: "log probabilities must remain unavailable", annotations: [], logprobs: [{ token: "secret", logprob: -0.1, top_logprobs: [] }] }] }] })],
+      ["malformed_completed_at", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad completion timestamp")), completed_at: "later" })],
+      ["oversized_completed_at", JSON.stringify({ ...JSON.parse(openAIResponsesText("oversized completion timestamp")), completed_at: Number.MAX_SAFE_INTEGER })],
+      ["malformed_max_tool_calls", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad tool ceiling")), max_tool_calls: -1 })],
+      ["malformed_safety_identifier", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad safety identity")), safety_identifier: { raw: true } })],
+      ["echoed_input", JSON.stringify({ ...JSON.parse(openAIResponsesText("input must not be accepted")), input: [{ role: "user", content: "raw prompt" }] })],
       ["hosted_tool", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "web_search_call", id: "ws_1", status: "completed" }] })],
       ["reasoning", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "reasoning", id: "r_1", summary: [] }] })],
       ["malformed_call", JSON.stringify({ ...JSON.parse(openAIResponsesToolCall("call_bad", "repo__git_status", {})), output: [{ type: "function_call", id: "fc_bad", call_id: "call_bad", name: "repo__git_status", arguments: "{", status: "completed" }] })],
@@ -316,6 +327,8 @@ describe("Commander AI SDK model adapter", () => {
       expect(JSON.stringify(result)).not.toContain("partial must remain unavailable")
       expect(JSON.stringify(result)).not.toContain("must not publish")
       expect(JSON.stringify(result)).not.toContain("reasoning must remain unavailable")
+      expect(JSON.stringify(result)).not.toContain("log probabilities must remain unavailable")
+      expect(JSON.stringify(result)).not.toContain("raw prompt")
     }
     for (const status of [429, 500]) {
       const transport = new FakeExternalApiTransport([{ status_code: status, body: JSON.stringify({ error: { message: `sk-${"x".repeat(10_000)}` } }) }])
@@ -326,7 +339,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("sk-")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(14)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(20)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("sk-")
     expect(events).not.toContain("partial must remain unavailable")

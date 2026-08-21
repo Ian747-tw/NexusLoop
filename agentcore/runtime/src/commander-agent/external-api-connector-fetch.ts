@@ -547,7 +547,7 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
 function validateOpenAIResponsesResponseBody(body: string, expectedModelId: string): string {
   let payload: unknown
   try { payload = JSON.parse(body) } catch { throw new Error("OpenAI Responses response must be valid JSON") }
-  const allowed = ["id", "object", "created_at", "status", "background", "error", "incomplete_details", "instructions", "max_output_tokens", "metadata", "model", "output", "parallel_tool_calls", "previous_response_id", "prompt_cache_key", "reasoning", "service_tier", "store", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "usage", "user"]
+  const allowed = ["id", "object", "created_at", "completed_at", "status", "background", "error", "incomplete_details", "input", "instructions", "max_output_tokens", "max_tool_calls", "metadata", "model", "output", "parallel_tool_calls", "previous_response_id", "prompt_cache_key", "reasoning", "safety_identifier", "service_tier", "store", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "usage", "user"]
   if (!isRecord(payload) || !hasOnlyKeys(payload, allowed) || payload.object !== undefined && payload.object !== "response" || payload.status !== "completed" || payload.error !== null && payload.error !== undefined || payload.incomplete_details !== null && payload.incomplete_details !== undefined || !openAIResponsesModelMatches(expectedModelId, payload.model) || !validOpenAIResponsesInertEnvelope(payload) || !boundedIdentifier(payload.id, 200) || typeof payload.created_at !== "number" || !Number.isFinite(payload.created_at) || payload.background !== undefined && payload.background !== false || payload.previous_response_id !== undefined && payload.previous_response_id !== null || payload.store !== undefined && payload.store !== false) throw new Error("OpenAI Responses response identity or terminal state is invalid")
   if (payload.reasoning !== undefined && payload.reasoning !== null && (!isRecord(payload.reasoning) || !hasOnlyKeys(payload.reasoning, ["effort", "summary"]) || payload.reasoning.effort !== null && payload.reasoning.effort !== undefined || payload.reasoning.summary !== null && payload.reasoning.summary !== undefined)) throw new Error("OpenAI Responses reasoning output is forbidden")
   if (!validOpenAIResponsesUsage(payload.usage)) throw new Error("OpenAI Responses usage is invalid")
@@ -572,7 +572,7 @@ function validateOpenAIResponsesResponseBody(body: string, expectedModelId: stri
     for (const part of item.content) {
       if (!isRecord(part) || part.type !== "output_text" && part.type !== "refusal" || !hasOnlyKeys(part, part.type === "output_text" ? ["type", "text", "annotations", "logprobs"] : ["type", "refusal"])) throw new Error("OpenAI Responses message content is invalid")
       const text = part.type === "refusal" ? part.refusal : part.text
-      if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > 65_536 || part.type === "output_text" && (!Array.isArray(part.annotations) || part.annotations.length !== 0 || part.logprobs !== undefined && part.logprobs !== null)) throw new Error("OpenAI Responses text or refusal content is invalid")
+      if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > 65_536 || part.type === "output_text" && (!Array.isArray(part.annotations) || part.annotations.length !== 0 || part.logprobs !== undefined && part.logprobs !== null && (!Array.isArray(part.logprobs) || part.logprobs.length !== 0))) throw new Error("OpenAI Responses text or refusal content is invalid")
       hasRefusal ||= part.type === "refusal"
       hasText ||= part.type === "output_text"
       content.push({ type: "output_text", text, annotations: [] })
@@ -595,6 +595,10 @@ function validateOpenAIResponsesResponseBody(body: string, expectedModelId: stri
 }
 
 function validOpenAIResponsesInertEnvelope(payload: Record<string, unknown>): boolean {
+  if (payload.completed_at !== undefined && payload.completed_at !== null && (!nonnegativeInteger(payload.completed_at) || Number(payload.completed_at) > 10_000_000_000)) return false
+  if (payload.input !== undefined && payload.input !== null && (!Array.isArray(payload.input) || payload.input.length !== 0)) return false
+  if (payload.max_tool_calls !== undefined && payload.max_tool_calls !== null && (!nonnegativeInteger(payload.max_tool_calls) || Number(payload.max_tool_calls) > 128)) return false
+  if (payload.safety_identifier !== undefined && payload.safety_identifier !== null && !boundedSafeMetadataString(payload.safety_identifier, 64)) return false
   if (payload.metadata !== undefined && payload.metadata !== null) {
     if (!isRecord(payload.metadata)) return false
     const entries = Object.entries(payload.metadata)
