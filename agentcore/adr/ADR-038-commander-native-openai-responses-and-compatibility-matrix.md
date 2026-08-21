@@ -37,7 +37,10 @@ The audited dependency is `@ai-sdk/openai@4.0.15` on the existing
    usage. Reject unknown output items, hosted-tool output, reasoning state,
    incomplete/truncated output, malformed calls, model mismatch, and ambiguous
    combinations. A returned model may equal the configured ID or be its exact
-   calendar-date snapshot; the configured model remains authoritative.
+   calendar-date snapshot; the configured model remains authoritative. The
+   initial verified model family is `gpt-4.1-mini` and its dated snapshots;
+   reasoning-model configuration fails before readiness. Documented inert
+   envelope fields are bounded and discarded before SDK normalization.
 6. Synthesize a minimal SDK response after validation. Provider response IDs,
    aliases, echoed options, service-tier observations, and raw metadata do not
    enter Commander results, journals, audits, hashes, or future requests.

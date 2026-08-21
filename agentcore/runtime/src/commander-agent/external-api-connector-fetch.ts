@@ -547,8 +547,8 @@ function providerResponseBody(result: { ok: boolean; status_code?: number; reque
 function validateOpenAIResponsesResponseBody(body: string, expectedModelId: string): string {
   let payload: unknown
   try { payload = JSON.parse(body) } catch { throw new Error("OpenAI Responses response must be valid JSON") }
-  const allowed = ["id", "object", "created_at", "status", "background", "error", "incomplete_details", "instructions", "max_output_tokens", "model", "output", "parallel_tool_calls", "previous_response_id", "reasoning", "service_tier", "store", "temperature", "text", "tool_choice", "tools", "top_p", "truncation", "usage"]
-  if (!isRecord(payload) || !hasOnlyKeys(payload, allowed) || payload.object !== undefined && payload.object !== "response" || payload.status !== "completed" || payload.error !== null && payload.error !== undefined || payload.incomplete_details !== null && payload.incomplete_details !== undefined || !openAIResponsesModelMatches(expectedModelId, payload.model) || !boundedIdentifier(payload.id, 200) || typeof payload.created_at !== "number" || !Number.isFinite(payload.created_at) || payload.background !== undefined && payload.background !== false || payload.previous_response_id !== undefined && payload.previous_response_id !== null || payload.store !== undefined && payload.store !== false) throw new Error("OpenAI Responses response identity or terminal state is invalid")
+  const allowed = ["id", "object", "created_at", "status", "background", "error", "incomplete_details", "instructions", "max_output_tokens", "metadata", "model", "output", "parallel_tool_calls", "previous_response_id", "prompt_cache_key", "reasoning", "service_tier", "store", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "usage", "user"]
+  if (!isRecord(payload) || !hasOnlyKeys(payload, allowed) || payload.object !== undefined && payload.object !== "response" || payload.status !== "completed" || payload.error !== null && payload.error !== undefined || payload.incomplete_details !== null && payload.incomplete_details !== undefined || !openAIResponsesModelMatches(expectedModelId, payload.model) || !validOpenAIResponsesInertEnvelope(payload) || !boundedIdentifier(payload.id, 200) || typeof payload.created_at !== "number" || !Number.isFinite(payload.created_at) || payload.background !== undefined && payload.background !== false || payload.previous_response_id !== undefined && payload.previous_response_id !== null || payload.store !== undefined && payload.store !== false) throw new Error("OpenAI Responses response identity or terminal state is invalid")
   if (payload.reasoning !== undefined && payload.reasoning !== null && (!isRecord(payload.reasoning) || !hasOnlyKeys(payload.reasoning, ["effort", "summary"]) || payload.reasoning.effort !== null && payload.reasoning.effort !== undefined || payload.reasoning.summary !== null && payload.reasoning.summary !== undefined)) throw new Error("OpenAI Responses reasoning output is forbidden")
   if (!validOpenAIResponsesUsage(payload.usage)) throw new Error("OpenAI Responses usage is invalid")
   if (!Array.isArray(payload.output) || payload.output.length === 0 || payload.output.length > 128) throw new Error("OpenAI Responses output is invalid")
@@ -592,6 +592,18 @@ function validateOpenAIResponsesResponseBody(body: string, expectedModelId: stri
     incomplete_details: hasRefusal ? { reason: "content_filter" } : null,
     usage: payload.usage,
   })
+}
+
+function validOpenAIResponsesInertEnvelope(payload: Record<string, unknown>): boolean {
+  if (payload.metadata !== undefined && payload.metadata !== null) {
+    if (!isRecord(payload.metadata)) return false
+    const entries = Object.entries(payload.metadata)
+    if (entries.length > 16 || entries.some(([key, value]) => !boundedSafeMetadataString(key, 64) || typeof value !== "string" || value.length > 512)) return false
+  }
+  if (payload.user !== undefined && payload.user !== null && !boundedSafeMetadataString(payload.user, 256)) return false
+  if (payload.prompt_cache_key !== undefined && payload.prompt_cache_key !== null && !boundedSafeMetadataString(payload.prompt_cache_key, 64)) return false
+  if (payload.top_logprobs !== undefined && payload.top_logprobs !== null && (!nonnegativeInteger(payload.top_logprobs) || Number(payload.top_logprobs) > 20)) return false
+  return true
 }
 
 function openAIResponsesModelMatches(expectedModelId: string, returnedModelId: unknown): boolean {

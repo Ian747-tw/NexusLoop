@@ -55,6 +55,10 @@ describe("9W4B1 legacy Commander model authority adapter", () => {
     expect(authority.registry.commanderSelection()).toMatchObject({ provider_kind: "openai", transport_kind: "openai_responses_connector", model_id: "gpt-4.1-mini" })
     expect(authority.registry.snapshot().commander_selection?.conformance_policy_hash).not.toBe(adaptLegacyCommanderModelAuthority(config()).registry.snapshot().commander_selection?.conformance_policy_hash)
     expect(authority.registry.executorSelection()).toBeUndefined()
+    expect(() => validateCommanderInvestigationProviderConfig({
+      ...authority.provider_config,
+      model_id: "o3",
+    })).toThrow("verified non-reasoning model set")
   })
   test("deterministically maps validated legacy authority to an exact Commander selection", () => {
     const first = adaptLegacyCommanderModelAuthority(config())

@@ -155,7 +155,10 @@ templates, include expansion, service-tier authority, hosted tools, reasoning
 continuation, streaming, retries, and fallback are rejected. Successful raw
 responses are reduced to bounded text, refusal, client function calls, and
 usage before SDK normalization; response IDs and provider metadata are
-discarded. Native Responses JSON-schema output is not claimed.
+discarded. Documented inert envelope metadata is strictly bounded and discarded.
+The verified non-reasoning model family is `gpt-4.1-mini` and its exact dated
+snapshots; reasoning-model IDs are rejected before readiness. Native Responses
+JSON-schema output is not claimed.
 
 Commander conformance policy v3 is required for native Responses and also
 admits every protocol valid under v1/v2. The pure compatibility matrix records

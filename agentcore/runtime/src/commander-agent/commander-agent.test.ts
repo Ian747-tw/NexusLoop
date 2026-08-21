@@ -176,11 +176,18 @@ describe("Commander AI SDK model adapter", () => {
     expect(() => connectorOpenAIResponsesUrl(connector("responses-query", "https://api.openai.com/v1?unsafe=1"))).toThrow("query")
     expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "google", supports_json_schema: false }))).toThrow("provider_kind openai")
     expect(validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "openai", supports_json_schema: false }))).toMatchObject({ transport_kind: "openai_responses_connector", provider_kind: "openai", supports_json_schema: false })
+    expect(validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "openai", model_id: "gpt-4.1-mini-2025-04-14", supports_json_schema: false }))).toMatchObject({ model_id: "gpt-4.1-mini-2025-04-14" })
+    expect(() => validateCommanderInvestigationProviderConfig(providerConfig({ ...config, provider_kind: "openai", model_id: "o3", supports_json_schema: false }))).toThrow("verified non-reasoning model set")
   })
 
   test("native OpenAI Responses dispatches one stateless audited request with exact credential policy", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-final-"))
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("native Responses final", "gpt-4.1-mini-2025-04-14") }])
+    const responsePayload = JSON.parse(openAIResponsesText("native Responses final", "gpt-4.1-mini-2025-04-14"))
+    responsePayload.metadata = { fixture: "discarded" }
+    responsePayload.user = "bounded-user"
+    responsePayload.prompt_cache_key = "bounded-cache-key"
+    responsePayload.top_logprobs = 0
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: JSON.stringify(responsePayload) }])
     const adapter = connectorBackedAdapter(projectDir, transport, "api_responses_final", {
       config: connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" }),
       connector: openAIResponsesConnector(),
@@ -189,6 +196,7 @@ describe("Commander AI SDK model adapter", () => {
     const request = { ...baseRequest({ baseUrl: "http://127.0.0.1:1" }).request, provider_id: "openai_responses_provider", provider_kind: "openai", model_id: "gpt-4.1-mini", max_output_tokens: 1024 }
     const result = await adapter.executeOneStep(request)
     expect(result).toMatchObject({ status: "final", text: "native Responses final", request_count: 1, usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, provider_reported: true } })
+    expect(JSON.stringify(result)).not.toMatch(/discarded|bounded-user|bounded-cache-key|2025-04-14/)
     expect(transport.requests).toHaveLength(1)
     expect(transport.requests[0].url).toBe("https://api.openai.com/v1/responses")
     expect(transport.requests[0].headers.Authorization).toBe("Bearer real-openai-responses-key")
@@ -289,6 +297,7 @@ describe("Commander AI SDK model adapter", () => {
       ["wrong_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-other" })],
       ["prefix_confusable_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-evil-2025-04-14" })],
       ["invalid_snapshot_date", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-2025-02-31" })],
+      ["malformed_metadata", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad metadata")), metadata: { nested: { forbidden: true } } })],
       ["hosted_tool", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "web_search_call", id: "ws_1", status: "completed" }] })],
       ["reasoning", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "reasoning", id: "r_1", summary: [] }] })],
       ["malformed_call", JSON.stringify({ ...JSON.parse(openAIResponsesToolCall("call_bad", "repo__git_status", {})), output: [{ type: "function_call", id: "fc_bad", call_id: "call_bad", name: "repo__git_status", arguments: "{", status: "completed" }] })],
@@ -315,7 +324,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("sk-")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(12)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(13)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("sk-")
     expect(events).not.toContain("partial must remain unavailable")

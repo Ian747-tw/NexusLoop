@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SERVER_TS = REPO_ROOT / "agentcore/tests/fixtures/lifecycle_server.ts"
+SERVER_TS = REPO_ROOT / "agentcore/server-fork/src/server.ts"
 
 
 def _spawn_server(project_dir: Path) -> subprocess.Popen[str]:

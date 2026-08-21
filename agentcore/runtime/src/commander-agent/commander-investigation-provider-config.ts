@@ -69,6 +69,7 @@ export function validateCommanderInvestigationProviderConfig(value: unknown): Co
   if (transport.transport_kind === "anthropic_messages_connector" && providerKind !== "anthropic") throw new Error("anthropic_messages_connector requires provider_kind anthropic")
   if (transport.transport_kind === "google_generative_ai_connector" && providerKind !== "google") throw new Error("google_generative_ai_connector requires provider_kind google")
   if (transport.transport_kind === "openai_responses_connector" && providerKind !== "openai") throw new Error("openai_responses_connector requires provider_kind openai")
+  if (transport.transport_kind === "openai_responses_connector" && !verifiedOpenAIResponsesModel(transport.model_id)) throw new Error("openai_responses_connector model_id is not in the verified non-reasoning model set")
   if (transport.transport_kind === "openai_compatible_connector" && providerKind === "anthropic") throw new Error("provider_kind anthropic requires anthropic_messages_connector")
   const enabledPhases = normalizePhases(value.enabled_phases)
   const maxContextBytes = positiveInteger(value.max_context_bytes, "max_context_bytes", 65_536)
@@ -95,6 +96,17 @@ export function validateCommanderInvestigationProviderConfig(value: unknown): Co
     }
   }
   return config
+}
+
+function verifiedOpenAIResponsesModel(modelId: string): boolean {
+  if (modelId === "gpt-4.1-mini") return true
+  const match = /^gpt-4\.1-mini-(\d{4})-(\d{2})-(\d{2})$/.exec(modelId)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
 }
 
 function rejectCredentialOrUrlString(value: string): void {

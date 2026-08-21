@@ -38,6 +38,9 @@ jobs:
       - name: Install agentcore dependencies
         run: cd agentcore/server-fork && bun install
 
+      - name: Install production OpenCode dependencies for server lifecycle integration
+        run: cd agentcore/upstream && bun install --frozen-lockfile --filter opencode
+
       - name: Install OpenTUI dependencies
         run: cd agentcore/tui && bun install
 
