@@ -304,6 +304,7 @@ describe("Commander AI SDK model adapter", () => {
       ["mixed_refusal", JSON.stringify({ ...refusalPayload, output: [...refusalPayload.output, ...JSON.parse(openAIResponsesText("must not publish")).output] })],
       ["unknown_item", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "custom_tool_call", id: "custom_1" }] })],
       ["malformed_usage", JSON.stringify({ ...JSON.parse(openAIResponsesText("bad usage")), usage: { input_tokens: 17, output_tokens: 5, total_tokens: 999 } })],
+      ["reasoning_usage", JSON.stringify({ ...JSON.parse(openAIResponsesText("reasoning must remain unavailable")), usage: { input_tokens: 17, output_tokens: 5, total_tokens: 22, output_tokens_details: { reasoning_tokens: 1 } } })],
       ["malformed_json", "{"],
     ]
     for (const [name, body] of invalidBodies) {
@@ -314,6 +315,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.text).toBeUndefined()
       expect(JSON.stringify(result)).not.toContain("partial must remain unavailable")
       expect(JSON.stringify(result)).not.toContain("must not publish")
+      expect(JSON.stringify(result)).not.toContain("reasoning must remain unavailable")
     }
     for (const status of [429, 500]) {
       const transport = new FakeExternalApiTransport([{ status_code: status, body: JSON.stringify({ error: { message: `sk-${"x".repeat(10_000)}` } }) }])
@@ -324,7 +326,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("sk-")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(13)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(14)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("sk-")
     expect(events).not.toContain("partial must remain unavailable")
