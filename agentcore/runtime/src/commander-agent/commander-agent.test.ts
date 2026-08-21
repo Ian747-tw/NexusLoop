@@ -180,7 +180,7 @@ describe("Commander AI SDK model adapter", () => {
 
   test("native OpenAI Responses dispatches one stateless audited request with exact credential policy", async () => {
     const projectDir = await mkdtemp(join(tmpdir(), "nxl-9w4d-responses-final-"))
-    const transport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("native Responses final") }])
+    const transport = new FakeExternalApiTransport([{ status_code: 200, body: openAIResponsesText("native Responses final", "gpt-4.1-mini-2025-04-14") }])
     const adapter = connectorBackedAdapter(projectDir, transport, "api_responses_final", {
       config: connectorConfig({ transport_kind: "openai_responses_connector", provider_id: "openai_responses_provider", connector_id: "openai-responses-test", model_id: "gpt-4.1-mini" }),
       connector: openAIResponsesConnector(),
@@ -287,6 +287,8 @@ describe("Commander AI SDK model adapter", () => {
     const invalidBodies: Array<[string, string]> = [
       ["incomplete", JSON.stringify({ ...JSON.parse(openAIResponsesText("partial must remain unavailable")), status: "incomplete", incomplete_details: { reason: "max_output_tokens" } })],
       ["wrong_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-other" })],
+      ["prefix_confusable_model", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-evil-2025-04-14" })],
+      ["invalid_snapshot_date", JSON.stringify({ ...JSON.parse(openAIResponsesText("wrong model")), model: "gpt-4.1-mini-2025-02-31" })],
       ["hosted_tool", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "web_search_call", id: "ws_1", status: "completed" }] })],
       ["reasoning", JSON.stringify({ ...JSON.parse(openAIResponsesText("placeholder")), output: [{ type: "reasoning", id: "r_1", summary: [] }] })],
       ["malformed_call", JSON.stringify({ ...JSON.parse(openAIResponsesToolCall("call_bad", "repo__git_status", {})), output: [{ type: "function_call", id: "fc_bad", call_id: "call_bad", name: "repo__git_status", arguments: "{", status: "completed" }] })],
@@ -313,7 +315,7 @@ describe("Commander AI SDK model adapter", () => {
       expect(result.error).not.toContain("sk-")
     }
     const events = await eventText(projectDir)
-    expect(events.match(/external_api_request_executed/g)).toHaveLength(10)
+    expect(events.match(/external_api_request_executed/g)).toHaveLength(12)
     expect(events.match(/external_api_request_failed/g)).toHaveLength(2)
     expect(events).not.toContain("sk-")
     expect(events).not.toContain("partial must remain unavailable")
@@ -14512,7 +14514,7 @@ function geminiText(text: string): string {
   })
 }
 
-function openAIResponsesText(text: string): string {
+function openAIResponsesText(text: string, model = "gpt-4.1-mini"): string {
   return JSON.stringify({
     id: "resp_fixture",
     object: "response",
@@ -14521,7 +14523,7 @@ function openAIResponsesText(text: string): string {
     background: false,
     error: null,
     incomplete_details: null,
-    model: "gpt-4.1-mini",
+    model,
     output: [{ type: "message", id: "msg_fixture", status: "completed", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] }],
     previous_response_id: null,
     reasoning: { effort: null, summary: null },
