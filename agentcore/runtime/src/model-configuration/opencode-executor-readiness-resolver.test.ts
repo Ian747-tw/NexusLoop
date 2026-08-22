@@ -163,6 +163,13 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       experimental: false,
       expected: "unavailable",
     },
+    {
+      name: "catalog status retained through configured model id alias",
+      model_id: "gemini-2.5-flash",
+      provider: { models: { "gemini-2.5-flash": { id: "alpha" } } },
+      experimental: false,
+      expected: "unavailable",
+    },
     { name: "explicit experimental model enablement", model_id: "alpha", provider: {}, experimental: true, expected: "available" },
     { name: "deprecated model", model_id: "deprecated", provider: {}, experimental: false, expected: "unavailable" },
   ] as const

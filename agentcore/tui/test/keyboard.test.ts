@@ -79,6 +79,22 @@ describe("TUI keyboard command model", () => {
     expect(result.effects).toEqual([])
   })
 
+  test("unchanged committed setup returns to its originating main screen", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        origin: "main",
+        stage: "committed",
+        pendingRestart: false,
+      },
+    }
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(result.state).toMatchObject({ screen: "main", focus: "message-box" })
+    expect(result.effects).toEqual([])
+  })
+
   test("model setup cancellation returns to the screen that opened it", () => {
     const fromInit: UiState = {
       ...initialState("/tmp/demo"),

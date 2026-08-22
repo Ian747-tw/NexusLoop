@@ -202,7 +202,19 @@ function submitModelSetup(state: UiState): KeyCommandResult {
       }],
     }
   }
-  if (setup.stage === "committed") return { state, effects: [] }
+  if (setup.stage === "committed") {
+    if (setup.pendingRestart) return { state, effects: [] }
+    const screen = setup.origin
+    return {
+      state: {
+        ...state,
+        screen,
+        focus: screen === "main" ? "message-box" : "init-choice",
+        modelSetup: { ...setup, stage: "loading" },
+      },
+      effects: [],
+    }
+  }
   return { state, effects: [] }
 }
 

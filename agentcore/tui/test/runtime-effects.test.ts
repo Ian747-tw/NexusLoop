@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "../src/commander-recovery-view"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
+import { modelSetupCompletionCopy } from "../src/model-setup-view"
 import { applyKeyCommandWithEffects, parseRuntimeCommand } from "../src/keyboard"
 import { commandTypeFromSlash } from "../src/operator-actions"
 import { mergeRuntimeEffectState } from "../src/runtime-state-merge"
@@ -1039,6 +1040,10 @@ describe("runtime UI effects", () => {
     )
     expect(state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: false, pendingSetupHash: "c".repeat(64) })
     expect(state.systemActions.at(-1)).toEqual({ title: "Model setup unchanged", detail: "The active selection already matches this setup" })
+    expect(modelSetupCompletionCopy(state.modelSetup.pendingRestart)).toEqual({
+      headline: "Selection already active. No restart is required.",
+      instructions: "Enter returns to the main shell.",
+    })
   })
   test("model setup durable confirmation survives an Escape key race", async () => {
     let release!: () => void

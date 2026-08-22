@@ -11,6 +11,7 @@ import { snapshotUiState } from "./state-snapshot"
 import { initialState, type FocusTarget, type StreamLine, type UiState } from "./state"
 import type { RuntimeClient } from "./runtime"
 import { redactText } from "./redaction"
+import { modelSetupCompletionCopy } from "./model-setup-view"
 
 const color = {
   bg: "#0b0f14",
@@ -155,6 +156,7 @@ function ChoiceScreen(props: { state: UiState; kind: "init" | "resume" }) {
 
 function ModelSetupScreen(props: { state: UiState }) {
   const setup = props.state.modelSetup
+  const completionCopy = () => modelSetupCompletionCopy(setup.pendingRestart)
   const choices = setup.stage === "commander" ? setup.commanderChoices : setup.executorChoices
   const selection = setup.stage === "commander" ? setup.commanderSelection : setup.executorSelection
   const selectedCommander = setup.commanderChoices[setup.commanderSelection]?.label ?? "Unconfigured"
@@ -190,11 +192,11 @@ function ModelSetupScreen(props: { state: UiState }) {
           <text fg={color.warning}>Recording setup authority. Wait for the durable result.</text>
         </Show>
         <Show when={setup.stage === "committed"}>
-          <text fg={color.accent}>Selection recorded. Exit and restart NexusLoop to activate it.</text>
+          <text fg={color.accent}>{completionCopy().headline}</text>
         </Show>
         <Show when={setup.commandError}>{(value) => <text fg={color.warning}>setup error: {value()}</text>}</Show>
         <text fg={color.muted}>{setup.stage === "committed"
-          ? "This runtime cannot enter the main shell until restart."
+          ? completionCopy().instructions
           : setup.stage === "confirming"
             ? "Confirmation is in progress and cannot be cancelled locally."
             : "Enter selects. Up/Down changes selection. Esc returns."}</text>

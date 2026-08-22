@@ -54,9 +54,14 @@ async function main(): Promise<void> {
         const catalogModel = catalogProvider?.models && Object.hasOwn(catalogProvider.models, input.model_id)
           ? catalogProvider.models[input.model_id]
           : undefined
+        const catalogModelForConfiguredId = configuredModel?.id
+          && catalogProvider?.models
+          && Object.hasOwn(catalogProvider.models, configuredModel.id)
+          ? catalogProvider.models[configuredModel.id]
+          : catalogModel
         const model = configuredModel ?? catalogModel
-        const modelStatus = configuredModel?.status ?? catalogModel?.status
-        const apiModelId = configuredModel?.id ?? catalogModel?.id ?? input.model_id
+        const modelStatus = configuredModel?.status ?? catalogModelForConfiguredId?.status
+        const apiModelId = configuredModel?.id ?? catalogModelForConfiguredId?.id ?? input.model_id
         const oauthModelFiltered = input.provider_id === "openai"
           && auth?.type === "oauth"
           && !openAiOauthAllowsModel(input.model_id, apiModelId)
