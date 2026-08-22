@@ -151,6 +151,38 @@ changing v1/v2 hashes. A pure immutable four-entry compatibility matrix records
 tested protocol facts but creates no selection or readiness authority. See
 ADR-038.
 
+Branch 9W4E adds the first user-facing selection boundary without changing the
+ADR-035 schema. OpenTUI reads a fixed setup catalog, stages independent
+Commander and primary Executor recipe IDs, previews server-reconstructed role
+projections, and confirms one exact candidate against the current revision.
+`runtime_model_setup_committed` stores only credential-free recipe references
+and semantic hashes. Startup projects that event into the immutable ADR-036
+registry; later commits remain pending until a clean restart.
+
+```text
+OpenTUI role choices
+-> RuntimeServer candidate reconstruction and ADR-035 validation
+-> expected revision + candidate hash preview
+-> explicit confirmation
+-> EventStore appendIfLatest(runtime_model_setup_committed)
+-> clean process boundary
+-> immutable RuntimeServer registry on next start
+-> independent Commander and Executor readiness
+```
+
+Executor readiness is observed only after exact selection through a bounded
+OpenCode-side subprocess. Runtime sends the exact projection identity and
+accepts only matching availability/credential tri-states. OpenCode catalog,
+config, and auth details stay inside that process; provider lists, auth records,
+paths, environment names, plugin/package data, and raw errors never cross into
+RuntimeServer. Timeout, partial state, malformed output, cancellation, and
+shutdown are unknown rather than ready. The process is lifecycle-owned and
+drained before `runtime_shutdown`.
+
+Persisted setup, an explicit registry, and legacy Commander environment
+authority conflict rather than merge. Connector URLs/headers and both roles'
+credential resolution stay outside setup authority. See ADR-039.
+
 ```text
 NexusLoop domain control plane
 -> RuntimeServer provider config
@@ -361,7 +393,8 @@ Follow-on sequencing:
   scoped primary Executor projection, and independent role readiness.
 - 9W4C: native Gemini `generateContent` through unified model profiles.
 - 9W4D: native OpenAI Responses and verified compatibility matrix.
-- 9W4E: first-run provider setup and TUI role-model selection.
+- 9W4E: first-run provider setup and TUI role-model selection (append-only,
+  restart-only activation).
 - post-v1 9XB1: first exact external-research descriptor only after fresh
   provider requalification; v1 does not activate external MCP or
   `external_research.*`.

@@ -5,9 +5,9 @@ provider settings do not authorize Commander.
 
 ## Internal Model-Profile Contract
 
-Branch 9W4B0 defines the internal configuration vocabulary, and 9W4B1 activates
-validated snapshots in an immutable RuntimeServer registry. It is still not a
-CLI, TUI, persistent configuration, or discovery feature. A model connection contains only bounded
+Branch 9W4B0 defines the internal configuration vocabulary, 9W4B1 activates
+validated snapshots in an immutable RuntimeServer registry, and 9W4E adds an
+append-only OpenTUI setup transaction over that same vocabulary. A model connection contains only bounded
 provider/account authority identifiers, a model profile selects an exact model,
 and independent role bindings select profiles for `commander` and `executor`.
 The Executor role means the primary tactical OpenCode model only, not small,
@@ -46,6 +46,31 @@ endpoint, package, protocol, or capability; values such as URI-like catalog IDs
 cannot create those absent authority fields. Hashes exclude display labels and
 secret rotation behind an unchanged opaque credential authority, while exact
 model, credential authority, and role-specific mappings are semantic.
+
+## First-Run Setup Recipes
+
+The v1 setup catalog is fixed code-owned authority. Commander offers only:
+
+- Anthropic Messages with `claude-sonnet-4-5-20250929`;
+- Google Generative AI with `gemini-2.5-flash`;
+- OpenAI Responses with `gpt-4.1-mini`.
+
+The primary Executor offers those same exact provider/model intents under the
+static Executor mapping. Each role may remain unconfigured. OpenAI-compatible
+custom endpoints are not offered because protocol compatibility alone does not
+identify one exact endpoint/model conformance recipe.
+
+Setup persists no connector URL, header, credential environment name/value,
+provider object, OpenCode auth, or catalog observation. Commander connectors
+retain the code-owned recipe connector IDs `anthropic-main`, `google-main`, and
+`openai-main`; their actual connector/credential authority remains separately
+configured and may leave readiness blocked. Executor readiness remains an
+independent OpenCode-owned observation. The process-isolated observer receives
+only the selected Executor identity and returns bounded availability and
+credential-connection tri-states. It does not expose provider lists or auth
+details, perform model requests, refresh catalogs, or authorize Commander. A
+commit is pending until the next clean RuntimeServer start and never hot-reloads
+active execution.
 
 ## Support Taxonomy
 

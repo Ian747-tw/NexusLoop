@@ -81,5 +81,14 @@ and a pure verified compatibility matrix without changing role readiness or
 Executor projection. 9W4E owns first-run setup and role-model selection UX.
 External research MCP remains post-v1.
 
+Branch 9W4E closes the persistence and user-selection follow-on through an
+append-only setup transaction. Startup constructs this same registry; an
+active registry is never hot-reloaded. Role readiness remains separate from
+selection and may stay blocked or unknown after a valid setup commit.
+The production Executor resolver is a bounded process-isolated OpenCode-side
+observation of the already-selected exact identity. Runtime receives no
+provider list or auth detail, and owns timeout, cancellation, output bounds,
+identity validation, and shutdown draining.
+
 `resume_supported=false`, `provider_tool_loop_enabled=false`, and
 `external_read_execution_enabled=false` remain unchanged.

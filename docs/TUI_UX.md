@@ -19,15 +19,34 @@ unless explicitly retained as a compatibility surface.
 When the user opens NexusLoop without an initialized project:
 
 1. OpenTUI detects missing project/runtime state.
-2. The app launches an initialization flow inside the main shell rather than
-   handing control to a separate dashboard or wizard website.
-3. The flow collects provider onboarding, project spec source material, custom
-   policies, and any required clarifications.
-4. The runtime records approved initialization outcomes durably before the
-   mission becomes runnable.
+2. The app launches a keyboard-driven model setup view in OpenTUI rather than
+   handing control to a separate dashboard or website.
+3. Commander and the primary tactical Executor are selected independently from
+   exact code-owned recipes; either may be intentionally left unconfigured.
+4. The view separates selected/configured state, credential connection,
+   lifecycle readiness, blockers, and unknown state. It previews bounded
+   hashes and requires a second explicit confirmation.
+5. RuntimeServer appends the credential-free selection authority to
+   `events.jsonl`. It never stores or accepts API-key text in ordinary TUI
+   state.
+6. The first clean restart activates the immutable registry. Later changes are
+   visibly pending for the next start and never hot-reload active work.
+7. Project-spec approval and all existing mission/runtime gates remain separate;
+   completing model setup does not imply mission readiness.
 
 The init flow should feel like entering a system that is already alive, not a
 detached setup script.
+
+The normal onboarding panel shows active and pending model setup, independent
+role readiness, and whether restart is required. `/model-setup` reopens the
+same view for a later staged change; cached selections remain display evidence
+and RuntimeServer reconstructs every preview and confirmation.
+
+Executor readiness displayed by this view is fresh bounded evidence from the
+production OpenCode-side observer after exact selection. `unknown` remains
+blocked. The UI never receives model catalogs, credential sources, auth
+records, environment names, or provider objects and cannot turn an observation
+into a different selection.
 
 ## Resume Flow
 
