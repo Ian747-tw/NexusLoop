@@ -13,6 +13,8 @@ export { adaptLegacyCommanderModelAuthority } from "./model-configuration/model-
 export * from "./model-configuration/model-profile-runtime-registry-types"
 export { providerCompatibilityMatrix, PROVIDER_COMPATIBILITY_MATRIX_POLICY_VERSION, PROVIDER_COMPATIBILITY_MATRIX_SCHEMA_VERSION } from "./model-configuration/provider-compatibility-matrix"
 export type { CommanderProviderCompatibilityEvidence, CommanderProviderCompatibilityMatrix } from "./model-configuration/provider-compatibility-matrix"
+export { ModelSetupService, buildModelSetupCandidate, modelSetupCatalog, projectModelSetupEvents, readPersistedModelSetupAuthority } from "./model-configuration/model-setup"
+export type { ModelSetupCandidate, ModelSetupCatalog, ModelSetupChoices, ModelSetupCommitInput, ModelSetupCommitResult, ModelSetupPreview, ModelSetupProjection, ModelSetupRecipe, PersistedModelSetupAuthority } from "./model-configuration/model-setup"
 export type { WakeSchedulerBootstrapConfig, WakeSchedulerBootstrapStatus, WakeSchedulerStaleRunInfo } from "./schedules/wake-scheduler-bootstrap-types"
 export type { WakeSchedulerRecovery, WakeSchedulerRecoveryAcknowledgeInput, WakeSchedulerRecoveryCommand, WakeSchedulerRecoveryPreview, WakeSchedulerRecoveryRecord, WakeSchedulerRecoveryStatus } from "./schedules/wake-scheduler-recovery-types"
 export type { WakeSchedulerRecoveryWorkflow, WakeSchedulerRecoveryWorkflowCancelInput, WakeSchedulerRecoveryWorkflowInput, WakeSchedulerRecoveryWorkflowPreview, WakeSchedulerRecoveryWorkflowRecord, WakeSchedulerRecoveryWorkflowStep, WakeSchedulerRecoveryWorkflowStepRecordInput, WakeSchedulerRecoveryWorkflowVerification } from "./schedules/wake-scheduler-recovery-workflow-types"
