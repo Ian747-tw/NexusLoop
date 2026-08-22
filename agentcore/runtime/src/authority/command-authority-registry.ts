@@ -83,6 +83,7 @@ const profiles = {
   apply: profile(["tests/e2e_user/scenarios/test_commander_cycle_tui.py"]),
   externalApi: profile(["tests/e2e_user/scenarios/test_reasoning_provider_tui.py"]),
   commanderRecovery: profile(["tests/e2e_user/scenarios/test_commander_recovery_operator_controls_tui.py"], ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py", "tests/e2e_user/scenarios/test_commander_continuity_packet_tui.py"]),
+  modelSetup: profile(["tests/e2e_user/scenarios/test_model_setup_executor_readiness_tui.py"], ["tests/e2e_user/scenarios/test_command_authority_inventory_tui.py"]),
 }
 
 type BaseRecord = Omit<CommandAuthorityRecord, "authority_id" | "aliases" | "creates_external_process" | "calls_provider" | "requires_run_lock" | "blocked_by_default" | "expected_event_kinds" | "recommended_reads" | "notes" | "out_of_scope">
@@ -178,6 +179,7 @@ function write(args: {
 }
 
 export const COMMAND_AUTHORITY_REGISTRY: CommandAuthorityRecord[] = [
+  record({ slash_command: "/model-setup", runtime_command: "runtime.confirm_model_setup", risk: "medium_risk_write", gate: "model_setup_runtime", owner: "model_setup", mutates_events: true, creates_external_process: false, calls_provider: false, requires_active_runtime: false, requires_run_lock: true, requires_approval: true, approval_surface: "/model-setup", expected_event_kinds: ["runtime_model_setup_committed"], blocked_by_default: true, current_phase_status: "implemented", validation_profile: profiles.modelSetup, notes: ["Previews and explicitly confirms one credential-free model setup candidate. Confirmation appends one setup record for restart-only activation; catalog and preview reads are side-effect free."], out_of_scope: ["credential storage", "provider calls", "OpenCode launch", "hot reload", "automatic restart", "provider discovery", "role fallback"] }),
   read("/authority", "runtime.command_authority_summary", "runtime_status", "none", profiles.authority, ["/command-authority", "/command-map"]),
   read("/authority-summary", "runtime.command_authority_summary", "runtime_status", "none", profiles.authority),
   read("/authority-list", "runtime.command_authority_list", "runtime_status", "none", profiles.authority),

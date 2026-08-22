@@ -1257,6 +1257,7 @@ describe("CommandAuthorityService", () => {
 
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    expect(service.get("/model-setup")).toMatchObject({ runtime_command: "runtime.confirm_model_setup", risk: "medium_risk_write", gate: "model_setup_runtime", owner: "model_setup", mutates_events: true, creates_external_process: false, calls_provider: false, requires_active_runtime: false, requires_run_lock: true, requires_approval: true, blocked_by_default: true, expected_event_kinds: ["runtime_model_setup_committed"] })
     expect(service.get("/commander-recoveries")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_commander_investigation_recoveries", owner: "commander_recovery", mutates_events: false, calls_provider: false })
     expect(service.get("/commander-recovery-show")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.get_commander_investigation_recovery", owner: "commander_recovery", mutates_events: false })
     expect(service.get("/commander-recovery-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_commander_investigation_recovery", mutates_events: false, calls_provider: false })
