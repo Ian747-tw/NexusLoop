@@ -59,7 +59,7 @@ export type ProviderOnboardingState = {
 
 export type ModelSetupState = {
   origin: "init" | "main"
-  stage: "loading" | "commander" | "executor" | "preview" | "confirmation" | "committed"
+  stage: "loading" | "commander" | "executor" | "preview" | "confirmation" | "confirming" | "committed"
   commanderChoices: Choice[]
   executorChoices: Choice[]
   commanderSelection: number

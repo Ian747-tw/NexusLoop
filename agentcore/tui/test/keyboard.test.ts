@@ -95,6 +95,23 @@ describe("TUI keyboard command model", () => {
     expect(applyKeyCommandWithEffects(fromMain, { type: "cancel" }).state).toMatchObject({ screen: "main", focus: "message-box" })
   })
 
+  test("model setup confirmation owns cancellation until the durable result settles", () => {
+    const confirmation: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        stage: "confirmation",
+        expectedRevision: 0,
+        candidateHash: "a".repeat(64),
+      },
+    }
+    const submitted = applyKeyCommandWithEffects(confirmation, { type: "submit" })
+    expect(submitted.state.modelSetup.stage).toBe("confirming")
+    expect(submitted.effects).toHaveLength(1)
+    expect(applyKeyCommandWithEffects(submitted.state, { type: "cancel" })).toEqual({ state: submitted.state, effects: [] })
+  })
+
   test("message box keeps API keys out of TUI state while sending original message", () => {
     let state: UiState = {
       ...initialState("/tmp/demo"),

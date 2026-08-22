@@ -186,11 +186,18 @@ function ModelSetupScreen(props: { state: UiState }) {
         <Show when={setup.stage === "confirmation"}>
           <text fg={color.warning}>Confirm credential-free selection for the next RuntimeServer start.</text>
         </Show>
+        <Show when={setup.stage === "confirming"}>
+          <text fg={color.warning}>Recording setup authority. Wait for the durable result.</text>
+        </Show>
         <Show when={setup.stage === "committed"}>
           <text fg={color.accent}>Selection recorded. Exit and restart NexusLoop to activate it.</text>
         </Show>
         <Show when={setup.commandError}>{(value) => <text fg={color.warning}>setup error: {value()}</text>}</Show>
-        <text fg={color.muted}>{setup.stage === "committed" ? "This runtime cannot enter the main shell until restart." : "Enter selects. Up/Down changes selection. Esc returns."}</text>
+        <text fg={color.muted}>{setup.stage === "committed"
+          ? "This runtime cannot enter the main shell until restart."
+          : setup.stage === "confirming"
+            ? "Confirmation is in progress and cannot be cancelled locally."
+            : "Enter selects. Up/Down changes selection. Esc returns."}</text>
       </box>
     </box>
   )

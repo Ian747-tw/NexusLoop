@@ -249,6 +249,26 @@ describe("9W4E runtime model setup", () => {
     })
   })
 
+  test("startup revalidates persisted setup after acquiring the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const staleServer = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: new LongLivedAdapter() })
+    const writer = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await writer.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await writer.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })
+
+    await expect(staleServer.start()).rejects.toThrow("persisted model setup changed before runtime start")
+    expect((await staleServer.eventStore.readAll()).some((event) => event.kind === "runtime_started")).toBe(false)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
   test("reports Commander and Executor readiness independently from persisted selection", async () => {
     const dir = await tempProject()
     const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })

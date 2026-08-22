@@ -2324,7 +2324,14 @@ export async function applyRuntimeUiEffect(
   } catch (error) {
     if (effect.type === "load-model-setup" || effect.type === "preview-model-setup" || effect.type === "confirm-model-setup") {
       const message = error instanceof Error ? error.message : String(error)
-      return { ...state, modelSetup: { ...state.modelSetup, commandError: redactText(message).slice(0, 240) } }
+      return {
+        ...state,
+        modelSetup: {
+          ...state.modelSetup,
+          ...(effect.type === "confirm-model-setup" && state.modelSetup.stage === "confirming" ? { stage: "confirmation" as const } : {}),
+          commandError: redactText(message).slice(0, 240),
+        },
+      }
     }
     if (isOperatorActionEffect(effect)) return recordOperatorActionCommandError(state, error)
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)

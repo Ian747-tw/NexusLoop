@@ -136,6 +136,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
       }
     case "cancel":
       if (state.screen === "model-setup") {
+        if (state.modelSetup.stage === "confirming") return { state, effects: [] }
         if (state.modelSetup.stage === "executor") return { state: { ...state, modelSetup: { ...state.modelSetup, stage: "commander" } }, effects: [] }
         if (state.modelSetup.stage === "preview" || state.modelSetup.stage === "confirmation") return { state: { ...state, modelSetup: { ...state.modelSetup, stage: "executor" } }, effects: [] }
         const screen = state.modelSetup.origin
@@ -191,7 +192,7 @@ function submitModelSetup(state: UiState): KeyCommandResult {
   }
   if (setup.stage === "confirmation" && setup.candidateHash !== undefined && setup.expectedRevision !== undefined) {
     return {
-      state,
+      state: { ...state, modelSetup: { ...setup, stage: "confirming", commandError: undefined } },
       effects: [{
         type: "confirm-model-setup",
         commanderRecipeId: setup.commanderChoices[setup.commanderSelection]?.id || null,

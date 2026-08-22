@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "../src/commander-recovery-view"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
-import { parseRuntimeCommand } from "../src/keyboard"
+import { applyKeyCommandWithEffects, parseRuntimeCommand } from "../src/keyboard"
 import { commandTypeFromSlash } from "../src/operator-actions"
+import { mergeRuntimeEffectState } from "../src/runtime-state-merge"
 import { FakeRuntimeClient, orderQueueItems, type RuntimeClient } from "../src/runtime"
 import { layoutSnapshot } from "../src/snapshot"
 import { snapshotUiState } from "../src/state-snapshot"
@@ -1038,6 +1039,49 @@ describe("runtime UI effects", () => {
     )
     expect(state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: false, pendingSetupHash: "c".repeat(64) })
     expect(state.systemActions.at(-1)).toEqual({ title: "Model setup unchanged", detail: "The active selection already matches this setup" })
+  })
+  test("model setup durable confirmation survives an Escape key race", async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    runtime.command = (async (name: string) => {
+      if (name === "runtime.confirm_model_setup") {
+        await gate
+        return { status: "committed", revision: 1, setup_hash: "c".repeat(64), candidate_hash: "a".repeat(64), restart_required: true }
+      }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+    const confirmation: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        stage: "confirmation",
+        expectedRevision: 0,
+        candidateHash: "a".repeat(64),
+      },
+    }
+    const submitted = applyKeyCommandWithEffects(confirmation, { type: "submit" })
+    const baseline = submitted.state
+    const effectResult = applyRuntimeUiEffect(baseline, runtime, submitted.effects[0]!)
+    const current = applyKeyCommandWithEffects(baseline, { type: "cancel" }).state
+    release()
+    const merged = mergeRuntimeEffectState(current, await effectResult, baseline.systemActions.length, baseline)
+    expect(merged.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true, pendingSetupHash: "c".repeat(64) })
+  })
+  test("failed model setup confirmation releases the owned confirmation state", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    runtime.command = (async () => { throw new Error("confirmation failed") }) as RuntimeClient["command"]
+    const state = await applyRuntimeUiEffect(
+      {
+        ...initialState("/tmp/demo"),
+        screen: "model-setup",
+        modelSetup: { ...initialState("/tmp/demo").modelSetup, stage: "confirming" },
+      },
+      runtime,
+      { type: "confirm-model-setup", commanderRecipeId: null, executorRecipeId: null, expectedRevision: 0, candidateHash: "a".repeat(64) },
+    )
+    expect(state.modelSetup).toMatchObject({ stage: "confirmation", commandError: "confirmation failed" })
   })
   test("model setup keeps active readiness attached to active selection while a replacement is pending", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")

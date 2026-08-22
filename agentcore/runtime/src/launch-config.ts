@@ -75,12 +75,13 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
     ? {
         ...providedOptions,
         projectDir,
+        revalidatePersistedModelSetupOnStart: true,
         modelProfileRuntimeRegistry: persisted.registry,
         modelSetupActiveHash: persisted.setup_hash,
         modelSetupActiveCandidate: persisted.candidate,
         ...(persisted.commander_provider_config ? { commanderInvestigationProviderConfig: persisted.commander_provider_config } : {}),
       }
-    : { ...providedOptions, projectDir }
+    : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
   const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
   const observerEnv = env ?? process.env
   const observerConfigured = hasExecutorObserverEnvironment(observerEnv)

@@ -7,7 +7,7 @@ import type { RuntimeEvent, RuntimeMode, RuntimeResearchProjectionHealth, Runtim
 import { modeRequiresApprovedSpec } from "./project/project-status"
 import { locateProjectRoot, projectName } from "./project/project-root"
 import { RunLock } from "./project/run-lock"
-import { buildModelSetupCandidate, ModelSetupService, type ModelSetupCandidate } from "./model-configuration/model-setup"
+import { buildModelSetupCandidate, ModelSetupService, readPersistedModelSetupAuthority, type ModelSetupCandidate } from "./model-configuration/model-setup"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { ExecutorToolHandlerAdapter, OpenCodeRuntimeAdapter } from "./opencode/adapter"
 import { createOpenCodeAdapter, type OpenCodeAdapterConfig, type OpenCodeAdapterFactoryOptions } from "./opencode/adapter-config"
@@ -386,6 +386,7 @@ export interface RuntimeServerOptions {
   modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
   modelSetupActiveHash?: string
   modelSetupActiveCandidate?: ModelSetupCandidate
+  revalidatePersistedModelSetupOnStart?: boolean
   executorModelReadinessResolver?: ExecutorModelReadinessResolver
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
   commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
@@ -485,6 +486,7 @@ export class RuntimeServer {
   private readonly modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
   private readonly modelSetupActiveHash?: string
   private readonly modelSetupActiveCandidate?: ModelSetupCandidate
+  private readonly revalidatePersistedModelSetupOnStart: boolean
   private readonly activeModelSetupWrites = new Set<Promise<unknown>>()
   private readonly executorModelReadinessResolver?: ExecutorModelReadinessResolver
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
@@ -630,6 +632,7 @@ export class RuntimeServer {
       throw new Error("active model setup hash and candidate must be supplied together")
     }
     this.modelSetupActiveHash = options.modelSetupActiveHash
+    this.revalidatePersistedModelSetupOnStart = options.revalidatePersistedModelSetupOnStart === true
     if (options.modelSetupActiveCandidate) {
       const rebuilt = buildModelSetupCandidate(options.modelSetupActiveCandidate.choices)
       if (rebuilt.candidate_hash !== options.modelSetupActiveCandidate.candidate_hash) {
@@ -738,6 +741,7 @@ export class RuntimeServer {
       this.commanderInvestigationLifecycleAbort = new AbortController()
     }
     try {
+      this.requireCurrentPersistedModelSetupAuthority()
       await this.executorModelReadinessResolver?.start?.()
       this.ensureResearchProjectionUsable("startup")
       this.started = true
@@ -756,6 +760,17 @@ export class RuntimeServer {
     } catch (error) {
       await this.cleanupFailedStartup()
       throw error
+    }
+  }
+
+  private requireCurrentPersistedModelSetupAuthority(): void {
+    if (!this.revalidatePersistedModelSetupOnStart) return
+    const current = readPersistedModelSetupAuthority(this.projectDir)
+    const currentHash = current?.setup_hash
+    const currentCandidateHash = current?.candidate.candidate_hash
+    if (currentHash !== this.modelSetupActiveHash
+      || currentCandidateHash !== this.modelSetupActiveCandidate?.candidate_hash) {
+      throw new Error("persisted model setup changed before runtime start; reconstruct RuntimeServer")
     }
   }
 
