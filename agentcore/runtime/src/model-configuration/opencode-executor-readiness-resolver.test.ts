@@ -12,6 +12,10 @@ const selection = buildModelSetupCandidate({
   commander_recipe_id: null,
   executor_recipe_id: "executor-google-gemini-2-5-flash",
 }).executor_selection!
+const openAiSelection = buildModelSetupCandidate({
+  commander_recipe_id: null,
+  executor_recipe_id: "executor-openai-gpt-4-1-mini",
+}).executor_selection!
 
 async function fixture(source: string): Promise<{ command: string; args: string[]; cwd: string }> {
   const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-observer-"))
@@ -37,6 +41,40 @@ console.log(JSON.stringify({
 `
 
 describe("9W4E OpenCode-owned Executor readiness resolver", () => {
+  test("mirrors pinned OpenAI OAuth model filtering before reporting availability", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-oauth-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      openai: {
+        id: "openai",
+        name: "OpenAI",
+        env: ["OPENAI_API_KEY"],
+        models: { "gpt-4.1-mini": { id: "gpt-4.1-mini", name: "GPT-4.1 mini" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({
+          openai: { type: "oauth", refresh: "fixture-refresh-secret", access: "fixture-access-secret", expires: 4_102_444_800_000 },
+        }),
+      },
+    })
+    const observed = await resolver.observe(openAiSelection)
+    expect(observed).toMatchObject({
+      provider_id: "openai",
+      model_id: "gpt-4.1-mini",
+      provider_availability_status: "unavailable",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(observed)).not.toMatch(/oauth|fixture|refresh|access|auth\.json|OPENAI_API_KEY/i)
+    await resolver.shutdown()
+  })
+
   test("uses the pinned OpenCode child to observe exact model and credential-source presence", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-production-observer-"))
     const modelsPath = join(cwd, "models.json")

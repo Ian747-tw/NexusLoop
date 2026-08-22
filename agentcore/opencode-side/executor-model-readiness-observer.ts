@@ -1,4 +1,14 @@
 const MAX_INPUT_BYTES = 2_048
+const OPENAI_OAUTH_ALLOWED_MODELS = new Set([
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.2",
+  "gpt-5.2-codex",
+  "gpt-5.3-codex",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+])
 
 type Request = {
   protocol_version: 1
@@ -46,8 +56,13 @@ async function main(): Promise<void> {
           : undefined
         const model = configuredModel ?? catalogModel
         const modelStatus = configuredModel?.status ?? catalogModel?.status
+        const apiModelId = configuredModel?.id ?? catalogModel?.id ?? input.model_id
+        const oauthModelFiltered = input.provider_id === "openai"
+          && auth?.type === "oauth"
+          && !openAiOauthAllowsModel(input.model_id, apiModelId)
         const filtered = input.model_id === "gpt-5-chat-latest"
           || (input.provider_id === "openrouter" && input.model_id === "openai/gpt-5-chat")
+          || oauthModelFiltered
           || (modelStatus === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS)
           || modelStatus === "deprecated"
           || configuredProvider?.blacklist?.includes(input.model_id) === true
@@ -79,6 +94,13 @@ async function main(): Promise<void> {
     provider_availability_status: providerAvailability,
     credential_connection_status: credentialConnection,
   })
+}
+
+function openAiOauthAllowsModel(modelId: string, apiModelId: string): boolean {
+  if (modelId.includes("codex")) return true
+  if (OPENAI_OAUTH_ALLOWED_MODELS.has(apiModelId)) return true
+  const version = apiModelId.match(/^gpt-(\d+\.\d+)/)?.[1]
+  return version !== undefined && Number.parseFloat(version) > 5.4
 }
 
 async function readRequest(): Promise<Request> {
