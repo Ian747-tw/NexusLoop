@@ -355,6 +355,49 @@ describe("9W4E runtime model setup", () => {
     await server.shutdown()
   })
 
+  test("production Executor readiness observes process-adapter environment overrides", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observer = join(dir, "adapter-env-readiness-observer.ts")
+    await writeFile(observer, `
+let body = "";
+for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
+const input = JSON.parse(body);
+console.log(JSON.stringify({
+  protocol_version: 1,
+  selection_projection_hash: input.selection_projection_hash,
+  provider_id: input.provider_id,
+  model_id: input.model_id,
+  credential_binding_id: input.credential_binding_id,
+  provider_availability_status: "available",
+  credential_connection_status: process.env.GOOGLE_GENERATIVE_AI_API_KEY ? "connected" : "disconnected"
+}));
+`, "utf8")
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        GOOGLE_GENERATIVE_AI_API_KEY: "parent-credential-must-be-overridden",
+        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
+        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
+      },
+      openCodeAdapterConfig: {
+        kind: "process",
+        command: "opencode",
+        env: { GOOGLE_GENERATIVE_AI_API_KEY: "" },
+      },
+    })
+
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({
+      ready: false,
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+    await server.shutdown()
+  })
+
   test("production observer configuration cannot merge with an injected Executor resolver", async () => {
     const dir = await tempProject()
     const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
@@ -1374,7 +1417,7 @@ describe("CommandAuthorityService", () => {
 
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
-    expect(service.get("/model-setup")).toMatchObject({ runtime_command: "runtime.confirm_model_setup", risk: "medium_risk_write", gate: "model_setup_runtime", owner: "model_setup", mutates_events: true, creates_external_process: false, calls_provider: false, requires_active_runtime: false, requires_run_lock: true, requires_approval: true, blocked_by_default: true, expected_event_kinds: ["runtime_model_setup_committed"] })
+    expect(service.get("/model-setup")).toMatchObject({ runtime_command: "runtime.confirm_model_setup", risk: "medium_risk_write", gate: "model_setup_runtime", owner: "model_setup", mutates_events: true, creates_external_process: true, calls_provider: false, requires_active_runtime: false, requires_run_lock: true, requires_approval: true, blocked_by_default: true, expected_event_kinds: ["runtime_model_setup_committed"] })
     expect(service.get("/commander-recoveries")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_commander_investigation_recoveries", owner: "commander_recovery", mutates_events: false, calls_provider: false })
     expect(service.get("/commander-recovery-show")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.get_commander_investigation_recovery", owner: "commander_recovery", mutates_events: false })
     expect(service.get("/commander-recovery-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_commander_investigation_recovery", mutates_events: false, calls_provider: false })

@@ -83,7 +83,10 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
       }
     : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
   const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
-  const observerEnv = env ?? process.env
+  const observerEnv = {
+    ...(env ?? process.env),
+    ...(options.openCodeAdapterConfig?.kind === "process" ? options.openCodeAdapterConfig.env : undefined),
+  }
   const observerConfigured = hasExecutorObserverEnvironment(observerEnv)
   if (observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined
     && observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND === undefined) {
