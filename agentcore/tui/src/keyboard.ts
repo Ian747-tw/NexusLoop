@@ -1,4 +1,4 @@
-import type { FocusTarget, UiState } from "./state"
+import type { FocusTarget, ModelSetupState, UiState } from "./state"
 import { redactText } from "./redaction"
 
 export type KeyCommand =
@@ -137,8 +137,8 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
     case "cancel":
       if (state.screen === "model-setup") {
         if (state.modelSetup.stage === "confirming") return { state, effects: [] }
-        if (state.modelSetup.stage === "executor") return { state: { ...state, modelSetup: { ...state.modelSetup, stage: "commander" } }, effects: [] }
-        if (state.modelSetup.stage === "preview" || state.modelSetup.stage === "confirmation") return { state: { ...state, modelSetup: { ...state.modelSetup, stage: "executor" } }, effects: [] }
+        if (state.modelSetup.stage === "executor") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(state.modelSetup), stage: "commander" } }, effects: [] }
+        if (state.modelSetup.stage === "preview" || state.modelSetup.stage === "confirmation") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(state.modelSetup), stage: "executor" } }, effects: [] }
         const screen = state.modelSetup.origin
         return {
           state: {
@@ -173,17 +173,17 @@ function selectModelSetup(state: UiState, direction: 1 | -1): KeyCommandResult {
   if (!key) return { state, effects: [] }
   const choices = setup.stage === "commander" ? setup.commanderChoices : setup.executorChoices
   const next = (setup[key] + direction + choices.length) % choices.length
-  return { state: { ...state, modelSetup: { ...setup, [key]: next } }, effects: [] }
+  return { state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), [key]: next } }, effects: [] }
 }
 
 function submitModelSetup(state: UiState): KeyCommandResult {
   const setup = state.modelSetup
-  if (setup.stage === "commander") return { state: { ...state, modelSetup: { ...setup, stage: "executor" } }, effects: [] }
+  if (setup.stage === "commander") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), stage: "executor" } }, effects: [] }
   if (setup.stage === "executor") {
     const commanderRecipeId = setup.commanderChoices[setup.commanderSelection]?.id || null
     const executorRecipeId = setup.executorChoices[setup.executorSelection]?.id || null
     return {
-      state: { ...state, modelSetup: { ...setup, stage: "preview", commandError: undefined } },
+      state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), stage: "preview", commandError: undefined } },
       effects: [{ type: "preview-model-setup", commanderRecipeId, executorRecipeId }],
     }
   }
@@ -216,6 +216,16 @@ function submitModelSetup(state: UiState): KeyCommandResult {
     }
   }
   return { state, effects: [] }
+}
+
+function clearModelSetupPreview(setup: ModelSetupState): ModelSetupState {
+  const {
+    expectedRevision: _expectedRevision,
+    candidateHash: _candidateHash,
+    configurationHash: _configurationHash,
+    ...current
+  } = setup
+  return current
 }
 
 export function parseRuntimeCommand(value: string): { command: string; args: string[] } | undefined {

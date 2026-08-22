@@ -161,13 +161,13 @@ describe("9W4E runtime model setup", () => {
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" }
     const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
     const store = server.eventStore
-    const original = store.appendIfLatest.bind(store)
+    const original = store.appendIfLatestKind.bind(store)
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })
-    store.appendIfLatest = (async (...args: Parameters<typeof original>) => {
+    store.appendIfLatestKind = (async (...args: Parameters<typeof original>) => {
       await gate
       return await original(...args)
-    }) as typeof store.appendIfLatest
+    }) as typeof store.appendIfLatestKind
     const confirmation = server.command("runtime.confirm_model_setup", { ...choices, expected_revision: preview.expected_revision, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
     await Bun.sleep(10)
     const shutdown = server.shutdown()

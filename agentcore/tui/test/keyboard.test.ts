@@ -67,6 +67,44 @@ describe("TUI keyboard command model", () => {
     expect(state.modelSetup.stage).toBe("preview")
   })
 
+  test("model setup clears stale preview authority while a changed selection is being previewed", () => {
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        stage: "preview",
+        commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }],
+        executorChoices: [
+          { id: "executor-a", label: "Executor A" },
+          { id: "executor-b", label: "Executor B" },
+        ],
+        executorSelection: 0,
+        expectedRevision: 4,
+        candidateHash: "a".repeat(64),
+        configurationHash: "b".repeat(64),
+      },
+    }
+
+    state = applyKeyCommand(state, { type: "cancel" })
+    state = applyKeyCommand(state, { type: "select-next" })
+    const requested = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(requested.state.modelSetup).toMatchObject({ stage: "preview", executorSelection: 1 })
+    expect(requested.state.modelSetup.expectedRevision).toBeUndefined()
+    expect(requested.state.modelSetup.candidateHash).toBeUndefined()
+    expect(requested.state.modelSetup.configurationHash).toBeUndefined()
+    expect(requested.effects).toEqual([{
+      type: "preview-model-setup",
+      commanderRecipeId: null,
+      executorRecipeId: "executor-b",
+    }])
+
+    expect(applyKeyCommandWithEffects(requested.state, { type: "submit" })).toEqual({
+      state: requested.state,
+      effects: [],
+    })
+  })
+
   test("committed first-run setup cannot enter the main shell before restart", () => {
     const state: UiState = {
       ...initialState("/tmp/demo"),

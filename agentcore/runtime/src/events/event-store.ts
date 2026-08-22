@@ -72,6 +72,48 @@ export class EventStore {
     return operation.finally(() => { this.pendingAppends -= 1 })
   }
 
+  async appendIfLatestKind(
+    event: JsonlEvent,
+    kind: string,
+    expectedLatestEventId: string | null,
+    operational: { before_write?: () => void } = {},
+  ): Promise<string> {
+    if (event.kind !== kind) throw new Error("event kind does not match append authority")
+    this.appendGeneration += 1
+    this.pendingAppends += 1
+    const operation = this.appendQueue.then(async () => {
+      await mkdir(dirname(this.eventsPath), { recursive: true })
+      const events = await this.readAllSnapshot()
+      let latest: JsonlEvent | undefined
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        if (events[index]?.kind === kind) {
+          latest = events[index]
+          break
+        }
+      }
+      const latestEventId = latest?.event_id ? String(latest.event_id) : null
+      if (latestEventId !== expectedLatestEventId) {
+        throw new Error("event kind changed before append")
+      }
+      const safeEvent = redactValue({
+        ...event,
+        event_id: event.event_id ?? makeEventId(),
+        timestamp: event.timestamp ?? new Date().toISOString(),
+      })
+      const handle = await open(this.eventsPath, "a")
+      try {
+        operational.before_write?.()
+        await handle.write(JSON.stringify(safeEvent) + "\n")
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      return String(safeEvent.event_id)
+    })
+    this.appendQueue = operation.catch(() => undefined)
+    return operation.finally(() => { this.pendingAppends -= 1 })
+  }
+
   async readAll(): Promise<JsonlEvent[]> {
     while (true) {
       const generationBefore = this.appendGeneration
