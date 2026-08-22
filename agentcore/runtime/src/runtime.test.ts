@@ -12257,6 +12257,7 @@ describe("RuntimeServer core", () => {
 
     timers.shift()?.()
     await waitForCondition(() => service.status().tick_count === 1, "first failed scheduler tick did not settle")
+    await waitForCondition(() => timers.length === 1, "failed scheduler tick did not schedule its replacement timer")
     expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
     expect(timers).toHaveLength(1)
 
