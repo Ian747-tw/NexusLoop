@@ -66,6 +66,18 @@ describe("TUI keyboard command model", () => {
     expect(state.modelSetup.stage).toBe("preview")
   })
 
+  test("committed first-run setup cannot enter the main shell before restart", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, stage: "committed", pendingRestart: true },
+    }
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(result.state.screen).toBe("model-setup")
+    expect(result.state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true })
+    expect(result.effects).toEqual([])
+  })
+
   test("message box keeps API keys out of TUI state while sending original message", () => {
     let state: UiState = {
       ...initialState("/tmp/demo"),

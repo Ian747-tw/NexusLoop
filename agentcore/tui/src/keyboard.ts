@@ -192,7 +192,7 @@ function submitModelSetup(state: UiState): KeyCommandResult {
       }],
     }
   }
-  if (setup.stage === "committed") return { state: { ...state, screen: "main", focus: "message-box" }, effects: [] }
+  if (setup.stage === "committed") return { state, effects: [] }
   return { state, effects: [] }
 }
 

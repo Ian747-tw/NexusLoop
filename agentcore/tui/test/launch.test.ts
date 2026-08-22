@@ -914,6 +914,7 @@ describe("TUI launch boundary", () => {
     const snapshot = output.join("\n")
     expect(snapshot).toContain("stage=committed")
     expect(snapshot).toContain("pending_restart=true")
+    expect(snapshot).not.toContain("screen=main")
     expect((await readEventKinds(dir)).filter((kind) => kind === "runtime_model_setup_committed")).toHaveLength(1)
     expect((await readEventKinds(dir)).at(-1)).toBe("runtime_model_setup_committed")
   })
