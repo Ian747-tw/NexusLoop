@@ -741,7 +741,18 @@ export async function applyRuntimeUiEffect(
           runtime.command("runtime.model_setup_catalog"),
           runtime.command("runtime.model_setup_status"),
         ])
-        return applyModelSetupCatalogAndStatus(state, catalog, status)
+        const next = applyModelSetupCatalogAndStatus(state, catalog, status)
+        if (effect.continueInitializationIfActive && isActiveModelSetupStatus(status)) {
+          return {
+            ...next,
+            screen: "main",
+            focus: "message-box",
+            lastCommand: "initialize",
+            commander: { ...next.commander, workIntent: "TUI onboarding shell" },
+            systemActions: [...next.systemActions, { title: "Initialize selected", detail: "Active model setup verified; entered onboarding shell" }],
+          }
+        }
+        return next
       }
       case "preview-model-setup":
         return applyModelSetupPreview(state, await runtime.command("runtime.preview_model_setup", {
@@ -2430,6 +2441,13 @@ function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, 
       commandError: undefined,
     },
   }
+}
+
+function isActiveModelSetupStatus(value: unknown): boolean {
+  if (!isRecord(value) || value.status !== "ready" || value.pending_restart !== false) return false
+  return typeof value.setup_hash === "string"
+    && value.setup_hash.length === 64
+    && value.active_setup_hash === value.setup_hash
 }
 
 function applyModelSetupPreview(state: UiState, value: unknown): UiState {

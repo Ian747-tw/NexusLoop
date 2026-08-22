@@ -14,7 +14,7 @@ export type KeyCommand =
 export type KeySideEffect =
   | { type: "send-command"; command: string; args?: string[] }
   | { type: "send-user-message"; message: string }
-  | { type: "load-model-setup" }
+  | { type: "load-model-setup"; continueInitializationIfActive?: boolean }
   | { type: "preview-model-setup"; commanderRecipeId: string | null; executorRecipeId: string | null }
   | { type: "confirm-model-setup"; commanderRecipeId: string | null; executorRecipeId: string | null; expectedRevision: number; candidateHash: string }
 
@@ -86,7 +86,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
               focus: "init-choice",
               modelSetup: { ...state.modelSetup, stage: "loading", commandError: undefined },
             },
-            effects: [{ type: "load-model-setup" }],
+            effects: [{ type: "load-model-setup", continueInitializationIfActive: true }],
           }
         }
         return { state: { ...state, lastCommand: "cancel" }, effects: [{ type: "send-command", command: "cancel" }] }

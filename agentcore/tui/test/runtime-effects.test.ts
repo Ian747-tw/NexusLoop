@@ -1004,6 +1004,28 @@ describe("runtime UI effects", () => {
       "runtime.confirm_model_setup",
     ])
   })
+  test("initialization skips setup only for an exact active durable setup", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    let state = await applyRuntimeUiEffect(
+      { ...initialState("/tmp/demo"), screen: "model-setup" },
+      runtime,
+      { type: "load-model-setup", continueInitializationIfActive: true },
+    )
+    expect(state.screen).toBe("main")
+    expect(state.systemActions.at(-1)?.detail).toContain("Active model setup verified")
+
+    runtime.command = (async (name: string) => {
+      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_status") return { status: "ready", revision: 2, setup_hash: "5".repeat(64), active_setup_hash: "4".repeat(64), pending_restart: true }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+    state = await applyRuntimeUiEffect(
+      { ...initialState("/tmp/demo"), screen: "model-setup" },
+      runtime,
+      { type: "load-model-setup", continueInitializationIfActive: true },
+    )
+    expect(state.screen).toBe("model-setup")
+  })
   test("Commander recovery staged commands classify mutations as writes", () => {
     for (const command of [
       "/commander-recovery-approve",

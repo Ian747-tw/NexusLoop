@@ -48,7 +48,7 @@ describe("TUI keyboard command model", () => {
   test("model setup keeps Commander and Executor choices independent", () => {
     let state: UiState = { ...initialState("/tmp/demo"), screen: "init", focus: "init-choice" }
     let result = applyKeyCommandWithEffects(state, { type: "submit" })
-    expect(result.effects).toEqual([{ type: "load-model-setup" }])
+    expect(result.effects).toEqual([{ type: "load-model-setup", continueInitializationIfActive: true }])
     state = {
       ...result.state,
       modelSetup: {
