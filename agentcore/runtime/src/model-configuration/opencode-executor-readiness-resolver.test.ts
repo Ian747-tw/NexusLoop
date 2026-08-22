@@ -1,0 +1,238 @@
+import { describe, expect, test } from "bun:test"
+import { chmod, mkdtemp, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { buildModelSetupCandidate } from "./model-setup"
+import {
+  OpenCodeExecutorModelReadinessResolver,
+  createProductionOpenCodeExecutorReadinessResolver,
+} from "./opencode-executor-readiness-resolver"
+
+const selection = buildModelSetupCandidate({
+  commander_recipe_id: null,
+  executor_recipe_id: "executor-google-gemini-2-5-flash",
+}).executor_selection!
+
+async function fixture(source: string): Promise<{ command: string; args: string[]; cwd: string }> {
+  const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-observer-"))
+  const file = join(cwd, "observer.ts")
+  await writeFile(file, source, "utf8")
+  await chmod(file, 0o700)
+  return { command: process.execPath, args: [file], cwd }
+}
+
+const echoFixture = `
+let body = "";
+for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
+const input = JSON.parse(body);
+console.log(JSON.stringify({
+  protocol_version: 1,
+  selection_projection_hash: input.selection_projection_hash,
+  provider_id: input.provider_id,
+  model_id: input.model_id,
+  credential_binding_id: input.credential_binding_id,
+  provider_availability_status: "available",
+  credential_connection_status: "connected"
+}));
+`
+
+describe("9W4E OpenCode-owned Executor readiness resolver", () => {
+  test("uses the pinned OpenCode child to observe exact model and credential-source presence", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-production-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret-never-returned" } }),
+      },
+    })
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      provider_id: "google",
+      model_id: "gemini-2.5-flash",
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(observed)).not.toContain("fixture-secret-never-returned")
+    expect(JSON.stringify(observed)).not.toMatch(/OPENCODE_AUTH_CONTENT|XDG_|auth\.json|https?:|authorization/i)
+    await resolver.shutdown()
+
+    const disconnected = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: join(cwd, "disconnected-home"),
+        XDG_CONFIG_HOME: join(cwd, "disconnected-config"),
+        XDG_DATA_HOME: join(cwd, "disconnected-data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+      },
+    })
+    await expect(disconnected.observe(selection)).resolves.toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+    await disconnected.shutdown()
+
+    const absentSelection = Object.freeze({ ...selection, model_id: "missing-exact-model" })
+    const absent = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: join(cwd, "absent-home"),
+        XDG_CONFIG_HOME: join(cwd, "absent-config"),
+        XDG_DATA_HOME: join(cwd, "absent-data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "another-secret" } }),
+      },
+    })
+    await expect(absent.observe(absentSelection)).resolves.toMatchObject({
+      provider_availability_status: "unavailable",
+      credential_connection_status: "connected",
+    })
+    await absent.shutdown()
+  })
+
+  test("returns exact bounded evidence and derives its evidence identity", async () => {
+    const config = await fixture(echoFixture)
+    const resolver = new OpenCodeExecutorModelReadinessResolver(config)
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      observation_version: 1,
+      selection_projection_hash: selection.projection_hash,
+      provider_id: "google",
+      model_id: "gemini-2.5-flash",
+      credential_binding_id: "credential-executor-google-primary",
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(observed.evidence_id).toMatch(/^executor-readiness-v1-[a-f0-9]{32}$/)
+    expect(JSON.stringify(observed)).not.toMatch(/auth|environment|header|url|path|plugin|catalog/i)
+    await resolver.shutdown()
+  })
+
+  test("fails closed on every exact identity mismatch", async () => {
+    for (const field of ["selection_projection_hash", "provider_id", "model_id", "credential_binding_id"] as const) {
+      const config = await fixture(echoFixture.replace(`input.${field}`, `"wrong"`))
+      const resolver = new OpenCodeExecutorModelReadinessResolver(config)
+      await expect(resolver.observe(selection)).rejects.toThrow("identity")
+      await resolver.shutdown()
+    }
+  })
+
+  test("preserves unknown partial evidence and never infers readiness", async () => {
+    const source = echoFixture
+      .replace('"available"', '"unknown"')
+      .replace('"connected"', '"unknown"')
+    const resolver = new OpenCodeExecutorModelReadinessResolver(await fixture(source))
+    await expect(resolver.observe(selection)).resolves.toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
+    await resolver.shutdown()
+  })
+
+  test("rejects malformed, duplicate, oversized, unknown-key, and nonzero observations", async () => {
+    const sources = [
+      `console.log("not-json")`,
+      `${echoFixture}\nconsole.log("duplicate")`,
+      `console.log("x".repeat(5000))`,
+      echoFixture.replace('credential_connection_status: "connected"', 'credential_connection_status: "connected", extra: true'),
+      `console.log('{"protocol_version":1,"protocol_version":1,"selection_projection_hash":"${selection.projection_hash}","provider_id":"google","model_id":"gemini-2.5-flash","credential_binding_id":"credential-executor-google-primary","provider_availability_status":"available","credential_connection_status":"connected"}')`,
+      `process.exit(7)`,
+      `process.kill(process.pid, "SIGTERM")`,
+    ]
+    for (const source of sources) {
+      const resolver = new OpenCodeExecutorModelReadinessResolver({ ...(await fixture(source)), maxOutputBytes: 2048 })
+      await expect(resolver.observe(selection)).rejects.toThrow("Executor readiness observation failed")
+      await resolver.shutdown()
+    }
+  })
+
+  test("never publishes child errors, stderr, paths, headers, environment names, or auth material", async () => {
+    const leaked = "https://observer.invalid/path NXL_SECRET_TOKEN Authorization auth.json plugin catalog raw-secret"
+    const resolver = new OpenCodeExecutorModelReadinessResolver(await fixture(`
+process.stderr.write(${JSON.stringify(leaked)});
+throw new Error(${JSON.stringify(leaked)});
+`))
+    let message = ""
+    try {
+      await resolver.observe(selection)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toBe("Executor readiness observation failed: observer process did not complete")
+    expect(message).not.toContain("NXL_SECRET_TOKEN")
+    expect(message).not.toMatch(/https?:|authorization|auth\.json|plugin|catalog|raw-secret/i)
+    await resolver.shutdown()
+  })
+
+  test("bounds timeout and shutdown without orphaning an observation", async () => {
+    const slow = `setInterval(() => {}, 1000)`
+    const timed = new OpenCodeExecutorModelReadinessResolver({ ...(await fixture(slow)), timeoutMs: 20 })
+    await expect(timed.observe(selection)).rejects.toThrow("timed out")
+    await timed.shutdown()
+
+    const draining = new OpenCodeExecutorModelReadinessResolver({ ...(await fixture(slow)), timeoutMs: 10_000 })
+    const pending = draining.observe(selection)
+    await Bun.sleep(20)
+    await draining.shutdown()
+    await expect(pending).rejects.toThrow("shutdown")
+    expect(draining.activeCount()).toBe(0)
+  })
+
+  test("bounds concurrency and keeps observations identity-isolated", async () => {
+    const resolver = new OpenCodeExecutorModelReadinessResolver({ ...(await fixture(echoFixture)), maxConcurrency: 1 })
+    const first = resolver.observe(selection)
+    await expect(resolver.observe(selection)).rejects.toThrow("capacity")
+    await expect(first).resolves.toMatchObject({ provider_id: "google", model_id: "gemini-2.5-flash" })
+    await resolver.shutdown()
+  })
+
+  test("rejects proxies, accessors, symbols, sparse arrays, and caller mutation without executing them", async () => {
+    let traps = 0
+    const proxy = new Proxy({ command: process.execPath, args: [], cwd: "/tmp" }, {
+      ownKeys() { traps += 1; return [] },
+      getOwnPropertyDescriptor() { traps += 1; return undefined },
+      get() { traps += 1; return undefined },
+    })
+    expect(() => new OpenCodeExecutorModelReadinessResolver(proxy)).toThrow("Proxy")
+    expect(traps).toBe(0)
+
+    let getters = 0
+    const accessor = Object.defineProperty({ args: [], cwd: "/tmp" }, "command", {
+      enumerable: true,
+      get() { getters += 1; return process.execPath },
+    })
+    expect(() => new OpenCodeExecutorModelReadinessResolver(accessor as never)).toThrow("data fields")
+    expect(getters).toBe(0)
+    const symbolic = { command: process.execPath, args: [], cwd: "/tmp", [Symbol("hidden")]: true }
+    expect(() => new OpenCodeExecutorModelReadinessResolver(symbolic as never)).toThrow("unknown")
+    expect(() => new OpenCodeExecutorModelReadinessResolver({ command: process.execPath, args: new Array(1), cwd: "/tmp" })).toThrow("dense")
+
+    const config = await fixture(echoFixture)
+    const args = [...config.args]
+    const env = { OBSERVER_FIXTURE: "before" }
+    const resolver = new OpenCodeExecutorModelReadinessResolver({ ...config, args, env })
+    args[0] = "/does/not/exist"
+    env.OBSERVER_FIXTURE = "after"
+    await expect(resolver.observe(selection)).resolves.toMatchObject({ provider_id: "google" })
+    await resolver.shutdown()
+
+    const runtimeEnv = Object.create(Object.prototype) as Record<string, string>
+    runtimeEnv.VISIBLE = "accepted"
+    Object.defineProperty(runtimeEnv, "RUNTIME_INTERNAL", { enumerable: false, get: () => "ignored" })
+    const runtimeResolver = new OpenCodeExecutorModelReadinessResolver({ ...config, env: runtimeEnv })
+    await expect(runtimeResolver.observe(selection)).resolves.toMatchObject({ provider_id: "google" })
+    await runtimeResolver.shutdown()
+  })
+})

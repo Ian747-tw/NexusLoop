@@ -1,4 +1,6 @@
 import type { RuntimeEvent, RuntimeResearchProjectionHealth, RuntimeStatus } from "../events/event-types"
+import type { ModelSetupCatalog, ModelSetupChoices, ModelSetupCommitInput, ModelSetupCommitResult, ModelSetupPreview, ModelSetupProjection } from "../model-configuration/model-setup"
+import type { ModelRoleReadinessEvidence } from "../model-configuration/model-profile-runtime-registry-types"
 import type { ExecutorClaim, MissionProgress, MissionRecord, MissionResult } from "../missions/mission-types"
 import type { ReviewRequest, ReviewRequestInput, ReviewStatusSummary } from "../missions/review-types"
 import type { CommanderProposal, CommanderProposalInput, ProposalStatusSummary } from "../missions/proposal-types"
@@ -85,6 +87,10 @@ export interface SubmitUserMessageResult {
 }
 
 export interface RuntimeClient {
+  command(name: "runtime.model_setup_catalog"): Promise<ModelSetupCatalog>
+  command(name: "runtime.model_setup_status"): Promise<ModelSetupProjection & { active_setup_hash?: string; pending_restart: boolean; commander_role_readiness?: ModelRoleReadinessEvidence; executor_role_readiness?: ModelRoleReadinessEvidence }>
+  command(name: "runtime.preview_model_setup", payload: ModelSetupChoices): Promise<ModelSetupPreview>
+  command(name: "runtime.confirm_model_setup", payload: ModelSetupCommitInput): Promise<ModelSetupCommitResult>
   command(name: "runtime.status"): Promise<RuntimeStatus>
   command(name: "runtime.reasoning_provider_status"): Promise<ReasoningProviderStatus>
   command(name: "runtime.command_authority_summary"): Promise<CommandAuthoritySummary>
