@@ -131,6 +131,11 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
     return promise
   }
 
+  start(): void {
+    if (this.#active.size > 0) throw new Error("Executor readiness observation failed: observer is still draining")
+    this.#stopping = false
+  }
+
   async shutdown(): Promise<void> {
     this.#stopping = true
     const active = [...this.#active]

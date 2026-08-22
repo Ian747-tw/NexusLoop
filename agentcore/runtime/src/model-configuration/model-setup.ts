@@ -346,13 +346,7 @@ export function projectModelSetupEvents(events: readonly JsonlEvent[]): ModelSet
     if (typeof input.event_id !== "string" || !/^rt_[a-z0-9]{10}_[a-z0-9]{8}$/.test(input.event_id)) {
       throw new Error("model setup EventStore envelope event_id is invalid")
     }
-    if (typeof input.timestamp !== "string" || input.timestamp.length > 40) {
-      throw new Error("model setup EventStore envelope timestamp is invalid")
-    }
-    const eventTimestamp = new Date(input.timestamp)
-    if (Number.isNaN(eventTimestamp.getTime()) || eventTimestamp.toISOString() !== input.timestamp) {
-      throw new Error("model setup EventStore envelope timestamp is invalid")
-    }
+    canonicalIsoTimestamp(input.timestamp, "model setup EventStore envelope timestamp")
     if (input.schema_version !== MODEL_SETUP_EVENT_SCHEMA_VERSION || input.policy_version !== MODEL_SETUP_EVENT_POLICY_VERSION) throw new Error("model setup event version is unsupported")
     if (!Number.isInteger(input.revision) || input.revision !== revision + 1) throw new Error("model setup revision is not contiguous")
     if (input.previous_setup_hash !== (setupHash ?? null)) throw new Error("model setup previous hash does not match")
@@ -361,7 +355,7 @@ export function projectModelSetupEvents(events: readonly JsonlEvent[]): ModelSet
     if (input.catalog_hash !== rebuilt.catalog_hash || input.candidate_hash !== rebuilt.candidate_hash || input.configuration_hash !== rebuilt.configuration.configuration_hash) throw new Error("model setup event authority hash is invalid")
     if (input.commander_projection_hash !== (rebuilt.commander_selection?.projection_hash ?? null) || input.executor_projection_hash !== (rebuilt.executor_selection?.projection_hash ?? null)) throw new Error("model setup role projection hash is invalid")
     setupOperatorIdentifier(input.confirmed_by)
-    if (typeof input.committed_at !== "string" || Number.isNaN(Date.parse(input.committed_at))) throw new Error("model setup committed_at is invalid")
+    const canonicalCommittedAt = canonicalIsoTimestamp(input.committed_at, "model setup committed_at")
     const payload = {
       schema_version: input.schema_version,
       policy_version: input.policy_version,
@@ -375,14 +369,14 @@ export function projectModelSetupEvents(events: readonly JsonlEvent[]): ModelSet
       commander_projection_hash: input.commander_projection_hash,
       executor_projection_hash: input.executor_projection_hash,
       confirmed_by: input.confirmed_by,
-      committed_at: input.committed_at,
+      committed_at: canonicalCommittedAt,
     }
     if (input.event_payload_hash !== hash(payload)) throw new Error("model setup event payload hash is invalid")
     revision = input.revision
     setupHash = input.event_payload_hash as string
     candidate = rebuilt
     latestEventId = input.event_id
-    committedAt = input.committed_at
+    committedAt = canonicalCommittedAt
   }
   return deepFreeze(revision === 0
     ? { status: "missing", revision: 0, latest_event_id: null }
@@ -509,6 +503,13 @@ function rejectProxy(value: unknown, label: string): void {
 
 function nullableIdentifier(value: unknown, label: string): string | null {
   return value === null ? null : validateAuthoritySafeIdentifier(value, label, 160)
+}
+
+function canonicalIsoTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length > 40) throw new Error(`${label} is invalid`)
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) throw new Error(`${label} is invalid`)
+  return value
 }
 
 function result(status: "committed" | "idempotent", revision: number, setupHash: string, candidateHash: string): ModelSetupCommitResult {

@@ -358,6 +358,45 @@ describe("9W4E runtime model setup", () => {
     expect(internal.executorModelReadinessResolver?.activeCount()).toBe(0)
   })
 
+  test("RuntimeServer restart reactivates the production Executor readiness observer", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observer = join(dir, "restart-readiness-observer.ts")
+    await writeFile(observer, `
+let body = "";
+for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
+const input = JSON.parse(body);
+console.log(JSON.stringify({
+  protocol_version: 1,
+  selection_projection_hash: input.selection_projection_hash,
+  provider_id: input.provider_id,
+  model_id: input.model_id,
+  credential_binding_id: input.credential_binding_id,
+  provider_availability_status: "available",
+  credential_connection_status: "connected"
+}));
+`, "utf8")
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
+        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
+      },
+      adapter: new LongLivedAdapter(),
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({ ready: true })
+    await server.shutdown()
+    await server.start()
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({ ready: true })
+    await server.shutdown()
+  })
+
   test("persisted setup conflicts with explicit registry and legacy Commander environment authority", async () => {
     const dir = await tempProject()
     const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })

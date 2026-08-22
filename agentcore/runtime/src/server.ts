@@ -745,6 +745,7 @@ export class RuntimeServer {
       this.commanderInvestigationLifecycleAbort = new AbortController()
     }
     try {
+      await this.executorModelReadinessResolver?.start?.()
       this.ensureResearchProjectionUsable("startup")
       this.started = true
       if (this.mode === "active") {
@@ -824,6 +825,15 @@ export class RuntimeServer {
     this.executorStreamAbort = true
     this.lifecycleState = "stopping"
     this.commanderInvestigationLifecycleAbort.abort(new Error("RuntimeServer startup failed before Commander investigations became ready"))
+    try {
+      await this.executorModelReadinessResolver?.shutdown?.()
+    } catch (error) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-executor-readiness-observer-startup-cleanup-error",
+        message: "Executor readiness observer startup cleanup failed",
+      })
+    }
     await this.drainConfiguredCommanderInvestigations()
     this.started = false
     try {

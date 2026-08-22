@@ -231,6 +231,16 @@ throw new Error(${JSON.stringify(leaked)});
     expect(draining.activeCount()).toBe(0)
   })
 
+  test("reactivates only through the explicit lifecycle start hook after shutdown", async () => {
+    const resolver = new OpenCodeExecutorModelReadinessResolver(await fixture(echoFixture))
+    await expect(resolver.observe(selection)).resolves.toMatchObject({ provider_availability_status: "available" })
+    await resolver.shutdown()
+    await expect(resolver.observe(selection)).rejects.toThrow("shutdown")
+    await resolver.start()
+    await expect(resolver.observe(selection)).resolves.toMatchObject({ provider_availability_status: "available" })
+    await resolver.shutdown()
+  })
+
   test("bounds concurrency and keeps observations identity-isolated", async () => {
     const resolver = new OpenCodeExecutorModelReadinessResolver({ ...(await fixture(echoFixture)), maxConcurrency: 1 })
     const first = resolver.observe(selection)

@@ -2472,7 +2472,6 @@ function applyModelSetupPreview(state: UiState, value: unknown): UiState {
       expectedRevision: Number(value.expected_revision),
       candidateHash: value.candidate_hash.slice(0, 64),
       configurationHash: value.configuration_hash.slice(0, 64),
-      pendingRestart: value.restart_required === true,
       commandError: undefined,
     },
   }

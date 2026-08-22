@@ -995,6 +995,7 @@ describe("runtime UI effects", () => {
     expect(state.modelSetup.commanderChoices.map((item) => item.id)).toEqual(["", "commander-a"])
     state = await applyRuntimeUiEffect(state, runtime, { type: "preview-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b" })
     expect(state.modelSetup.candidateHash).toBe("a".repeat(64))
+    expect(state.modelSetup.pendingRestart).toBe(false)
     state = await applyRuntimeUiEffect(state, runtime, { type: "confirm-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b", expectedRevision: 0, candidateHash: "a".repeat(64) })
     expect(state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true, pendingSetupHash: "c".repeat(64) })
     expect(calls.map((item) => item.name)).toEqual([

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -186,8 +187,23 @@ describe("9W4E model setup authority", () => {
     expect(() => projectModelSetupEvents([payloadOnly as typeof setupEvent])).toThrow("EventStore envelope")
     expect(() => projectModelSetupEvents([{ ...setupEvent, event_id: "" }])).toThrow("event_id")
     expect(() => projectModelSetupEvents([{ ...setupEvent, timestamp: "not-a-timestamp" }])).toThrow("timestamp")
+    const noncanonicalCommit: Record<string, unknown> = { ...setupEvent, committed_at: "2026-08-22" }
+    noncanonicalCommit.event_payload_hash = setupPayloadHash(noncanonicalCommit)
+    expect(() => projectModelSetupEvents([noncanonicalCommit])).toThrow("committed_at")
     expect(() => projectModelSetupEvents([...events, events.find((event) => event.kind === MODEL_SETUP_EVENT_KIND)!])).toThrow("revision")
     await writeFile(path, `${await readFile(path, "utf8")}{\"kind\":\"${MODEL_SETUP_EVENT_KIND}\"`, "utf8")
     expect(() => readPersistedModelSetupAuthority(dir)).toThrow("model setup journal is malformed")
   })
 })
+
+function setupPayloadHash(event: Record<string, unknown>): string {
+  const { kind: _kind, event_id: _eventId, timestamp: _timestamp, event_payload_hash: _hash, ...payload } = event
+  return createHash("sha256").update(canonicalJson(payload)).digest("hex")
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
+}
