@@ -414,6 +414,20 @@ describe("TUI runtime client factory", () => {
     await client.runtime.shutdown()
   })
 
+  test("real runtime stream exposes an uninitialized project without starting it", async () => {
+    const dir = await tempProject()
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+    const iterator = client.stream()[Symbol.asyncIterator]()
+    expect((await iterator.next()).value).toMatchObject({ type: "RuntimeReady" })
+    expect((await iterator.next()).value).toEqual({ type: "ProjectUninitialized", projectDir: dir })
+    expect(await client.runtime.server.status()).toMatchObject({ runtimeStatus: "created", specApproved: false, lockHeld: false })
+    await iterator.return?.()
+    await client.runtime.shutdown()
+  })
+
   test("real runtime client maps resume menu commands to runtime commands", async () => {
     const commands: string[] = []
     const shutdownOptions: unknown[] = []

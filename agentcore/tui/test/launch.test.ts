@@ -894,6 +894,30 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("recent_missions")
   })
 
+  test("real headless first-run setup commits independent role selections without runtime start", async () => {
+    const dir = await tempProject()
+    const output: string[] = []
+    const keys = [
+      { type: "submit" },
+      { type: "select-next" },
+      { type: "submit" },
+      { type: "select-next" },
+      { type: "submit" },
+      { type: "submit" },
+      { type: "submit" },
+    ]
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys), NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("stage=committed")
+    expect(snapshot).toContain("pending_restart=true")
+    expect((await readEventKinds(dir)).filter((kind) => kind === "runtime_model_setup_committed")).toHaveLength(1)
+    expect((await readEventKinds(dir)).at(-1)).toBe("runtime_model_setup_committed")
+  })
+
   test("real headless runtime client submits a message and refreshes mission records", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

@@ -17,13 +17,12 @@ describe("TUI keyboard command model", () => {
       args: ["/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  "],
     })
   })
-  test("select Initialize enters onboarding shell", () => {
+  test("select Initialize enters model setup and loads server-owned recipes", () => {
     const state = { ...initialState("/tmp/demo"), screen: "init" as const, focus: "init-choice" as const }
     const next = applyKeyCommand(state, { type: "submit" })
 
-    expect(next.screen).toBe("main")
-    expect(next.lastCommand).toBe("initialize")
-    expect(next.commander.workIntent).toBe("TUI onboarding shell")
+    expect(next.screen).toBe("model-setup")
+    expect(next.modelSetup.stage).toBe("loading")
   })
 
   test("submit message from message box", () => {
@@ -46,24 +45,25 @@ describe("TUI keyboard command model", () => {
     expect(state.focus).toBe("message-box")
   })
 
-  test("initialize submit followed by message submit does not resend initialize", () => {
+  test("model setup keeps Commander and Executor choices independent", () => {
     let state: UiState = { ...initialState("/tmp/demo"), screen: "init", focus: "init-choice" }
-    const effects: string[] = []
-
     let result = applyKeyCommandWithEffects(state, { type: "submit" })
-    state = result.state
-    effects.push(...result.effects.map((effect) => `${effect.type}:${"command" in effect ? effect.command : effect.message}`))
-
-    result = applyKeyCommandWithEffects(state, { type: "insert", text: "hello runtime" })
-    state = result.state
-    effects.push(...result.effects.map((effect) => `${effect.type}:${"command" in effect ? effect.command : effect.message}`))
-
-    result = applyKeyCommandWithEffects(state, { type: "submit" })
-    state = result.state
-    effects.push(...result.effects.map((effect) => `${effect.type}:${"command" in effect ? effect.command : effect.message}`))
-
-    expect(effects).toEqual(["send-command:initialize", "send-user-message:hello runtime"])
-    expect(state.submittedMessages).toEqual(["hello runtime"])
+    expect(result.effects).toEqual([{ type: "load-model-setup" }])
+    state = {
+      ...result.state,
+      modelSetup: {
+        ...result.state.modelSetup,
+        stage: "commander",
+        commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }, { id: "commander-a", label: "Commander A" }],
+        executorChoices: [{ id: "", label: "Leave Executor unconfigured" }, { id: "executor-b", label: "Executor B" }],
+      },
+    }
+    state = applyKeyCommand(state, { type: "select-next" })
+    state = applyKeyCommand(state, { type: "submit" })
+    expect(state.modelSetup.stage).toBe("executor")
+    expect(state.modelSetup.commanderSelection).toBe(1)
+    state = applyKeyCommand(state, { type: "submit" })
+    expect(state.modelSetup.stage).toBe("preview")
   })
 
   test("message box keeps API keys out of TUI state while sending original message", () => {

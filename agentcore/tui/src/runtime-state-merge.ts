@@ -85,6 +85,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     (stableEqual(current.runtimeCommandError, baseline.runtimeCommandError) &&
       stableEqual(current.lastCommand, baseline.lastCommand))
   const canUpdateLastCommand = baseline === undefined || stableEqual(current.lastCommand, baseline.lastCommand)
+  const canUpdateModelSetup = baseline === undefined || stableEqual(current.modelSetup, baseline.modelSetup)
   const canUpdateProjectName = canUpdateRuntimeStatus || current.header.projectName === baseline?.header.projectName
   const canUpdateHeaderRuntimeStatus =
     canUpdateRuntimeStatus || current.header.runtimeStatus === baseline?.header.runtimeStatus
@@ -144,6 +145,7 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
     executorReviewProposalApplyReadiness: canUpdateExecutorReviewProposalApplyReadiness ? next.executorReviewProposalApplyReadiness : current.executorReviewProposalApplyReadiness,
     executorReviewProposalNarrowApply: canUpdateExecutorReviewProposalNarrowApply ? next.executorReviewProposalNarrowApply : current.executorReviewProposalNarrowApply,
     minimaxLiveValidation: canUpdateMiniMaxLiveValidation ? next.minimaxLiveValidation : current.minimaxLiveValidation,
+    modelSetup: canUpdateModelSetup ? next.modelSetup : current.modelSetup,
     runtimeCommandError: canUpdateRuntimeCommandError ? next.runtimeCommandError : current.runtimeCommandError,
     lastCommand: canUpdateLastCommand ? next.lastCommand : current.lastCommand,
     header: {

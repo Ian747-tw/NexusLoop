@@ -153,6 +153,46 @@ function ChoiceScreen(props: { state: UiState; kind: "init" | "resume" }) {
   )
 }
 
+function ModelSetupScreen(props: { state: UiState }) {
+  const setup = props.state.modelSetup
+  const choices = setup.stage === "commander" ? setup.commanderChoices : setup.executorChoices
+  const selection = setup.stage === "commander" ? setup.commanderSelection : setup.executorSelection
+  const selectedCommander = setup.commanderChoices[setup.commanderSelection]?.label ?? "Unconfigured"
+  const selectedExecutor = setup.executorChoices[setup.executorSelection]?.label ?? "Unconfigured"
+  return (
+    <box width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={color.bg}>
+      <box width="82%" maxWidth={96} border borderStyle="rounded" borderColor={color.focus} backgroundColor={color.panel} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1} gap={1}>
+        <text fg={color.accent}>Model setup</text>
+        <text fg={color.text}>Commander: {selectedCommander}</text>
+        <text fg={color.text}>Executor: {selectedExecutor}</text>
+        <text fg={color.muted}>Commander readiness: {setup.commanderReadiness}</text>
+        <text fg={color.muted}>Executor readiness: {setup.executorReadiness}</text>
+        <Show when={setup.stage === "commander" || setup.stage === "executor"}>
+          <text fg={color.warning}>{setup.stage === "commander" ? "Select Commander model" : "Select primary Executor model"}</text>
+          <For each={choices}>{(choice, index) => (
+            <text fg={index() === selection ? color.bg : color.text} bg={index() === selection ? color.focus : color.panel}>
+              {index() === selection ? "> " : "  "}{choice.label}
+            </text>
+          )}</For>
+        </Show>
+        <Show when={setup.stage === "loading"}><text fg={color.muted}>Loading setup authority...</text></Show>
+        <Show when={setup.stage === "preview"}>
+          <text fg={color.warning}>Preview ready. Candidate {setup.candidateHash?.slice(0, 12)} configuration {setup.configurationHash?.slice(0, 12)}</text>
+          <text fg={color.muted}>Enter opens explicit confirmation.</text>
+        </Show>
+        <Show when={setup.stage === "confirmation"}>
+          <text fg={color.warning}>Confirm credential-free selection for the next RuntimeServer start.</text>
+        </Show>
+        <Show when={setup.stage === "committed"}>
+          <text fg={color.accent}>Selection recorded. Clean restart required.</text>
+        </Show>
+        <Show when={setup.commandError}>{(value) => <text fg={color.warning}>setup error: {value()}</text>}</Show>
+        <text fg={color.muted}>Enter selects. Up/Down changes selection. Esc returns.</text>
+      </box>
+    </box>
+  )
+}
+
 function StreamPanel(props: { title: string; focus: FocusTarget; state: UiState; items: StreamLine[]; empty: string }) {
   return (
     <Panel title={props.title} focus={props.focus} state={props.state}>
@@ -459,6 +499,11 @@ function OnboardingPanel(props: { state: UiState }) {
       <text fg={color.text}>model: {provider.model}</text>
       <text fg={color.muted}>credential: {provider.credentialSource}</text>
       <text fg={color.muted}>connection: {provider.connectionStatus}</text>
+      <text fg={color.text}>Commander model: {props.state.modelSetup.commanderChoices[props.state.modelSetup.commanderSelection]?.label ?? "unconfigured"}</text>
+      <text fg={color.text}>Executor model: {props.state.modelSetup.executorChoices[props.state.modelSetup.executorSelection]?.label ?? "unconfigured"}</text>
+      <text fg={color.muted}>Commander readiness: {props.state.modelSetup.commanderReadiness}</text>
+      <text fg={color.muted}>Executor readiness: {props.state.modelSetup.executorReadiness}</text>
+      <Show when={props.state.modelSetup.pendingRestart}><text fg={color.warning}>Model selection pending next start</text></Show>
       <text fg={color.text}>gpu quota: {project.gpuQuota}</text>
       <text fg={color.text}>wake hooks: {project.wakeHooks}</text>
       <text fg={color.text}>max parallel runs: {project.maxParallelRuns}</text>
@@ -608,7 +653,7 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
   return (
     <Show
       when={state.screen === "main" || state.screen === "boot"}
-      fallback={<ChoiceScreen state={state} kind={state.screen === "init" ? "init" : "resume"} />}
+      fallback={state.screen === "model-setup" ? <ModelSetupScreen state={state} /> : <ChoiceScreen state={state} kind={state.screen === "init" ? "init" : "resume"} />}
     >
       <MainShell state={state} onDraft={(value) => setState("messageDraft", value)} onSubmit={() => apply({ type: "submit" })} />
     </Show>

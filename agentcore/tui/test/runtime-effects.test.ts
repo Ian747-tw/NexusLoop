@@ -976,6 +976,34 @@ class FailingMissionExecutionRuntime extends MissionExecutionRuntime {
 }
 
 describe("runtime UI effects", () => {
+  test("model setup loads exact recipes, previews, and confirms through RuntimeClient", async () => {
+    const calls: Array<{ name: string; payload?: Record<string, unknown> }> = []
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    runtime.command = (async (name: string, payload: Record<string, unknown> = {}) => {
+      calls.push({ name, payload })
+      if (name === "runtime.model_setup_catalog") return {
+        commander_recipes: [{ recipe_id: "commander-a", display_name: "Commander A" }],
+        executor_recipes: [{ recipe_id: "executor-b", display_name: "Executor B" }],
+      }
+      if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
+      if (name === "runtime.preview_model_setup") return { expected_revision: 0, candidate_hash: "a".repeat(64), configuration_hash: "b".repeat(64), restart_required: true }
+      if (name === "runtime.confirm_model_setup") return { status: "committed", revision: 1, setup_hash: "c".repeat(64), candidate_hash: "a".repeat(64), restart_required: true }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+
+    let state = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "model-setup" }, runtime, { type: "load-model-setup" })
+    expect(state.modelSetup.commanderChoices.map((item) => item.id)).toEqual(["", "commander-a"])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "preview-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b" })
+    expect(state.modelSetup.candidateHash).toBe("a".repeat(64))
+    state = await applyRuntimeUiEffect(state, runtime, { type: "confirm-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b", expectedRevision: 0, candidateHash: "a".repeat(64) })
+    expect(state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true, pendingSetupHash: "c".repeat(64) })
+    expect(calls.map((item) => item.name)).toEqual([
+      "runtime.model_setup_catalog",
+      "runtime.model_setup_status",
+      "runtime.preview_model_setup",
+      "runtime.confirm_model_setup",
+    ])
+  })
   test("Commander recovery staged commands classify mutations as writes", () => {
     for (const command of [
       "/commander-recovery-approve",

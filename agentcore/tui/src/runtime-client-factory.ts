@@ -63,7 +63,14 @@ export class TuiRuntimeServerClient implements RuntimeClient {
 
   async *stream(): AsyncIterable<RuntimeEvent> {
     for await (const event of this.runtime.stream()) {
-      if (isTuiRuntimeEvent(event)) yield event
+      if (!isTuiRuntimeEvent(event)) continue
+      yield event
+      if (event.type === "RuntimeReady") {
+        const status = await this.runtime.server.status()
+        if (!status.specApproved && status.runtimeStatus !== "started") {
+          yield { type: "ProjectUninitialized", projectDir: status.projectDir }
+        }
+      }
     }
   }
 
