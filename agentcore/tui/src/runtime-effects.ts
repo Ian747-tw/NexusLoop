@@ -2411,6 +2411,7 @@ function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, 
   const commanderChoices = [{ id: "", label: "Leave Commander unconfigured" }, ...choices(catalogValue.commander_recipes, "Commander")]
   const executorChoices = [{ id: "", label: "Leave Executor unconfigured" }, ...choices(catalogValue.executor_recipes, "Executor")]
   const candidate = isRecord(statusValue.candidate) && isRecord(statusValue.candidate.choices) ? statusValue.candidate.choices : undefined
+  const activeCandidate = isRecord(statusValue.active_candidate) && isRecord(statusValue.active_candidate.choices) ? statusValue.active_candidate.choices : undefined
   const selectedIndex = (items: Array<{ id: string }>, value: unknown) => {
     if (value === null) return 0
     if (typeof value !== "string") return 0
@@ -2424,6 +2425,11 @@ function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, 
     const lifecycle = readString(value.lifecycle_status, "unknown")
     return `${selected}; credential ${connected}; lifecycle ${lifecycle}`.slice(0, 180)
   }
+  const label = (items: Array<{ id: string; label: string }>, value: unknown) => items[selectedIndex(items, value)]?.label ?? "Unconfigured"
+  const pendingCommanderLabel = label(commanderChoices, candidate?.commander_recipe_id)
+  const pendingExecutorLabel = label(executorChoices, candidate?.executor_recipe_id)
+  const activeCommanderLabel = label(commanderChoices, activeCandidate?.commander_recipe_id)
+  const activeExecutorLabel = label(executorChoices, activeCandidate?.executor_recipe_id)
   return {
     ...state,
     modelSetup: {
@@ -2433,6 +2439,10 @@ function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, 
       executorChoices,
       commanderSelection: selectedIndex(commanderChoices, candidate?.commander_recipe_id),
       executorSelection: selectedIndex(executorChoices, candidate?.executor_recipe_id),
+      activeCommanderLabel,
+      activeExecutorLabel,
+      pendingCommanderLabel,
+      pendingExecutorLabel,
       activeSetupHash: typeof statusValue.active_setup_hash === "string" ? statusValue.active_setup_hash.slice(0, 64) : undefined,
       pendingSetupHash: typeof statusValue.setup_hash === "string" ? statusValue.setup_hash.slice(0, 64) : undefined,
       pendingRestart: statusValue.pending_restart === true,
@@ -2479,6 +2489,8 @@ function applyModelSetupCommit(state: UiState, value: unknown): UiState {
       stage: "committed",
       pendingSetupHash: value.setup_hash.slice(0, 64),
       pendingRestart: true,
+      pendingCommanderLabel: state.modelSetup.commanderChoices[state.modelSetup.commanderSelection]?.label ?? "Unconfigured",
+      pendingExecutorLabel: state.modelSetup.executorChoices[state.modelSetup.executorSelection]?.label ?? "Unconfigured",
       commandError: undefined,
     },
     systemActions: [...state.systemActions, { title: "Model setup recorded", detail: "Selection activates after a clean restart" }].slice(-12),

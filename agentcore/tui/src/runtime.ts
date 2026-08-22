@@ -105,12 +105,14 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly wakeSchedulerNavigationCheckpointWriteRuns: WakeSchedulerNavigationCheckpointWriteRunResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
-  private fakeModelSetup: { revision: number; setup_hash?: string; active_setup_hash?: string; commander_recipe_id: string | null; executor_recipe_id: string | null } = {
+  private fakeModelSetup: { revision: number; setup_hash?: string; active_setup_hash?: string; commander_recipe_id: string | null; executor_recipe_id: string | null; active_commander_recipe_id: string | null; active_executor_recipe_id: string | null } = {
     revision: 1,
     setup_hash: "4".repeat(64),
     active_setup_hash: "4".repeat(64),
     commander_recipe_id: null,
     executor_recipe_id: null,
+    active_commander_recipe_id: null,
+    active_executor_recipe_id: null,
   }
 
   constructor(
@@ -240,11 +242,12 @@ export class FakeRuntimeClient implements RuntimeClient {
           active_setup_hash: this.fakeModelSetup.active_setup_hash,
           pending_restart: this.fakeModelSetup.setup_hash !== this.fakeModelSetup.active_setup_hash,
           ...(this.fakeModelSetup.revision > 0 ? { candidate: { choices: { commander_recipe_id: this.fakeModelSetup.commander_recipe_id, executor_recipe_id: this.fakeModelSetup.executor_recipe_id } } } : {}),
+          ...(this.fakeModelSetup.active_setup_hash ? { active_candidate: { choices: { commander_recipe_id: this.fakeModelSetup.active_commander_recipe_id, executor_recipe_id: this.fakeModelSetup.active_executor_recipe_id } } } : {}),
         }
       case "runtime.preview_model_setup":
         return { preview_version: 1, expected_revision: this.fakeModelSetup.revision, candidate_hash: "2".repeat(64), catalog_hash: "1".repeat(64), configuration_hash: "3".repeat(64), restart_required: true }
       case "runtime.confirm_model_setup":
-        this.fakeModelSetup = { revision: this.fakeModelSetup.revision + 1, setup_hash: "5".repeat(64), active_setup_hash: this.fakeModelSetup.active_setup_hash, commander_recipe_id: typeof payload.commander_recipe_id === "string" ? payload.commander_recipe_id : null, executor_recipe_id: typeof payload.executor_recipe_id === "string" ? payload.executor_recipe_id : null }
+        this.fakeModelSetup = { ...this.fakeModelSetup, revision: this.fakeModelSetup.revision + 1, setup_hash: "5".repeat(64), commander_recipe_id: typeof payload.commander_recipe_id === "string" ? payload.commander_recipe_id : null, executor_recipe_id: typeof payload.executor_recipe_id === "string" ? payload.executor_recipe_id : null }
         return { status: "committed", revision: this.fakeModelSetup.revision, setup_hash: this.fakeModelSetup.setup_hash, candidate_hash: String(payload.candidate_hash ?? ""), restart_required: true }
       case "runtime.status":
         return {

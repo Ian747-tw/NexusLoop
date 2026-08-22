@@ -128,6 +128,31 @@ afterEach(async () => {
 })
 
 describe("9W4E runtime model setup", () => {
+  test("pre-start shutdown drains setup lock acquisition and prevents a later append", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" }
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const internal = server as unknown as { runLock: { acquire(): Promise<void> } }
+    const originalAcquire = internal.runLock.acquire.bind(internal.runLock)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    internal.runLock.acquire = async () => {
+      await gate
+      await originalAcquire()
+    }
+    const confirmation = server.command("runtime.confirm_model_setup", { ...choices, expected_revision: preview.expected_revision, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    await Bun.sleep(10)
+    const shutdown = server.shutdown()
+    expect(await Promise.race([shutdown.then(() => "settled"), Bun.sleep(20).then(() => "waiting")])).toBe("waiting")
+    release()
+    await expect(confirmation).rejects.toThrow("stopping")
+    await shutdown
+    expect((await server.eventStore.readAll()).some((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toBe(false)
+    await Bun.sleep(10)
+    expect((await server.eventStore.readAll()).some((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toBe(false)
+  })
+
   test("shutdown drains an owned setup append before runtime_shutdown", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -191,7 +216,12 @@ describe("9W4E runtime model setup", () => {
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
 
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
-    expect(await server.command("runtime.model_setup_status")).toMatchObject({ status: "ready", revision: 1, pending_restart: false })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      status: "ready",
+      revision: 1,
+      pending_restart: false,
+      active_candidate: { choices },
+    })
     const internal = server as unknown as { modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry; commanderInvestigationProviderConfig?: { transport_kind: string; model_id: string } }
     expect(internal.modelProfileRuntimeRegistry?.commanderSelection()).toMatchObject({ provider_kind: "google", model_id: "gemini-2.5-flash" })
     expect(internal.modelProfileRuntimeRegistry?.executorSelection()).toMatchObject({ provider_kind: "openai", model_id: "gpt-4.1-mini" })
@@ -201,7 +231,12 @@ describe("9W4E runtime model setup", () => {
     const nextPreview = await server.command("runtime.preview_model_setup", nextChoices) as { expected_revision: number; candidate_hash: string }
     await server.command("runtime.confirm_model_setup", { ...nextChoices, expected_revision: nextPreview.expected_revision, candidate_hash: nextPreview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
     expect(internal.modelProfileRuntimeRegistry?.commanderSelection()?.model_id).toBe("gemini-2.5-flash")
-    expect(await server.command("runtime.model_setup_status")).toMatchObject({ revision: 2, pending_restart: true })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      revision: 2,
+      pending_restart: true,
+      active_candidate: { choices },
+      candidate: { choices: nextChoices },
+    })
   })
 
   test("reports Commander and Executor readiness independently from persisted selection", async () => {

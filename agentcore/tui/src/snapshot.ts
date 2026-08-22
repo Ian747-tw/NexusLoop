@@ -39,10 +39,16 @@ export function layoutSnapshot(state: UiState): string {
     const setup = state.modelSetup
     out.push("Model setup")
     out.push(`  stage=${setup.stage}`)
-    out.push(`  commander=${setup.commanderChoices[setup.commanderSelection]?.label ?? "unconfigured"}`)
-    out.push(`  executor=${setup.executorChoices[setup.executorSelection]?.label ?? "unconfigured"}`)
-    out.push(`  commander_readiness=${setup.commanderReadiness}`)
-    out.push(`  executor_readiness=${setup.executorReadiness}`)
+    out.push(`  candidate_commander=${setup.commanderChoices[setup.commanderSelection]?.label ?? "unconfigured"}`)
+    out.push(`  candidate_executor=${setup.executorChoices[setup.executorSelection]?.label ?? "unconfigured"}`)
+    out.push(`  active_commander=${setup.activeCommanderLabel}`)
+    out.push(`  active_executor=${setup.activeExecutorLabel}`)
+    out.push(`  active_commander_readiness=${setup.commanderReadiness}`)
+    out.push(`  active_executor_readiness=${setup.executorReadiness}`)
+    if (setup.pendingRestart) {
+      out.push(`  pending_commander=${setup.pendingCommanderLabel}`)
+      out.push(`  pending_executor=${setup.pendingExecutorLabel}`)
+    }
     out.push(`  candidate=${setup.candidateHash?.slice(0, 12) ?? "none"}`)
     out.push(`  pending_restart=${setup.pendingRestart}`)
     if (setup.commandError) out.push(`  error=${setup.commandError}`)

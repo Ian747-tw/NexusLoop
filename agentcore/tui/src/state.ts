@@ -63,6 +63,10 @@ export type ModelSetupState = {
   executorChoices: Choice[]
   commanderSelection: number
   executorSelection: number
+  activeCommanderLabel: string
+  activeExecutorLabel: string
+  pendingCommanderLabel: string
+  pendingExecutorLabel: string
   expectedRevision?: number
   candidateHash?: string
   configurationHash?: string
@@ -5925,6 +5929,10 @@ export function initialState(projectDir: string): UiState {
       executorChoices: [{ id: "", label: "Leave Executor unconfigured" }],
       commanderSelection: 0,
       executorSelection: 0,
+      activeCommanderLabel: "Unconfigured",
+      activeExecutorLabel: "Unconfigured",
+      pendingCommanderLabel: "Unconfigured",
+      pendingExecutorLabel: "Unconfigured",
       pendingRestart: false,
       commanderReadiness: "unconfigured",
       executorReadiness: "unconfigured",

@@ -1004,6 +1004,43 @@ describe("runtime UI effects", () => {
       "runtime.confirm_model_setup",
     ])
   })
+  test("model setup keeps active readiness attached to active selection while a replacement is pending", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    runtime.command = (async (name: string) => {
+      if (name === "runtime.model_setup_catalog") return {
+        commander_recipes: [
+          { recipe_id: "commander-active", display_name: "Commander Active" },
+          { recipe_id: "commander-pending", display_name: "Commander Pending" },
+        ],
+        executor_recipes: [
+          { recipe_id: "executor-active", display_name: "Executor Active" },
+          { recipe_id: "executor-pending", display_name: "Executor Pending" },
+        ],
+      }
+      if (name === "runtime.model_setup_status") return {
+        status: "ready",
+        revision: 2,
+        setup_hash: "2".repeat(64),
+        active_setup_hash: "1".repeat(64),
+        pending_restart: true,
+        active_candidate: { choices: { commander_recipe_id: "commander-active", executor_recipe_id: "executor-active" } },
+        candidate: { choices: { commander_recipe_id: "commander-pending", executor_recipe_id: "executor-pending" } },
+        commander_role_readiness: { selection_status: "selected", credential_connection_status: "connected", lifecycle_status: "ready" },
+        executor_role_readiness: { selection_status: "selected", credential_connection_status: "connected", lifecycle_status: "ready" },
+      }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+    const state = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "model-setup" }, runtime, { type: "load-model-setup" })
+    expect(state.modelSetup).toMatchObject({
+      activeCommanderLabel: "Commander Active",
+      activeExecutorLabel: "Executor Active",
+      pendingCommanderLabel: "Commander Pending",
+      pendingExecutorLabel: "Executor Pending",
+      commanderReadiness: "selected; credential connected; lifecycle ready",
+      executorReadiness: "selected; credential connected; lifecycle ready",
+      pendingRestart: true,
+    })
+  })
   test("initialization skips setup only for an exact active durable setup", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     let state = await applyRuntimeUiEffect(

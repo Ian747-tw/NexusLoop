@@ -319,8 +319,10 @@ export class ModelSetupService {
       return result("committed", revision, eventPayloadHash, candidate.candidate_hash)
     } catch (error) {
       const reconciled = projectModelSetupEvents(await this.eventStore.readAll())
-      if (reconciled.setup_hash === eventPayloadHash && reconciled.candidate?.candidate_hash === candidate.candidate_hash) {
-        return result("idempotent", reconciled.revision, eventPayloadHash, candidate.candidate_hash)
+      if (reconciled.revision === input.expected_revision + 1
+        && reconciled.setup_hash
+        && reconciled.candidate?.candidate_hash === candidate.candidate_hash) {
+        return result("idempotent", reconciled.revision, reconciled.setup_hash, candidate.candidate_hash)
       }
       throw error
     }
@@ -337,10 +339,20 @@ export function projectModelSetupEvents(events: readonly JsonlEvent[]): ModelSet
     const event = events[index]!
     if (event.kind !== MODEL_SETUP_EVENT_KIND) continue
     const input = strictRecord(event, "model setup event", [
-      "kind", "event_id", "timestamp", "schema_version", "policy_version", "revision", "previous_setup_hash",
+      "kind", "schema_version", "policy_version", "revision", "previous_setup_hash",
       "commander_recipe_id", "executor_recipe_id", "catalog_hash", "candidate_hash", "configuration_hash",
       "commander_projection_hash", "executor_projection_hash", "confirmed_by", "committed_at", "event_payload_hash",
     ], ["event_id", "timestamp"])
+    if (typeof input.event_id !== "string" || !/^rt_[a-z0-9]{10}_[a-z0-9]{8}$/.test(input.event_id)) {
+      throw new Error("model setup EventStore envelope event_id is invalid")
+    }
+    if (typeof input.timestamp !== "string" || input.timestamp.length > 40) {
+      throw new Error("model setup EventStore envelope timestamp is invalid")
+    }
+    const eventTimestamp = new Date(input.timestamp)
+    if (Number.isNaN(eventTimestamp.getTime()) || eventTimestamp.toISOString() !== input.timestamp) {
+      throw new Error("model setup EventStore envelope timestamp is invalid")
+    }
     if (input.schema_version !== MODEL_SETUP_EVENT_SCHEMA_VERSION || input.policy_version !== MODEL_SETUP_EVENT_POLICY_VERSION) throw new Error("model setup event version is unsupported")
     if (!Number.isInteger(input.revision) || input.revision !== revision + 1) throw new Error("model setup revision is not contiguous")
     if (input.previous_setup_hash !== (setupHash ?? null)) throw new Error("model setup previous hash does not match")
@@ -369,7 +381,7 @@ export function projectModelSetupEvents(events: readonly JsonlEvent[]): ModelSet
     revision = input.revision
     setupHash = input.event_payload_hash as string
     candidate = rebuilt
-    latestEventId = typeof input.event_id === "string" ? input.event_id : null
+    latestEventId = input.event_id
     committedAt = input.committed_at
   }
   return deepFreeze(revision === 0

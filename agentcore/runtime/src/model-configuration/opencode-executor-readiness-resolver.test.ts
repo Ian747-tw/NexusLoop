@@ -102,6 +102,47 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await absent.shutdown()
   })
 
+  test("matches OpenCode model filtering before reporting exact availability", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-production-filters-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: {
+          "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+          alpha: { id: "alpha", name: "Alpha", status: "alpha" },
+          deprecated: { id: "deprecated", name: "Deprecated", status: "deprecated" },
+        },
+      },
+    }), "utf8")
+    const observe = async (model_id: string, provider: Record<string, unknown>, experimental = false) => {
+      const resolver = createProductionOpenCodeExecutorReadinessResolver({
+        projectDir: cwd,
+        env: {
+          HOME: cwd,
+          XDG_CONFIG_HOME: join(cwd, `config-${model_id}`),
+          XDG_DATA_HOME: join(cwd, `data-${model_id}`),
+          OPENCODE_MODELS_PATH: modelsPath,
+          OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: { google: provider } }),
+          ...(experimental ? { OPENCODE_ENABLE_EXPERIMENTAL_MODELS: "1" } : {}),
+        },
+      })
+      try {
+        return await resolver.observe(Object.freeze({ ...selection, model_id }))
+      } finally {
+        await resolver.shutdown()
+      }
+    }
+    await expect(observe("gemini-2.5-flash", { blacklist: ["gemini-2.5-flash"] })).resolves.toMatchObject({ provider_availability_status: "unavailable" })
+    await expect(observe("gemini-2.5-flash", { whitelist: ["another-model"] })).resolves.toMatchObject({ provider_availability_status: "unavailable" })
+    await expect(observe("alpha", {})).resolves.toMatchObject({ provider_availability_status: "unavailable" })
+    await expect(observe("alpha", {}, true)).resolves.toMatchObject({ provider_availability_status: "available" })
+    await expect(observe("deprecated", {})).resolves.toMatchObject({ provider_availability_status: "unavailable" })
+  })
+
   test("returns exact bounded evidence and derives its evidence identity", async () => {
     const config = await fixture(echoFixture)
     const resolver = new OpenCodeExecutorModelReadinessResolver(config)

@@ -15,11 +15,12 @@ async function main(): Promise<void> {
   try {
     if (process.env.OPENCODE_DISABLE_MODELS_FETCH !== "1") throw new Error("models refresh is not disabled")
     const { AppRuntime } = await import("../upstream/packages/opencode/src/effect/app-runtime.ts")
-    const [{ Instance }, { ModelsDev }, { Config }, { Auth }] = await Promise.all([
+    const [{ Instance }, { ModelsDev }, { Config }, { Auth }, { Flag }] = await Promise.all([
       import("../upstream/packages/opencode/src/project/instance.ts"),
       import("../upstream/packages/opencode/src/provider/index.ts"),
       import("../upstream/packages/opencode/src/config/index.ts"),
       import("../upstream/packages/opencode/src/auth/index.ts"),
+      import("../upstream/packages/opencode/src/flag/flag.ts"),
     ])
     await Instance.provide({
       directory: process.cwd(),
@@ -37,10 +38,20 @@ async function main(): Promise<void> {
         const configuredProvider = allowed && config.provider && Object.hasOwn(config.provider, input.provider_id)
           ? config.provider[input.provider_id]
           : undefined
-        const models = configuredProvider?.models && Object.hasOwn(configuredProvider.models, input.model_id)
-          ? configuredProvider.models
-          : catalogProvider?.models
-        providerAvailability = models && Object.hasOwn(models, input.model_id) ? "available" : "unavailable"
+        const configuredModel = configuredProvider?.models && Object.hasOwn(configuredProvider.models, input.model_id)
+          ? configuredProvider.models[input.model_id]
+          : undefined
+        const catalogModel = catalogProvider?.models && Object.hasOwn(catalogProvider.models, input.model_id)
+          ? catalogProvider.models[input.model_id]
+          : undefined
+        const model = configuredModel ?? catalogModel
+        const filtered = input.model_id === "gpt-5-chat-latest"
+          || (input.provider_id === "openrouter" && input.model_id === "openai/gpt-5-chat")
+          || (model?.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS)
+          || model?.status === "deprecated"
+          || configuredProvider?.blacklist?.includes(input.model_id) === true
+          || (configuredProvider?.whitelist !== undefined && !configuredProvider.whitelist.includes(input.model_id))
+        providerAvailability = model && !filtered ? "available" : "unavailable"
         if (!new Set(["anthropic", "google", "openai"]).has(input.provider_id)) {
           credentialConnection = "unknown"
           return

@@ -163,10 +163,13 @@ function ModelSetupScreen(props: { state: UiState }) {
     <box width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={color.bg}>
       <box width="82%" maxWidth={96} border borderStyle="rounded" borderColor={color.focus} backgroundColor={color.panel} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1} gap={1}>
         <text fg={color.accent}>Model setup</text>
-        <text fg={color.text}>Commander: {selectedCommander}</text>
-        <text fg={color.text}>Executor: {selectedExecutor}</text>
-        <text fg={color.muted}>Commander readiness: {setup.commanderReadiness}</text>
-        <text fg={color.muted}>Executor readiness: {setup.executorReadiness}</text>
+        <text fg={color.text}>Candidate Commander: {selectedCommander}</text>
+        <text fg={color.text}>Candidate Executor: {selectedExecutor}</text>
+        <text fg={color.text}>Active Commander: {setup.activeCommanderLabel}</text>
+        <text fg={color.text}>Active Executor: {setup.activeExecutorLabel}</text>
+        <text fg={color.muted}>Active Commander readiness: {setup.commanderReadiness}</text>
+        <text fg={color.muted}>Active Executor readiness: {setup.executorReadiness}</text>
+        <Show when={setup.pendingRestart}><text fg={color.warning}>Pending Commander: {setup.pendingCommanderLabel}; Executor: {setup.pendingExecutorLabel}</text></Show>
         <Show when={setup.stage === "commander" || setup.stage === "executor"}>
           <text fg={color.warning}>{setup.stage === "commander" ? "Select Commander model" : "Select primary Executor model"}</text>
           <For each={choices}>{(choice, index) => (
@@ -499,10 +502,12 @@ function OnboardingPanel(props: { state: UiState }) {
       <text fg={color.text}>model: {provider.model}</text>
       <text fg={color.muted}>credential: {provider.credentialSource}</text>
       <text fg={color.muted}>connection: {provider.connectionStatus}</text>
-      <text fg={color.text}>Commander model: {props.state.modelSetup.commanderChoices[props.state.modelSetup.commanderSelection]?.label ?? "unconfigured"}</text>
-      <text fg={color.text}>Executor model: {props.state.modelSetup.executorChoices[props.state.modelSetup.executorSelection]?.label ?? "unconfigured"}</text>
-      <text fg={color.muted}>Commander readiness: {props.state.modelSetup.commanderReadiness}</text>
-      <text fg={color.muted}>Executor readiness: {props.state.modelSetup.executorReadiness}</text>
+      <text fg={color.text}>Active Commander model: {props.state.modelSetup.activeCommanderLabel}</text>
+      <text fg={color.text}>Active Executor model: {props.state.modelSetup.activeExecutorLabel}</text>
+      <text fg={color.muted}>Active Commander readiness: {props.state.modelSetup.commanderReadiness}</text>
+      <text fg={color.muted}>Active Executor readiness: {props.state.modelSetup.executorReadiness}</text>
+      <Show when={props.state.modelSetup.pendingRestart}><text fg={color.warning}>Pending Commander model: {props.state.modelSetup.pendingCommanderLabel}</text></Show>
+      <Show when={props.state.modelSetup.pendingRestart}><text fg={color.warning}>Pending Executor model: {props.state.modelSetup.pendingExecutorLabel}</text></Show>
       <Show when={props.state.modelSetup.pendingRestart}><text fg={color.warning}>Model selection pending next start</text></Show>
       <text fg={color.text}>gpu quota: {project.gpuQuota}</text>
       <text fg={color.text}>wake hooks: {project.wakeHooks}</text>

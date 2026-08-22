@@ -156,6 +156,20 @@ describe("9W4E model setup authority", () => {
     expect((await store.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(1)
   })
 
+  test("concurrent identical confirmations reconcile one semantic winner across different timestamps", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxl-model-setup-identical-concurrent-"))
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const left = new ModelSetupService({ eventStore: store, now: () => new Date("2026-08-22T00:00:00.000Z") })
+    const right = new ModelSetupService({ eventStore: store, now: () => new Date("2026-08-22T00:00:01.000Z") })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await left.preview(choices)
+    const input = { ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" } as const
+    const settled = await Promise.all([left.confirm(input), right.confirm(input)])
+    expect(settled.map((item) => item.status).sort()).toEqual(["committed", "idempotent"])
+    expect(new Set(settled.map((item) => item.setup_hash)).size).toBe(1)
+    expect((await store.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(1)
+  })
+
   test("projection and startup reader fail closed on corrupt, duplicate, and truncated setup records", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nxl-model-setup-corrupt-"))
     const path = join(dir, ".nxl", "events.jsonl")
@@ -167,6 +181,11 @@ describe("9W4E model setup authority", () => {
     const events = await store.readAll()
     const authority = readPersistedModelSetupAuthority(dir)
     expect(authority?.candidate.commander_selection?.model_id).toBe("claude-sonnet-4-5-20250929")
+    const setupEvent = events.find((event) => event.kind === MODEL_SETUP_EVENT_KIND)!
+    const { event_id: _eventId, timestamp: _timestamp, ...payloadOnly } = setupEvent
+    expect(() => projectModelSetupEvents([payloadOnly as typeof setupEvent])).toThrow("EventStore envelope")
+    expect(() => projectModelSetupEvents([{ ...setupEvent, event_id: "" }])).toThrow("event_id")
+    expect(() => projectModelSetupEvents([{ ...setupEvent, timestamp: "not-a-timestamp" }])).toThrow("timestamp")
     expect(() => projectModelSetupEvents([...events, events.find((event) => event.kind === MODEL_SETUP_EVENT_KIND)!])).toThrow("revision")
     await writeFile(path, `${await readFile(path, "utf8")}{\"kind\":\"${MODEL_SETUP_EVENT_KIND}\"`, "utf8")
     expect(() => readPersistedModelSetupAuthority(dir)).toThrow("model setup journal is malformed")
