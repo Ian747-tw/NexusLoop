@@ -40,6 +40,9 @@ async function main(): Promise<void> {
           AppRuntime.runPromise(Config.Service.use((service) => service.get())),
           AppRuntime.runPromise(Auth.Service.use((service) => service.get(input.provider_id))),
         ])
+        const externalPluginsEnabled = !Flag.OPENCODE_PURE
+          && ((config.plugin?.length ?? 0) > 0 || (config.plugin_origins?.length ?? 0) > 0)
+        if (externalPluginsEnabled) return
         const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
         const disabled = new Set(config.disabled_providers ?? [])
         const allowed = (enabled ? enabled.has(input.provider_id) : true) && !disabled.has(input.provider_id)
@@ -54,11 +57,12 @@ async function main(): Promise<void> {
         const catalogModel = catalogProvider?.models && Object.hasOwn(catalogProvider.models, input.model_id)
           ? catalogProvider.models[input.model_id]
           : undefined
-        const catalogModelForConfiguredId = configuredModel?.id
-          && catalogProvider?.models
-          && Object.hasOwn(catalogProvider.models, configuredModel.id)
-          ? catalogProvider.models[configuredModel.id]
-          : catalogModel
+        const configuredApiModelId = configuredModel?.id
+        const catalogModelForConfiguredId = configuredApiModelId === undefined
+          ? catalogModel
+          : catalogProvider?.models && Object.hasOwn(catalogProvider.models, configuredApiModelId)
+            ? catalogProvider.models[configuredApiModelId]
+            : undefined
         const model = configuredModel ?? catalogModel
         const modelStatus = configuredModel?.status ?? catalogModelForConfiguredId?.status
         const apiModelId = configuredModel?.id ?? catalogModelForConfiguredId?.id ?? input.model_id
@@ -80,7 +84,8 @@ async function main(): Promise<void> {
         const envNames = configuredProvider?.env ?? catalogProvider?.env ?? []
         const hasEnvironmentCredential = Array.isArray(envNames)
           && envNames.some((name) => typeof name === "string" && typeof process.env[name] === "string" && process.env[name]!.length > 0)
-        const hasStoredCredential = auth !== undefined
+        const hasStoredCredential = auth?.type === "api"
+          || (input.provider_id === "openai" && auth?.type === "oauth")
         const hasConfiguredCredential = typeof configuredProvider?.options?.apiKey === "string"
           && configuredProvider.options.apiKey.length > 0
         credentialConnection = hasEnvironmentCredential || hasStoredCredential || hasConfiguredCredential ? "connected" : "disconnected"

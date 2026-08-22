@@ -140,6 +140,69 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await absent.shutdown()
   })
 
+  test("fails closed when external plugin authority can change selected provider models", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-plugin-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: ["fixture-provider-plugin"] }),
+      },
+    })
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
+    expect(JSON.stringify(observed)).not.toMatch(/fixture|plugin|secret|auth/i)
+    await resolver.shutdown()
+  })
+
+  test("accepts only stored credential types the pinned provider path can load", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-auth-type-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({
+          google: { type: "oauth", refresh: "stale-refresh", access: "stale-access", expires: 4_102_444_800_000 },
+        }),
+      },
+    })
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+    expect(JSON.stringify(observed)).not.toMatch(/oauth|stale|refresh|access|auth/i)
+    await resolver.shutdown()
+  })
+
   const productionFilterCases = [
     {
       name: "configured model blacklist",
@@ -169,6 +232,13 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       provider: { models: { "gemini-2.5-flash": { id: "alpha" } } },
       experimental: false,
       expected: "unavailable",
+    },
+    {
+      name: "unmatched configured model id defaults active",
+      model_id: "alpha",
+      provider: { models: { alpha: { id: "custom-google-api-model" } } },
+      experimental: false,
+      expected: "available",
     },
     { name: "explicit experimental model enablement", model_id: "alpha", provider: {}, experimental: true, expected: "available" },
     { name: "deprecated model", model_id: "deprecated", provider: {}, experimental: false, expected: "unavailable" },
