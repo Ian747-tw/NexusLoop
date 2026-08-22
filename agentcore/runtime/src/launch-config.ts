@@ -61,7 +61,7 @@ function hasLegacyCommanderEnvironmentAuthority(env: Record<string, string | und
 export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchConfig = {}): RuntimeServer {
   const { env, ...providedOptions } = config
   const projectDir = locateProjectRoot(providedOptions.projectDir)
-  const persisted = readPersistedModelSetupAuthority(projectDir)
+  const persisted = readPersistedModelSetupAuthorityBeforeLock(projectDir)
   if (persisted && providedOptions.modelProfileRuntimeRegistry) {
     throw new Error("persisted model setup cannot be combined with an explicit model-profile registry")
   }
@@ -97,13 +97,24 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
   }
   if (options.modelProfileRuntimeRegistry?.executorSelection() && !options.executorModelReadinessResolver) {
     options.executorModelReadinessResolver = createProductionOpenCodeExecutorReadinessResolver({
-      projectDir,
+      projectDir: options.openCodeAdapterConfig?.kind === "process"
+        ? options.openCodeAdapterConfig.cwd ?? projectDir
+        : projectDir,
       env: observerEnv,
       command: optionalBoundedEnvironmentText(observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND, "NXL_OPENCODE_EXECUTOR_READINESS_COMMAND", 1_024),
       args: readExecutorObserverArgs(observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON),
     })
   }
   return new RuntimeServer(options)
+}
+
+function readPersistedModelSetupAuthorityBeforeLock(projectDir: string): ReturnType<typeof readPersistedModelSetupAuthority> {
+  try {
+    return readPersistedModelSetupAuthority(projectDir)
+  } catch (error) {
+    if (error instanceof Error && error.message === "model setup journal is malformed") return undefined
+    throw error
+  }
 }
 
 function hasExecutorObserverEnvironment(env: Record<string, string | undefined>): boolean {

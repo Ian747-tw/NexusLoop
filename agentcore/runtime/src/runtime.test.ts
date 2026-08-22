@@ -355,13 +355,15 @@ describe("9W4E runtime model setup", () => {
     await server.shutdown()
   })
 
-  test("production Executor readiness observes process-adapter environment overrides", async () => {
+  test("production Executor readiness observes process-adapter environment and working-directory authority", async () => {
     const dir = await tempProject()
     const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
     const observer = join(dir, "adapter-env-readiness-observer.ts")
+    const launchCwd = join(dir, "opencode-launch-cwd")
+    await mkdir(launchCwd, { recursive: true })
     await writeFile(observer, `
 let body = "";
 for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
@@ -372,7 +374,7 @@ console.log(JSON.stringify({
   provider_id: input.provider_id,
   model_id: input.model_id,
   credential_binding_id: input.credential_binding_id,
-  provider_availability_status: "available",
+  provider_availability_status: process.cwd() === ${JSON.stringify(launchCwd)} ? "available" : "unknown",
   credential_connection_status: process.env.GOOGLE_GENERATIVE_AI_API_KEY ? "connected" : "disconnected"
 }));
 `, "utf8")
@@ -386,6 +388,7 @@ console.log(JSON.stringify({
       openCodeAdapterConfig: {
         kind: "process",
         command: "opencode",
+        cwd: launchCwd,
         env: { GOOGLE_GENERATIVE_AI_API_KEY: "" },
       },
     })
@@ -396,6 +399,26 @@ console.log(JSON.stringify({
       credential_connection_status: "disconnected",
     })
     await server.shutdown()
+  })
+
+  test("startup defers a torn setup snapshot until strict projection under the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    const committed = await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const complete = await readFile(eventsPath, "utf8")
+    await writeFile(eventsPath, complete.slice(0, -2), "utf8")
+
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: new LongLivedAdapter() })
+    await writeFile(eventsPath, complete, "utf8")
+
+    await expect(server.start()).rejects.toThrow("persisted model setup changed before runtime start")
+    expect(committed).toMatchObject({ status: "committed" })
+    expect((await server.eventStore.readAll()).some((event) => event.kind === "runtime_started")).toBe(false)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
   })
 
   test("production observer configuration cannot merge with an injected Executor resolver", async () => {
