@@ -102,7 +102,27 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await absent.shutdown()
   })
 
-  test("matches OpenCode model filtering before reporting exact availability", async () => {
+  const productionFilterCases = [
+    {
+      name: "configured model blacklist",
+      model_id: "gemini-2.5-flash",
+      provider: { blacklist: ["gemini-2.5-flash"] },
+      experimental: false,
+      expected: "unavailable",
+    },
+    {
+      name: "configured model whitelist",
+      model_id: "gemini-2.5-flash",
+      provider: { whitelist: ["another-model"] },
+      experimental: false,
+      expected: "unavailable",
+    },
+    { name: "experimental model default", model_id: "alpha", provider: {}, experimental: false, expected: "unavailable" },
+    { name: "explicit experimental model enablement", model_id: "alpha", provider: {}, experimental: true, expected: "available" },
+    { name: "deprecated model", model_id: "deprecated", provider: {}, experimental: false, expected: "unavailable" },
+  ] as const
+
+  for (const filterCase of productionFilterCases) test(`matches OpenCode ${filterCase.name} filtering`, async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-production-filters-"))
     const modelsPath = join(cwd, "models.json")
     await writeFile(modelsPath, JSON.stringify({
@@ -117,30 +137,25 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         },
       },
     }), "utf8")
-    const observe = async (model_id: string, provider: Record<string, unknown>, experimental = false) => {
-      const resolver = createProductionOpenCodeExecutorReadinessResolver({
-        projectDir: cwd,
-        env: {
-          HOME: cwd,
-          XDG_CONFIG_HOME: join(cwd, `config-${model_id}`),
-          XDG_DATA_HOME: join(cwd, `data-${model_id}`),
-          OPENCODE_MODELS_PATH: modelsPath,
-          OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
-          OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: { google: provider } }),
-          ...(experimental ? { OPENCODE_ENABLE_EXPERIMENTAL_MODELS: "1" } : {}),
-        },
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, `config-${filterCase.model_id}`),
+        XDG_DATA_HOME: join(cwd, `data-${filterCase.model_id}`),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: { google: filterCase.provider } }),
+        ...(filterCase.experimental ? { OPENCODE_ENABLE_EXPERIMENTAL_MODELS: "1" } : {}),
+      },
+    })
+    try {
+      await expect(resolver.observe(Object.freeze({ ...selection, model_id: filterCase.model_id }))).resolves.toMatchObject({
+        provider_availability_status: filterCase.expected,
       })
-      try {
-        return await resolver.observe(Object.freeze({ ...selection, model_id }))
-      } finally {
-        await resolver.shutdown()
-      }
+    } finally {
+      await resolver.shutdown()
     }
-    await expect(observe("gemini-2.5-flash", { blacklist: ["gemini-2.5-flash"] })).resolves.toMatchObject({ provider_availability_status: "unavailable" })
-    await expect(observe("gemini-2.5-flash", { whitelist: ["another-model"] })).resolves.toMatchObject({ provider_availability_status: "unavailable" })
-    await expect(observe("alpha", {})).resolves.toMatchObject({ provider_availability_status: "unavailable" })
-    await expect(observe("alpha", {}, true)).resolves.toMatchObject({ provider_availability_status: "available" })
-    await expect(observe("deprecated", {})).resolves.toMatchObject({ provider_availability_status: "unavailable" })
   })
 
   test("returns exact bounded evidence and derives its evidence identity", async () => {
