@@ -58,6 +58,7 @@ export type ProviderOnboardingState = {
 }
 
 export type ModelSetupState = {
+  origin: "init" | "main"
   stage: "loading" | "commander" | "executor" | "preview" | "confirmation" | "committed"
   commanderChoices: Choice[]
   executorChoices: Choice[]
@@ -5924,6 +5925,7 @@ export function initialState(projectDir: string): UiState {
       connectionStatus: "not tested",
     },
     modelSetup: {
+      origin: "init",
       stage: "loading",
       commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }],
       executorChoices: [{ id: "", label: "Leave Executor unconfigured" }],

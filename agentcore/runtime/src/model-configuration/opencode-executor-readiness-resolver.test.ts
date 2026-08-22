@@ -118,6 +118,13 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       expected: "unavailable",
     },
     { name: "experimental model default", model_id: "alpha", provider: {}, experimental: false, expected: "unavailable" },
+    {
+      name: "catalog status retained by configured model override",
+      model_id: "alpha",
+      provider: { models: { alpha: { options: { temperature: 0 } } } },
+      experimental: false,
+      expected: "unavailable",
+    },
     { name: "explicit experimental model enablement", model_id: "alpha", provider: {}, experimental: true, expected: "available" },
     { name: "deprecated model", model_id: "deprecated", provider: {}, experimental: false, expected: "unavailable" },
   ] as const

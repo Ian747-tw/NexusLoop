@@ -1005,6 +1005,40 @@ describe("runtime UI effects", () => {
       "runtime.confirm_model_setup",
     ])
   })
+  test("model setup slash command enters the async screen with main-shell origin", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    runtime.command = (async (name: string) => {
+      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+    const state = await applyRuntimeUiEffect(
+      { ...initialState("/tmp/demo"), screen: "main", focus: "message-box" },
+      runtime,
+      { type: "send-command", command: "model-setup" },
+    )
+    expect(state).toMatchObject({ screen: "model-setup", modelSetup: { origin: "main", stage: "commander" } })
+  })
+  test("unchanged model setup confirmation stays active without requesting restart", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    runtime.command = (async (name: string) => {
+      if (name === "runtime.confirm_model_setup") return {
+        status: "idempotent",
+        revision: 1,
+        setup_hash: "c".repeat(64),
+        candidate_hash: "a".repeat(64),
+        restart_required: false,
+      }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+    const state = await applyRuntimeUiEffect(
+      { ...initialState("/tmp/demo"), screen: "model-setup" },
+      runtime,
+      { type: "confirm-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b", expectedRevision: 1, candidateHash: "a".repeat(64) },
+    )
+    expect(state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: false, pendingSetupHash: "c".repeat(64) })
+    expect(state.systemActions.at(-1)).toEqual({ title: "Model setup unchanged", detail: "The active selection already matches this setup" })
+  })
   test("model setup keeps active readiness attached to active selection while a replacement is pending", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     runtime.command = (async (name: string) => {

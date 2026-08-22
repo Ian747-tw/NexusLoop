@@ -84,7 +84,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
               ...state,
               screen: "model-setup",
               focus: "init-choice",
-              modelSetup: { ...state.modelSetup, stage: "loading", commandError: undefined },
+              modelSetup: { ...state.modelSetup, origin: "init", stage: "loading", commandError: undefined },
             },
             effects: [{ type: "load-model-setup", continueInitializationIfActive: true }],
           }
@@ -138,7 +138,16 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
       if (state.screen === "model-setup") {
         if (state.modelSetup.stage === "executor") return { state: { ...state, modelSetup: { ...state.modelSetup, stage: "commander" } }, effects: [] }
         if (state.modelSetup.stage === "preview" || state.modelSetup.stage === "confirmation") return { state: { ...state, modelSetup: { ...state.modelSetup, stage: "executor" } }, effects: [] }
-        return { state: { ...state, screen: "init", modelSetup: { ...state.modelSetup, stage: "loading" } }, effects: [] }
+        const screen = state.modelSetup.origin
+        return {
+          state: {
+            ...state,
+            screen,
+            focus: screen === "main" ? "message-box" : "init-choice",
+            modelSetup: { ...state.modelSetup, stage: "loading" },
+          },
+          effects: [],
+        }
       }
       return {
         state: state.screen === "init" || state.screen === "resume" ? { ...state, lastCommand: "cancel" } : { ...state, messageDraft: "" },

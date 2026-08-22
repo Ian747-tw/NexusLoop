@@ -45,10 +45,11 @@ async function main(): Promise<void> {
           ? catalogProvider.models[input.model_id]
           : undefined
         const model = configuredModel ?? catalogModel
+        const modelStatus = configuredModel?.status ?? catalogModel?.status
         const filtered = input.model_id === "gpt-5-chat-latest"
           || (input.provider_id === "openrouter" && input.model_id === "openai/gpt-5-chat")
-          || (model?.status === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS)
-          || model?.status === "deprecated"
+          || (modelStatus === "alpha" && !Flag.OPENCODE_ENABLE_EXPERIMENTAL_MODELS)
+          || modelStatus === "deprecated"
           || configuredProvider?.blacklist?.includes(input.model_id) === true
           || (configuredProvider?.whitelist !== undefined && !configuredProvider.whitelist.includes(input.model_id))
         providerAvailability = model && !filtered ? "available" : "unavailable"

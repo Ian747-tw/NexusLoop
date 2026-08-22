@@ -291,13 +291,6 @@ function modelProfileRuntimeCapabilities(
 ): ModelCapability[] {
   const commander = commanderConfig ? commanderInvestigationModelCapability(commanderConfig) : undefined
   if (!executorSelection) return commander ? [commander] : []
-  if (commander && commander.provider_kind === executorSelection.provider_kind && commander.model_id === executorSelection.model_id) {
-    return [{
-      ...commander,
-      role_support: ["commander", "executor"],
-      warnings: [...commander.warnings, "Executor eligibility comes from the exact immutable role selection; readiness remains separate"],
-    }]
-  }
   const executor: ModelCapability = {
     capability_id: `runtime-executor-${stableHash({
       provider_kind: executorSelection.provider_kind,
@@ -886,7 +879,13 @@ export class RuntimeServer {
       case "runtime.preview_model_setup":
         return this.modelSetupService().preview(payload)
       case "runtime.confirm_model_setup":
-        return this.withModelSetupWriteLock(() => this.modelSetupService().confirm(payload))
+        return this.withModelSetupWriteLock(async () => {
+          const confirmation = await this.modelSetupService().confirm(payload)
+          return Object.freeze({
+            ...confirmation,
+            restart_required: confirmation.setup_hash !== this.modelSetupActiveHash,
+          })
+        })
       case "runtime.reasoning_provider_status":
         return this.reasoningProviderStatus()
       case "runtime.command_authority_summary":

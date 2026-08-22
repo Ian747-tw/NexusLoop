@@ -127,6 +127,11 @@ describe("9W4E model setup authority", () => {
     const setup = events.find((event) => event.kind === MODEL_SETUP_EVENT_KIND)!
     expect(setup.revision).toBe(1)
     expect(JSON.stringify(setup)).not.toMatch(/secret|env_name|base_url|authorization|header/i)
+
+    const currentPreview = await service.preview(choices)
+    const unchanged = await service.confirm({ ...input, expected_revision: currentPreview.expected_revision })
+    expect(unchanged).toMatchObject({ status: "idempotent", revision: 1, setup_hash: setup.event_payload_hash })
+    expect((await store.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(1)
   })
 
   test("stale revisions and candidate hashes fail without appending", async () => {

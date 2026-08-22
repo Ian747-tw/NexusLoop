@@ -3,6 +3,9 @@ import type { UiState } from "./state"
 
 export function mergeRuntimeEffectState(current: UiState, next: UiState, previousActionCount = 0, baseline?: UiState): UiState {
   const addedActions = addedSystemActions(next.systemActions, previousActionCount, baseline?.systemActions)
+  const canUpdateNavigation = baseline !== undefined
+    && current.screen === baseline.screen
+    && current.focus === baseline.focus
   const canUpdateRuntimeStatus = baseline === undefined || stableEqual(current.runtimeStatus, baseline.runtimeStatus)
   const canUpdateAdapterStatus = baseline === undefined || stableEqual(current.adapterStatus, baseline.adapterStatus)
   const canUpdateResearchProjection =
@@ -99,6 +102,8 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
 
   return {
     ...current,
+    screen: canUpdateNavigation ? next.screen : current.screen,
+    focus: canUpdateNavigation ? next.focus : current.focus,
     systemActions: addedActions.length > 0 ? [...current.systemActions, ...addedActions].slice(-12) : current.systemActions,
     runtimeStatus: canUpdateRuntimeStatus ? next.runtimeStatus : current.runtimeStatus,
     adapterStatus: canUpdateAdapterStatus ? next.adapterStatus : current.adapterStatus,

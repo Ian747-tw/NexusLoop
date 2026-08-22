@@ -4,6 +4,26 @@ import { mergeRuntimeEffectState } from "../src/runtime-state-merge"
 import { initialState, type UiState } from "../src/state"
 
 describe("interactive runtime effect state merge", () => {
+  test("applies async navigation only while the initiating screen and focus remain current", () => {
+    const baseline: UiState = { ...initialState("/tmp/demo"), screen: "main", focus: "message-box" }
+    const effectResult: UiState = {
+      ...baseline,
+      screen: "model-setup",
+      focus: "init-choice",
+      modelSetup: { ...baseline.modelSetup, origin: "main", stage: "commander" },
+    }
+    expect(mergeRuntimeEffectState(baseline, effectResult, 0, baseline)).toMatchObject({
+      screen: "model-setup",
+      focus: "init-choice",
+    })
+
+    const moved: UiState = { ...baseline, screen: "resume", focus: "resume-choice" }
+    expect(mergeRuntimeEffectState(moved, effectResult, 0, baseline)).toMatchObject({
+      screen: "resume",
+      focus: "resume-choice",
+    })
+  })
+
   test("rebases async runtime effect fields without dropping newer stream state", () => {
     const base: UiState = {
       ...initialState("/tmp/demo"),

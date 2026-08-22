@@ -23,6 +23,7 @@ describe("TUI keyboard command model", () => {
 
     expect(next.screen).toBe("model-setup")
     expect(next.modelSetup.stage).toBe("loading")
+    expect(next.modelSetup.origin).toBe("init")
   })
 
   test("submit message from message box", () => {
@@ -76,6 +77,22 @@ describe("TUI keyboard command model", () => {
     expect(result.state.screen).toBe("model-setup")
     expect(result.state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true })
     expect(result.effects).toEqual([])
+  })
+
+  test("model setup cancellation returns to the screen that opened it", () => {
+    const fromInit: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, origin: "init", stage: "commander" },
+    }
+    expect(applyKeyCommandWithEffects(fromInit, { type: "cancel" }).state).toMatchObject({ screen: "init", focus: "init-choice" })
+
+    const fromMain: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, origin: "main", stage: "committed" },
+    }
+    expect(applyKeyCommandWithEffects(fromMain, { type: "cancel" }).state).toMatchObject({ screen: "main", focus: "message-box" })
   })
 
   test("message box keeps API keys out of TUI state while sending original message", () => {

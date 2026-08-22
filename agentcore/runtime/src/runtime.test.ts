@@ -222,6 +222,16 @@ describe("9W4E runtime model setup", () => {
       pending_restart: false,
       active_candidate: { choices },
     })
+    const unchangedPreview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const eventCount = (await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND).length
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: unchangedPreview.expected_revision,
+      candidate_hash: unchangedPreview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).resolves.toMatchObject({ status: "idempotent", revision: 1, restart_required: false })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(eventCount)
     const internal = server as unknown as { modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry; commanderInvestigationProviderConfig?: { transport_kind: string; model_id: string } }
     expect(internal.modelProfileRuntimeRegistry?.commanderSelection()).toMatchObject({ provider_kind: "google", model_id: "gemini-2.5-flash" })
     expect(internal.modelProfileRuntimeRegistry?.executorSelection()).toMatchObject({ provider_kind: "openai", model_id: "gpt-4.1-mini" })
@@ -297,6 +307,19 @@ describe("9W4E runtime model setup", () => {
     }) as { blockers: string[] }
     expect(commander.blockers).not.toContain("selected model capability does not support requested role")
     expect(executor.blockers).not.toContain("selected model capability does not support requested role")
+    const commanderCapability = await server.command("runtime.get_model_capability", {
+      providerKind: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+      role: "commander",
+    }) as Record<string, unknown>
+    const executorCapability = await server.command("runtime.get_model_capability", {
+      providerKind: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+      role: "executor",
+    }) as Record<string, unknown>
+    expect(commanderCapability).toMatchObject({ role_support: ["commander"], supports_tools: true })
+    expect(executorCapability).toMatchObject({ role_support: ["executor"], supports_tools: "unknown", supports_long_context: "unknown" })
+    expect(executorCapability.capability_id).not.toBe(commanderCapability.capability_id)
     await server.shutdown()
   })
 

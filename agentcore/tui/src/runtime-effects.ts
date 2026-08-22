@@ -2487,12 +2487,15 @@ function applyModelSetupCommit(state: UiState, value: unknown): UiState {
       ...state.modelSetup,
       stage: "committed",
       pendingSetupHash: value.setup_hash.slice(0, 64),
-      pendingRestart: true,
+      pendingRestart: value.restart_required === true,
       pendingCommanderLabel: state.modelSetup.commanderChoices[state.modelSetup.commanderSelection]?.label ?? "Unconfigured",
       pendingExecutorLabel: state.modelSetup.executorChoices[state.modelSetup.executorSelection]?.label ?? "Unconfigured",
       commandError: undefined,
     },
-    systemActions: [...state.systemActions, { title: "Model setup recorded", detail: "Selection activates after a clean restart" }].slice(-12),
+    systemActions: [...state.systemActions, {
+      title: value.restart_required === true ? "Model setup recorded" : "Model setup unchanged",
+      detail: value.restart_required === true ? "Selection activates after a clean restart" : "The active selection already matches this setup",
+    }].slice(-12),
   }
 }
 
@@ -6242,7 +6245,11 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
   switch (command) {
     case "model-setup":
       if (args.length > 0) throw new Error("/model-setup accepts no arguments")
-      return applyRuntimeUiEffect({ ...commandState, screen: "model-setup", modelSetup: { ...commandState.modelSetup, stage: "loading", commandError: undefined } }, runtime, { type: "load-model-setup" })
+      return applyRuntimeUiEffect({
+        ...commandState,
+        screen: "model-setup",
+        modelSetup: { ...commandState.modelSetup, origin: "main", stage: "loading", commandError: undefined },
+      }, runtime, { type: "load-model-setup" })
     case "stage":
       return Promise.resolve(stageSuggestedOperatorCommand(commandState, args))
     case "stage-command":

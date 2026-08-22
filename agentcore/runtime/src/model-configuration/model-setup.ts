@@ -290,7 +290,8 @@ export class ModelSetupService {
     if (candidate.candidate_hash !== input.candidate_hash) throw new Error("model setup candidate hash does not match current authority")
     const events = await this.eventStore.readAll()
     const projection = projectModelSetupEvents(events)
-    if (projection.candidate?.candidate_hash === candidate.candidate_hash && input.expected_revision === projection.revision - 1) {
+    if (projection.candidate?.candidate_hash === candidate.candidate_hash
+      && (input.expected_revision === projection.revision || input.expected_revision === projection.revision - 1)) {
       return result("idempotent", projection.revision, projection.setup_hash!, candidate.candidate_hash)
     }
     if (input.expected_revision !== projection.revision) throw new Error("model setup revision is stale")
