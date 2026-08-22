@@ -83,13 +83,14 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
       }
     : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
   const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
-  const observerEnv = {
-    ...(env ?? process.env),
+  const observerConfigEnv = env ?? process.env
+  const observerProcessEnv = {
+    ...process.env,
     ...(options.openCodeAdapterConfig?.kind === "process" ? options.openCodeAdapterConfig.env : undefined),
   }
-  const observerConfigured = hasExecutorObserverEnvironment(observerEnv)
-  if (observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined
-    && observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND === undefined) {
+  const observerConfigured = hasExecutorObserverEnvironment(observerConfigEnv)
+  if (observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined
+    && observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND === undefined) {
     throw new Error("NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON requires NXL_OPENCODE_EXECUTOR_READINESS_COMMAND")
   }
   if (options.executorModelReadinessResolver && observerConfigured) {
@@ -100,9 +101,9 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
       projectDir: options.openCodeAdapterConfig?.kind === "process"
         ? options.openCodeAdapterConfig.cwd ?? projectDir
         : projectDir,
-      env: observerEnv,
-      command: optionalBoundedEnvironmentText(observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND, "NXL_OPENCODE_EXECUTOR_READINESS_COMMAND", 1_024),
-      args: readExecutorObserverArgs(observerEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON),
+      env: observerProcessEnv,
+      command: optionalBoundedEnvironmentText(observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND, "NXL_OPENCODE_EXECUTOR_READINESS_COMMAND", 1_024),
+      args: readExecutorObserverArgs(observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON),
     })
   }
   return new RuntimeServer(options)

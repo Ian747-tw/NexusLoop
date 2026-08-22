@@ -176,6 +176,25 @@ describe("9W4E model setup authority", () => {
     expect((await store.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(1)
   })
 
+  test("confirmation reconciles unrelated tail appends without weakening setup revision authority", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxl-model-setup-unrelated-tail-"))
+    const store = new EventStore(join(dir, ".nxl", "events.jsonl"))
+    const service = new ModelSetupService({ eventStore: store })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    const original = store.appendIfLatest.bind(store)
+    let attempts = 0
+    store.appendIfLatest = (async (...args: Parameters<typeof original>) => {
+      attempts += 1
+      if (attempts === 1) await store.append({ kind: "runtime_status_observed" })
+      return original(...args)
+    }) as typeof store.appendIfLatest
+
+    await expect(service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })).resolves.toMatchObject({ status: "committed", revision: 1 })
+    expect(attempts).toBe(2)
+    expect((await store.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(1)
+  })
+
   test("projection and startup reader fail closed on corrupt, duplicate, and truncated setup records", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nxl-model-setup-corrupt-"))
     const path = join(dir, ".nxl", "events.jsonl")

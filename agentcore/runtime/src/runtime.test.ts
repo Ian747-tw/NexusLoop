@@ -375,13 +375,14 @@ console.log(JSON.stringify({
   model_id: input.model_id,
   credential_binding_id: input.credential_binding_id,
   provider_availability_status: process.cwd() === ${JSON.stringify(launchCwd)} ? "available" : "unknown",
-  credential_connection_status: process.env.GOOGLE_GENERATIVE_AI_API_KEY ? "connected" : "disconnected"
+  credential_connection_status: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.NXL_DETACHED_EXECUTOR_CREDENTIAL ? "connected" : "disconnected"
 }));
 `, "utf8")
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {
         GOOGLE_GENERATIVE_AI_API_KEY: "parent-credential-must-be-overridden",
+        NXL_DETACHED_EXECUTOR_CREDENTIAL: "detached-config-must-not-reach-child",
         NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
         NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
       },

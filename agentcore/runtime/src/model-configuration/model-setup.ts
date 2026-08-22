@@ -314,19 +314,24 @@ export class ModelSetupService {
     }
     const eventPayloadHash = hash(payload)
     const event = { kind: MODEL_SETUP_EVENT_KIND, ...payload, event_payload_hash: eventPayloadHash }
-    const expectedTail = events.at(-1)?.event_id ? String(events.at(-1)?.event_id) : null
-    try {
-      await this.eventStore.appendIfLatest(event, expectedTail)
-      return result("committed", revision, eventPayloadHash, candidate.candidate_hash)
-    } catch (error) {
-      const reconciled = projectModelSetupEvents(await this.eventStore.readAll())
-      if (reconciled.revision === input.expected_revision + 1
-        && reconciled.setup_hash
-        && reconciled.candidate?.candidate_hash === candidate.candidate_hash) {
-        return result("idempotent", reconciled.revision, reconciled.setup_hash, candidate.candidate_hash)
+    let expectedTail = events.at(-1)?.event_id ? String(events.at(-1)?.event_id) : null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.eventStore.appendIfLatest(event, expectedTail)
+        return result("committed", revision, eventPayloadHash, candidate.candidate_hash)
+      } catch (error) {
+        const reconciledEvents = await this.eventStore.readAll()
+        const reconciled = projectModelSetupEvents(reconciledEvents)
+        if (reconciled.revision === input.expected_revision + 1
+          && reconciled.setup_hash
+          && reconciled.candidate?.candidate_hash === candidate.candidate_hash) {
+          return result("idempotent", reconciled.revision, reconciled.setup_hash, candidate.candidate_hash)
+        }
+        if (reconciled.revision !== input.expected_revision || attempt === 2) throw error
+        expectedTail = reconciledEvents.at(-1)?.event_id ? String(reconciledEvents.at(-1)?.event_id) : null
       }
-      throw error
     }
+    throw new Error("model setup confirmation did not settle")
   }
 }
 
