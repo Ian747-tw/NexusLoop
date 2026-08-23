@@ -25,18 +25,22 @@ async function main(): Promise<void> {
   try {
     if (process.env.OPENCODE_DISABLE_MODELS_FETCH !== "1") throw new Error("models refresh is not disabled")
     const { AppRuntime } = await import("../upstream/packages/opencode/src/effect/app-runtime.ts")
-    const [{ Instance }, { ModelsDev }, { Config }, { Auth }, { Flag }] = await Promise.all([
+    const [{ Instance }, { ModelsDev }, { Config }, { Auth }, { Flag }, { Account }, { Option }] = await Promise.all([
       import("../upstream/packages/opencode/src/project/instance.ts"),
       import("../upstream/packages/opencode/src/provider/index.ts"),
       import("../upstream/packages/opencode/src/config/index.ts"),
       import("../upstream/packages/opencode/src/auth/index.ts"),
       import("../upstream/packages/opencode/src/flag/flag.ts"),
+      import("../upstream/packages/opencode/src/account/account.ts"),
+      import("effect"),
     ])
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
         const authEntries = await AppRuntime.runPromise(Auth.Service.use((service) => service.all()))
         if (Object.values(authEntries).some((entry) => entry.type === "wellknown")) return
+        const activeAccount = await AppRuntime.runPromise(Account.Service.use((service) => service.active()))
+        if (Option.isSome(activeAccount) && activeAccount.value.active_org_id) return
         const [catalog, config] = await Promise.all([
           ModelsDev.get(),
           AppRuntime.runPromise(Config.Service.use((service) => service.get())),

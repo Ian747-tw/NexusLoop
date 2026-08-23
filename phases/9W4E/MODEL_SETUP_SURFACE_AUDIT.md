@@ -85,3 +85,8 @@ has type `wellknown`. The observer therefore reads the local OpenCode auth
 snapshot first and returns `unknown`/`unknown` if any such entry exists, before
 calling the config service. Readiness observation never performs that remote
 fetch or treats remote configuration as selection or connection evidence.
+The same config path requests active-organization configuration and tokens when
+the local OpenCode account state selects an organization. The observer also
+checks that local active-account marker first and returns `unknown`/`unknown`
+when an organization is active, before config loading can contact the account
+server.

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { chmod, mkdtemp, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -232,6 +233,67 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     })
 
     try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+      expect(requestCount).toBe(0)
+    } finally {
+      await resolver.shutdown()
+      server.stop(true)
+    }
+  })
+
+  test("rejects active organization accounts before OpenCode config can perform a remote fetch", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-active-account-observer-"))
+    const dataHome = join(cwd, "data")
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    let requestCount = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        requestCount += 1
+        return Response.json({ config: {} })
+      },
+    })
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: dataHome,
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+      },
+    })
+
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+      const db = new Database(join(dataHome, "opencode", "opencode-local.db"))
+      try {
+        db.run(
+          "INSERT INTO account (id, email, url, access_token, refresh_token, token_expiry, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          ["account-fixture", "fixture@example.test", `http://127.0.0.1:${server.port}`, "access-secret", "refresh-secret", Date.now() + 60_000, Date.now(), Date.now()],
+        )
+        db.run(
+          "INSERT INTO account_state (id, active_account_id, active_org_id) VALUES (?, ?, ?)",
+          [1, "account-fixture", "organization-fixture"],
+        )
+      } finally {
+        db.close()
+      }
+
       await expect(resolver.observe(selection)).resolves.toMatchObject({
         provider_availability_status: "unknown",
         credential_connection_status: "unknown",
