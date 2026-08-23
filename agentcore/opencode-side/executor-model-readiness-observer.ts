@@ -46,11 +46,21 @@ async function main(): Promise<void> {
         const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
         const disabled = new Set(config.disabled_providers ?? [])
         const allowed = (enabled ? enabled.has(input.provider_id) : true) && !disabled.has(input.provider_id)
-        if (Object.keys(catalog).length === 0 && !config.provider) return
         const catalogProvider = allowed && Object.hasOwn(catalog, input.provider_id) ? catalog[input.provider_id] : undefined
         const configuredProvider = allowed && config.provider && Object.hasOwn(config.provider, input.provider_id)
           ? config.provider[input.provider_id]
           : undefined
+        if (new Set(["anthropic", "google", "openai"]).has(input.provider_id)) {
+          const envNames = configuredProvider?.env ?? catalogProvider?.env ?? []
+          const hasEnvironmentCredential = Array.isArray(envNames)
+            && envNames.some((name) => typeof name === "string" && typeof process.env[name] === "string" && process.env[name]!.length > 0)
+          const hasStoredCredential = auth?.type === "api"
+            || (input.provider_id === "openai" && auth?.type === "oauth")
+          const hasConfiguredCredential = typeof configuredProvider?.options?.apiKey === "string"
+            && configuredProvider.options.apiKey.length > 0
+          credentialConnection = hasEnvironmentCredential || hasStoredCredential || hasConfiguredCredential ? "connected" : "disconnected"
+        }
+        if (Object.keys(catalog).length === 0 && !config.provider) return
         const configuredModel = configuredProvider?.models && Object.hasOwn(configuredProvider.models, input.model_id)
           ? configuredProvider.models[input.model_id]
           : undefined
@@ -77,18 +87,6 @@ async function main(): Promise<void> {
           || configuredProvider?.blacklist?.includes(input.model_id) === true
           || (configuredProvider?.whitelist !== undefined && !configuredProvider.whitelist.includes(input.model_id))
         providerAvailability = model && !filtered ? "available" : "unavailable"
-        if (!new Set(["anthropic", "google", "openai"]).has(input.provider_id)) {
-          credentialConnection = "unknown"
-          return
-        }
-        const envNames = configuredProvider?.env ?? catalogProvider?.env ?? []
-        const hasEnvironmentCredential = Array.isArray(envNames)
-          && envNames.some((name) => typeof name === "string" && typeof process.env[name] === "string" && process.env[name]!.length > 0)
-        const hasStoredCredential = auth?.type === "api"
-          || (input.provider_id === "openai" && auth?.type === "oauth")
-        const hasConfiguredCredential = typeof configuredProvider?.options?.apiKey === "string"
-          && configuredProvider.options.apiKey.length > 0
-        credentialConnection = hasEnvironmentCredential || hasStoredCredential || hasConfiguredCredential ? "connected" : "disconnected"
       },
     })
   } catch {

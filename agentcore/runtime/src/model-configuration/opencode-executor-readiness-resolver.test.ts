@@ -174,6 +174,30 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await absent.shutdown()
   })
 
+  test("keeps credential evidence connected when malformed catalog evidence makes availability unknown", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-malformed-catalog-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, "{", "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret-never-returned" } }),
+      },
+    })
+
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(observed)).not.toMatch(/fixture|secret|auth|models\.json|OPENCODE_/i)
+    await resolver.shutdown()
+  })
+
   test("fails closed when external plugin authority can change selected provider models", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-plugin-observer-"))
     const modelsPath = join(cwd, "models.json")

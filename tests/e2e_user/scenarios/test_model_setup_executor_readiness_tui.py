@@ -34,8 +34,8 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
     for key in inherited_authority:
         sandbox.env.pop(key, None)
         sandbox.runner.env.pop(key, None)
-    sandbox.env.update({"NXL_TUI_HEADLESS": "1", "NXL_RUNTIME_CLIENT": "real"})
-    sandbox.runner.env.update({"NXL_TUI_HEADLESS": "1", "NXL_RUNTIME_CLIENT": "real"})
+    sandbox.env.update({"NXL_TUI_HEADLESS": "1"})
+    sandbox.runner.env.update({"NXL_TUI_HEADLESS": "1"})
 
     def run_tui(keys: list[dict[str, str]], *, timeout: int = 300):
         encoded = json.dumps(keys)
@@ -45,7 +45,24 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
         assert result.exit_code == 0, result.stdout + result.stderr
         return result
 
+    approved = run_tui([
+        {"type": "submit"},
+        {"type": "insert", "text": "Verify first-run model setup and exact Executor launch authority"},
+        {"type": "submit"},
+        {"type": "insert", "text": "approve spec"},
+        {"type": "submit"},
+    ])
+    assert "screen=main" in approved.stdout
+    current_spec_path = project / ".nxl" / "spec" / "current.json"
+    assert current_spec_path.exists(), approved.stdout
+    current_spec = json.loads(current_spec_path.read_text(encoding="utf-8"))
+    assert current_spec["status"] == "approved"
+
+    sandbox.env["NXL_RUNTIME_CLIENT"] = "real"
+    sandbox.runner.env["NXL_RUNTIME_CLIENT"] = "real"
     setup = run_tui([
+        {"type": "submit"},
+        {"type": "insert", "text": "/model-setup"},
         {"type": "submit"},
         {"type": "select-next"},
         {"type": "submit"},
@@ -57,33 +74,6 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
     assert "stage=committed" in setup.stdout
     assert "pending_restart=true" in setup.stdout
     assert "Anthropic Claude Sonnet 4.5" in setup.stdout
-
-    initialized = sandbox.run_cli(
-        ["init", "--auto", "--project-mode", "build", "--skill-pack", "drl", "--plugin", "none"],
-        cwd=project,
-        timeout=300,
-    )
-    assert initialized.exit_code == 0, initialized.stdout + initialized.stderr
-    spec_dir = project / ".nxl" / "spec"
-    spec_dir.mkdir(parents=True, exist_ok=True)
-    (spec_dir / "current.json").write_text(
-        json.dumps(
-            {
-                "spec_id": "spec_model_setup_executor_readiness_e2e",
-                "version": 1,
-                "status": "approved",
-                "objective": "Verify first-run model setup and exact Executor launch authority",
-                "project_mode": "build",
-                "domain": "test",
-                "success_metrics": ["one exact primary Executor model reaches launch"],
-                "evaluation_protocol": "real headless OpenTUI setup and launch flow",
-                "approved_by": "e2e",
-                "approved_at": "2026-08-22T00:00:00Z",
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
     models_path = sandbox.root / "opencode-models.json"
     models = {
@@ -173,8 +163,10 @@ for await (const _chunk of Bun.stdin.stream()) {}
     sandbox.env["OPENCODE_AUTH_CONTENT"] = auth_content
     sandbox.runner.env["OPENCODE_AUTH_CONTENT"] = auth_content
     models_path.write_text("{", encoding="utf-8")
-    malformed = run_tui(command_keys([f"/opencode-launch-preview session={session_id} pack={pack_id}"]))
-    assert "Executor role readiness is not ready for the selected model profile" in malformed.stdout
+    malformed_launch = run_tui(command_keys([f"/opencode-launch-preview session={session_id} pack={pack_id}"]))
+    assert "Executor role readiness is not ready for the selected model profile" in malformed_launch.stdout
+    malformed = run_tui(command_keys(["/model-setup"]))
+    assert "credential connected" in malformed.stdout
     assert not capture.exists()
 
     models_path.write_text(json.dumps(models), encoding="utf-8")
@@ -213,7 +205,7 @@ for await (const _chunk of Bun.stdin.stream()) {}
     assert not any(name in " ".join(args) for name in ["small_model", "title", "summary", "compaction", "subagent"])
 
     events_text = (project / ".nxl" / "events.jsonl").read_text(encoding="utf-8")
-    durable = setup.stdout + initialized.stdout + planned.stdout + packed.stdout + disconnected.stdout + malformed.stdout + launched.stdout + events_text
+    durable = setup.stdout + approved.stdout + planned.stdout + packed.stdout + disconnected.stdout + malformed_launch.stdout + malformed.stdout + launched.stdout + events_text
     for forbidden in [
         secret,
         "NXL_E2E_LAUNCH_CAPTURE",
@@ -226,6 +218,7 @@ for await (const _chunk of Bun.stdin.stream()) {}
         assert forbidden not in durable
     events = [json.loads(line) for line in events_text.splitlines() if line.strip()]
     assert sum(event.get("kind") == "runtime_model_setup_committed" for event in events) == 1
+    assert sum(event.get("kind") == "spec_approved" for event in events) == 1
     assert sum(event.get("kind") == "opencode_session_launch_started" for event in events) == 1
     assert sum(event.get("kind") == "opencode_session_launch_succeeded" for event in events) == 1
     assert events[-1]["kind"] == "runtime_shutdown"
