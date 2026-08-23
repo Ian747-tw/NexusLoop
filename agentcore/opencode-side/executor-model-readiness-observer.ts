@@ -252,8 +252,12 @@ function hasUsableStoredCredential(providerId: string, value: unknown): boolean 
   const auth = value as Record<string, unknown>
   if (auth.type === "api") return typeof auth.key === "string" && auth.key.length > 0
   if (providerId !== "openai" || auth.type !== "oauth") return false
-  return (typeof auth.access === "string" && auth.access.length > 0)
-    || (typeof auth.refresh === "string" && auth.refresh.length > 0)
+  const accessUsable = typeof auth.access === "string"
+    && auth.access.length > 0
+    && typeof auth.expires === "number"
+    && auth.expires >= Date.now()
+  const refreshUsable = typeof auth.refresh === "string" && auth.refresh.length > 0
+  return accessUsable || refreshUsable
 }
 
 async function readRequest(): Promise<Request> {
