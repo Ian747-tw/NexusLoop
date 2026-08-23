@@ -37,3 +37,9 @@ export function pluginAuthorityRemainedAbsent(
     && before.matches.length === 0
     && after.matches.length === 0
 }
+
+export function authorityPathSetUnchanged(before: readonly string[], after: readonly string[]): boolean {
+  const left = new Set(before)
+  const right = new Set(after)
+  return left.size === right.size && [...left].every((value) => right.has(value))
+}

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { captureConfigAuthority, configAuthorityUnchanged, replayConfigAuthority } from "./executor-readiness-config-snapshot"
-import { pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "./executor-readiness-plugin-snapshot"
+import { authorityPathSetUnchanged, pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "./executor-readiness-plugin-snapshot"
 
 const MAX_INPUT_BYTES = 2_048
 const MAX_CONFIG_FILE_BYTES = 65_536
@@ -118,8 +118,16 @@ async function main(): Promise<void> {
           if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
           config = mergeDeep(config, next) as LocalConfig
         }
+        const [projectFilesAfter, directoriesAfter] = await Promise.all([
+          Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+            ? Promise.resolve([])
+            : AppRuntime.runPromise(ConfigPaths.files("opencode", process.cwd(), Instance.worktree)),
+          AppRuntime.runPromise(ConfigPaths.directories(process.cwd(), Instance.worktree)),
+        ])
+        if (!authorityPathSetUnchanged(projectFiles, projectFilesAfter)
+          || !authorityPathSetUnchanged(directories, directoriesAfter)) return
         if (pluginAuthorityBefore) {
-          const pluginAuthorityAfter = await snapshotPluginAuthority(directories, Glob)
+          const pluginAuthorityAfter = await snapshotPluginAuthority(directoriesAfter, Glob)
           if (!pluginAuthorityRemainedAbsent(pluginAuthorityBefore, pluginAuthorityAfter)) return
         }
         if (!await configAuthorityUnchanged(configAuthority)) return

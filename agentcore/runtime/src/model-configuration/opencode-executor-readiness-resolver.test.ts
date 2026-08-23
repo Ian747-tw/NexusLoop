@@ -9,7 +9,7 @@ import {
   OpenCodeExecutorModelReadinessResolver,
   createProductionOpenCodeExecutorReadinessResolver,
 } from "./opencode-executor-readiness-resolver"
-import { pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "../../../opencode-side/executor-readiness-plugin-snapshot"
+import { authorityPathSetUnchanged, pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "../../../opencode-side/executor-readiness-plugin-snapshot"
 import { captureConfigAuthority, configAuthorityUnchanged } from "../../../opencode-side/executor-readiness-config-snapshot"
 
 const selection = buildModelSetupCandidate({
@@ -36,6 +36,10 @@ test("plugin authority created during config replay fails the before-and-after s
   expect(before).toEqual({ status: "absent", matches: [] })
   expect(after).toEqual({ status: "present", matches: ["/project/.opencode/plugin/provider.ts"] })
   expect(pluginAuthorityRemainedAbsent(before, after)).toBeFalse()
+  expect(authorityPathSetUnchanged(
+    ["/home/.config/opencode"],
+    ["/home/.config/opencode", "/project/.opencode"],
+  )).toBeFalse()
 })
 
 test("config authority created after an absent-path snapshot fails revalidation", async () => {
