@@ -40,6 +40,7 @@ test("plugin authority created during config replay fails the before-and-after s
     ["/home/.config/opencode"],
     ["/home/.config/opencode", "/project/.opencode"],
   )).toBeFalse()
+  expect(authorityPathSetUnchanged([], ["/project/opencode.json"])).toBeFalse()
 })
 
 test("config authority created after an absent-path snapshot fails revalidation", async () => {
@@ -50,6 +51,17 @@ test("config authority created after an absent-path snapshot fails revalidation"
   expect(await configAuthorityUnchanged(snapshot!)).toBeTrue()
 
   await writeFile(configPath, JSON.stringify({ disabled_providers: ["google"] }), "utf8")
+
+  expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
+})
+
+test("legacy config sentinel created after capture fails authority revalidation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-legacy-config-race-"))
+  const legacyPath = join(cwd, "config")
+  const snapshot = await captureConfigAuthority([legacyPath])
+  expect(snapshot).toBeDefined()
+
+  await writeFile(legacyPath, "disabled_providers = [\"google\"]\n", "utf8")
 
   expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
 })

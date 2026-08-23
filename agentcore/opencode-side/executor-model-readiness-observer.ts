@@ -83,7 +83,9 @@ async function main(): Promise<void> {
           AppRuntime.runPromise(ConfigPaths.directories(process.cwd(), Instance.worktree)),
         ])
         const catalogValid = Object.values(catalog).every((provider) => ModelsDev.Provider.safeParse(provider).success)
+        const legacyConfigPath = path.join(Global.Path.config, "config")
         const configFiles = [
+          legacyConfigPath,
           path.join(Global.Path.config, "config.json"),
           path.join(Global.Path.config, "opencode.json"),
           path.join(Global.Path.config, "opencode.jsonc"),
@@ -95,7 +97,7 @@ async function main(): Promise<void> {
           path.join(ConfigManaged.managedConfigDir(), "opencode.json"),
           path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
         ]
-        if (existsSync(path.join(Global.Path.config, "config"))) return
+        if (existsSync(legacyConfigPath)) return
         const pluginAuthorityBefore = Flag.OPENCODE_PURE
           ? undefined
           : await snapshotPluginAuthority(directories, Glob)
