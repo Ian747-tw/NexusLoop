@@ -185,6 +185,7 @@ function parseLocalConfig(
   parser: { jsonc(text: string, source: string): unknown },
 ): LocalConfig | undefined {
   if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
+  if (text === "") return {}
   if (/\{(?:env|file):/u.test(text)) return
   try {
     const parsed = normalizeLegacyTuiConfig(parser.jsonc(text, source))
