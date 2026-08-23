@@ -108,7 +108,18 @@ async function openCodeObservationEnvironment(
       id: providerId,
       name: providerId,
       env: [`${providerId.toUpperCase()}_API_KEY`],
-      models: { [modelId]: { id: modelId, name: modelId } },
+      models: {
+        [modelId]: {
+          id: modelId,
+          name: modelId,
+          release_date: "2025-01-01",
+          attachment: false,
+          reasoning: false,
+          temperature: true,
+          tool_call: true,
+          limit: { context: 128_000, output: 8_192 },
+        },
+      },
     },
   }), "utf8")
   return {

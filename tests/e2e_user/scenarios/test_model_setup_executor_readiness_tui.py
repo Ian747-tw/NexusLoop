@@ -85,6 +85,12 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
                 "claude-sonnet-4-5-20250929": {
                     "id": "claude-sonnet-4-5-20250929",
                     "name": "Claude Sonnet 4.5",
+                    "release_date": "2025-09-29",
+                    "attachment": False,
+                    "reasoning": True,
+                    "temperature": True,
+                    "tool_call": True,
+                    "limit": {"context": 200000, "output": 8192},
                 }
             },
         }

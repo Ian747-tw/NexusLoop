@@ -19,6 +19,20 @@ const openAiSelection = buildModelSetupCandidate({
   executor_recipe_id: "executor-openai-gpt-4-1-mini",
 }).executor_selection!
 
+function catalogModel(id: string, name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    name,
+    release_date: "2025-01-01",
+    attachment: false,
+    reasoning: false,
+    temperature: true,
+    tool_call: true,
+    limit: { context: 128_000, output: 8_192 },
+    ...extra,
+  }
+}
+
 async function fixture(source: string): Promise<{ command: string; args: string[]; cwd: string }> {
   const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-observer-"))
   const file = join(cwd, "observer.ts")
@@ -55,7 +69,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -85,7 +99,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "openai",
         name: "OpenAI",
         env: ["OPENAI_API_KEY"],
-        models: { "gpt-4.1-mini": { id: "gpt-4.1-mini", name: "GPT-4.1 mini" } },
+        models: { "gpt-4.1-mini": catalogModel("gpt-4.1-mini", "GPT-4.1 mini") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -119,7 +133,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -152,7 +166,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const disconnected = createProductionOpenCodeExecutorReadinessResolver({
@@ -179,7 +193,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const absentSelection = Object.freeze({ ...selection, model_id: "missing-exact-model" })
@@ -224,6 +238,37 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await resolver.shutdown()
   })
 
+  test("rejects parseable catalog entries that pinned OpenCode cannot initialize", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-incomplete-catalog-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+      },
+    })
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+    } finally {
+      await resolver.shutdown()
+    }
+  })
+
   test("rejects well-known auth before OpenCode config can perform a remote fetch", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-wellknown-observer-"))
     const modelsPath = join(cwd, "models.json")
@@ -232,7 +277,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     let requestCount = 0
@@ -278,7 +323,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     let requestCount = 0
@@ -343,7 +388,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -383,7 +428,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -419,7 +464,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -452,7 +497,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -475,6 +520,40 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await resolver.shutdown()
   })
 
+  test("pure mode ignores configured and auto-discovered external plugins like pinned OpenCode", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-pure-plugin-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await mkdir(join(cwd, ".opencode", "plugin"), { recursive: true })
+    await writeFile(join(cwd, "opencode.json"), JSON.stringify({ plugin: ["fixture-provider-plugin"] }), "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+        OPENCODE_PURE: "1",
+      },
+    })
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+    } finally {
+      await resolver.shutdown()
+    }
+  })
+
   test("accepts only stored credential types the pinned provider path can load", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-auth-type-observer-"))
     const modelsPath = join(cwd, "models.json")
@@ -483,7 +562,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         id: "google",
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
       },
     }), "utf8")
     const resolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -557,9 +636,9 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         name: "Google",
         env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
         models: {
-          "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-          alpha: { id: "alpha", name: "Alpha", status: "alpha" },
-          deprecated: { id: "deprecated", name: "Deprecated", status: "deprecated" },
+          "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash"),
+          alpha: catalogModel("alpha", "Alpha", { status: "alpha" }),
+          deprecated: catalogModel("deprecated", "Deprecated", { status: "deprecated" }),
         },
       },
     }), "utf8")

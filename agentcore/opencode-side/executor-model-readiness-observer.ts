@@ -80,6 +80,7 @@ async function main(): Promise<void> {
             : AppRuntime.runPromise(ConfigPaths.files("opencode", process.cwd(), Instance.worktree)),
           AppRuntime.runPromise(ConfigPaths.directories(process.cwd(), Instance.worktree)),
         ])
+        if (!Object.values(catalog).every((provider) => ModelsDev.Provider.safeParse(provider).success)) return
         const configFiles = [
           path.join(Global.Path.config, "config.json"),
           path.join(Global.Path.config, "opencode.json"),
@@ -92,8 +93,8 @@ async function main(): Promise<void> {
           path.join(ConfigManaged.managedConfigDir(), "opencode.json"),
           path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
         ]
-        if (existsSync(path.join(Global.Path.config, "config"))) return
-        if (hasAutoDiscoveredPluginDirectory(directories)) return
+        if (!Flag.OPENCODE_PURE && existsSync(path.join(Global.Path.config, "config"))) return
+        if (!Flag.OPENCODE_PURE && hasAutoDiscoveredPluginDirectory(directories)) return
         if (hasManagedPreference()) return
         const snapshots = await readStableConfigFiles(configFiles)
         if (snapshots === undefined) return
@@ -101,13 +102,13 @@ async function main(): Promise<void> {
         for (const snapshot of snapshots) {
           const next = parseLocalConfig(snapshot.text, snapshot.source, Config, ConfigParse)
           if (next === undefined) return
-          if ((next.plugin?.length ?? 0) > 0) return
+          if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
           config = mergeDeep(config, next) as LocalConfig
         }
         if (process.env.OPENCODE_CONFIG_CONTENT) {
           const next = parseLocalConfig(process.env.OPENCODE_CONFIG_CONTENT, "OPENCODE_CONFIG_CONTENT", Config, ConfigParse)
           if (next === undefined) return
-          if ((next.plugin?.length ?? 0) > 0) return
+          if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
           config = mergeDeep(config, next) as LocalConfig
         }
         const auth = authEntries[input.provider_id]
