@@ -104,8 +104,10 @@ constructed from production environment configuration.
 
 The Runtime capability registry derives role eligibility from the two immutable
 selection projections, not from readiness evidence. If Commander and Executor
-select the same exact provider kind and model, Runtime creates one combined
-context-capability view with both roles while preserving the Commander limits.
-Different selections retain separate role capabilities. This does not change
-either projection hash, conformance, mapping, credential authority, or
-readiness result.
+select the same exact provider kind and model, Runtime still creates separate
+role-specific capability records. The Commander record retains only its static
+Commander conformance, tool, and context authority; the Executor record retains
+its independently conservative primary-tactical-model capability evidence.
+Sharing provider/model selection intent never combines contexts, tools, limits,
+or readiness. This does not change either projection hash, conformance,
+mapping, credential authority, or readiness result.
