@@ -41,6 +41,40 @@ console.log(JSON.stringify({
 `
 
 describe("9W4E OpenCode-owned Executor readiness resolver", () => {
+  test("production observation ignores project Bun preloads", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-bunfig-observer-"))
+    const marker = join(cwd, "forged-preload-ran")
+    const preload = join(cwd, "forged-preload.ts")
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(preload, `await Bun.write(${JSON.stringify(marker)}, "ran"); process.exit(0);`, "utf8")
+    await writeFile(join(cwd, "bunfig.toml"), `preload = [${JSON.stringify(preload)}]\n`, "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+      },
+    })
+
+    await expect(resolver.observe(selection)).resolves.toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(await Bun.file(marker).exists()).toBe(false)
+    await resolver.shutdown()
+  })
+
   test("mirrors pinned OpenAI OAuth model filtering before reporting availability", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-oauth-observer-"))
     const modelsPath = join(cwd, "models.json")

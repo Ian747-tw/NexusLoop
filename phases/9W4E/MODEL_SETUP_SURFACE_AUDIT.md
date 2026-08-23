@@ -71,7 +71,8 @@ state, process failure, truncation, or cancellation yields
 owns timeout, output bytes, concurrency, identity validation, evidence hashing,
 cancellation, and shutdown draining.
 
-Production launch hard-binds `process.execPath` and the checked-in observer
+Production launch hard-binds `process.execPath`, a checked-in empty Bun
+configuration that excludes project preloads, and the checked-in observer
 module. The former `NXL_OPENCODE_EXECUTOR_READINESS_COMMAND` and
 `NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON` inputs are rejected, not parsed or
 ignored. Custom process fixtures exist only in package-internal resolver unit

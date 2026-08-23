@@ -86,7 +86,8 @@ only built-in `anthropic`, `google`, and `openai` credential observations can
 be definitive. Missing or incomplete catalog state remains `unknown`.
 
 The observer executable and arguments are fixed by NexusLoop to the checked-in
-OpenCode-side child. `NXL_OPENCODE_EXECUTOR_READINESS_COMMAND` and
+OpenCode-side child through a checked-in empty Bun configuration, so project
+preloads cannot run. `NXL_OPENCODE_EXECUTOR_READINESS_COMMAND` and
 `NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON` are rejected; environment or CLI
 input cannot replace the production observer. Direct process injection exists
 only inside package-internal unit tests for malformed-output and lifecycle

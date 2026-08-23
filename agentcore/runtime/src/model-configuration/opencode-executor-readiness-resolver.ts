@@ -150,10 +150,12 @@ export function createProductionOpenCodeExecutorReadinessResolver(options: {
   projectDir: string
   env?: Readonly<Record<string, string | undefined>>
 }): OpenCodeExecutorModelReadinessResolver {
-  const childPath = join(dirname(fileURLToPath(import.meta.url)), "../../../opencode-side/executor-model-readiness-observer.ts")
+  const observerDir = join(dirname(fileURLToPath(import.meta.url)), "../../../opencode-side")
+  const childPath = join(observerDir, "executor-model-readiness-observer.ts")
+  const configPath = join(observerDir, "executor-readiness-bunfig.toml")
   return new OpenCodeExecutorModelReadinessResolver({
     command: process.execPath,
-    args: [childPath],
+    args: [`--config=${configPath}`, childPath],
     cwd: options.projectDir,
     env: options.env,
   })

@@ -18,6 +18,22 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
     secret = "executor-observer-secret-never-published"
     bun = shutil.which("bun")
     assert bun is not None
+    inherited_authority = [
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_GENERATIVE_AI_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENCODE_AUTH_CONTENT",
+        "OPENCODE_CONFIG",
+        "OPENCODE_CONFIG_CONTENT",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_DISABLE_MODELS_FETCH",
+        "OPENCODE_ENABLE_EXPERIMENTAL_MODELS",
+        "OPENCODE_MODELS_PATH",
+        "OPENCODE_PURE",
+    ]
+    for key in inherited_authority:
+        sandbox.env.pop(key, None)
+        sandbox.runner.env.pop(key, None)
     sandbox.env.update({"NXL_TUI_HEADLESS": "1", "NXL_RUNTIME_CLIENT": "real"})
     sandbox.runner.env.update({"NXL_TUI_HEADLESS": "1", "NXL_RUNTIME_CLIENT": "real"})
 
@@ -154,6 +170,8 @@ for await (const _chunk of Bun.stdin.stream()) {}
     assert "lifecycle unknown" in disconnected.stdout
     assert not capture.exists()
 
+    sandbox.env["OPENCODE_AUTH_CONTENT"] = auth_content
+    sandbox.runner.env["OPENCODE_AUTH_CONTENT"] = auth_content
     models_path.write_text("{", encoding="utf-8")
     malformed = run_tui(command_keys([f"/opencode-launch-preview session={session_id} pack={pack_id}"]))
     assert "Executor role readiness is not ready for the selected model profile" in malformed.stdout

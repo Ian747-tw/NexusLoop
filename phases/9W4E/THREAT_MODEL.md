@@ -19,7 +19,7 @@
 | Partial OpenCode state becomes definitive absence | Child/process/timeout/truncation failures map to `unknown`; only a complete observation may emit `unavailable` or `disconnected`. |
 | Observer outlives RuntimeServer | Runtime owns each subprocess before its first await; shutdown terminates and drains all observations before `runtime_shutdown`. |
 | Fixture or caller forges readiness identity | Runtime validates projection/provider/model/binding/version and recomputes the evidence ID from safe semantic results. |
-| Environment replaces the production observer | Launch rejects the former observer command/argument keys; production always spawns the checked-in OpenCode-side child through `process.execPath`. |
+| Environment or project Bun preload replaces the production observer | Launch rejects the former observer command/argument keys and invokes the checked-in child through `process.execPath` with a checked-in empty Bun configuration. |
 
 GitHub/provider content and OpenCode observations remain evidence, not setup
 authority. No provider request is performed during setup.
