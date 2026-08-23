@@ -663,35 +663,35 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await resolver.shutdown()
   })
 
-  test("requires nonempty stored API and OAuth credential material", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-empty-auth-observer-"))
-    const modelsPath = join(cwd, "models.json")
-    await writeFile(modelsPath, JSON.stringify({
-      google: {
-        id: "google",
-        name: "Google",
-        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
-        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
-      },
-      openai: {
-        id: "openai",
-        name: "OpenAI",
-        env: ["OPENAI_API_KEY"],
-        models: { "gpt-4.1-mini": catalogModel("gpt-4.1-mini", "GPT-4.1 mini") },
-      },
-    }), "utf8")
-    const cases = [
-      { name: "empty API key", selected: selection, auth: { google: { type: "api", key: "" } } },
-      { name: "missing API key", selected: selection, auth: { google: { type: "api" } } },
-      {
-        name: "empty OAuth tokens",
-        selected: openAiSelection,
-        auth: { openai: { type: "oauth", refresh: "", access: "", expires: 4_102_444_800_000 } },
-      },
-      { name: "missing OAuth tokens", selected: openAiSelection, auth: { openai: { type: "oauth", expires: 4_102_444_800_000 } } },
-    ] as const
+  const emptyStoredCredentialCases = [
+    { name: "empty API key", selected: selection, auth: { google: { type: "api", key: "" } } },
+    { name: "missing API key", selected: selection, auth: { google: { type: "api" } } },
+    {
+      name: "empty OAuth tokens",
+      selected: openAiSelection,
+      auth: { openai: { type: "oauth", refresh: "", access: "", expires: 4_102_444_800_000 } },
+    },
+    { name: "missing OAuth tokens", selected: openAiSelection, auth: { openai: { type: "oauth", expires: 4_102_444_800_000 } } },
+  ] as const
 
-    for (const item of cases) {
+  for (const item of emptyStoredCredentialCases) {
+    test(`requires nonempty stored credential material for ${item.name}`, async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-empty-auth-observer-"))
+      const modelsPath = join(cwd, "models.json")
+      await writeFile(modelsPath, JSON.stringify({
+        google: {
+          id: "google",
+          name: "Google",
+          env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+          models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+        },
+        openai: {
+          id: "openai",
+          name: "OpenAI",
+          env: ["OPENAI_API_KEY"],
+          models: { "gpt-4.1-mini": catalogModel("gpt-4.1-mini", "GPT-4.1 mini") },
+        },
+      }), "utf8")
       const resolver = createProductionOpenCodeExecutorReadinessResolver({
         projectDir: cwd,
         env: {
@@ -709,8 +709,8 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       } finally {
         await resolver.shutdown()
       }
-    }
-  })
+    })
+  }
 
   const productionFilterCases = [
     {
