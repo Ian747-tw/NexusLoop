@@ -1,4 +1,5 @@
 import { lstat, readFile, stat } from "node:fs/promises"
+import path from "node:path"
 
 const MAX_CONFIG_FILE_BYTES = 65_536
 const MAX_CONFIG_TOTAL_BYTES = 262_144
@@ -75,4 +76,12 @@ export function replayConfigAuthority(
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT"
+}
+
+export function managedPreferenceAuthorityPaths(platform: string, username: string): readonly string[] {
+  if (platform !== "darwin") return Object.freeze([])
+  return Object.freeze([
+    path.join("/Library/Managed Preferences", username, "ai.opencode.managed.plist"),
+    path.join("/Library/Managed Preferences", "ai.opencode.managed.plist"),
+  ])
 }

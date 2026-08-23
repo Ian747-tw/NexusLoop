@@ -10,7 +10,7 @@ import {
   createProductionOpenCodeExecutorReadinessResolver,
 } from "./opencode-executor-readiness-resolver"
 import { authorityPathSetUnchanged, pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "../../../opencode-side/executor-readiness-plugin-snapshot"
-import { captureConfigAuthority, configAuthorityUnchanged } from "../../../opencode-side/executor-readiness-config-snapshot"
+import { captureConfigAuthority, configAuthorityUnchanged, managedPreferenceAuthorityPaths } from "../../../opencode-side/executor-readiness-config-snapshot"
 
 const selection = buildModelSetupCandidate({
   commander_recipe_id: null,
@@ -64,6 +64,14 @@ test("legacy config sentinel created after capture fails authority revalidation"
   await writeFile(legacyPath, "disabled_providers = [\"google\"]\n", "utf8")
 
   expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
+})
+
+test("macOS managed-preference sentinels are captured as config authority", () => {
+  expect(managedPreferenceAuthorityPaths("linux", "operator")).toEqual([])
+  expect(managedPreferenceAuthorityPaths("darwin", "operator")).toEqual([
+    "/Library/Managed Preferences/operator/ai.opencode.managed.plist",
+    "/Library/Managed Preferences/ai.opencode.managed.plist",
+  ])
 })
 
 function catalogModel(id: string, name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {

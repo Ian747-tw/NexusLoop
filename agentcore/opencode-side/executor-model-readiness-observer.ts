@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { captureConfigAuthority, configAuthorityUnchanged, replayConfigAuthority } from "./executor-readiness-config-snapshot"
+import { captureConfigAuthority, configAuthorityUnchanged, managedPreferenceAuthorityPaths, replayConfigAuthority } from "./executor-readiness-config-snapshot"
 import { authorityPathSetUnchanged, pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "./executor-readiness-plugin-snapshot"
 
 const MAX_INPUT_BYTES = 2_048
@@ -84,8 +84,10 @@ async function main(): Promise<void> {
         ])
         const catalogValid = Object.values(catalog).every((provider) => ModelsDev.Provider.safeParse(provider).success)
         const legacyConfigPath = path.join(Global.Path.config, "config")
+        const managedPreferencePaths = managedPreferenceAuthorityPaths(process.platform, os.userInfo().username)
         const configFiles = [
           legacyConfigPath,
+          ...managedPreferencePaths,
           path.join(Global.Path.config, "config.json"),
           path.join(Global.Path.config, "opencode.json"),
           path.join(Global.Path.config, "opencode.jsonc"),
@@ -102,7 +104,7 @@ async function main(): Promise<void> {
           ? undefined
           : await snapshotPluginAuthority(directories, Glob)
         if (pluginAuthorityBefore && pluginAuthorityBefore.status !== "absent") return
-        if (hasManagedPreference()) return
+        if (managedPreferencePaths.some((file) => existsSync(file))) return
         const configAuthority = await captureConfigAuthority(configFiles)
         if (configAuthority === undefined) return
         const snapshots = replayConfigAuthority(configAuthority, configFiles)
@@ -229,15 +231,6 @@ function normalizeLegacyTuiConfig(value: unknown): unknown {
   delete normalized.keybinds
   delete normalized.tui
   return normalized
-}
-
-function hasManagedPreference(): boolean {
-  if (process.platform !== "darwin") return false
-  const user = os.userInfo().username
-  return [
-    path.join("/Library/Managed Preferences", user, "ai.opencode.managed.plist"),
-    path.join("/Library/Managed Preferences", "ai.opencode.managed.plist"),
-  ].some((file) => existsSync(file))
 }
 
 function openAiOauthAllowsModel(modelId: string, apiModelId: string): boolean {

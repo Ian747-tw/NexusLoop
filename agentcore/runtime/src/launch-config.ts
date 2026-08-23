@@ -88,6 +88,7 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
       }
     : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
   const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
+  // ProcessOpenCodeLaunchAdapter.defaultSpawn applies this same parent-plus-override environment policy.
   const observerProcessEnv = {
     ...process.env,
     ...(options.openCodeAdapterConfig?.kind === "process" ? options.openCodeAdapterConfig.env : undefined),
