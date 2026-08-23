@@ -4,7 +4,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { FakeOpenCodeAdapter, RuntimeServer } from "../../runtime/src/index"
 import type { RuntimeEvent } from "../src/events"
-import { runTuiEntrypoint } from "../src/launch"
+import { buildHeadlessSnapshot, runTuiEntrypoint } from "../src/launch"
 import type { RuntimeClient } from "../src/runtime"
 import { createTuiRuntimeClient } from "../src/runtime-client-factory"
 
@@ -922,6 +922,24 @@ describe("TUI launch boundary", () => {
     expect(eventKinds.filter((kind) => kind === "runtime_model_setup_committed")).toHaveLength(1)
     expect(eventKinds.indexOf("runtime_model_setup_committed")).toBeLessThan(eventKinds.lastIndexOf("runtime_shutdown"))
     expect(eventKinds.at(-1)).toBe("runtime_shutdown")
+  })
+
+  test("same-process spec approval cannot open model setup through the bootstrap fake client", async () => {
+    const dir = await tempProject()
+    const runtime = createTuiRuntimeClient({ projectDir: dir, env: {} })
+    await makeApprovedProject(dir)
+
+    const snapshot = await buildHeadlessSnapshot(runtime, dir, {
+      NXL_TUI_KEYS: JSON.stringify([
+        { type: "submit" },
+        { type: "insert", text: "/model-setup" },
+        { type: "submit" },
+      ]),
+    })
+
+    expect(snapshot).toContain("Restart NexusLoop after spec approval before opening model setup")
+    expect(snapshot).not.toContain("stage=committed")
+    expect(await readEventKinds(dir)).not.toContain("runtime_model_setup_committed")
   })
 
   test("real headless runtime client submits a message and refreshes mission records", async () => {

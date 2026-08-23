@@ -31,8 +31,11 @@ export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions):
   }
   const env = options.env ?? {}
   const kind = readRuntimeClientKind(env)
-  if (kind === "fake" || (kind === "auto" && !hasApprovedSpec(options.projectDir))) {
+  if (kind === "fake") {
     return new FakeRuntimeClient(options.projectDir, options.projectName ?? basename(options.projectDir))
+  }
+  if (kind === "auto" && !hasApprovedSpec(options.projectDir)) {
+    return new FakeRuntimeClient(options.projectDir, options.projectName ?? basename(options.projectDir), "restart_required")
   }
   const server = createRuntimeServerFromLaunchConfig({
     projectDir: options.projectDir,
@@ -76,6 +79,7 @@ export function isTuiRuntimeEvent(event: unknown): event is RuntimeEvent {
 
 export class TuiRuntimeServerClient implements RuntimeClient {
   readonly streamMode = "long-lived" as const
+  readonly modelSetupAuthority = "durable" as const
 
   constructor(readonly runtime: RuntimeServerClient) {}
 

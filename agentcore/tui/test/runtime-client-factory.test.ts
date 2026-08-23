@@ -144,6 +144,7 @@ describe("TUI runtime client factory", () => {
     const client = createTuiRuntimeClient({ projectDir: dir, env: {} })
 
     expect(client).toBeInstanceOf(FakeRuntimeClient)
+    expect(client.modelSetupAuthority).toBe("restart_required")
   })
 
   test("no env routes an approved project through the real RuntimeServer client", async () => {
@@ -178,6 +179,7 @@ describe("TUI runtime client factory", () => {
 
     expect(readRuntimeClientKind({ NXL_RUNTIME_CLIENT: "fake" })).toBe("fake")
     expect(client).toBeInstanceOf(FakeRuntimeClient)
+    expect(client.modelSetupAuthority).toBe("fixture")
   })
 
   test("NXL_RUNTIME_CLIENT=real creates RuntimeServer-backed client", async () => {

@@ -6252,6 +6252,9 @@ function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, comman
   switch (command) {
     case "model-setup":
       if (args.length > 0) throw new Error("/model-setup accepts no arguments")
+      if (runtime.modelSetupAuthority === "restart_required") {
+        throw new Error("Restart NexusLoop after spec approval before opening model setup")
+      }
       return applyRuntimeUiEffect({
         ...commandState,
         screen: "model-setup",

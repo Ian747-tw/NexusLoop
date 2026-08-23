@@ -20,6 +20,7 @@ export interface SubmitUserMessageResult {
 
 export interface RuntimeClient {
   readonly streamMode?: "finite" | "long-lived"
+  readonly modelSetupAuthority?: "durable" | "fixture" | "restart_required"
   stream(): AsyncIterable<RuntimeEvent>
   command(name: string, payload?: Record<string, unknown>): Promise<unknown>
   sendUserMessage(message: string): Promise<SubmitUserMessageResult | void>
@@ -39,6 +40,7 @@ const COMMANDER_QUEUE_KINDS: CommanderQueueKind[] = [
 ]
 
 export class FakeRuntimeClient implements RuntimeClient {
+  readonly modelSetupAuthority: "fixture" | "restart_required"
   readonly sentMessages: string[] = []
   readonly sentCommands: string[] = []
   private readonly missions: MissionRecord[] = []
@@ -118,7 +120,9 @@ export class FakeRuntimeClient implements RuntimeClient {
   constructor(
     private readonly projectDir: string,
     private readonly projectName: string,
+    modelSetupAuthority: "fixture" | "restart_required" = "fixture",
   ) {
+    this.modelSetupAuthority = modelSetupAuthority
     if (process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE === "1") {
       this.wakeSchedulerRecoveryPreviewRecord = fakeWakeSchedulerRecoveryPreview({
         recovery_id: "fake-recovery-1",
