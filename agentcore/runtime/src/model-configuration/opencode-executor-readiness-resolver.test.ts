@@ -141,7 +141,19 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     expect(JSON.stringify(observed)).not.toContain("fixture-secret-never-returned")
     expect(JSON.stringify(observed)).not.toMatch(/OPENCODE_AUTH_CONTENT|XDG_|auth\.json|https?:|authorization/i)
     await resolver.shutdown()
+  })
 
+  test("reports exact model availability independently from credential connection", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-disconnected-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
     const disconnected = createProductionOpenCodeExecutorReadinessResolver({
       projectDir: cwd,
       env: {
@@ -156,7 +168,19 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       credential_connection_status: "disconnected",
     })
     await disconnected.shutdown()
+  })
 
+  test("reports exact model absence independently from credential connection", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-absent-model-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
     const absentSelection = Object.freeze({ ...selection, model_id: "missing-exact-model" })
     const absent = createProductionOpenCodeExecutorReadinessResolver({
       projectDir: cwd,
