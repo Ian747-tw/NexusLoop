@@ -126,8 +126,7 @@ async function main(): Promise<void> {
           const envNames = configuredProvider?.env ?? catalogProvider?.env ?? []
           const hasEnvironmentCredential = Array.isArray(envNames)
             && envNames.some((name) => typeof name === "string" && typeof process.env[name] === "string" && process.env[name]!.length > 0)
-          const hasStoredCredential = auth?.type === "api"
-            || (input.provider_id === "openai" && auth?.type === "oauth")
+          const hasStoredCredential = hasUsableStoredCredential(input.provider_id, auth)
           const hasConfiguredCredential = typeof configuredProvider?.options?.apiKey === "string"
             && configuredProvider.options.apiKey.length > 0
           credentialConnection = hasEnvironmentCredential || hasStoredCredential || hasConfiguredCredential ? "connected" : "disconnected"
@@ -198,7 +197,6 @@ function parseLocalConfig(
 async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ source: string; text: string }> | undefined> {
   const unique = [...new Set(files)]
   const snapshots: Array<{ source: string; text: string; size: number; mtimeMs: number; ino: number }> = []
-  let totalBytes = 0
   for (const source of unique) {
     let before
     try {
@@ -208,8 +206,6 @@ async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ 
       return
     }
     if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_CONFIG_FILE_BYTES) return
-    totalBytes += before.size
-    if (totalBytes > MAX_CONFIG_TOTAL_BYTES) return
     const text = await readFile(source, "utf8").catch(() => undefined)
     if (text === undefined || Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
     const after = await stat(source).catch(() => undefined)
@@ -220,7 +216,17 @@ async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ 
     const current = await stat(snapshot.source).catch(() => undefined)
     if (!current || current.size !== snapshot.size || current.mtimeMs !== snapshot.mtimeMs || current.ino !== snapshot.ino) return
   }
-  return snapshots.map(({ source, text }) => ({ source, text }))
+  const bySource = new Map(snapshots.map((snapshot) => [snapshot.source, snapshot]))
+  const replay: Array<{ source: string; text: string }> = []
+  let totalBytes = 0
+  for (const source of files) {
+    const snapshot = bySource.get(source)
+    if (!snapshot) continue
+    totalBytes += snapshot.size
+    if (totalBytes > MAX_CONFIG_TOTAL_BYTES) return
+    replay.push({ source, text: snapshot.text })
+  }
+  return replay
 }
 
 function hasAutoDiscoveredPluginDirectory(directories: readonly string[]): boolean {
@@ -245,6 +251,15 @@ function openAiOauthAllowsModel(modelId: string, apiModelId: string): boolean {
   if (OPENAI_OAUTH_ALLOWED_MODELS.has(apiModelId)) return true
   const version = apiModelId.match(/^gpt-(\d+\.\d+)/)?.[1]
   return version !== undefined && Number.parseFloat(version) > 5.4
+}
+
+function hasUsableStoredCredential(providerId: string, value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const auth = value as Record<string, unknown>
+  if (auth.type === "api") return typeof auth.key === "string" && auth.key.length > 0
+  if (providerId !== "openai" || auth.type !== "oauth") return false
+  return (typeof auth.access === "string" && auth.access.length > 0)
+    || (typeof auth.refresh === "string" && auth.refresh.length > 0)
 }
 
 async function readRequest(): Promise<Request> {
