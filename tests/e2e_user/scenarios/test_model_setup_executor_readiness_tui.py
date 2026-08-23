@@ -51,12 +51,17 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
         {"type": "submit"},
         {"type": "insert", "text": "approve spec"},
         {"type": "submit"},
+        {"type": "insert", "text": "/model-setup"},
+        {"type": "submit"},
     ])
     assert "screen=main" in approved.stdout
+    assert "Restart NexusLoop after spec approval before opening model setup" in approved.stdout
     current_spec_path = project / ".nxl" / "spec" / "current.json"
     assert current_spec_path.exists(), approved.stdout
     current_spec = json.loads(current_spec_path.read_text(encoding="utf-8"))
     assert current_spec["status"] == "approved"
+    approved_events = (project / ".nxl" / "events.jsonl").read_text(encoding="utf-8")
+    assert "runtime_model_setup_committed" not in approved_events
 
     setup = run_tui([
         {"type": "submit"},

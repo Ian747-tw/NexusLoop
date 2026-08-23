@@ -19,19 +19,22 @@ unless explicitly retained as a compatibility surface.
 When the user opens NexusLoop without an initialized project:
 
 1. OpenTUI detects missing project/runtime state.
-2. The app launches a keyboard-driven model setup view in OpenTUI rather than
-   handing control to a separate dashboard or website.
-3. Commander and the primary tactical Executor are selected independently from
+2. The app completes the existing project-spec onboarding and approval flow.
+   The pre-spec bootstrap client cannot persist model setup.
+3. The operator restarts NexusLoop after spec approval so OpenTUI owns a real
+   RuntimeServer client, then opens the keyboard-driven model setup view rather
+   than a separate dashboard or website.
+4. Commander and the primary tactical Executor are selected independently from
    exact code-owned recipes; either may be intentionally left unconfigured.
-4. The view separates selected/configured state, credential connection,
+5. The view separates selected/configured state, credential connection,
    lifecycle readiness, blockers, and unknown state. It previews bounded
    hashes and requires a second explicit confirmation.
-5. RuntimeServer appends the credential-free selection authority to
+6. RuntimeServer appends the credential-free selection authority to
    `events.jsonl`. It never stores or accepts API-key text in ordinary TUI
    state.
-6. The first clean restart activates the immutable registry. Later changes are
+7. The next clean restart activates the immutable registry. Later changes are
    visibly pending for the next start and never hot-reload active work.
-7. Project-spec approval and all existing mission/runtime gates remain separate;
+8. Project-spec approval and all existing mission/runtime gates remain separate;
    completing model setup does not imply mission readiness.
 
 The init flow should feel like entering a system that is already alive, not a

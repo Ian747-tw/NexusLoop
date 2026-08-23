@@ -238,6 +238,38 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await resolver.shutdown()
   })
 
+  test("keeps selected-provider environment credential evidence when an unrelated catalog entry is invalid", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-partial-catalog-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+      },
+      malformed: { id: "malformed" },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        GOOGLE_GENERATIVE_AI_API_KEY: "fixture-secret-never-returned",
+      },
+    })
+
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(observed)).not.toMatch(/fixture|secret|environment|models\.json|OPENCODE_|GOOGLE_/i)
+    await resolver.shutdown()
+  })
+
   test("rejects parseable catalog entries that pinned OpenCode cannot initialize", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-incomplete-catalog-observer-"))
     const modelsPath = join(cwd, "models.json")

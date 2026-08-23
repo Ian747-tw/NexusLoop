@@ -120,7 +120,11 @@ async function main(): Promise<void> {
         const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
         const disabled = new Set(config.disabled_providers ?? [])
         const allowed = (enabled ? enabled.has(input.provider_id) : true) && !disabled.has(input.provider_id)
-        const catalogProvider = catalogValid && allowed && Object.hasOwn(catalog, input.provider_id) ? catalog[input.provider_id] : undefined
+        const selectedCatalogProvider = Object.hasOwn(catalog, input.provider_id)
+          && ModelsDev.Provider.safeParse(catalog[input.provider_id]).success
+          ? catalog[input.provider_id]
+          : undefined
+        const catalogProvider = allowed ? selectedCatalogProvider : undefined
         const configuredProvider = allowed && config.provider && Object.hasOwn(config.provider, input.provider_id)
           ? config.provider[input.provider_id]
           : undefined
