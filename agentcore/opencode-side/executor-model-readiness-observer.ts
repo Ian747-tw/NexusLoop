@@ -75,7 +75,9 @@ async function main(): Promise<void> {
         if (Option.isSome(activeAccount) && activeAccount.value.active_org_id) return
         const [catalog, projectFiles, directories] = await Promise.all([
           ModelsDev.get(),
-          AppRuntime.runPromise(ConfigPaths.files("opencode", process.cwd(), Instance.worktree)),
+          Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+            ? Promise.resolve([])
+            : AppRuntime.runPromise(ConfigPaths.files("opencode", process.cwd(), Instance.worktree)),
           AppRuntime.runPromise(ConfigPaths.directories(process.cwd(), Instance.worktree)),
         ])
         const configFiles = [
@@ -99,11 +101,13 @@ async function main(): Promise<void> {
         for (const snapshot of snapshots) {
           const next = parseLocalConfig(snapshot.text, snapshot.source, Config, ConfigParse)
           if (next === undefined) return
+          if ((next.plugin?.length ?? 0) > 0) return
           config = mergeDeep(config, next) as LocalConfig
         }
         if (process.env.OPENCODE_CONFIG_CONTENT) {
           const next = parseLocalConfig(process.env.OPENCODE_CONFIG_CONTENT, "OPENCODE_CONFIG_CONTENT", Config, ConfigParse)
           if (next === undefined) return
+          if ((next.plugin?.length ?? 0) > 0) return
           config = mergeDeep(config, next) as LocalConfig
         }
         const auth = authEntries[input.provider_id]
