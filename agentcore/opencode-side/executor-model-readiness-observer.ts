@@ -2,6 +2,7 @@ import { existsSync } from "node:fs"
 import { lstat, readFile, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "./executor-readiness-plugin-snapshot"
 
 const MAX_INPUT_BYTES = 2_048
 const MAX_CONFIG_FILE_BYTES = 65_536
@@ -96,7 +97,10 @@ async function main(): Promise<void> {
           path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
         ]
         if (existsSync(path.join(Global.Path.config, "config"))) return
-        if (!Flag.OPENCODE_PURE && await autoDiscoveredPluginAuthority(directories, Glob) !== "absent") return
+        const pluginAuthorityBefore = Flag.OPENCODE_PURE
+          ? undefined
+          : await snapshotPluginAuthority(directories, Glob)
+        if (pluginAuthorityBefore && pluginAuthorityBefore.status !== "absent") return
         if (hasManagedPreference()) return
         const snapshots = await readStableConfigFiles(configFiles)
         if (snapshots === undefined) return
@@ -112,6 +116,10 @@ async function main(): Promise<void> {
           if (next === undefined) return
           if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
           config = mergeDeep(config, next) as LocalConfig
+        }
+        if (pluginAuthorityBefore) {
+          const pluginAuthorityAfter = await snapshotPluginAuthority(directories, Glob)
+          if (!pluginAuthorityRemainedAbsent(pluginAuthorityBefore, pluginAuthorityAfter)) return
         }
         const auth = authEntries[input.provider_id]
         const externalPluginsEnabled = !Flag.OPENCODE_PURE
@@ -243,26 +251,6 @@ async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ 
     replay.push({ source, text: snapshot.text })
   }
   return replay
-}
-
-async function autoDiscoveredPluginAuthority(
-  directories: readonly string[],
-  glob: { scan(pattern: string, options: { cwd: string; absolute: boolean; dot: boolean; symlink: boolean }): Promise<string[]> },
-): Promise<"present" | "absent" | "unknown"> {
-  for (const dir of directories) {
-    try {
-      const matches = await glob.scan("{plugin,plugins}/*.{ts,js}", {
-        cwd: dir,
-        absolute: true,
-        dot: true,
-        symlink: true,
-      })
-      if (matches.length > 0) return "present"
-    } catch {
-      return "unknown"
-    }
-  }
-  return "absent"
 }
 
 function hasManagedPreference(): boolean {

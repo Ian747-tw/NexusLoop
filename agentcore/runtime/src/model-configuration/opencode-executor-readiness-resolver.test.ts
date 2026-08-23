@@ -9,6 +9,7 @@ import {
   OpenCodeExecutorModelReadinessResolver,
   createProductionOpenCodeExecutorReadinessResolver,
 } from "./opencode-executor-readiness-resolver"
+import { pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "../../../opencode-side/executor-readiness-plugin-snapshot"
 
 const selection = buildModelSetupCandidate({
   commander_recipe_id: null,
@@ -18,6 +19,23 @@ const openAiSelection = buildModelSetupCandidate({
   commander_recipe_id: null,
   executor_recipe_id: "executor-openai-gpt-4-1-mini",
 }).executor_selection!
+
+test("plugin authority created during config replay fails the before-and-after snapshot", async () => {
+  let scans = 0
+  const glob = {
+    async scan() {
+      scans += 1
+      return scans === 1 ? [] : ["/project/.opencode/plugin/provider.ts"]
+    },
+  }
+
+  const before = await snapshotPluginAuthority(["/project/.opencode"], glob)
+  const after = await snapshotPluginAuthority(["/project/.opencode"], glob)
+
+  expect(before).toEqual({ status: "absent", matches: [] })
+  expect(after).toEqual({ status: "present", matches: ["/project/.opencode/plugin/provider.ts"] })
+  expect(pluginAuthorityRemainedAbsent(before, after)).toBeFalse()
+})
 
 function catalogModel(id: string, name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
