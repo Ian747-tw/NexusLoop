@@ -5,6 +5,20 @@ import path from "node:path"
 const MAX_CONFIG_FILE_BYTES = 65_536
 const MAX_CONFIG_TOTAL_BYTES = 262_144
 
+type BoundedFileSnapshot = Readonly<{
+  source: string
+  size: number
+  mtimeMs: number
+  ino: number
+  contentHash: string
+}>
+
+export type BoundedFileAuthoritySnapshot = Readonly<{
+  present: readonly BoundedFileSnapshot[]
+  missing: readonly string[]
+  maxFileBytes: number
+}>
+
 type PresentConfigSnapshot = Readonly<{
   source: string
   text: string
@@ -71,8 +85,66 @@ export async function configAuthorityUnchanged(snapshot: ConfigAuthoritySnapshot
   return true
 }
 
+export async function captureBoundedFileAuthority(
+  files: readonly string[],
+  maxFileBytes: number,
+): Promise<BoundedFileAuthoritySnapshot | undefined> {
+  const present: BoundedFileSnapshot[] = []
+  const missing: string[] = []
+  for (const source of new Set(files)) {
+    let before
+    try {
+      before = await lstat(source)
+    } catch (error) {
+      if (isMissing(error)) {
+        missing.push(source)
+        continue
+      }
+      return
+    }
+    if (!before.isFile() || before.isSymbolicLink() || before.size > maxFileBytes) return
+    const bytes = await readFile(source).catch(() => undefined)
+    if (bytes === undefined || bytes.length > maxFileBytes) return
+    const after = await stat(source).catch(() => undefined)
+    if (!after || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) return
+    present.push(Object.freeze({
+      source,
+      size: after.size,
+      mtimeMs: after.mtimeMs,
+      ino: after.ino,
+      contentHash: hashBytes(bytes),
+    }))
+  }
+  return Object.freeze({ present: Object.freeze(present), missing: Object.freeze(missing), maxFileBytes })
+}
+
+export async function boundedFileAuthorityUnchanged(snapshot: BoundedFileAuthoritySnapshot): Promise<boolean> {
+  for (const item of snapshot.present) {
+    const current = await stat(item.source).catch(() => undefined)
+    if (!current || current.size !== item.size || current.mtimeMs !== item.mtimeMs || current.ino !== item.ino) return false
+    const bytes = await readFile(item.source).catch(() => undefined)
+    if (bytes === undefined || bytes.length > snapshot.maxFileBytes) return false
+    const after = await stat(item.source).catch(() => undefined)
+    if (!after || after.size !== current.size || after.mtimeMs !== current.mtimeMs || after.ino !== current.ino) return false
+    if (hashBytes(bytes) !== item.contentHash) return false
+  }
+  for (const source of snapshot.missing) {
+    try {
+      await lstat(source)
+      return false
+    } catch (error) {
+      if (!isMissing(error)) return false
+    }
+  }
+  return true
+}
+
 function hashConfigText(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex")
+  return hashBytes(Buffer.from(text, "utf8"))
+}
+
+function hashBytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex")
 }
 
 export function replayConfigAuthority(

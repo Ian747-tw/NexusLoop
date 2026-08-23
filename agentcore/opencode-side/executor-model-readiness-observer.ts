@@ -1,11 +1,19 @@
 import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { captureConfigAuthority, configAuthorityUnchanged, managedPreferenceAuthorityPaths, replayConfigAuthority } from "./executor-readiness-config-snapshot"
+import {
+  boundedFileAuthorityUnchanged,
+  captureBoundedFileAuthority,
+  captureConfigAuthority,
+  configAuthorityUnchanged,
+  managedPreferenceAuthorityPaths,
+  replayConfigAuthority,
+} from "./executor-readiness-config-snapshot"
 import { authorityPathSetUnchanged, pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "./executor-readiness-plugin-snapshot"
 
 const MAX_INPUT_BYTES = 2_048
 const MAX_CONFIG_FILE_BYTES = 65_536
+const MAX_MODEL_CATALOG_BYTES = 8 * 1_024 * 1_024
 const OPENAI_OAUTH_ALLOWED_MODELS = new Set([
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
@@ -56,6 +64,7 @@ async function main(): Promise<void> {
       { Option },
       { mergeDeep },
       { Glob },
+      { Hash },
     ] = await Promise.all([
       import("../upstream/packages/opencode/src/project/instance.ts"),
       import("../upstream/packages/opencode/src/provider/index.ts"),
@@ -67,10 +76,18 @@ async function main(): Promise<void> {
       import("effect"),
       import("remeda"),
       import("../upstream/packages/shared/src/util/glob.ts"),
+      import("../upstream/packages/shared/src/util/hash.ts"),
     ])
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
+        const modelsSource = Flag.OPENCODE_MODELS_URL || "https://models.dev"
+        const modelsPath = Flag.OPENCODE_MODELS_PATH ?? path.join(
+          Global.Path.cache,
+          modelsSource === "https://models.dev" ? "models.json" : `models-${Hash.fast(modelsSource)}.json`,
+        )
+        const catalogAuthority = await captureBoundedFileAuthority([modelsPath], MAX_MODEL_CATALOG_BYTES)
+        if (catalogAuthority === undefined) return
         const authEntries = await AppRuntime.runPromise(Auth.Service.use((service) => service.all()))
         if (Object.values(authEntries).some((entry) => entry.type === "wellknown")) return
         const activeAccount = await AppRuntime.runPromise(Account.Service.use((service) => service.active()))
@@ -85,12 +102,15 @@ async function main(): Promise<void> {
         const catalogValid = Object.values(catalog).every((provider) => ModelsDev.Provider.safeParse(provider).success)
         const legacyConfigPath = path.join(Global.Path.config, "config")
         const managedPreferencePaths = managedPreferenceAuthorityPaths(process.platform, os.userInfo().username)
-        const configFiles = [
-          legacyConfigPath,
-          ...managedPreferencePaths,
+        const defaultGlobalPaths = [
           path.join(Global.Path.config, "config.json"),
           path.join(Global.Path.config, "opencode.json"),
           path.join(Global.Path.config, "opencode.jsonc"),
+        ]
+        const configFiles = [
+          legacyConfigPath,
+          ...managedPreferencePaths,
+          ...defaultGlobalPaths,
           ...(Flag.OPENCODE_CONFIG ? [Flag.OPENCODE_CONFIG] : []),
           ...projectFiles,
           ...directories.flatMap((dir) => dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR
@@ -110,7 +130,30 @@ async function main(): Promise<void> {
         const snapshots = replayConfigAuthority(configAuthority, configFiles)
         if (snapshots === undefined) return
         let config: LocalConfig = {}
+        let defaultGlobalConfig: LocalConfig = {}
+        let defaultGlobalValid = true
+        const consumedDefaultGlobals = new Set<string>()
+        const defaultGlobalSnapshots: typeof snapshots = []
+        const remainingSnapshots: typeof snapshots = []
         for (const snapshot of snapshots) {
+          if (defaultGlobalPaths.includes(snapshot.source) && !consumedDefaultGlobals.has(snapshot.source)) {
+            consumedDefaultGlobals.add(snapshot.source)
+            defaultGlobalSnapshots.push(snapshot)
+            continue
+          }
+          remainingSnapshots.push(snapshot)
+        }
+        for (const snapshot of defaultGlobalSnapshots) {
+          const next = parseLocalConfig(snapshot.text, snapshot.source, Config, ConfigParse)
+          if (next === undefined) {
+            defaultGlobalValid = false
+            break
+          }
+          if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
+          defaultGlobalConfig = mergeDeep(defaultGlobalConfig, next) as LocalConfig
+        }
+        if (defaultGlobalValid) config = defaultGlobalConfig
+        for (const snapshot of remainingSnapshots) {
           const next = parseLocalConfig(snapshot.text, snapshot.source, Config, ConfigParse)
           if (next === undefined) return
           if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
@@ -135,6 +178,7 @@ async function main(): Promise<void> {
           if (!pluginAuthorityRemainedAbsent(pluginAuthorityBefore, pluginAuthorityAfter)) return
         }
         if (!await configAuthorityUnchanged(configAuthority)) return
+        if (!await boundedFileAuthorityUnchanged(catalogAuthority)) return
         const auth = authEntries[input.provider_id]
         const externalPluginsEnabled = !Flag.OPENCODE_PURE
           && ((config.plugin?.length ?? 0) > 0 || (config.plugin_origins?.length ?? 0) > 0)

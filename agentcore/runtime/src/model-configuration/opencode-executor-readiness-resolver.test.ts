@@ -10,7 +10,13 @@ import {
   createProductionOpenCodeExecutorReadinessResolver,
 } from "./opencode-executor-readiness-resolver"
 import { authorityPathSetUnchanged, pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "../../../opencode-side/executor-readiness-plugin-snapshot"
-import { captureConfigAuthority, configAuthorityUnchanged, managedPreferenceAuthorityPaths } from "../../../opencode-side/executor-readiness-config-snapshot"
+import {
+  boundedFileAuthorityUnchanged,
+  captureBoundedFileAuthority,
+  captureConfigAuthority,
+  configAuthorityUnchanged,
+  managedPreferenceAuthorityPaths,
+} from "../../../opencode-side/executor-readiness-config-snapshot"
 
 const selection = buildModelSetupCandidate({
   commander_recipe_id: null,
@@ -81,6 +87,23 @@ test("same-size config rewrite with restored mtime fails content revalidation", 
   await utimes(configPath, before.atime, before.mtime)
 
   expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
+})
+
+test("same-size model catalog rewrite with restored mtime fails authority revalidation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-catalog-content-race-"))
+  const catalogPath = join(cwd, "models.json")
+  const initial = '{"model":"available_"}'
+  const replacement = '{"model":"deprecated"}'
+  expect(Buffer.byteLength(replacement)).toBe(Buffer.byteLength(initial))
+  await writeFile(catalogPath, initial, "utf8")
+  const before = await stat(catalogPath)
+  const snapshot = await captureBoundedFileAuthority([catalogPath], 1_024)
+  expect(snapshot).toBeDefined()
+
+  await writeFile(catalogPath, replacement, "utf8")
+  await utimes(catalogPath, before.atime, before.mtime)
+
+  expect(await boundedFileAuthorityUnchanged(snapshot!)).toBeFalse()
 })
 
 test("macOS managed-preference sentinels are captured as config authority", () => {
@@ -712,6 +735,53 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       })
     } finally {
       await resolver.shutdown()
+    }
+  })
+
+  test("mirrors pinned malformed default-global group fallback while explicit config stays strict", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-malformed-global-observer-"))
+    const globalConfigDir = join(cwd, "config", "opencode")
+    const modelsPath = join(cwd, "models.json")
+    const malformedPath = join(globalConfigDir, "config.json")
+    await mkdir(globalConfigDir, { recursive: true })
+    await writeFile(malformedPath, "{ malformed", "utf8")
+    await writeFile(join(globalConfigDir, "opencode.json"), JSON.stringify({ disabled_providers: ["google"] }), "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+      },
+    }), "utf8")
+    const environment = {
+      HOME: cwd,
+      XDG_CONFIG_HOME: join(cwd, "config"),
+      XDG_DATA_HOME: join(cwd, "data"),
+      OPENCODE_MODELS_PATH: modelsPath,
+      OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+    }
+    const fallback = createProductionOpenCodeExecutorReadinessResolver({ projectDir: cwd, env: environment })
+    try {
+      await expect(fallback.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+    } finally {
+      await fallback.shutdown()
+    }
+
+    const explicit = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: { ...environment, OPENCODE_CONFIG: malformedPath },
+    })
+    try {
+      await expect(explicit.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+    } finally {
+      await explicit.shutdown()
     }
   })
 
