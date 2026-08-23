@@ -1,12 +1,11 @@
 import { existsSync } from "node:fs"
-import { lstat, readFile, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { captureConfigAuthority, configAuthorityUnchanged, replayConfigAuthority } from "./executor-readiness-config-snapshot"
 import { pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "./executor-readiness-plugin-snapshot"
 
 const MAX_INPUT_BYTES = 2_048
 const MAX_CONFIG_FILE_BYTES = 65_536
-const MAX_CONFIG_TOTAL_BYTES = 262_144
 const OPENAI_OAUTH_ALLOWED_MODELS = new Set([
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
@@ -102,7 +101,9 @@ async function main(): Promise<void> {
           : await snapshotPluginAuthority(directories, Glob)
         if (pluginAuthorityBefore && pluginAuthorityBefore.status !== "absent") return
         if (hasManagedPreference()) return
-        const snapshots = await readStableConfigFiles(configFiles)
+        const configAuthority = await captureConfigAuthority(configFiles)
+        if (configAuthority === undefined) return
+        const snapshots = replayConfigAuthority(configAuthority, configFiles)
         if (snapshots === undefined) return
         let config: LocalConfig = {}
         for (const snapshot of snapshots) {
@@ -121,6 +122,7 @@ async function main(): Promise<void> {
           const pluginAuthorityAfter = await snapshotPluginAuthority(directories, Glob)
           if (!pluginAuthorityRemainedAbsent(pluginAuthorityBefore, pluginAuthorityAfter)) return
         }
+        if (!await configAuthorityUnchanged(configAuthority)) return
         const auth = authEntries[input.provider_id]
         const externalPluginsEnabled = !Flag.OPENCODE_PURE
           && ((config.plugin?.length ?? 0) > 0 || (config.plugin_origins?.length ?? 0) > 0)
@@ -132,17 +134,18 @@ async function main(): Promise<void> {
           && ModelsDev.Provider.safeParse(catalog[input.provider_id]).success
           ? catalog[input.provider_id]
           : undefined
-        const catalogProvider = allowed ? selectedCatalogProvider : undefined
-        const configuredProvider = allowed && config.provider && Object.hasOwn(config.provider, input.provider_id)
+        const selectedConfiguredProvider = config.provider && Object.hasOwn(config.provider, input.provider_id)
           ? config.provider[input.provider_id]
           : undefined
+        const catalogProvider = allowed ? selectedCatalogProvider : undefined
+        const configuredProvider = allowed ? selectedConfiguredProvider : undefined
         if (new Set(["anthropic", "google", "openai"]).has(input.provider_id)) {
-          const envNames = configuredProvider?.env ?? catalogProvider?.env ?? []
+          const envNames = selectedConfiguredProvider?.env ?? selectedCatalogProvider?.env ?? []
           const hasEnvironmentCredential = Array.isArray(envNames)
             && envNames.some((name) => typeof name === "string" && typeof process.env[name] === "string" && process.env[name]!.length > 0)
           const hasStoredCredential = hasUsableStoredCredential(input.provider_id, auth)
-          const hasConfiguredCredential = typeof configuredProvider?.options?.apiKey === "string"
-            && configuredProvider.options.apiKey.length > 0
+          const hasConfiguredCredential = typeof selectedConfiguredProvider?.options?.apiKey === "string"
+            && selectedConfiguredProvider.options.apiKey.length > 0
           credentialConnection = hasEnvironmentCredential || hasStoredCredential || hasConfiguredCredential ? "connected" : "disconnected"
         }
         if (!catalogValid) return
@@ -218,41 +221,6 @@ function normalizeLegacyTuiConfig(value: unknown): unknown {
   return normalized
 }
 
-async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ source: string; text: string }> | undefined> {
-  const unique = [...new Set(files)]
-  const snapshots: Array<{ source: string; text: string; size: number; mtimeMs: number; ino: number }> = []
-  for (const source of unique) {
-    let before
-    try {
-      before = await lstat(source)
-    } catch (error) {
-      if (isMissing(error)) continue
-      return
-    }
-    if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_CONFIG_FILE_BYTES) return
-    const text = await readFile(source, "utf8").catch(() => undefined)
-    if (text === undefined || Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
-    const after = await stat(source).catch(() => undefined)
-    if (!after || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) return
-    snapshots.push({ source, text, size: after.size, mtimeMs: after.mtimeMs, ino: after.ino })
-  }
-  for (const snapshot of snapshots) {
-    const current = await stat(snapshot.source).catch(() => undefined)
-    if (!current || current.size !== snapshot.size || current.mtimeMs !== snapshot.mtimeMs || current.ino !== snapshot.ino) return
-  }
-  const bySource = new Map(snapshots.map((snapshot) => [snapshot.source, snapshot]))
-  const replay: Array<{ source: string; text: string }> = []
-  let totalBytes = 0
-  for (const source of files) {
-    const snapshot = bySource.get(source)
-    if (!snapshot) continue
-    totalBytes += snapshot.size
-    if (totalBytes > MAX_CONFIG_TOTAL_BYTES) return
-    replay.push({ source, text: snapshot.text })
-  }
-  return replay
-}
-
 function hasManagedPreference(): boolean {
   if (process.platform !== "darwin") return false
   const user = os.userInfo().username
@@ -260,10 +228,6 @@ function hasManagedPreference(): boolean {
     path.join("/Library/Managed Preferences", user, "ai.opencode.managed.plist"),
     path.join("/Library/Managed Preferences", "ai.opencode.managed.plist"),
   ].some((file) => existsSync(file))
-}
-
-function isMissing(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT"
 }
 
 function openAiOauthAllowsModel(modelId: string, apiModelId: string): boolean {

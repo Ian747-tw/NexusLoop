@@ -10,6 +10,7 @@ import {
   createProductionOpenCodeExecutorReadinessResolver,
 } from "./opencode-executor-readiness-resolver"
 import { pluginAuthorityRemainedAbsent, snapshotPluginAuthority } from "../../../opencode-side/executor-readiness-plugin-snapshot"
+import { captureConfigAuthority, configAuthorityUnchanged } from "../../../opencode-side/executor-readiness-config-snapshot"
 
 const selection = buildModelSetupCandidate({
   commander_recipe_id: null,
@@ -35,6 +36,18 @@ test("plugin authority created during config replay fails the before-and-after s
   expect(before).toEqual({ status: "absent", matches: [] })
   expect(after).toEqual({ status: "present", matches: ["/project/.opencode/plugin/provider.ts"] })
   expect(pluginAuthorityRemainedAbsent(before, after)).toBeFalse()
+})
+
+test("config authority created after an absent-path snapshot fails revalidation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-config-race-"))
+  const configPath = join(cwd, "opencode.json")
+  const snapshot = await captureConfigAuthority([configPath])
+  expect(snapshot).toBeDefined()
+  expect(await configAuthorityUnchanged(snapshot!)).toBeTrue()
+
+  await writeFile(configPath, JSON.stringify({ disabled_providers: ["google"] }), "utf8")
+
+  expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
 })
 
 function catalogModel(id: string, name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -285,6 +298,41 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       credential_connection_status: "connected",
     })
     expect(JSON.stringify(observed)).not.toMatch(/fixture|secret|environment|models\.json|OPENCODE_|GOOGLE_/i)
+    await resolver.shutdown()
+  })
+
+  test("keeps credential evidence independent when the selected provider is disabled", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-disabled-provider-credential-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(join(cwd, "opencode.json"), JSON.stringify({
+      disabled_providers: ["google"],
+      provider: { google: { options: { apiKey: "configured-secret-never-returned" } } },
+    }), "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        GOOGLE_GENERATIVE_AI_API_KEY: "environment-secret-never-returned",
+      },
+    })
+
+    const observed = await resolver.observe(selection)
+    expect(observed).toMatchObject({
+      provider_availability_status: "unavailable",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(observed)).not.toMatch(/configured|environment|secret|GOOGLE_/i)
     await resolver.shutdown()
   })
 
