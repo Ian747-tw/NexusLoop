@@ -78,3 +78,10 @@ module. The former `NXL_OPENCODE_EXECUTOR_READINESS_COMMAND` and
 ignored. Custom process fixtures exist only in package-internal resolver unit
 tests and cannot be selected through the real CLI or RuntimeServer launch
 configuration.
+
+The pinned `Config.Service.get()` path fetches remote
+`<auth-key>/.well-known/opencode` configuration when any OpenCode auth entry
+has type `wellknown`. The observer therefore reads the local OpenCode auth
+snapshot first and returns `unknown`/`unknown` if any such entry exists, before
+calling the config service. Readiness observation never performs that remote
+fetch or treats remote configuration as selection or connection evidence.

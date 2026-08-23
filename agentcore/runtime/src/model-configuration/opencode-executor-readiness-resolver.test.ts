@@ -198,6 +198,51 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await resolver.shutdown()
   })
 
+  test("rejects well-known auth before OpenCode config can perform a remote fetch", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-wellknown-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    let requestCount = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        requestCount += 1
+        return Response.json({ config: {} })
+      },
+    })
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({
+          google: { type: "api", key: "fixture-secret" },
+          [`http://127.0.0.1:${server.port}`]: { type: "wellknown", key: "REMOTE_TOKEN", token: "remote-secret" },
+        }),
+      },
+    })
+
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+      expect(requestCount).toBe(0)
+    } finally {
+      await resolver.shutdown()
+      server.stop(true)
+    }
+  })
+
   test("fails closed when external plugin authority can change selected provider models", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-plugin-observer-"))
     const modelsPath = join(cwd, "models.json")

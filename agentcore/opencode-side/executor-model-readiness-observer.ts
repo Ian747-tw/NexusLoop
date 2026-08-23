@@ -35,11 +35,13 @@ async function main(): Promise<void> {
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
-        const [catalog, config, auth] = await Promise.all([
+        const authEntries = await AppRuntime.runPromise(Auth.Service.use((service) => service.all()))
+        if (Object.values(authEntries).some((entry) => entry.type === "wellknown")) return
+        const [catalog, config] = await Promise.all([
           ModelsDev.get(),
           AppRuntime.runPromise(Config.Service.use((service) => service.get())),
-          AppRuntime.runPromise(Auth.Service.use((service) => service.get(input.provider_id))),
         ])
+        const auth = authEntries[input.provider_id]
         const externalPluginsEnabled = !Flag.OPENCODE_PURE
           && ((config.plugin?.length ?? 0) > 0 || (config.plugin_origins?.length ?? 0) > 0)
         if (externalPluginsEnabled) return

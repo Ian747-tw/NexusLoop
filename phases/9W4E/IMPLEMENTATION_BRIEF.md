@@ -15,7 +15,9 @@
    strict tri-state result, and is lifecycle-owned,
    timeout/output/concurrency bounded, and non-retrying. Production fixes the
    executable and argument to this checked-in child; no environment command or
-   argument override exists.
+   argument override exists. The child rejects `wellknown` auth entries before
+   invoking OpenCode config loading so readiness observation cannot initiate
+   remote well-known configuration fetches.
 6. Project persisted setup during launch and construct the immutable ADR-036
    registry plus Commander provider assertions. Reject explicit/legacy/persisted
    source conflicts. Construct the production observer with a fixed empty Bun

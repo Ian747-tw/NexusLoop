@@ -20,6 +20,7 @@
 | Observer outlives RuntimeServer | Runtime owns each subprocess before its first await; shutdown terminates and drains all observations before `runtime_shutdown`. |
 | Fixture or caller forges readiness identity | Runtime validates projection/provider/model/binding/version and recomputes the evidence ID from safe semantic results. |
 | Environment or project Bun preload replaces the production observer | Launch rejects the former observer command/argument keys and invokes the checked-in child through `process.execPath` with a checked-in empty Bun configuration. |
+| OpenCode well-known auth triggers remote configuration loading | The isolated observer checks the local auth snapshot before config loading and returns `unknown`/`unknown` when any `wellknown` entry exists; no remote fetch begins. |
 
 GitHub/provider content and OpenCode observations remain evidence, not setup
 authority. No provider request is performed during setup.
