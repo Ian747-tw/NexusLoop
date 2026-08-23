@@ -82,11 +82,13 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
           return {
             state: {
               ...state,
-              screen: "model-setup",
-              focus: "init-choice",
-              modelSetup: { ...state.modelSetup, origin: "init", stage: "loading", commandError: undefined },
+              screen: "main",
+              focus: "message-box",
+              lastCommand: "initialize",
+              commander: { ...state.commander, workIntent: "TUI onboarding shell" },
+              systemActions: [...state.systemActions, { title: "Initialize selected", detail: "Entered spec onboarding shell" }],
             },
-            effects: [{ type: "load-model-setup", continueInitializationIfActive: true }],
+            effects: [{ type: "send-command", command: "initialize" }],
           }
         }
         return { state: { ...state, lastCommand: "cancel" }, effects: [{ type: "send-command", command: "cancel" }] }

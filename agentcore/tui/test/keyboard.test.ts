@@ -17,13 +17,14 @@ describe("TUI keyboard command model", () => {
       args: ["/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  "],
     })
   })
-  test("select Initialize enters model setup and loads server-owned recipes", () => {
+  test("select Initialize enters spec onboarding before model setup", () => {
     const state = { ...initialState("/tmp/demo"), screen: "init" as const, focus: "init-choice" as const }
-    const next = applyKeyCommand(state, { type: "submit" })
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
 
-    expect(next.screen).toBe("model-setup")
-    expect(next.modelSetup.stage).toBe("loading")
-    expect(next.modelSetup.origin).toBe("init")
+    expect(result.state.screen).toBe("main")
+    expect(result.state.focus).toBe("message-box")
+    expect(result.state.lastCommand).toBe("initialize")
+    expect(result.effects).toEqual([{ type: "send-command", command: "initialize" }])
   })
 
   test("submit message from message box", () => {
@@ -47,13 +48,12 @@ describe("TUI keyboard command model", () => {
   })
 
   test("model setup keeps Commander and Executor choices independent", () => {
-    let state: UiState = { ...initialState("/tmp/demo"), screen: "init", focus: "init-choice" }
-    let result = applyKeyCommandWithEffects(state, { type: "submit" })
-    expect(result.effects).toEqual([{ type: "load-model-setup", continueInitializationIfActive: true }])
-    state = {
-      ...result.state,
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
       modelSetup: {
-        ...result.state.modelSetup,
+        ...initialState("/tmp/demo").modelSetup,
+        origin: "main",
         stage: "commander",
         commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }, { id: "commander-a", label: "Commander A" }],
         executorChoices: [{ id: "", label: "Leave Executor unconfigured" }, { id: "executor-b", label: "Executor B" }],
