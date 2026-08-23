@@ -8348,9 +8348,13 @@ describe("RuntimeServer core", () => {
     const first = service.executeStep({ plan_id: "plan_continue_concurrent_1", index: 0, requested_by: "operator" })
     await readStarted
     const second = service.executeStep({ plan_id: "plan_continue_concurrent_1", index: 0, requested_by: "operator" })
+    const secondResult = second.then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    )
     releaseRead([])
     await expect(first).resolves.toMatchObject({ status: "succeeded", command: "/missions" })
-    await expect(second).rejects.toThrow("continuation plan is completed")
+    expect((await secondResult).error).toEqual(new Error("continuation plan is completed"))
 
     expect(readCalls).toBe(1)
     const events = await eventStore.readAll()
