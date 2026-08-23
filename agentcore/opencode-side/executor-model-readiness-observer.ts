@@ -80,7 +80,7 @@ async function main(): Promise<void> {
             : AppRuntime.runPromise(ConfigPaths.files("opencode", process.cwd(), Instance.worktree)),
           AppRuntime.runPromise(ConfigPaths.directories(process.cwd(), Instance.worktree)),
         ])
-        if (!Object.values(catalog).every((provider) => ModelsDev.Provider.safeParse(provider).success)) return
+        const catalogValid = Object.values(catalog).every((provider) => ModelsDev.Provider.safeParse(provider).success)
         const configFiles = [
           path.join(Global.Path.config, "config.json"),
           path.join(Global.Path.config, "opencode.json"),
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
           path.join(ConfigManaged.managedConfigDir(), "opencode.json"),
           path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
         ]
-        if (!Flag.OPENCODE_PURE && existsSync(path.join(Global.Path.config, "config"))) return
+        if (existsSync(path.join(Global.Path.config, "config"))) return
         if (!Flag.OPENCODE_PURE && hasAutoDiscoveredPluginDirectory(directories)) return
         if (hasManagedPreference()) return
         const snapshots = await readStableConfigFiles(configFiles)
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
         const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
         const disabled = new Set(config.disabled_providers ?? [])
         const allowed = (enabled ? enabled.has(input.provider_id) : true) && !disabled.has(input.provider_id)
-        const catalogProvider = allowed && Object.hasOwn(catalog, input.provider_id) ? catalog[input.provider_id] : undefined
+        const catalogProvider = catalogValid && allowed && Object.hasOwn(catalog, input.provider_id) ? catalog[input.provider_id] : undefined
         const configuredProvider = allowed && config.provider && Object.hasOwn(config.provider, input.provider_id)
           ? config.provider[input.provider_id]
           : undefined
@@ -132,6 +132,7 @@ async function main(): Promise<void> {
             && configuredProvider.options.apiKey.length > 0
           credentialConnection = hasEnvironmentCredential || hasStoredCredential || hasConfiguredCredential ? "connected" : "disconnected"
         }
+        if (!catalogValid) return
         if (Object.keys(catalog).length === 0 && !config.provider) return
         const configuredModel = configuredProvider?.models && Object.hasOwn(configuredProvider.models, input.model_id)
           ? configuredProvider.models[input.model_id]
