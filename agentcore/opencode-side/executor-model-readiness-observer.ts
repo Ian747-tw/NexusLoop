@@ -94,7 +94,7 @@ async function main(): Promise<void> {
           path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
         ]
         if (existsSync(path.join(Global.Path.config, "config"))) return
-        if (!Flag.OPENCODE_PURE && hasAutoDiscoveredPluginDirectory(directories)) return
+        if (!Flag.OPENCODE_PURE && await autoDiscoveredPluginAuthority(directories) !== "absent") return
         if (hasManagedPreference()) return
         const snapshots = await readStableConfigFiles(configFiles)
         if (snapshots === undefined) return
@@ -238,8 +238,23 @@ async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ 
   return replay
 }
 
-function hasAutoDiscoveredPluginDirectory(directories: readonly string[]): boolean {
-  return directories.some((dir) => existsSync(path.join(dir, "plugin")) || existsSync(path.join(dir, "plugins")))
+async function autoDiscoveredPluginAuthority(
+  directories: readonly string[],
+): Promise<"present" | "absent" | "unknown"> {
+  for (const dir of directories) {
+    try {
+      const matches = new Bun.Glob("{plugin,plugins}/*.{ts,js}").scan({
+        cwd: dir,
+        dot: true,
+        followSymlinks: true,
+        onlyFiles: true,
+      })
+      for await (const _match of matches) return "present"
+    } catch {
+      return "unknown"
+    }
+  }
+  return "absent"
 }
 
 function hasManagedPreference(): boolean {

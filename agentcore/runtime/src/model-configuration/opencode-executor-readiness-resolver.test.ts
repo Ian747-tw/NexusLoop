@@ -633,6 +633,46 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     }
   })
 
+  test("only matching code files in plugin directories create plugin authority", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-empty-plugin-directories-observer-"))
+    const modelsPath = join(cwd, "models.json")
+    await mkdir(join(cwd, ".opencode", "plugin"), { recursive: true })
+    await mkdir(join(cwd, ".opencode", "plugins"), { recursive: true })
+    await writeFile(join(cwd, ".opencode", "plugins", "README.md"), "not executable", "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+      },
+    })
+
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+      await writeFile(join(cwd, ".opencode", "plugin", "provider.ts"), "export default {}", "utf8")
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+    } finally {
+      await resolver.shutdown()
+    }
+  })
+
   test("pure mode still fails closed on pinned OpenCode legacy global configuration", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-pure-legacy-config-observer-"))
     const globalConfigDir = join(cwd, "config", "opencode")

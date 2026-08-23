@@ -155,6 +155,23 @@ describe("TUI runtime client factory", () => {
     await (client as TuiRuntimeServerClient).runtime.shutdown()
   })
 
+  test("no env routes a valid large approved spec through the real RuntimeServer client", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl", "spec"), { recursive: true })
+    await writeFile(join(dir, ".nxl", "spec", "current.json"), JSON.stringify({
+      spec_id: "spec_large_approved",
+      version: 1,
+      status: "approved",
+      objective: "x".repeat(70_000),
+      success_metrics: ["tests pass"],
+    }))
+
+    const client = createTuiRuntimeClient({ projectDir: dir, env: { NXL_OPENCODE_ADAPTER: "fake" } })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    await (client as TuiRuntimeServerClient).runtime.shutdown()
+  })
+
   test("NXL_RUNTIME_CLIENT=fake explicitly selects fake", async () => {
     const dir = await tempProject()
     const client = createTuiRuntimeClient({ projectDir: dir, env: { NXL_RUNTIME_CLIENT: "fake" } })

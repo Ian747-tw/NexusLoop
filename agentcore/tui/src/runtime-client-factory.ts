@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from "fs"
+import { readFileSync } from "fs"
 import { basename, join } from "path"
 import {
   createRuntimeServerFromLaunchConfig,
@@ -56,8 +56,6 @@ export function readRuntimeClientKind(env: Record<string, string | undefined>): 
 function hasApprovedSpec(projectDir: string): boolean {
   const file = join(projectDir, ".nxl", "spec", "current.json")
   try {
-    const entry = lstatSync(file)
-    if (!entry.isFile() || entry.isSymbolicLink() || entry.size > 65_536) return false
     const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown
     return parsed !== null
       && typeof parsed === "object"
