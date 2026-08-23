@@ -185,13 +185,22 @@ function parseLocalConfig(
   if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
   if (/\{(?:env|file):/u.test(text)) return
   try {
-    const parsed = parser.jsonc(text, source)
+    const parsed = normalizeLegacyTuiConfig(parser.jsonc(text, source))
     const result = configModule.Info.zod.safeParse(parsed)
     if (!result.success) return
     return result.data as LocalConfig
   } catch {
     return
   }
+}
+
+function normalizeLegacyTuiConfig(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value
+  const normalized = { ...(value as Record<string, unknown>) }
+  delete normalized.theme
+  delete normalized.keybinds
+  delete normalized.tui
+  return normalized
 }
 
 async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ source: string; text: string }> | undefined> {
