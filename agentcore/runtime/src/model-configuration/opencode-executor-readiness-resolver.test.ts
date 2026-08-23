@@ -1173,6 +1173,18 @@ throw new Error(${JSON.stringify(leaked)});
     expect(draining.activeCount()).toBe(0)
   })
 
+  test("production-sized default timeout admits a valid cold OpenCode observation", async () => {
+    const resolver = new OpenCodeExecutorModelReadinessResolver(await fixture(`
+await Bun.sleep(5_100);
+${echoFixture}
+`))
+    await expect(resolver.observe(selection)).resolves.toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    await resolver.shutdown()
+  }, 10_000)
+
   test("reactivates only through the explicit lifecycle start hook after shutdown", async () => {
     const resolver = new OpenCodeExecutorModelReadinessResolver(await fixture(echoFixture))
     await expect(resolver.observe(selection)).resolves.toMatchObject({ provider_availability_status: "available" })

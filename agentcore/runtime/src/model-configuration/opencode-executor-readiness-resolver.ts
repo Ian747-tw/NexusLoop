@@ -14,7 +14,7 @@ export const OPENCODE_EXECUTOR_READINESS_PROTOCOL_POLICY = "nexusloop_opencode_e
 
 const HASH = /^[a-f0-9]{64}$/
 const SAFE_ID = /^[A-Za-z0-9_.:-]+$/
-const DEFAULT_TIMEOUT_MS = 5_000
+const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_OUTPUT_BYTES = 4_096
 const DEFAULT_MAX_CONCURRENCY = 2
 const TERMINATION_GRACE_MS = 100
