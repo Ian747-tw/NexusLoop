@@ -132,6 +132,7 @@ async function main(): Promise<void> {
         let config: LocalConfig = {}
         let defaultGlobalConfig: LocalConfig = {}
         let defaultGlobalValid = true
+        let defaultGlobalHasPluginAuthority = false
         const consumedDefaultGlobals = new Set<string>()
         const defaultGlobalSnapshots: typeof snapshots = []
         const remainingSnapshots: typeof snapshots = []
@@ -149,10 +150,13 @@ async function main(): Promise<void> {
             defaultGlobalValid = false
             break
           }
-          if (!Flag.OPENCODE_PURE && (next.plugin?.length ?? 0) > 0) return
+          defaultGlobalHasPluginAuthority ||= (next.plugin?.length ?? 0) > 0
           defaultGlobalConfig = mergeDeep(defaultGlobalConfig, next) as LocalConfig
         }
-        if (defaultGlobalValid) config = defaultGlobalConfig
+        if (defaultGlobalValid) {
+          if (!Flag.OPENCODE_PURE && defaultGlobalHasPluginAuthority) return
+          config = defaultGlobalConfig
+        }
         for (const snapshot of remainingSnapshots) {
           const next = parseLocalConfig(snapshot.text, snapshot.source, Config, ConfigParse)
           if (next === undefined) return
@@ -179,7 +183,11 @@ async function main(): Promise<void> {
         }
         if (!await configAuthorityUnchanged(configAuthority)) return
         if (!await boundedFileAuthorityUnchanged(catalogAuthority)) return
-        const auth = authEntries[input.provider_id]
+        const authEntriesAfter = await AppRuntime.runPromise(Auth.Service.use((service) => service.all()))
+        if (Object.values(authEntriesAfter).some((entry) => entry.type === "wellknown")) return
+        const activeAccountAfter = await AppRuntime.runPromise(Account.Service.use((service) => service.active()))
+        if (Option.isSome(activeAccountAfter) && activeAccountAfter.value.active_org_id) return
+        const auth = authEntriesAfter[input.provider_id]
         const externalPluginsEnabled = !Flag.OPENCODE_PURE
           && ((config.plugin?.length ?? 0) > 0 || (config.plugin_origins?.length ?? 0) > 0)
         if (externalPluginsEnabled) return

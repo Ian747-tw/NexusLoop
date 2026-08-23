@@ -785,6 +785,51 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     }
   })
 
+  test("discards plugin authority with a malformed default-global group", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-malformed-global-plugin-observer-"))
+    const globalConfigDir = join(cwd, "config", "opencode")
+    const modelsPath = join(cwd, "models.json")
+    await mkdir(globalConfigDir, { recursive: true })
+    await writeFile(join(globalConfigDir, "config.json"), JSON.stringify({ plugin: ["discarded-provider-plugin"] }), "utf8")
+    await writeFile(join(globalConfigDir, "opencode.json"), "{ malformed", "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": catalogModel("gemini-2.5-flash", "Gemini 2.5 Flash") },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+      },
+    })
+
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+    } finally {
+      await resolver.shutdown()
+    }
+  })
+
+  test("rechecks remote-config sentinels before publishing readiness", async () => {
+    const observerSource = await Bun.file(join(import.meta.dir, "../../../opencode-side/executor-model-readiness-observer.ts")).text()
+    expect(observerSource.match(/Auth\.Service\.use\(\(service\) => service\.all\(\)\)/g)).toHaveLength(2)
+    expect(observerSource.match(/Account\.Service\.use\(\(service\) => service\.active\(\)\)/g)).toHaveLength(2)
+    const finalCatalogFence = observerSource.indexOf("if (!await boundedFileAuthorityUnchanged(catalogAuthority)) return")
+    expect(observerSource.indexOf("authEntriesAfter")).toBeGreaterThan(finalCatalogFence)
+    expect(observerSource.indexOf("activeAccountAfter")).toBeGreaterThan(finalCatalogFence)
+  })
+
   test("ignores root project config when pinned OpenCode project config is disabled", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-disabled-project-config-observer-"))
     const modelsPath = join(cwd, "models.json")
