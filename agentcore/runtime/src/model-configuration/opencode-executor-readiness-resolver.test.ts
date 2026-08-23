@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { existsSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { buildModelSetupCandidate } from "./model-setup"
@@ -663,7 +663,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         provider_availability_status: "available",
         credential_connection_status: "connected",
       })
-      await writeFile(join(cwd, ".opencode", "plugin", "provider.ts"), "export default {}", "utf8")
+      await symlink("missing-provider.ts", join(cwd, ".opencode", "plugin", "provider.ts"))
       await expect(resolver.observe(selection)).resolves.toMatchObject({
         provider_availability_status: "unknown",
         credential_connection_status: "unknown",

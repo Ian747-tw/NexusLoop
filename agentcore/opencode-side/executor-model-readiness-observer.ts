@@ -55,6 +55,7 @@ async function main(): Promise<void> {
       { Global },
       { Option },
       { mergeDeep },
+      { Glob },
     ] = await Promise.all([
       import("../upstream/packages/opencode/src/project/instance.ts"),
       import("../upstream/packages/opencode/src/provider/index.ts"),
@@ -65,6 +66,7 @@ async function main(): Promise<void> {
       import("../upstream/packages/opencode/src/global/index.ts"),
       import("effect"),
       import("remeda"),
+      import("../upstream/packages/shared/src/util/glob.ts"),
     ])
     await Instance.provide({
       directory: process.cwd(),
@@ -94,7 +96,7 @@ async function main(): Promise<void> {
           path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
         ]
         if (existsSync(path.join(Global.Path.config, "config"))) return
-        if (!Flag.OPENCODE_PURE && await autoDiscoveredPluginAuthority(directories) !== "absent") return
+        if (!Flag.OPENCODE_PURE && await autoDiscoveredPluginAuthority(directories, Glob) !== "absent") return
         if (hasManagedPreference()) return
         const snapshots = await readStableConfigFiles(configFiles)
         if (snapshots === undefined) return
@@ -240,16 +242,17 @@ async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ 
 
 async function autoDiscoveredPluginAuthority(
   directories: readonly string[],
+  glob: { scan(pattern: string, options: { cwd: string; absolute: boolean; dot: boolean; symlink: boolean }): Promise<string[]> },
 ): Promise<"present" | "absent" | "unknown"> {
   for (const dir of directories) {
     try {
-      const matches = new Bun.Glob("{plugin,plugins}/*.{ts,js}").scan({
+      const matches = await glob.scan("{plugin,plugins}/*.{ts,js}", {
         cwd: dir,
+        absolute: true,
         dot: true,
-        followSymlinks: true,
-        onlyFiles: true,
+        symlink: true,
       })
-      for await (const _match of matches) return "present"
+      if (matches.length > 0) return "present"
     } catch {
       return "unknown"
     }
