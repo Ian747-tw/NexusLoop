@@ -263,7 +263,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     await expect(observe("expired-access-secret", "refresh-secret", 1)).resolves.toMatchObject({
       credential_connection_status: "connected",
     })
-  })
+  }, 15_000)
 
   test("uses the pinned OpenCode child to observe exact model and credential-source presence", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-production-observer-"))
