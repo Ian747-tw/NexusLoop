@@ -42,6 +42,12 @@ role readiness, and whether restart is required. `/model-setup` reopens the
 same view for a later staged change; cached selections remain display evidence
 and RuntimeServer reconstructs every preview and confirmation.
 
+With no runtime-client override, legacy fake behavior is limited to pre-spec
+onboarding. Once the project has an approved spec, OpenTUI constructs the real
+RuntimeServer client, so a displayed model-setup commit is backed by the
+append-only setup event. Explicit fake mode remains a fixture path and is not
+durable setup evidence.
+
 Executor readiness displayed by this view is fresh bounded evidence from the
 production OpenCode-side observer after exact selection. `unknown` remains
 blocked. The UI never receives model catalogs, credential sources, auth

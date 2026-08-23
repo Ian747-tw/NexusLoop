@@ -139,11 +139,20 @@ async function readFirst<T>(stream: AsyncIterable<T>): Promise<T> {
 }
 
 describe("TUI runtime client factory", () => {
-  test("no env keeps fake default behavior", async () => {
+  test("no env keeps legacy fake behavior only before spec approval", async () => {
     const dir = await tempProject()
     const client = createTuiRuntimeClient({ projectDir: dir, env: {} })
 
     expect(client).toBeInstanceOf(FakeRuntimeClient)
+  })
+
+  test("no env routes an approved project through the real RuntimeServer client", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({ projectDir: dir, env: { NXL_OPENCODE_ADAPTER: "fake" } })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    await (client as TuiRuntimeServerClient).runtime.shutdown()
   })
 
   test("NXL_RUNTIME_CLIENT=fake explicitly selects fake", async () => {

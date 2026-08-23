@@ -894,10 +894,13 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("recent_missions")
   })
 
-  test("real headless first-run setup commits independent role selections without runtime start", async () => {
+  test("default approved-project setup commits through RuntimeServer persistence", async () => {
     const dir = await tempProject()
+    await makeApprovedProject(dir)
     const output: string[] = []
     const keys = [
+      { type: "submit" },
+      { type: "insert", text: "/model-setup" },
       { type: "submit" },
       { type: "select-next" },
       { type: "submit" },
@@ -908,15 +911,17 @@ describe("TUI launch boundary", () => {
     ]
     await runTuiEntrypoint({
       projectDir: dir,
-      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys), NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys), NXL_OPENCODE_ADAPTER: "fake" },
       writeOutput: (snapshot) => output.push(snapshot),
     })
     const snapshot = output.join("\n")
     expect(snapshot).toContain("stage=committed")
     expect(snapshot).toContain("pending_restart=true")
     expect(snapshot).not.toContain("screen=main")
-    expect((await readEventKinds(dir)).filter((kind) => kind === "runtime_model_setup_committed")).toHaveLength(1)
-    expect((await readEventKinds(dir)).at(-1)).toBe("runtime_model_setup_committed")
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds.filter((kind) => kind === "runtime_model_setup_committed")).toHaveLength(1)
+    expect(eventKinds.indexOf("runtime_model_setup_committed")).toBeLessThan(eventKinds.lastIndexOf("runtime_shutdown"))
+    expect(eventKinds.at(-1)).toBe("runtime_shutdown")
   })
 
   test("real headless runtime client submits a message and refreshes mission records", async () => {

@@ -69,6 +69,10 @@ store connector credentials.
 11. Executor selection still reaches only the primary tactical OpenCode run as
     one exact `--model provider/model` argument. Auxiliary models and OpenCode
     global/user configuration are unchanged.
+12. The unset TUI runtime-client mode is `auto`: legacy fake behavior is
+    limited to pre-spec onboarding, while an approved project constructs the
+    real RuntimeServer client. Explicit fake mode remains non-production
+    fixture authority and cannot prove a durable setup commit.
 
 ## Consequences
 

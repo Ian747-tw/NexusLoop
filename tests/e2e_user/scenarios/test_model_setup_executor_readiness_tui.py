@@ -58,8 +58,6 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
     current_spec = json.loads(current_spec_path.read_text(encoding="utf-8"))
     assert current_spec["status"] == "approved"
 
-    sandbox.env["NXL_RUNTIME_CLIENT"] = "real"
-    sandbox.runner.env["NXL_RUNTIME_CLIENT"] = "real"
     setup = run_tui([
         {"type": "submit"},
         {"type": "insert", "text": "/model-setup"},
@@ -114,7 +112,6 @@ for await (const _chunk of Bun.stdin.stream()) {}
 
     configured = {
         "NXL_TUI_HEADLESS": "1",
-        "NXL_RUNTIME_CLIENT": "real",
         "NXL_OPENCODE_ADAPTER": "process",
         "NXL_OPENCODE_COMMAND": bun,
         "NXL_OPENCODE_ARGS_JSON": json.dumps([str(opencode), "--stdio"]),

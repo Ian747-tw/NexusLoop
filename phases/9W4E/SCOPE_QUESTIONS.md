@@ -60,8 +60,13 @@ blocks startup. They are never merged or prioritized.
 
 ## Does the default fake/real client policy change?
 
-No. `NXL_RUNTIME_CLIENT` retains its current behavior. Production proof uses
-the existing real-client setting and RuntimeServer path.
+Yes, narrowly. An unset `NXL_RUNTIME_CLIENT` is now code-owned `auto`: the
+legacy fake client remains available only before an approved spec so existing
+spec onboarding can complete, while an approved project always constructs the
+real RuntimeServer client. Explicit `fake` remains a fixture/operator override;
+it is not production setup evidence. This prevents the normal model-setup flow
+from reporting an in-memory fake commit. RuntimeServer still revalidates the
+spec and owns every durable setup preview and confirmation.
 
 ## Is a controlled restart automatic?
 
