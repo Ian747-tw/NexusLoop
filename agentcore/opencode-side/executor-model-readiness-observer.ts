@@ -1,4 +1,11 @@
+import { existsSync } from "node:fs"
+import { lstat, readFile, stat } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+
 const MAX_INPUT_BYTES = 2_048
+const MAX_CONFIG_FILE_BYTES = 65_536
+const MAX_CONFIG_TOTAL_BYTES = 262_144
 const OPENAI_OAUTH_ALLOWED_MODELS = new Set([
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
@@ -18,6 +25,19 @@ type Request = {
   credential_binding_id: string
 }
 
+type LocalConfig = {
+  plugin?: unknown[]
+  enabled_providers?: string[]
+  disabled_providers?: string[]
+  provider?: Record<string, {
+    env?: string[]
+    whitelist?: string[]
+    blacklist?: string[]
+    options?: { apiKey?: string }
+    models?: Record<string, { id?: string; status?: "alpha" | "beta" | "deprecated" }>
+  }>
+}
+
 async function main(): Promise<void> {
   const input = await readRequest()
   let providerAvailability: "available" | "unavailable" | "unknown" = "unknown"
@@ -25,14 +45,26 @@ async function main(): Promise<void> {
   try {
     if (process.env.OPENCODE_DISABLE_MODELS_FETCH !== "1") throw new Error("models refresh is not disabled")
     const { AppRuntime } = await import("../upstream/packages/opencode/src/effect/app-runtime.ts")
-    const [{ Instance }, { ModelsDev }, { Config }, { Auth }, { Flag }, { Account }, { Option }] = await Promise.all([
+    const [
+      { Instance },
+      { ModelsDev },
+      { Config, ConfigManaged, ConfigParse, ConfigPaths },
+      { Auth },
+      { Flag },
+      { Account },
+      { Global },
+      { Option },
+      { mergeDeep },
+    ] = await Promise.all([
       import("../upstream/packages/opencode/src/project/instance.ts"),
       import("../upstream/packages/opencode/src/provider/index.ts"),
       import("../upstream/packages/opencode/src/config/index.ts"),
       import("../upstream/packages/opencode/src/auth/index.ts"),
       import("../upstream/packages/opencode/src/flag/flag.ts"),
       import("../upstream/packages/opencode/src/account/account.ts"),
+      import("../upstream/packages/opencode/src/global/index.ts"),
       import("effect"),
+      import("remeda"),
     ])
     await Instance.provide({
       directory: process.cwd(),
@@ -41,10 +73,39 @@ async function main(): Promise<void> {
         if (Object.values(authEntries).some((entry) => entry.type === "wellknown")) return
         const activeAccount = await AppRuntime.runPromise(Account.Service.use((service) => service.active()))
         if (Option.isSome(activeAccount) && activeAccount.value.active_org_id) return
-        const [catalog, config] = await Promise.all([
+        const [catalog, projectFiles, directories] = await Promise.all([
           ModelsDev.get(),
-          AppRuntime.runPromise(Config.Service.use((service) => service.get())),
+          AppRuntime.runPromise(ConfigPaths.files("opencode", process.cwd(), Instance.worktree)),
+          AppRuntime.runPromise(ConfigPaths.directories(process.cwd(), Instance.worktree)),
         ])
+        const configFiles = [
+          path.join(Global.Path.config, "config.json"),
+          path.join(Global.Path.config, "opencode.json"),
+          path.join(Global.Path.config, "opencode.jsonc"),
+          ...(Flag.OPENCODE_CONFIG ? [Flag.OPENCODE_CONFIG] : []),
+          ...projectFiles,
+          ...directories.flatMap((dir) => dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR
+            ? [path.join(dir, "opencode.json"), path.join(dir, "opencode.jsonc")]
+            : []),
+          path.join(ConfigManaged.managedConfigDir(), "opencode.json"),
+          path.join(ConfigManaged.managedConfigDir(), "opencode.jsonc"),
+        ]
+        if (existsSync(path.join(Global.Path.config, "config"))) return
+        if (hasAutoDiscoveredPluginDirectory(directories)) return
+        if (hasManagedPreference()) return
+        const snapshots = await readStableConfigFiles(configFiles)
+        if (snapshots === undefined) return
+        let config: LocalConfig = {}
+        for (const snapshot of snapshots) {
+          const next = parseLocalConfig(snapshot.text, snapshot.source, Config, ConfigParse)
+          if (next === undefined) return
+          config = mergeDeep(config, next) as LocalConfig
+        }
+        if (process.env.OPENCODE_CONFIG_CONTENT) {
+          const next = parseLocalConfig(process.env.OPENCODE_CONFIG_CONTENT, "OPENCODE_CONFIG_CONTENT", Config, ConfigParse)
+          if (next === undefined) return
+          config = mergeDeep(config, next) as LocalConfig
+        }
         const auth = authEntries[input.provider_id]
         const externalPluginsEnabled = !Flag.OPENCODE_PURE
           && ((config.plugin?.length ?? 0) > 0 || (config.plugin_origins?.length ?? 0) > 0)
@@ -108,6 +169,69 @@ async function main(): Promise<void> {
     provider_availability_status: providerAvailability,
     credential_connection_status: credentialConnection,
   })
+}
+
+function parseLocalConfig(
+  text: string,
+  source: string,
+  configModule: { Info: { zod: { safeParse(value: unknown): { success: boolean; data?: unknown } } } },
+  parser: { jsonc(text: string, source: string): unknown },
+): LocalConfig | undefined {
+  if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
+  if (/\{(?:env|file):/u.test(text)) return
+  try {
+    const parsed = parser.jsonc(text, source)
+    const result = configModule.Info.zod.safeParse(parsed)
+    if (!result.success) return
+    return result.data as LocalConfig
+  } catch {
+    return
+  }
+}
+
+async function readStableConfigFiles(files: readonly string[]): Promise<Array<{ source: string; text: string }> | undefined> {
+  const unique = [...new Set(files)]
+  const snapshots: Array<{ source: string; text: string; size: number; mtimeMs: number; ino: number }> = []
+  let totalBytes = 0
+  for (const source of unique) {
+    let before
+    try {
+      before = await lstat(source)
+    } catch (error) {
+      if (isMissing(error)) continue
+      return
+    }
+    if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_CONFIG_FILE_BYTES) return
+    totalBytes += before.size
+    if (totalBytes > MAX_CONFIG_TOTAL_BYTES) return
+    const text = await readFile(source, "utf8").catch(() => undefined)
+    if (text === undefined || Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
+    const after = await stat(source).catch(() => undefined)
+    if (!after || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) return
+    snapshots.push({ source, text, size: after.size, mtimeMs: after.mtimeMs, ino: after.ino })
+  }
+  for (const snapshot of snapshots) {
+    const current = await stat(snapshot.source).catch(() => undefined)
+    if (!current || current.size !== snapshot.size || current.mtimeMs !== snapshot.mtimeMs || current.ino !== snapshot.ino) return
+  }
+  return snapshots.map(({ source, text }) => ({ source, text }))
+}
+
+function hasAutoDiscoveredPluginDirectory(directories: readonly string[]): boolean {
+  return directories.some((dir) => existsSync(path.join(dir, "plugin")) || existsSync(path.join(dir, "plugins")))
+}
+
+function hasManagedPreference(): boolean {
+  if (process.platform !== "darwin") return false
+  const user = os.userInfo().username
+  return [
+    path.join("/Library/Managed Preferences", user, "ai.opencode.managed.plist"),
+    path.join("/Library/Managed Preferences", "ai.opencode.managed.plist"),
+  ].some((file) => existsSync(file))
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT"
 }
 
 function openAiOauthAllowsModel(modelId: string, apiModelId: string): boolean {

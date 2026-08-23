@@ -22,6 +22,7 @@
 | Environment or project Bun preload replaces the production observer | Launch rejects the former observer command/argument keys and invokes the checked-in child through `process.execPath` with a checked-in empty Bun configuration. |
 | OpenCode well-known auth triggers remote configuration loading | The isolated observer checks the local auth snapshot before config loading and returns `unknown`/`unknown` when any `wellknown` entry exists; no remote fetch begins. |
 | Active OpenCode organization triggers remote account config/token loading | The observer checks the local active-account marker before config loading and returns `unknown`/`unknown` when an organization is active; no account-server request begins. |
+| OpenCode config loading installs packages or races preflight snapshots | The observer never calls `Config.Service`; it uses bounded stable local file/content reads with the pinned schema and rejects plugin, variable, symlink, managed-dynamic, oversized, or changing authority. |
 
 GitHub/provider content and OpenCode observations remain evidence, not setup
 authority. No provider request is performed during setup.

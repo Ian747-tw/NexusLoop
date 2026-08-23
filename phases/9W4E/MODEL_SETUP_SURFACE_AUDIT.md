@@ -56,13 +56,17 @@ the process boundary. The child performs the equivalent exact selected-identity
 lookup and discards every unrelated provider/model and every raw auth/config
 field before writing one bounded JSON observation. Runtime never imports
 OpenCode provider, auth, config, plugin, or catalog modules. The isolated child
-reads the exact pinned `ModelsDev`, `Config`, and `Auth` services. It checks the
-selected case-sensitive provider/model against the bounded catalog/config
-snapshot and checks credential-source presence independently from the selected
-provider's OpenCode auth record, declared environment sources, or explicit
-provider API-key option. It supports this credential observation only for the
-built-in `anthropic`, `google`, and `openai` provider IDs; all other providers
-remain `unknown`.
+reads the exact pinned `ModelsDev` and `Auth` services, then builds a bounded,
+stable local config projection with the pinned schema and precedence. It does
+not call `Config.Service`: that service can fetch remote account/well-known
+configuration and install packages in config directories. The projection
+rejects variables, plugins, symlinks, oversized or changing files, managed
+dynamic sources, and malformed config. It checks the selected case-sensitive
+provider/model against the bounded catalog/config snapshot and checks
+credential-source presence independently from the selected provider's OpenCode
+auth record, declared environment sources, or explicit provider API-key option.
+It supports this credential observation only for the built-in `anthropic`,
+`google`, and `openai` provider IDs; all other providers remain `unknown`.
 
 The child disables models.dev refresh for the observation. The bundled/cache
 snapshot remains the availability source; timeout, missing snapshot, malformed
@@ -89,4 +93,5 @@ The same config path requests active-organization configuration and tokens when
 the local OpenCode account state selects an organization. The observer also
 checks that local active-account marker first and returns `unknown`/`unknown`
 when an organization is active, before config loading can contact the account
-server.
+server. Because the observer never invokes that service after its local
+preflights, later mutable-store rereads cannot race those checks.

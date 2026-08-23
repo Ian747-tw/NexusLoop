@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { chmod, mkdtemp, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { buildModelSetupCandidate } from "./model-setup"
@@ -326,6 +327,48 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
     } finally {
       await resolver.shutdown()
       server.stop(true)
+    }
+  })
+
+  test("projects local config without package installation or the OpenCode config service", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-local-config-observer-"))
+    const configDir = join(cwd, ".opencode")
+    const modelsPath = join(cwd, "models.json")
+    await mkdir(configDir)
+    await writeFile(join(configDir, "opencode.json"), JSON.stringify({
+      provider: { google: { blacklist: ["gemini-2.5-flash"] } },
+    }), "utf8")
+    await writeFile(modelsPath, JSON.stringify({
+      google: {
+        id: "google",
+        name: "Google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+        models: { "gemini-2.5-flash": { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" } },
+      },
+    }), "utf8")
+    const resolver = createProductionOpenCodeExecutorReadinessResolver({
+      projectDir: cwd,
+      env: {
+        HOME: cwd,
+        XDG_CONFIG_HOME: join(cwd, "config"),
+        XDG_DATA_HOME: join(cwd, "data"),
+        OPENCODE_MODELS_PATH: modelsPath,
+        OPENCODE_AUTH_CONTENT: JSON.stringify({ google: { type: "api", key: "fixture-secret" } }),
+      },
+    })
+
+    try {
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: "unavailable",
+        credential_connection_status: "connected",
+      })
+      expect(existsSync(join(configDir, "package.json"))).toBe(false)
+      expect(existsSync(join(configDir, "package-lock.json"))).toBe(false)
+      expect(existsSync(join(configDir, "node_modules"))).toBe(false)
+      const observerSource = await Bun.file(join(import.meta.dir, "../../../opencode-side/executor-model-readiness-observer.ts")).text()
+      expect(observerSource).not.toContain("Config.Service")
+    } finally {
+      await resolver.shutdown()
     }
   })
 
