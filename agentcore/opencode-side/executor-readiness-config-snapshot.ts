@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { lstat, readFile, stat } from "node:fs/promises"
 import path from "node:path"
 
@@ -10,6 +11,7 @@ type PresentConfigSnapshot = Readonly<{
   size: number
   mtimeMs: number
   ino: number
+  contentHash: string
 }>
 
 export type ConfigAuthoritySnapshot = Readonly<{
@@ -36,7 +38,14 @@ export async function captureConfigAuthority(files: readonly string[]): Promise<
     if (text === undefined || Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return
     const after = await stat(source).catch(() => undefined)
     if (!after || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) return
-    present.push(Object.freeze({ source, text, size: after.size, mtimeMs: after.mtimeMs, ino: after.ino }))
+    present.push(Object.freeze({
+      source,
+      text,
+      size: after.size,
+      mtimeMs: after.mtimeMs,
+      ino: after.ino,
+      contentHash: hashConfigText(text),
+    }))
   }
   return Object.freeze({ present: Object.freeze(present), missing: Object.freeze(missing) })
 }
@@ -45,6 +54,11 @@ export async function configAuthorityUnchanged(snapshot: ConfigAuthoritySnapshot
   for (const item of snapshot.present) {
     const current = await stat(item.source).catch(() => undefined)
     if (!current || current.size !== item.size || current.mtimeMs !== item.mtimeMs || current.ino !== item.ino) return false
+    const text = await readFile(item.source, "utf8").catch(() => undefined)
+    if (text === undefined || Buffer.byteLength(text, "utf8") > MAX_CONFIG_FILE_BYTES) return false
+    const after = await stat(item.source).catch(() => undefined)
+    if (!after || after.size !== current.size || after.mtimeMs !== current.mtimeMs || after.ino !== current.ino) return false
+    if (hashConfigText(text) !== item.contentHash) return false
   }
   for (const source of snapshot.missing) {
     try {
@@ -55,6 +69,10 @@ export async function configAuthorityUnchanged(snapshot: ConfigAuthoritySnapshot
     }
   }
   return true
+}
+
+function hashConfigText(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex")
 }
 
 export function replayConfigAuthority(

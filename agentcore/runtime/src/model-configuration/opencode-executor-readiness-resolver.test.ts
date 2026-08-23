@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { existsSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, stat, symlink, utimes, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { buildModelSetupCandidate } from "./model-setup"
@@ -62,6 +62,23 @@ test("legacy config sentinel created after capture fails authority revalidation"
   expect(snapshot).toBeDefined()
 
   await writeFile(legacyPath, "disabled_providers = [\"google\"]\n", "utf8")
+
+  expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
+})
+
+test("same-size config rewrite with restored mtime fails content revalidation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "nxl-opencode-config-content-race-"))
+  const configPath = join(cwd, "opencode.json")
+  const initial = '{"disabled_providers":[]}'
+  const replacement = '{"enabled_providers": []}'
+  expect(Buffer.byteLength(replacement)).toBe(Buffer.byteLength(initial))
+  await writeFile(configPath, initial, "utf8")
+  const before = await stat(configPath)
+  const snapshot = await captureConfigAuthority([configPath])
+  expect(snapshot).toBeDefined()
+
+  await writeFile(configPath, replacement, "utf8")
+  await utimes(configPath, before.atime, before.mtime)
 
   expect(await configAuthorityUnchanged(snapshot!)).toBeFalse()
 })
