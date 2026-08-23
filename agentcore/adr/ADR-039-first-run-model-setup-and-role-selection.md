@@ -58,6 +58,9 @@ store connector credentials.
    timeout, output bounds, concurrency, identity validation, cancellation, and
    shutdown drain. The observation cannot select, map, normalize, recommend,
    fall back, or authorize Commander.
+   Production always uses `process.execPath` and the checked-in OpenCode-side
+   observer path. Environment-selected observer commands or arguments are
+   rejected; direct process injection is package-internal and test-only.
 10. OpenTUI extends the existing initialization/onboarding surface with
    keyboard selection, preview, separate explicit confirmation, current and
    pending hashes, blocked readiness, cancellation, and restart-required

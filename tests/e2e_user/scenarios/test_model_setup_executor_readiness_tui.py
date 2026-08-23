@@ -69,29 +69,22 @@ def test_first_run_model_setup_activates_exact_executor_through_production_obser
         encoding="utf-8",
     )
 
-    observer_state = sandbox.root / "executor-readiness-state.json"
-    observer_state.write_text(json.dumps({"availability": "available", "credential": "connected", "mismatch": False}), encoding="utf-8")
-    observer = sandbox.root / "executor-readiness-observer.ts"
-    observer.write_text(
-        f"""
-import {{ readFileSync }} from "node:fs";
-let body = "";
-for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
-const input = JSON.parse(body);
-const state = JSON.parse(readFileSync({json.dumps(str(observer_state))}, "utf8"));
-const exact = input.provider_id === "anthropic" && input.model_id === "claude-sonnet-4-5-20250929";
-console.log(JSON.stringify({{
-  protocol_version: 1,
-  selection_projection_hash: state.mismatch ? "0".repeat(64) : input.selection_projection_hash,
-  provider_id: input.provider_id,
-  model_id: input.model_id,
-  credential_binding_id: input.credential_binding_id,
-  provider_availability_status: exact ? state.availability : "unavailable",
-  credential_connection_status: state.credential
-}}));
-""",
-        encoding="utf-8",
-    )
+    models_path = sandbox.root / "opencode-models.json"
+    models = {
+        "anthropic": {
+            "id": "anthropic",
+            "name": "Anthropic",
+            "env": ["ANTHROPIC_API_KEY"],
+            "models": {
+                "claude-sonnet-4-5-20250929": {
+                    "id": "claude-sonnet-4-5-20250929",
+                    "name": "Claude Sonnet 4.5",
+                }
+            },
+        }
+    }
+    models_path.write_text(json.dumps(models), encoding="utf-8")
+    auth_content = json.dumps({"anthropic": {"type": "api", "key": secret}})
     capture = sandbox.root / "opencode-launch-args.json"
     opencode = sandbox.root / "opencode-fixture.ts"
     opencode.write_text(
@@ -113,11 +106,13 @@ for await (const _chunk of Bun.stdin.stream()) {}
         "NXL_OPENCODE_ADAPTER": "process",
         "NXL_OPENCODE_COMMAND": bun,
         "NXL_OPENCODE_ARGS_JSON": json.dumps([str(opencode), "--stdio"]),
-        "NXL_OPENCODE_EXECUTOR_READINESS_COMMAND": bun,
-        "NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON": json.dumps([str(observer)]),
+        "HOME": str(sandbox.root / "opencode-home"),
+        "XDG_CONFIG_HOME": str(sandbox.root / "opencode-config"),
+        "XDG_DATA_HOME": str(sandbox.root / "opencode-data"),
+        "OPENCODE_MODELS_PATH": str(models_path),
+        "OPENCODE_AUTH_CONTENT": auth_content,
         "NXL_REAL_OPENCODE_LAUNCH": "1",
         "NXL_E2E_LAUNCH_CAPTURE": str(capture),
-        "NXL_E2E_OBSERVER_SECRET": secret,
     }
     sandbox.env.update(configured)
     sandbox.runner.env.update(configured)
@@ -146,7 +141,8 @@ for await (const _chunk of Bun.stdin.stream()) {}
     assert pack_match, packed.stdout
     pack_id = pack_match.group(1)
 
-    observer_state.write_text(json.dumps({"availability": "available", "credential": "disconnected", "mismatch": False}), encoding="utf-8")
+    sandbox.env.pop("OPENCODE_AUTH_CONTENT")
+    sandbox.runner.env.pop("OPENCODE_AUTH_CONTENT")
     disconnected = run_tui(command_keys([
         f"/opencode-launch-preview session={session_id} pack={pack_id}",
         "/model-setup",
@@ -158,12 +154,14 @@ for await (const _chunk of Bun.stdin.stream()) {}
     assert "lifecycle unknown" in disconnected.stdout
     assert not capture.exists()
 
-    observer_state.write_text(json.dumps({"availability": "available", "credential": "connected", "mismatch": True}), encoding="utf-8")
-    mismatched = run_tui(command_keys([f"/opencode-launch-preview session={session_id} pack={pack_id}"]))
-    assert "Executor role readiness is not ready for the selected model profile" in mismatched.stdout
+    models_path.write_text("{", encoding="utf-8")
+    malformed = run_tui(command_keys([f"/opencode-launch-preview session={session_id} pack={pack_id}"]))
+    assert "Executor role readiness is not ready for the selected model profile" in malformed.stdout
     assert not capture.exists()
 
-    observer_state.write_text(json.dumps({"availability": "available", "credential": "connected", "mismatch": False}), encoding="utf-8")
+    models_path.write_text(json.dumps(models), encoding="utf-8")
+    sandbox.env["OPENCODE_AUTH_CONTENT"] = auth_content
+    sandbox.runner.env["OPENCODE_AUTH_CONTENT"] = auth_content
     conflicting_args = json.dumps([str(opencode), "--stdio", "--model=wrong/provider"])
     sandbox.env["NXL_OPENCODE_ARGS_JSON"] = conflicting_args
     sandbox.runner.env["NXL_OPENCODE_ARGS_JSON"] = conflicting_args
@@ -197,11 +195,12 @@ for await (const _chunk of Bun.stdin.stream()) {}
     assert not any(name in " ".join(args) for name in ["small_model", "title", "summary", "compaction", "subagent"])
 
     events_text = (project / ".nxl" / "events.jsonl").read_text(encoding="utf-8")
-    durable = setup.stdout + initialized.stdout + planned.stdout + packed.stdout + disconnected.stdout + mismatched.stdout + launched.stdout + events_text
+    durable = setup.stdout + initialized.stdout + planned.stdout + packed.stdout + disconnected.stdout + malformed.stdout + launched.stdout + events_text
     for forbidden in [
         secret,
-        "NXL_E2E_OBSERVER_SECRET",
         "NXL_E2E_LAUNCH_CAPTURE",
+        "OPENCODE_AUTH_CONTENT",
+        "OPENCODE_MODELS_PATH",
         "authorization",
         "api-key",
         "auth.json",

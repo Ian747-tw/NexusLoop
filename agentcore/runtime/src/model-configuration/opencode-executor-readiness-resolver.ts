@@ -149,14 +149,11 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
 export function createProductionOpenCodeExecutorReadinessResolver(options: {
   projectDir: string
   env?: Readonly<Record<string, string | undefined>>
-  command?: string
-  args?: readonly string[]
 }): OpenCodeExecutorModelReadinessResolver {
   const childPath = join(dirname(fileURLToPath(import.meta.url)), "../../../opencode-side/executor-model-readiness-observer.ts")
-  const customCommand = options.command !== undefined
   return new OpenCodeExecutorModelReadinessResolver({
-    command: options.command ?? process.execPath,
-    args: options.args ?? (customCommand ? [] : [childPath]),
+    command: process.execPath,
+    args: [childPath],
     cwd: options.projectDir,
     env: options.env,
   })

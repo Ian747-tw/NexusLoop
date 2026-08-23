@@ -5,6 +5,7 @@
 - Credential storage, OpenCode `auth.json` mutation, or cross-role credential authority.
 - Provider model-execution probes, fallback, failover, retry, streaming, or registry hot reload.
 - OpenCode observations as selection, mapping, Commander conformance, or credential-sharing authority.
+- Environment-, CLI-, or user-selected Executor readiness observer executables or arguments.
 - Implicit role fallback or auxiliary OpenCode model selection.
 - New Commander transports, hosted tools, retained provider state, or response retrieval.
 - External MCP/research, proposal, governance, research mutation, or replay capability.

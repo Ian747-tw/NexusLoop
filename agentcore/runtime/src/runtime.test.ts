@@ -8,6 +8,7 @@ import { Database } from "bun:sqlite"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
 import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv, readWakeSchedulerBootstrapConfigFromEnv } from "./launch-config"
+import type { RuntimeServerLaunchConfig } from "./launch-config"
 import { RuntimeServerClient } from "./tui/runtime-server-client"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
@@ -93,6 +94,32 @@ async function tempProject(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nxl-runtime-"))
   cleanup.push(dir)
   return dir
+}
+
+async function openCodeObservationEnvironment(
+  dir: string,
+  providerId: "anthropic" | "google" | "openai",
+  modelId: string,
+  options: { connected?: boolean } = {},
+): Promise<Record<string, string>> {
+  const modelsPath = join(dir, `opencode-models-${providerId}.json`)
+  await writeFile(modelsPath, JSON.stringify({
+    [providerId]: {
+      id: providerId,
+      name: providerId,
+      env: [`${providerId.toUpperCase()}_API_KEY`],
+      models: { [modelId]: { id: modelId, name: modelId } },
+    },
+  }), "utf8")
+  return {
+    HOME: join(dir, "opencode-home"),
+    XDG_CONFIG_HOME: join(dir, "opencode-config"),
+    XDG_DATA_HOME: join(dir, "opencode-data"),
+    OPENCODE_MODELS_PATH: modelsPath,
+    ...(options.connected === false ? {} : {
+      OPENCODE_AUTH_CONTENT: JSON.stringify({ [providerId]: { type: "api", key: "fixture-secret-never-published" } }),
+    }),
+  }
 }
 
 function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
@@ -275,10 +302,11 @@ describe("9W4E runtime model setup", () => {
     const choices = { commander_recipe_id: "commander-google-gemini-2-5-flash", executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {},
-      executorModelReadinessResolver: { observe: (selection) => ({ observation_version: 1, selection_projection_hash: selection.projection_hash, provider_id: selection.provider_id, model_id: selection.model_id, credential_binding_id: selection.credential_binding_id, provider_availability_status: "available", credential_connection_status: "connected", evidence_id: "readiness-executor-only-v1" }) },
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
     })
     const status = await server.command("runtime.model_setup_status") as Record<string, any>
     expect(status.commander_role_readiness).toMatchObject({ selection_status: "selected", credential_connection_status: "unknown", ready: false })
@@ -295,23 +323,13 @@ describe("9W4E runtime model setup", () => {
     } as const
     const preview = await setup.preview(choices)
     await setup.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "anthropic", "claude-sonnet-4-5-20250929")
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
       adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
-      executorModelReadinessResolver: {
-        observe: () => ({
-          observation_version: 1,
-          selection_projection_hash: preview.executor_selection!.projection_hash,
-          provider_id: preview.executor_selection!.provider_id,
-          model_id: preview.executor_selection!.model_id,
-          credential_binding_id: preview.executor_selection!.credential_binding_id,
-          provider_availability_status: "available",
-          credential_connection_status: "connected",
-          evidence_id: "readiness-shared-roles-v1",
-        }),
-      },
     })
     const commander = await server.command("runtime.preview_context_budget", {
       purpose: "commander_investigation",
@@ -361,36 +379,20 @@ describe("9W4E runtime model setup", () => {
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observer = join(dir, "adapter-env-readiness-observer.ts")
     const launchCwd = join(dir, "opencode-launch-cwd")
     await mkdir(launchCwd, { recursive: true })
-    await writeFile(observer, `
-let body = "";
-for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
-const input = JSON.parse(body);
-console.log(JSON.stringify({
-  protocol_version: 1,
-  selection_projection_hash: input.selection_projection_hash,
-  provider_id: input.provider_id,
-  model_id: input.model_id,
-  credential_binding_id: input.credential_binding_id,
-  provider_availability_status: process.cwd() === ${JSON.stringify(launchCwd)} ? "available" : "unknown",
-  credential_connection_status: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.NXL_DETACHED_EXECUTOR_CREDENTIAL ? "connected" : "disconnected"
-}));
-`, "utf8")
+    const observationEnv = await openCodeObservationEnvironment(launchCwd, "google", "gemini-2.5-flash", { connected: false })
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {
         GOOGLE_GENERATIVE_AI_API_KEY: "parent-credential-must-be-overridden",
         NXL_DETACHED_EXECUTOR_CREDENTIAL: "detached-config-must-not-reach-child",
-        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
-        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
       },
       openCodeAdapterConfig: {
         kind: "process",
         command: "opencode",
         cwd: launchCwd,
-        env: { GOOGLE_GENERATIVE_AI_API_KEY: "" },
+        env: { ...observationEnv, GOOGLE_GENERATIVE_AI_API_KEY: "" },
       },
     })
 
@@ -422,21 +424,36 @@ console.log(JSON.stringify({
     expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
   })
 
-  test("production observer configuration cannot merge with an injected Executor resolver", async () => {
+  test("environment input cannot replace the code-owned production Executor readiness observer", async () => {
     const dir = await tempProject()
     const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const marker = join(dir, "forged-observer-ran")
+    const forged = join(dir, "forged-observer.ts")
+    await writeFile(forged, `await Bun.write(${JSON.stringify(marker)}, "forged");`, "utf8")
+    for (const env of [
+      { NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath },
+      { NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([forged]) },
+      {
+        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
+        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([forged]),
+      },
+    ]) {
+      expect(() => createRuntimeServerFromLaunchConfig({ projectDir: dir, env })).toThrow("not supported")
+    }
     expect(() => createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: { NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath },
       executorModelReadinessResolver: { observe: () => { throw new Error("must not run") } },
-    })).toThrow("production Executor readiness observer")
+    } as unknown as RuntimeServerLaunchConfig)).toThrow("not supported")
     expect(() => createRuntimeServerFromLaunchConfig({
       projectDir: dir,
-      env: { NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: "[]" },
-    })).toThrow("requires NXL_OPENCODE_EXECUTOR_READINESS_COMMAND")
+      env: {},
+      executorModelReadinessResolver: { observe: () => { throw new Error("must not run") } },
+    } as unknown as RuntimeServerLaunchConfig)).toThrow("not supported")
+    expect(existsSync(marker)).toBe(false)
   })
 
   test("shutdown terminates and drains production Executor observation before runtime_shutdown", async () => {
@@ -446,20 +463,16 @@ console.log(JSON.stringify({
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observer = join(dir, "slow-readiness-observer.ts")
-    await writeFile(observer, `setInterval(() => {}, 1000)`, "utf8")
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
-      env: {
-        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
-        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
-      },
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
       adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
     })
     await server.start()
     const pending = server.previewExecutorModelRoleReadiness()
-    await Bun.sleep(20)
     await server.shutdown()
     await expect(pending).resolves.toMatchObject({ ready: false, provider_availability_status: "unknown" })
     const events = await server.eventStore.readAll()
@@ -475,27 +488,11 @@ console.log(JSON.stringify({
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observer = join(dir, "restart-readiness-observer.ts")
-    await writeFile(observer, `
-let body = "";
-for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
-const input = JSON.parse(body);
-console.log(JSON.stringify({
-  protocol_version: 1,
-  selection_projection_hash: input.selection_projection_hash,
-  provider_id: input.provider_id,
-  model_id: input.model_id,
-  credential_binding_id: input.credential_binding_id,
-  provider_availability_status: "available",
-  credential_connection_status: "connected"
-}));
-`, "utf8")
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
-      env: {
-        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
-        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
-      },
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
       adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
     })
@@ -21648,23 +21645,14 @@ describe("OpenCode launch readiness", () => {
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const setupPreview = await setup.preview(choices)
     await setup.confirm({ ...choices, expected_revision: 0, candidate_hash: setupPreview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observer = join(dir, "executor-readiness-observer.ts")
-    await writeFile(observer, `
-let body = "";
-for await (const chunk of Bun.stdin.stream()) body += new TextDecoder().decode(chunk);
-const input = JSON.parse(body);
-console.log(JSON.stringify({ protocol_version: 1, selection_projection_hash: input.selection_projection_hash, provider_id: input.provider_id, model_id: input.model_id, credential_binding_id: input.credential_binding_id, provider_availability_status: "available", credential_connection_status: "connected" }));
-`, "utf8")
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
     const spawnedArgs: string[][] = []
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
-      env: {
-        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
-        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([observer]),
-      },
+      env: {},
       adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
-      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["--format", "json"] },
+      openCodeAdapterConfig: { kind: "process", command: "/bin/echo", args: ["--format", "json"], env: observationEnv },
       opencodeLaunchEnv: { NXL_REAL_OPENCODE_LAUNCH: "1" },
       opencodeLaunchSpawn: (_command, args) => {
         spawnedArgs.push(args)

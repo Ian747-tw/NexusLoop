@@ -13,11 +13,14 @@
    It accepts only the exact immutable projection, inspects the pinned
    OpenCode-owned catalog/config/auth services in the isolated child, emits one
    strict tri-state result, and is lifecycle-owned,
-   timeout/output/concurrency bounded, and non-retrying.
+   timeout/output/concurrency bounded, and non-retrying. Production fixes the
+   executable and argument to this checked-in child; no environment command or
+   argument override exists.
 6. Project persisted setup during launch and construct the immutable ADR-036
    registry plus Commander provider assertions. Reject explicit/legacy/persisted
    source conflicts. Construct the production observer in launch configuration;
-   injected and production observer authority cannot be merged.
+   package-internal resolver injection remains test-only and no production
+   environment input can select it.
 7. Add canonical RuntimeServer/client commands for catalog, status, preview,
    and confirm. All are pre-start safe; confirmation temporarily acquires or
    reuses the run lock and is lifecycle-owned through durable settlement.

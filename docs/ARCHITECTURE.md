@@ -178,6 +178,9 @@ paths, environment names, plugin/package data, and raw errors never cross into
 RuntimeServer. Timeout, partial state, malformed output, cancellation, and
 shutdown are unknown rather than ready. The process is lifecycle-owned and
 drained before `runtime_shutdown`.
+Production fixes the executable and argument to the checked-in observer;
+environment-selected observer commands or arguments are rejected and cannot
+forge readiness.
 
 Persisted setup, an explicit registry, and legacy Commander environment
 authority conflict rather than merge. Connector URLs/headers and both roles'

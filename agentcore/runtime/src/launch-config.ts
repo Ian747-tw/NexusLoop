@@ -8,7 +8,7 @@ import { locateProjectRoot } from "./project/project-root"
 import { readPersistedModelSetupAuthority } from "./model-configuration/model-setup"
 import { createProductionOpenCodeExecutorReadinessResolver } from "./model-configuration/opencode-executor-readiness-resolver"
 
-export interface RuntimeServerLaunchConfig extends RuntimeServerOptions {
+export interface RuntimeServerLaunchConfig extends Omit<RuntimeServerOptions, "executorModelReadinessResolver"> {
   env?: Record<string, string | undefined>
 }
 
@@ -16,6 +16,7 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   env: Record<string, string | undefined>,
   baseOptions: RuntimeServerOptions = {},
 ): RuntimeServerOptions {
+  rejectExecutorObserverEnvironment(env)
   const options: RuntimeServerOptions = { ...baseOptions }
   if (options.modelProfileRuntimeRegistry && hasLegacyCommanderEnvironmentAuthority(env)) {
     throw new Error("explicit model-profile registry cannot be combined with legacy Commander environment authority")
@@ -59,7 +60,11 @@ function hasLegacyCommanderEnvironmentAuthority(env: Record<string, string | und
 }
 
 export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchConfig = {}): RuntimeServer {
+  if (Object.prototype.hasOwnProperty.call(config, "executorModelReadinessResolver")) {
+    throw new Error("custom Executor readiness resolver is not supported by production launch configuration")
+  }
   const { env, ...providedOptions } = config
+  if (env) rejectExecutorObserverEnvironment(env)
   const projectDir = locateProjectRoot(providedOptions.projectDir)
   const persisted = readPersistedModelSetupAuthorityBeforeLock(projectDir)
   if (persisted && providedOptions.modelProfileRuntimeRegistry) {
@@ -83,18 +88,9 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
       }
     : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
   const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
-  const observerConfigEnv = env ?? process.env
   const observerProcessEnv = {
     ...process.env,
     ...(options.openCodeAdapterConfig?.kind === "process" ? options.openCodeAdapterConfig.env : undefined),
-  }
-  const observerConfigured = hasExecutorObserverEnvironment(observerConfigEnv)
-  if (observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined
-    && observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND === undefined) {
-    throw new Error("NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON requires NXL_OPENCODE_EXECUTOR_READINESS_COMMAND")
-  }
-  if (options.executorModelReadinessResolver && observerConfigured) {
-    throw new Error("injected Executor readiness resolver cannot be combined with production Executor readiness observer configuration")
   }
   if (options.modelProfileRuntimeRegistry?.executorSelection() && !options.executorModelReadinessResolver) {
     options.executorModelReadinessResolver = createProductionOpenCodeExecutorReadinessResolver({
@@ -102,8 +98,6 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
         ? options.openCodeAdapterConfig.cwd ?? projectDir
         : projectDir,
       env: observerProcessEnv,
-      command: optionalBoundedEnvironmentText(observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND, "NXL_OPENCODE_EXECUTOR_READINESS_COMMAND", 1_024),
-      args: readExecutorObserverArgs(observerConfigEnv.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON),
     })
   }
   return new RuntimeServer(options)
@@ -118,29 +112,11 @@ function readPersistedModelSetupAuthorityBeforeLock(projectDir: string): ReturnT
   }
 }
 
-function hasExecutorObserverEnvironment(env: Record<string, string | undefined>): boolean {
-  return env.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND !== undefined
-    || env.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined
-}
-
-function readExecutorObserverArgs(value: string | undefined): readonly string[] | undefined {
-  if (value === undefined) return undefined
-  if (value.length < 2 || value.length > 8_192) throw new Error("NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON is invalid")
-  let parsed: unknown
-  try { parsed = JSON.parse(value) } catch { throw new Error("NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON is invalid") }
-  if (!Array.isArray(parsed) || parsed.length > 16) throw new Error("NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON is invalid")
-  const output: string[] = []
-  for (let index = 0; index < parsed.length; index += 1) {
-    if (!Object.hasOwn(parsed, index)) throw new Error("NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON is invalid")
-    output.push(optionalBoundedEnvironmentText(parsed[index], "NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON item", 1_024)!)
+function rejectExecutorObserverEnvironment(env: Record<string, string | undefined>): void {
+  if (env.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND !== undefined
+    || env.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined) {
+    throw new Error("custom Executor readiness observer environment configuration is not supported")
   }
-  return Object.freeze(output)
-}
-
-function optionalBoundedEnvironmentText(value: unknown, label: string, max: number): string | undefined {
-  if (value === undefined) return undefined
-  if (typeof value !== "string" || value.length < 1 || value.length > max || value !== value.trim() || /[\u0000\r\n]/.test(value)) throw new Error(`${label} is invalid`)
-  return value
 }
 
 export function readWakeSchedulerBootstrapConfigFromEnv(env: Record<string, string | undefined>): WakeSchedulerBootstrapConfig | undefined {

@@ -85,12 +85,19 @@ child checks model availability and credential-source presence independently;
 only built-in `anthropic`, `google`, and `openai` credential observations can
 be definitive. Missing or incomplete catalog state remains `unknown`.
 
+The observer executable and arguments are fixed by NexusLoop to the checked-in
+OpenCode-side child. `NXL_OPENCODE_EXECUTOR_READINESS_COMMAND` and
+`NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON` are rejected; environment or CLI
+input cannot replace the production observer. Direct process injection exists
+only inside package-internal unit tests for malformed-output and lifecycle
+adversaries.
+
 The observer is not discovery authority. It cannot return choices, change a
 profile, create a mapping, authorize Commander, or select fallback. Its process
 is registered before the first await, bounded by timeout/output/concurrency,
 cancelled and drained during shutdown, and freshly invoked by the launch gate.
-An injected resolver remains a test seam and conflicts with explicit production
-observer configuration.
+An injected resolver remains a package-internal test seam and is never
+constructed from production environment configuration.
 
 ## How does a shared exact model remain usable by both roles?
 

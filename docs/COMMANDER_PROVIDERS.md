@@ -71,6 +71,9 @@ credential-connection tri-states. It does not expose provider lists or auth
 details, perform model requests, refresh catalogs, or authorize Commander. A
 commit is pending until the next clean RuntimeServer start and never hot-reloads
 active execution.
+The production observer command and argument are code-owned. Runtime rejects
+the former environment override keys; custom observer processes remain only a
+package-internal unit-test seam.
 
 ## Support Taxonomy
 
