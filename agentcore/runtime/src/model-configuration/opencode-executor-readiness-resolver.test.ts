@@ -191,7 +191,7 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
         models: { "gpt-4.1-mini": catalogModel("gpt-4.1-mini", "GPT-4.1 mini") },
       },
     }), "utf8")
-    const observe = async (access: string, refresh: string, expires: number) => {
+    const observe = async (access: string, refresh: string, expires?: number) => {
       const resolver = createProductionOpenCodeExecutorReadinessResolver({
         projectDir: cwd,
         env: {
@@ -199,7 +199,9 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
           XDG_CONFIG_HOME: join(cwd, "config"),
           XDG_DATA_HOME: join(cwd, "data"),
           OPENCODE_MODELS_PATH: modelsPath,
-          OPENCODE_AUTH_CONTENT: JSON.stringify({ openai: { type: "oauth", access, refresh, expires } }),
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            openai: { type: "oauth", access, refresh, ...(expires === undefined ? {} : { expires }) },
+          }),
         },
       })
       try {
@@ -213,6 +215,9 @@ describe("9W4E OpenCode-owned Executor readiness resolver", () => {
       credential_connection_status: "disconnected",
     })
     await expect(observe("future-access-secret", "", 4_102_444_800_000)).resolves.toMatchObject({
+      credential_connection_status: "connected",
+    })
+    await expect(observe("access-without-expiry-secret", "")).resolves.toMatchObject({
       credential_connection_status: "connected",
     })
     await expect(observe("expired-access-secret", "refresh-secret", 1)).resolves.toMatchObject({
