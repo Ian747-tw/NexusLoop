@@ -291,6 +291,20 @@ describe("NexusLoop Executor readiness local state", () => {
     })
     expect(observeExecutorReadiness(request, invalid).provider_availability_status).toBe("unknown")
 
+    await fs.writeFile(
+      path.join(item.configHome, "opencode", "opencode.json"),
+      JSON.stringify({ provider: { openai: { options: { timeout: 0 } } } }),
+    )
+    const invalidProviderOption = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, invalidProviderOption).provider_availability_status).toBe("unknown")
+
     const managedFile = path.join(item.root, "managed-file")
     await fs.writeFile(managedFile, "not a directory")
     const uncertain = await loadExecutorReadinessSource({

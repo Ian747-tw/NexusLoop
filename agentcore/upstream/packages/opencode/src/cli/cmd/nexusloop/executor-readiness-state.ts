@@ -271,8 +271,23 @@ function validProviderConfigRecord(value: unknown): boolean {
     if (Object.keys(info).some((key) => !allowed.has(key))) return false
     if (!optionalString(info.api) || !optionalString(info.name) || !optionalString(info.id) || !optionalString(info.npm)) return false
     if (!optionalStringArray(info.env) || !optionalStringArray(info.whitelist) || !optionalStringArray(info.blacklist)) return false
-    if (info.options !== undefined && !jsonRecord(info.options)) return false
+    if (!validProviderOptions(info.options)) return false
     if (!validConfiguredModels(info.models)) return false
+  }
+  return true
+}
+
+function validProviderOptions(value: unknown): boolean {
+  if (value === undefined) return true
+  const options = jsonRecord(value)
+  if (!options) return false
+  for (const key of ["apiKey", "baseURL", "enterpriseUrl"]) if (!optionalString(options[key])) return false
+  if (!optionalBoolean(options.setCacheKey)) return false
+  for (const key of ["timeout", "chunkTimeout"]) {
+    const item = options[key]
+    if (item === undefined) continue
+    if (key === "timeout" && item === false) continue
+    if (typeof item !== "number" || !Number.isInteger(item) || item <= 0) return false
   }
   return true
 }

@@ -153,6 +153,16 @@ describe("NexusLoop Executor readiness protocol", () => {
       env: {},
       observation_complete: true,
     }).provider_availability_status).toBe("unavailable")
+    expect(observeExecutorReadiness(request, {
+      catalog,
+      config_fragments: [
+        { provider: { openai: { models: { "gpt-5": { status: "deprecated" } } } } },
+        { provider: { openai: { models: { "gpt-5": { name: "later overlay" } } } } },
+      ],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }).provider_availability_status).toBe("unavailable")
   })
 
   test("does not infer connection for provider-specific multi-field credentials", () => {
@@ -182,6 +192,26 @@ describe("NexusLoop Executor readiness protocol", () => {
         credential_connection_status: "unknown",
       })
     }
+  })
+
+  test("recognizes catalog-declared alternative credential keys for generic providers", () => {
+    const google = {
+      google: {
+        id: "google",
+        env: ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"],
+        models: { gemini: { id: "gemini" } },
+      },
+    }
+    expect(observeExecutorReadiness({ ...request, provider_id: "google", model_id: "gemini" }, {
+      catalog: google,
+      config_fragments: [],
+      auth: {},
+      env: { GEMINI_API_KEY: "secret" },
+      observation_complete: true,
+    })).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
   })
 
   test("requires provider and model identity to agree exactly", () => {

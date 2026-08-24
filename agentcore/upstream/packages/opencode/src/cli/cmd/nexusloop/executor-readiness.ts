@@ -6,6 +6,18 @@ export const EXECUTOR_READINESS_REQUEST_VERSION = "nexusloop_opencode_executor_r
 export const EXECUTOR_READINESS_OBSERVATION_VERSION = 1 as const
 export const EXECUTOR_READINESS_POLICY_VERSION = "nexusloop_opencode_executor_readiness_policy_v1" as const
 
+const COMPLEX_CREDENTIAL_PROVIDERS = new Set([
+  "amazon-bedrock",
+  "azure",
+  "azure-cognitive-services",
+  "cloudflare-ai-gateway",
+  "cloudflare-workers-ai",
+  "gitlab",
+  "google-vertex",
+  "google-vertex-anthropic",
+  "sap-ai-core",
+])
+
 const MAX_REQUEST_BYTES = 4096
 const HASH = /^[a-f0-9]{64}$/
 const SAFE_ID = /^[A-Za-z0-9_.:-]+$/
@@ -123,16 +135,14 @@ export function observeExecutorReadiness(
         const model = optionalRecord(modelValue)
         const status = ownValue(model, "status")
         catalogModelStatus = status
-        const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
-        const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
-        catalogModel = modelAllowed(request.provider_id, request.model_id, status, enabledExperimental)
+        catalogModel = true
       }
     }
     const catalogEnv = parseStringArray(ownValue(provider, "env"), false)
     if (!catalogEnv) complete = false
     else {
       credentialKeys = catalogEnv
-      credentialSemanticsKnown = catalogEnv.length <= 1
+      credentialSemanticsKnown = !COMPLEX_CREDENTIAL_PROVIDERS.has(request.provider_id)
     }
   }
 
@@ -160,7 +170,8 @@ export function observeExecutorReadiness(
       const configuredModelValue = ownValue(models, request.model_id)
       if (configuredModelValue !== undefined) {
         configuredModel = true
-        configuredModelStatus = ownValue(optionalRecord(configuredModelValue), "status")
+        const status = ownValue(optionalRecord(configuredModelValue), "status")
+        if (status !== undefined) configuredModelStatus = status
       }
     }
     const selectedEnv = parseStringArray(ownValue(selected, "env"), false)
@@ -168,7 +179,7 @@ export function observeExecutorReadiness(
       if (!selectedEnv) complete = false
       else {
         credentialKeys = selectedEnv
-        credentialSemanticsKnown &&= selectedEnv.length <= 1
+        credentialSemanticsKnown &&= !COMPLEX_CREDENTIAL_PROVIDERS.has(request.provider_id)
       }
     }
     const options = optionalRecord(ownValue(selected, "options"))
@@ -188,7 +199,7 @@ export function observeExecutorReadiness(
   const credential = credentialStatus(authValue, env, credentialKeys, configuredApiKey, credentialSemanticsKnown)
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
-  configuredModel &&= modelAllowed(
+  const modelAvailable = (catalogModel || configuredModel) && modelAllowed(
     request.provider_id,
     request.model_id,
     configuredModelStatus ?? catalogModelStatus,
@@ -200,7 +211,7 @@ export function observeExecutorReadiness(
     !blacklist?.includes(request.model_id)
   const availability = !complete || ambiguous
     ? "unknown"
-    : providerEnabled && (catalogModel || configuredModel)
+    : providerEnabled && modelAvailable
       ? "available"
       : "unavailable"
   const credentialConnection = complete ? credential : "unknown"
