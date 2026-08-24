@@ -93,6 +93,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (options.env.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
+    else if (/\{(?:env|file):[^}]+\}/.test(options.env.OPENCODE_CONFIG_CONTENT)) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
       const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined

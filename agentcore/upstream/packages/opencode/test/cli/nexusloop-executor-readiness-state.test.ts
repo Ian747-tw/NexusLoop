@@ -135,6 +135,25 @@ describe("NexusLoop Executor readiness local state", () => {
     }
   })
 
+  test("inline configuration substitutions cannot produce false-ready evidence", async () => {
+    const item = await fixture()
+    for (const token of ["{env:BLOCKED_PROVIDER}", "{file:provider-name}"]) {
+      const source = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: {
+          BLOCKED_PROVIDER: "openai",
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({ disabled_providers: [token] }),
+        },
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(source.config_fragments).toEqual([])
+      expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unknown")
+    }
+  })
+
   test("rejects malformed plugin tuples before readiness projection", async () => {
     const item = await fixture()
     await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
