@@ -1,0 +1,201 @@
+import { describe, expect, test } from "bun:test"
+import {
+  EXECUTOR_READINESS_REQUEST_VERSION,
+  observeExecutorReadiness,
+  parseExecutorReadinessRequestText,
+  parseExecutorReadinessRequestValue,
+} from "../../src/cli/cmd/nexusloop/executor-readiness"
+
+const request = {
+  request_version: EXECUTOR_READINESS_REQUEST_VERSION,
+  selection_projection_hash: "a".repeat(64),
+  provider_id: "openai",
+  model_id: "gpt-5",
+  credential_binding_id: "executor-primary",
+}
+
+const catalog = {
+  openai: {
+    id: "openai",
+    env: ["OPENAI_API_KEY"],
+    models: {
+      "gpt-5": { id: "gpt-5" },
+    },
+  },
+}
+
+describe("NexusLoop Executor readiness protocol", () => {
+  test("reports one exact catalog model and credential source independently", () => {
+    const connected = observeExecutorReadiness(request, {
+      catalog,
+      config_fragments: [],
+      auth: {},
+      env: { OPENAI_API_KEY: "secret-value" },
+      observation_complete: true,
+    })
+    expect(connected).toMatchObject({
+      observation_version: 1,
+      selection_projection_hash: request.selection_projection_hash,
+      provider_id: "openai",
+      model_id: "gpt-5",
+      credential_binding_id: "executor-primary",
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(connected)).not.toContain("secret-value")
+
+    const disconnected = observeExecutorReadiness(request, {
+      catalog,
+      config_fragments: [],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    })
+    expect(disconnected.credential_connection_status).toBe("disconnected")
+  })
+
+  test("distinguishes unavailable from incomplete or ambiguous observations", () => {
+    expect(
+      observeExecutorReadiness({ ...request, model_id: "missing" }, {
+        catalog,
+        config_fragments: [],
+        auth: {},
+        env: {},
+        observation_complete: true,
+      }).provider_availability_status,
+    ).toBe("unavailable")
+    expect(
+      observeExecutorReadiness({ ...request, provider_id: "missing" }, {
+        catalog,
+        config_fragments: [],
+        auth: {},
+        env: {},
+        observation_complete: true,
+      }).provider_availability_status,
+    ).toBe("unavailable")
+    expect(
+      observeExecutorReadiness(request, {
+        catalog: {},
+        config_fragments: [],
+        auth: {},
+        env: {},
+        observation_complete: false,
+      }).provider_availability_status,
+    ).toBe("unknown")
+    expect(
+      observeExecutorReadiness(request, {
+        catalog,
+        config_fragments: [{ plugin: ["file:///tmp/provider.ts"] }],
+        auth: {},
+        env: {},
+        observation_complete: true,
+      }).provider_availability_status,
+    ).toBe("unknown")
+  })
+
+  test("requires provider and model identity to agree exactly", () => {
+    const result = observeExecutorReadiness({ ...request, provider_id: "anthropic" }, {
+      catalog,
+      config_fragments: [],
+      auth: { openai: { type: "api", key: "secret-value" } },
+      env: {},
+      observation_complete: true,
+    })
+    expect(result.provider_availability_status).toBe("unavailable")
+    expect(result.credential_connection_status).toBe("disconnected")
+  })
+
+  test("uses exact local config authority without exposing it", () => {
+    const result = observeExecutorReadiness(
+      { ...request, provider_id: "custom", model_id: "Exact/Model" },
+      {
+        catalog: {},
+        config_fragments: [
+          {
+            provider: {
+              custom: {
+                env: ["CUSTOM_EXECUTOR_KEY"],
+                models: { "Exact/Model": { name: "Configured" } },
+              },
+            },
+          },
+        ],
+        auth: { custom: { type: "api", key: "ghp_abcdefghijklmnopqrstuvwxyz0123456789" } },
+        env: { CUSTOM_EXECUTOR_KEY: "header-value" },
+        observation_complete: true,
+      },
+    )
+    expect(result.provider_availability_status).toBe("available")
+    expect(result.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(result)).not.toMatch(/CUSTOM_EXECUTOR_KEY|ghp_|header-value|Configured/)
+  })
+
+  test("fails closed for dynamic, partial, and unsupported credential semantics", () => {
+    const oauth = observeExecutorReadiness(request, {
+      catalog,
+      config_fragments: [],
+      auth: { openai: { type: "oauth", access: "secret", refresh: "secret", expires: 1 } },
+      env: {},
+      observation_complete: true,
+    })
+    expect(oauth.provider_availability_status).toBe("available")
+    expect(oauth.credential_connection_status).toBe("unknown")
+
+    const remote = observeExecutorReadiness(request, {
+      catalog,
+      config_fragments: [],
+      auth: { "https://auth.example": { type: "wellknown", key: "TOKEN_ENV", token: "secret" } },
+      env: {},
+      observation_complete: false,
+    })
+    expect(remote.provider_availability_status).toBe("unknown")
+    expect(remote.credential_connection_status).toBe("unknown")
+    expect(JSON.stringify(remote)).not.toMatch(/auth\.example|TOKEN_ENV|secret/)
+  })
+
+  test("strict request parsing rejects malformed oversized duplicate and unknown authority", () => {
+    const text = JSON.stringify(request)
+    expect(parseExecutorReadinessRequestText(text)).toEqual(request)
+    expect(() => parseExecutorReadinessRequestText("{")) .toThrow()
+    expect(() => parseExecutorReadinessRequestText("x".repeat(5000))).toThrow()
+    expect(() =>
+      parseExecutorReadinessRequestText(
+        `{"request_version":"${EXECUTOR_READINESS_REQUEST_VERSION}","selection_projection_hash":"${"a".repeat(64)}","provider_id":"openai","provider_id":"anthropic","model_id":"gpt-5","credential_binding_id":"executor-primary"}`,
+      ),
+    ).toThrow()
+    expect(() => parseExecutorReadinessRequestText(JSON.stringify({ ...request, extra: true }))).toThrow()
+  })
+
+  test("value parsing rejects inherited accessors symbols sparse arrays and proxies without executing them", () => {
+    let calls = 0
+    const inherited = Object.create({ request_version: EXECUTOR_READINESS_REQUEST_VERSION })
+    Object.assign(inherited, request)
+    delete inherited.request_version
+    expect(() => parseExecutorReadinessRequestValue(inherited)).toThrow()
+
+    const accessor = { ...request }
+    Object.defineProperty(accessor, "provider_id", { enumerable: true, get: () => { calls += 1; return "openai" } })
+    expect(() => parseExecutorReadinessRequestValue(accessor)).toThrow()
+
+    const symbol = { ...request, [Symbol("authority")]: "openai" }
+    expect(() => parseExecutorReadinessRequestValue(symbol)).toThrow()
+
+    const proxied = new Proxy({}, { ownKeys: () => { calls += 1; return [] } })
+    expect(() => parseExecutorReadinessRequestValue(proxied)).toThrow()
+    expect(calls).toBe(0)
+  })
+
+  test("output is deterministic and no callback, network, or write authority is accepted", () => {
+    const source = {
+      catalog,
+      config_fragments: [],
+      auth: {},
+      env: { OPENAI_API_KEY: "secret-value" },
+      observation_complete: true,
+    }
+    expect(observeExecutorReadiness(request, source)).toEqual(observeExecutorReadiness(request, source))
+    expect(() => observeExecutorReadiness(request, { ...source, fetch: () => {} } as never)).toThrow()
+    expect(() => observeExecutorReadiness(request, { ...source, write: () => {} } as never)).toThrow()
+    expect(JSON.stringify(observeExecutorReadiness(request, source))).not.toMatch(/url|header|path|plugin|secret|OPENAI_API_KEY/i)
+  })
+})
