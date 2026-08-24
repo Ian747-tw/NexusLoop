@@ -13,6 +13,8 @@ import type { ExecutorReadinessSource } from "./executor-readiness"
 const MAX_CONFIG_BYTES = 1024 * 1024
 const MAX_AUTH_BYTES = 1024 * 1024
 const MAX_FRAGMENTS = 64
+const MAX_GIT_OUTPUT_BYTES = 4096
+const GIT_TIMEOUT_MS = 1000
 
 const validateOpenCodeConfigSchema = new Ajv2020({ strict: false, allErrors: false }).compile({
   $ref: "#/components/schemas/Config",
@@ -31,8 +33,8 @@ type LoadOptions = Readonly<{
 export async function loadExecutorReadinessSource(options: LoadOptions): Promise<ExecutorReadinessSource> {
   const environment = snapshotEnvironment(options.env)
   const home = environment.OPENCODE_TEST_HOME || os.homedir()
-  const configHome = options.configHome ?? options.env.XDG_CONFIG_HOME ?? path.join(home, ".config")
-  const dataHome = options.dataHome ?? options.env.XDG_DATA_HOME ?? path.join(home, ".local", "share")
+  const configHome = options.configHome ?? (options.env.XDG_CONFIG_HOME || path.join(home, ".config"))
+  const dataHome = options.dataHome ?? (options.env.XDG_DATA_HOME || path.join(home, ".local", "share"))
   const fragments: unknown[] = []
   let complete = true
 
@@ -259,13 +261,96 @@ async function discoverProjectBoundary(cwd: string): Promise<{ boundary: string;
   let current = path.resolve(cwd)
   for (;;) {
     try {
-      if (await fsStat(path.join(current, ".git")) !== "missing") return { boundary: current, complete: true }
+      if (await fsStat(path.join(current, ".git")) !== "missing") break
     } catch {
       return { boundary: current, complete: false }
     }
     const parent = path.dirname(current)
     if (parent === current) return { boundary: current, complete: true }
     current = parent
+  }
+
+  const sandbox = current
+  const commonResult = await boundedGit(["rev-parse", "--git-common-dir"], sandbox)
+  if (commonResult.status === "failed") return { boundary: sandbox, complete: true }
+  if (commonResult.status !== "ready") return { boundary: sandbox, complete: false }
+  const common = resolveGitPath(sandbox, commonResult.value)
+  if (!common) return { boundary: sandbox, complete: false }
+  if (common === sandbox) return { boundary: sandbox, complete: true }
+
+  const bareResult = await boundedGit(["config", "--bool", "core.bare"], sandbox)
+  if (bareResult.status === "timeout") return { boundary: sandbox, complete: false }
+  const bare = bareResult.status === "ready" && bareResult.value === "true"
+  return { boundary: bare ? common : path.dirname(common), complete: true }
+}
+
+function resolveGitPath(cwd: string, value: string): string | undefined {
+  const trimmed = value.replace(/[\r\n]+$/, "")
+  if (!trimmed || /[\0\r\n]/.test(trimmed)) return
+  return path.normalize(path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed))
+}
+
+async function boundedGit(
+  args: readonly string[],
+  cwd: string,
+): Promise<{ status: "ready"; value: string } | { status: "failed" | "timeout" }> {
+  let process: ReturnType<typeof Bun.spawn>
+  try {
+    process = Bun.spawn({ cmd: ["git", ...args], cwd, stdin: "ignore", stdout: "pipe", stderr: "ignore" })
+  } catch {
+    return { status: "failed" }
+  }
+  if (!(process.stdout instanceof ReadableStream)) {
+    process.kill()
+    await process.exited.catch(() => undefined)
+    return { status: "failed" }
+  }
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    process.kill()
+  }, GIT_TIMEOUT_MS)
+  try {
+    const value = await boundedStreamText(process.stdout, MAX_GIT_OUTPUT_BYTES)
+    if (value === undefined) process.kill()
+    const code = await process.exited
+    if (timedOut) return { status: "timeout" }
+    if (code !== 0 || value === undefined) return { status: "failed" }
+    return { status: "ready", value }
+  } catch {
+    process.kill()
+    await process.exited.catch(() => undefined)
+    return { status: timedOut ? "timeout" : "failed" }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function boundedStreamText(stream: ReadableStream<Uint8Array>, maximumBytes: number): Promise<string | undefined> {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      size += chunk.value.byteLength
+      if (size > maximumBytes) return
+      chunks.push(chunk.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const output = new Uint8Array(size)
+  let offset = 0
+  for (let index = 0; index < chunks.length; index += 1) {
+    output.set(chunks[index]!, offset)
+    offset += chunks[index]!.byteLength
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(output)
+  } catch {
+    return
   }
 }
 

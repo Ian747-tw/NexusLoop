@@ -371,6 +371,60 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
   })
 
+  test("empty XDG overrides retain standard home config and data authority", async () => {
+    const item = await fixture()
+    const home = path.join(item.root, "home")
+    const config = path.join(home, ".config", "opencode")
+    const data = path.join(home, ".local", "share", "opencode")
+    await fs.mkdir(config, { recursive: true })
+    await fs.mkdir(data, { recursive: true })
+    await fs.writeFile(path.join(config, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
+    await fs.writeFile(path.join(data, "auth.json"), JSON.stringify({ openai: { type: "api", key: "secret" } }))
+
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { OPENCODE_TEST_HOME: home, XDG_CONFIG_HOME: "", XDG_DATA_HOME: "" },
+      catalog,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source)).toMatchObject({
+      provider_availability_status: "unavailable",
+      credential_connection_status: "connected",
+    })
+  })
+
+  test("matches linked-worktree project discovery through the git common directory", async () => {
+    const item = await fixture()
+    const main = path.join(item.root, "main")
+    const linkedParent = path.join(item.root, "linked-parent")
+    const linked = path.join(linkedParent, "worktree")
+    await fs.mkdir(main, { recursive: true })
+    await fs.mkdir(linkedParent, { recursive: true })
+    const git = async (...args: string[]) => {
+      const process = Bun.spawn({ cmd: ["git", ...args], cwd: main, stdout: "pipe", stderr: "pipe" })
+      const code = await process.exited
+      if (code !== 0) throw new Error(await new Response(process.stderr).text())
+    }
+    await git("init")
+    await git("config", "user.email", "readiness@example.invalid")
+    await git("config", "user.name", "Readiness Test")
+    await fs.writeFile(path.join(main, "tracked"), "ready")
+    await git("add", "tracked")
+    await git("commit", "-m", "fixture")
+    await git("worktree", "add", "-b", "linked-test", linked)
+    await fs.writeFile(path.join(linkedParent, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
+
+    const source = await loadExecutorReadinessSource({
+      cwd: linked,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
+  })
+
   test("normalizes accepted legacy TUI keys and fails closed for legacy global TOML", async () => {
     const item = await fixture()
     const globalDirectory = path.join(item.configHome, "opencode")

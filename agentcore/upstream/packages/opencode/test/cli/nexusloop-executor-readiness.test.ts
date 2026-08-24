@@ -54,6 +54,37 @@ describe("NexusLoop Executor readiness protocol", () => {
     expect(disconnected.credential_connection_status).toBe("disconnected")
   })
 
+  test("treats only exact free built-in OpenCode models as publicly connected", () => {
+    const opencodeRequest = { ...request, provider_id: "opencode", model_id: "gpt-5-nano" }
+    const source = {
+      catalog: {
+        opencode: {
+          id: "opencode",
+          env: ["OPENCODE_API_KEY"],
+          models: { "gpt-5-nano": { id: "gpt-5-nano", cost: { input: 0, output: 0 } } },
+        },
+      },
+      config_fragments: [],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }
+    expect(observeExecutorReadiness(opencodeRequest, source)).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(observeExecutorReadiness(opencodeRequest, {
+      ...source,
+      catalog: {
+        opencode: {
+          id: "opencode",
+          env: ["OPENCODE_API_KEY"],
+          models: { "gpt-5-nano": { id: "gpt-5-nano", cost: { input: 1, output: 0 } } },
+        },
+      },
+    }).credential_connection_status).toBe("disconnected")
+  })
+
   test("distinguishes unavailable from incomplete or ambiguous observations", () => {
     expect(
       observeExecutorReadiness({ ...request, model_id: "missing" }, {

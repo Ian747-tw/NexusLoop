@@ -132,6 +132,7 @@ export function observeExecutorReadiness(
   let catalogModelStatus: unknown
   let catalogModelApiID: string | undefined
   let catalogModelPackage: string | undefined
+  let publicCredentialConnection = false
   let catalogProviderPackage: string | undefined
   let catalogModels: Record<string, unknown> = Object.create(null)
   let catalogModel = false
@@ -166,6 +167,12 @@ export function observeExecutorReadiness(
         else complete = false
         catalogModelStatus = status
         catalogModel = true
+        if (request.provider_id === "opencode") {
+          const cost = optionalRecord(ownValue(model, "cost"))
+          const inputCost = ownValue(cost, "input")
+          if (inputCost === 0) publicCredentialConnection = true
+          else if (typeof inputCost !== "number" || !Number.isFinite(inputCost)) credentialSemanticsKnown = false
+        }
       }
     }
     const catalogEnv = parseStringArray(ownValue(provider, "env"), false)
@@ -255,6 +262,7 @@ export function observeExecutorReadiness(
     credentialKeys,
     configuredApiKey,
     credentialSemanticsKnown,
+    publicCredentialConnection,
   )
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
@@ -389,8 +397,10 @@ function credentialStatus(
   credentialKeys: readonly string[],
   configuredApiKey: boolean,
   credentialSemanticsKnown: boolean,
+  publicCredentialConnection: boolean,
 ): "connected" | "disconnected" | "unknown" {
   if (!credentialSemanticsKnown) return "unknown"
+  if (publicCredentialConnection) return "connected"
   if (configuredApiKey) return "connected"
   for (let index = 0; index < credentialKeys.length; index += 1) {
     const value = ownValue(env, credentialKeys[index]!)
