@@ -90,6 +90,10 @@ describe("NexusLoop Executor readiness protocol", () => {
       provider_availability_status: "available",
       credential_connection_status: "disconnected",
     })
+    expect(observeExecutorReadiness(opencodeRequest, {
+      ...source,
+      config_fragments: [{ provider: { opencode: { models: { "gpt-5-nano": { cost: { output: 1 } } } } } }],
+    }).credential_connection_status).toBe("connected")
     for (const [model_id, model] of [
       ["configured-only", {}],
       ["configured-alias", { id: "non-catalog-target" }],

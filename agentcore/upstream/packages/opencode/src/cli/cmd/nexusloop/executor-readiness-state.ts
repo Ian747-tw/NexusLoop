@@ -74,12 +74,16 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (text.status === "failed" || /\{(?:env|file):[^}]+\}/.test(text.value)) {
+    if (text.status === "failed") {
       complete = false
       continue
     }
     const parsed = strictJson(text.value, true)
     if (!parsed.ok) {
+      complete = false
+      continue
+    }
+    if (containsConfigSubstitution(parsed.value)) {
       complete = false
       continue
     }
@@ -93,10 +97,11 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (options.env.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
-    else if (/\{(?:env|file):[^}]+\}/.test(options.env.OPENCODE_CONFIG_CONTENT)) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
-      const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
+      const validated = parsed.ok && !containsConfigSubstitution(parsed.value)
+        ? validatedOpenCodeConfig(parsed.value)
+        : undefined
       if (validated) fragments.push(validated)
       else complete = false
     }
@@ -112,12 +117,14 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (text.status === "failed" || /\{(?:env|file):[^}]+\}/.test(text.value)) {
+    if (text.status === "failed") {
       complete = false
       continue
     }
     const parsed = strictJson(text.value, true)
-    const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
+    const validated = parsed.ok && !containsConfigSubstitution(parsed.value)
+      ? validatedOpenCodeConfig(parsed.value)
+      : undefined
     if (!validated) {
       complete = false
       continue
@@ -396,6 +403,26 @@ function validatedOpenCodeConfig(value: unknown): Record<string, unknown> | unde
     if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || !jsonRecord(item[1])) return
   }
   return normalized
+}
+
+function containsConfigSubstitution(value: unknown): boolean {
+  const pending: unknown[] = [value]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (typeof current === "string") {
+      if (/\{(?:env|file):[^}]+\}/.test(current)) return true
+      continue
+    }
+    if (typeof current !== "object" || current === null) continue
+    if (Array.isArray(current)) {
+      for (let index = 0; index < current.length; index += 1) pending.push(current[index])
+      continue
+    }
+    for (const key of Object.keys(current)) {
+      pending.push(key, (current as Record<string, unknown>)[key])
+    }
+  }
+  return false
 }
 
 function validateAuthRecord(value: unknown): { value: Record<string, unknown>; complete: boolean } {

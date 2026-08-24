@@ -176,6 +176,20 @@ describe("NexusLoop Executor readiness local state", () => {
       expect(source.config_fragments).toEqual([])
       expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unknown")
     }
+
+    await fs.writeFile(
+      path.join(managed, "opencode.jsonc"),
+      '// documentation: {file:credentials.txt}\n{"disabled_providers": []}',
+    )
+    const commented = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: managed,
+    })
+    expect(observeExecutorReadiness(request, commented).provider_availability_status).toBe("available")
   })
 
   test("rejects malformed plugin tuples before readiness projection", async () => {

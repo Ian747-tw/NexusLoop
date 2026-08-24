@@ -234,7 +234,9 @@ export function observeExecutorReadiness(
         const cost = optionalRecord(ownValue(configured, "cost"))
         const inputCost = ownValue(cost, "input")
         if (ownValue(configured, "cost") !== undefined) {
-          if (typeof inputCost === "number" && Number.isFinite(inputCost)) authority.inputCost = inputCost
+          if (inputCost === undefined) {
+            // OpenCode preserves inherited/default input cost for partial overrides.
+          } else if (typeof inputCost === "number" && Number.isFinite(inputCost)) authority.inputCost = inputCost
           else complete = false
         }
         configuredModels[modelID] = authority
