@@ -27,13 +27,15 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   let complete = true
 
   const projectConfigDisabled = truthy(environment.OPENCODE_DISABLE_PROJECT_CONFIG)
+  const project = await discoverProjectBoundary(options.cwd)
+  if (!project.complete) complete = false
   const configFiles = unique([
     path.join(configHome, "opencode", "config.json"),
     path.join(configHome, "opencode", "opencode.json"),
     path.join(configHome, "opencode", "opencode.jsonc"),
     ...(options.env.OPENCODE_CONFIG ? [options.env.OPENCODE_CONFIG] : []),
-    ...(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd) : []),
-    ...(!projectConfigDisabled ? upwardProjectDirectoryConfigFiles(options.cwd) : []),
+    ...(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd, project.boundary) : []),
+    ...(!projectConfigDisabled ? upwardProjectDirectoryConfigFiles(options.cwd, project.boundary) : []),
     path.join(home, ".opencode", "opencode.json"),
     path.join(home, ".opencode", "opencode.jsonc"),
     ...(options.env.OPENCODE_CONFIG_DIR
@@ -95,7 +97,14 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (managedPreferencesMayExist()) complete = false
 
   if (options.env.OPENCODE_MODELS_PATH || options.env.OPENCODE_MODELS_URL) complete = false
-  if (await hasPluginFiles(options.cwd, home, configHome, projectConfigDisabled, options.env.OPENCODE_CONFIG_DIR)) {
+  if (await hasPluginFiles(
+    options.cwd,
+    project.boundary,
+    home,
+    configHome,
+    projectConfigDisabled,
+    options.env.OPENCODE_CONFIG_DIR,
+  )) {
     fragments.push({ plugin: ["present"] })
   }
 
@@ -133,26 +142,28 @@ function snapshotEnvironment(value: Readonly<Record<string, string | undefined>>
   return Object.freeze(output)
 }
 
-function upwardDirectories(cwd: string): string[] {
+function upwardDirectories(cwd: string, boundary = path.parse(path.resolve(cwd)).root): string[] {
   const output: string[] = []
   let current = path.resolve(cwd)
+  const stop = path.resolve(boundary)
   for (;;) {
     output.unshift(current)
+    if (current === stop) return output
     const parent = path.dirname(current)
     if (parent === current) return output
     current = parent
   }
 }
 
-function upwardProjectConfigFiles(cwd: string): string[] {
-  return upwardDirectories(cwd).flatMap((directory) => [
+function upwardProjectConfigFiles(cwd: string, boundary: string): string[] {
+  return upwardDirectories(cwd, boundary).flatMap((directory) => [
     path.join(directory, "opencode.jsonc"),
     path.join(directory, "opencode.json"),
   ])
 }
 
-function upwardProjectDirectoryConfigFiles(cwd: string): string[] {
-  return upwardDirectories(cwd).flatMap((directory) => [
+function upwardProjectDirectoryConfigFiles(cwd: string, boundary: string): string[] {
+  return upwardDirectories(cwd, boundary).flatMap((directory) => [
     path.join(directory, ".opencode", "opencode.json"),
     path.join(directory, ".opencode", "opencode.jsonc"),
   ])
@@ -160,6 +171,7 @@ function upwardProjectDirectoryConfigFiles(cwd: string): string[] {
 
 async function hasPluginFiles(
   cwd: string,
+  projectBoundary: string,
   home: string,
   configHome: string,
   projectConfigDisabled: boolean,
@@ -167,7 +179,7 @@ async function hasPluginFiles(
 ): Promise<boolean> {
   const dirs = [path.join(configHome, "opencode", "plugin"), path.join(configHome, "opencode", "plugins")]
   if (!projectConfigDisabled) {
-    for (const current of upwardDirectories(cwd)) {
+    for (const current of upwardDirectories(cwd, projectBoundary)) {
       dirs.push(path.join(current, ".opencode", "plugin"), path.join(current, ".opencode", "plugins"))
     }
   }
@@ -179,6 +191,20 @@ async function hasPluginFiles(
     } catch {}
   }
   return false
+}
+
+async function discoverProjectBoundary(cwd: string): Promise<{ boundary: string; complete: boolean }> {
+  let current = path.resolve(cwd)
+  for (;;) {
+    try {
+      if (await fsStat(path.join(current, ".git")) !== "missing") return { boundary: current, complete: true }
+    } catch {
+      return { boundary: current, complete: false }
+    }
+    const parent = path.dirname(current)
+    if (parent === current) return { boundary: current, complete: true }
+    current = parent
+  }
 }
 
 async function managedConfigFiles(directory: string): Promise<{ ok: boolean; files: string[] }> {
@@ -325,7 +351,7 @@ function activeRemoteAccountStatus(databasePath: string): boolean | undefined {
     using database = new Database(databasePath, { readonly: true, strict: true })
     const row = database
       .query("SELECT active_org_id FROM account_state WHERE id = ? LIMIT 1")
-      .get("singleton") as { active_org_id?: unknown } | null
+      .get(1) as { active_org_id?: unknown } | null
     return typeof row?.active_org_id === "string" && row.active_org_id.length > 0
   } catch {
     return undefined

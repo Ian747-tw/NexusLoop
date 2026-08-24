@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { Database } from "bun:sqlite"
 import { loadExecutorReadinessSource } from "../../src/cli/cmd/nexusloop/executor-readiness-state"
 import { observeExecutorReadiness } from "../../src/cli/cmd/nexusloop/executor-readiness"
 
@@ -228,6 +229,52 @@ describe("NexusLoop Executor readiness local state", () => {
       { enabled_providers: ["openai"] },
       { disabled_providers: [] },
     ])
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
+  })
+
+  test("stops project configuration discovery at the nearest git boundary", async () => {
+    const item = await fixture()
+    const repository = path.join(item.root, "repository")
+    const cwd = path.join(repository, "nested")
+    await fs.mkdir(path.join(repository, ".git"), { recursive: true })
+    await fs.mkdir(cwd, { recursive: true })
+    await fs.writeFile(
+      path.join(item.root, "opencode.json"),
+      JSON.stringify({ provider: { custom: { env: ["CUSTOM_KEY"], models: { exact: {} } } } }),
+    )
+    const source = await loadExecutorReadinessSource({
+      cwd,
+      env: { CUSTOM_KEY: "secret" },
+      catalog: {},
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness({ ...request, provider_id: "custom", model_id: "exact" }, source)).toMatchObject({
+      provider_availability_status: "unavailable",
+      credential_connection_status: "disconnected",
+    })
+  })
+
+  test("active remote organization state uses the real singleton key and is unknown", async () => {
+    const item = await fixture()
+    const directory = path.join(item.dataHome, "opencode")
+    await fs.mkdir(directory, { recursive: true })
+    using database = new Database(path.join(directory, "opencode.db"), { create: true, strict: true })
+    database.run("CREATE TABLE account_state (id INTEGER PRIMARY KEY, active_org_id TEXT)")
+    database.run("INSERT INTO account_state (id, active_org_id) VALUES (1, 'org-current')")
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source)).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
   })
 
   test("invalid OpenCode schema and unreadable managed authority fail closed", async () => {

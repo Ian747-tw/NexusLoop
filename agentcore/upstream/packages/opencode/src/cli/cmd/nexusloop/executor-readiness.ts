@@ -99,7 +99,10 @@ export function observeExecutorReadiness(
 
   let complete = source.observation_complete
   let ambiguous = false
-  let providerEnabled = true
+  let enabledProviders: string[] | undefined
+  let disabledProviders: string[] | undefined
+  let whitelist: string[] | undefined
+  let blacklist: string[] | undefined
   let configuredModel = false
   let configuredModelStatus: unknown
   let catalogModel = false
@@ -138,8 +141,8 @@ export function observeExecutorReadiness(
     const disabled = parseStringArray(ownValue(config, "disabled_providers"), false)
     if (ownValue(config, "enabled_providers") !== undefined && !enabled) complete = false
     if (ownValue(config, "disabled_providers") !== undefined && !disabled) complete = false
-    if (enabled && !enabled.includes(request.provider_id)) providerEnabled = false
-    if (disabled?.includes(request.provider_id)) providerEnabled = false
+    if (enabled) enabledProviders = enabled
+    if (disabled) disabledProviders = disabled
 
     const providers = optionalRecord(ownValue(config, "provider"))
     const selectedValue = ownValue(providers, request.provider_id)
@@ -163,12 +166,12 @@ export function observeExecutorReadiness(
     if (typeof apiKey === "string" && apiKey.length > 0) configuredApiKey = true
     else if (apiKey !== undefined) complete = false
 
-    const whitelist = parseStringArray(ownValue(selected, "whitelist"), false)
-    const blacklist = parseStringArray(ownValue(selected, "blacklist"), false)
-    if (ownValue(selected, "whitelist") !== undefined && !whitelist) complete = false
-    if (ownValue(selected, "blacklist") !== undefined && !blacklist) complete = false
-    if (whitelist && !whitelist.includes(request.model_id)) providerEnabled = false
-    if (blacklist?.includes(request.model_id)) providerEnabled = false
+    const selectedWhitelist = parseStringArray(ownValue(selected, "whitelist"), false)
+    const selectedBlacklist = parseStringArray(ownValue(selected, "blacklist"), false)
+    if (ownValue(selected, "whitelist") !== undefined && !selectedWhitelist) complete = false
+    if (ownValue(selected, "blacklist") !== undefined && !selectedBlacklist) complete = false
+    if (selectedWhitelist) whitelist = selectedWhitelist
+    if (selectedBlacklist) blacklist = selectedBlacklist
   }
 
   const authValue = ownValue(auth, request.provider_id)
@@ -176,6 +179,10 @@ export function observeExecutorReadiness(
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
   configuredModel &&= modelAllowed(request.provider_id, request.model_id, configuredModelStatus, enabledExperimental)
+  const providerEnabled = (enabledProviders === undefined || enabledProviders.includes(request.provider_id)) &&
+    !disabledProviders?.includes(request.provider_id) &&
+    (whitelist === undefined || whitelist.includes(request.model_id)) &&
+    !blacklist?.includes(request.model_id)
   const availability = !complete || ambiguous
     ? "unknown"
     : providerEnabled && (catalogModel || configuredModel)
