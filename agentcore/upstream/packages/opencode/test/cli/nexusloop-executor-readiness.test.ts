@@ -259,7 +259,7 @@ describe("NexusLoop Executor readiness protocol", () => {
       env: {},
       observation_complete: true,
     })
-    expect(oauth.provider_availability_status).toBe("available")
+    expect(oauth.provider_availability_status).toBe("unavailable")
     expect(oauth.credential_connection_status).toBe("connected")
 
     const remote = observeExecutorReadiness(request, {
@@ -304,6 +304,38 @@ describe("NexusLoop Executor readiness protocol", () => {
       env: {},
       observation_complete: true,
     }).credential_connection_status).toBe("unknown")
+  })
+
+  test("applies the built-in OpenAI OAuth model allowlist before reporting availability", () => {
+    const oauthCatalog = {
+      openai: {
+        id: "openai",
+        env: ["OPENAI_API_KEY"],
+        models: {
+          "gpt-4o": { id: "gpt-4o" },
+          "gpt-5.4": { id: "gpt-5.4" },
+          alias: { id: "gpt-5.2-codex" },
+        },
+      },
+    }
+    const source = {
+      catalog: oauthCatalog,
+      config_fragments: [],
+      auth: {
+        openai: { type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 0 },
+      },
+      env: {},
+      observation_complete: true,
+    }
+
+    expect(observeExecutorReadiness({ ...request, model_id: "gpt-4o" }, source)).toMatchObject({
+      provider_availability_status: "unavailable",
+      credential_connection_status: "connected",
+    })
+    expect(observeExecutorReadiness({ ...request, model_id: "gpt-5.4" }, source).provider_availability_status)
+      .toBe("available")
+    expect(observeExecutorReadiness({ ...request, model_id: "alias" }, source).provider_availability_status)
+      .toBe("available")
   })
 
   test("strict request parsing rejects malformed oversized duplicate and unknown authority", () => {

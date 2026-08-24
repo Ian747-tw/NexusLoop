@@ -6,6 +6,7 @@ import { parse, visit, type ParseError } from "jsonc-parser"
 import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
 import { Info as AuthInfo } from "../../../auth/schema"
+import { InstallationChannel } from "../../../installation/version"
 import type { ExecutorReadinessSource } from "./executor-readiness"
 
 const MAX_CONFIG_BYTES = 1024 * 1024
@@ -144,7 +145,9 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     } else complete = false
   }
 
-  const remoteAccount = activeRemoteAccountStatus(path.join(dataHome, "opencode", "opencode.db"))
+  const databasePath = effectiveDatabasePath(dataHome, environment)
+  if (!databasePath) complete = false
+  const remoteAccount = databasePath ? activeRemoteAccountStatus(databasePath) : undefined
   if (remoteAccount !== false) complete = false
 
   return Object.freeze({
@@ -154,6 +157,23 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     env: environment,
     observation_complete: complete,
   })
+}
+
+function effectiveDatabasePath(
+  dataHome: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): string | undefined {
+  const dataDirectory = path.join(dataHome, "opencode")
+  const configured = environment.OPENCODE_DB
+  if (configured) {
+    if (configured === ":memory:") return
+    return path.isAbsolute(configured) ? configured : path.join(dataDirectory, configured)
+  }
+  if (["latest", "beta", "prod"].includes(InstallationChannel) || truthy(environment.OPENCODE_DISABLE_CHANNEL_DB)) {
+    return path.join(dataDirectory, "opencode.db")
+  }
+  const channel = InstallationChannel.replace(/[^a-zA-Z0-9._-]/g, "-")
+  return path.join(dataDirectory, `opencode-${channel}.db`)
 }
 
 function snapshotEnvironment(value: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {

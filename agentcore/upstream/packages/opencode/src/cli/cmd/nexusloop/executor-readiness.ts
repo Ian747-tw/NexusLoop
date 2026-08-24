@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { types as nodeUtilTypes } from "node:util"
 import { parse, visit, type ParseError } from "jsonc-parser"
+import { isCodexOAuthModelAllowed } from "../../../plugin/codex-model-authority"
 
 export const EXECUTOR_READINESS_REQUEST_VERSION = "nexusloop_opencode_executor_readiness_request_v1" as const
 export const EXECUTOR_READINESS_OBSERVATION_VERSION = 1 as const
@@ -119,6 +120,7 @@ export function observeExecutorReadiness(
   let configuredModel = false
   let configuredModelStatus: unknown
   let catalogModelStatus: unknown
+  let effectiveModelApiID: string | undefined
   let catalogModel = false
   let configuredApiKey = false
   let credentialKeys: string[] = []
@@ -135,6 +137,9 @@ export function observeExecutorReadiness(
       if (modelValue !== undefined) {
         const model = optionalRecord(modelValue)
         const status = ownValue(model, "status")
+        const apiID = ownValue(model, "id")
+        if (typeof apiID !== "string" || apiID.length === 0) complete = false
+        else effectiveModelApiID = apiID
         catalogModelStatus = status
         catalogModel = true
       }
@@ -171,7 +176,12 @@ export function observeExecutorReadiness(
       const configuredModelValue = ownValue(models, request.model_id)
       if (configuredModelValue !== undefined) {
         configuredModel = true
-        const status = ownValue(optionalRecord(configuredModelValue), "status")
+        const configured = optionalRecord(configuredModelValue)
+        const status = ownValue(configured, "status")
+        const apiID = ownValue(configured, "id")
+        if (apiID === undefined) effectiveModelApiID ??= request.model_id
+        else if (typeof apiID === "string" && apiID.length > 0) effectiveModelApiID = apiID
+        else complete = false
         if (status !== undefined) configuredModelStatus = status
       }
     }
@@ -207,11 +217,14 @@ export function observeExecutorReadiness(
   )
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
+  const openAiOAuth = request.provider_id === "openai" && ownValue(optionalRecord(authValue), "type") === "oauth"
   const modelAvailable = (catalogModel || configuredModel) && modelAllowed(
     request.provider_id,
     request.model_id,
+    effectiveModelApiID ?? request.model_id,
     configuredModelStatus ?? catalogModelStatus,
     enabledExperimental,
+    openAiOAuth,
   )
   const providerEnabled = (enabledProviders === undefined || enabledProviders.includes(request.provider_id)) &&
     !disabledProviders?.includes(request.provider_id) &&
@@ -244,11 +257,19 @@ export function observeExecutorReadiness(
   })
 }
 
-function modelAllowed(providerID: string, modelID: string, status: unknown, experimental: boolean): boolean {
+function modelAllowed(
+  providerID: string,
+  modelID: string,
+  apiModelID: string,
+  status: unknown,
+  experimental: boolean,
+  openAiOAuth: boolean,
+): boolean {
   if (modelID === "gpt-5-chat-latest") return false
   if (providerID === "openrouter" && modelID === "openai/gpt-5-chat") return false
   if (status === "deprecated") return false
-  return status !== "alpha" || experimental
+  if (status === "alpha" && !experimental) return false
+  return !openAiOAuth || isCodexOAuthModelAllowed(modelID, apiModelID)
 }
 
 function parseSource(value: unknown): ExecutorReadinessSource {

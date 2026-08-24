@@ -21,6 +21,8 @@ Add an OpenCode-internal read-only observation module and CLI command. The modul
 
 The command runs from the packaged binary, suppresses ordinary models.dev refresh and database migration, accepts no provider list request, returns no model list, and never constructs a language model.
 
+OpenAI OAuth uses the same pure Codex model-allowance predicate as `CodexAuthPlugin`; credential presence cannot make a model available when normal plugin initialization would remove it. Remote account state is read from the exact database path selected by OpenCode's `OPENCODE_DB`, release-channel, channel-isolation, and `OPENCODE_DISABLE_CHANNEL_DB` rules. The database is opened read-only and is never migrated.
+
 Before declaring an exact model available, the observation mirrors OpenCode's
 effective local authority: hard-removed, deprecated, and disabled alpha models
 are excluded; project configuration and project plugin directories are omitted

@@ -161,7 +161,7 @@ describe("NexusLoop Executor readiness local state", () => {
     await fs.writeFile(path.join(databaseDirectory, "opencode.db"), "not a database")
     const source = await loadExecutorReadinessSource({
       cwd: item.cwd,
-      env: {},
+      env: { OPENCODE_DISABLE_CHANNEL_DB: "true" },
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
@@ -308,7 +308,34 @@ describe("NexusLoop Executor readiness local state", () => {
     database.run("INSERT INTO account_state (id, active_org_id) VALUES (1, 'org-current')")
     const source = await loadExecutorReadinessSource({
       cwd: item.cwd,
-      env: {},
+      env: { OPENCODE_DISABLE_CHANNEL_DB: "true" },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source)).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
+  })
+
+  test("observes the exact OpenCode database override instead of the default path", async () => {
+    const item = await fixture()
+    const defaultDirectory = path.join(item.dataHome, "opencode")
+    const selectedDatabase = path.join(item.root, "selected-opencode.db")
+    await fs.mkdir(defaultDirectory, { recursive: true })
+
+    using ignored = new Database(path.join(defaultDirectory, "opencode.db"), { create: true, strict: true })
+    ignored.run("CREATE TABLE account_state (id INTEGER PRIMARY KEY, active_org_id TEXT)")
+
+    using selected = new Database(selectedDatabase, { create: true, strict: true })
+    selected.run("CREATE TABLE account_state (id INTEGER PRIMARY KEY, active_org_id TEXT)")
+    selected.run("INSERT INTO account_state (id, active_org_id) VALUES (1, 'org-current')")
+
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { OPENCODE_DB: selectedDatabase },
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
