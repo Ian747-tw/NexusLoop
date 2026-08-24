@@ -169,9 +169,11 @@ export function observeExecutorReadiness(
         catalogModelStatus = status
         catalogModel = true
         if (request.provider_id === "opencode") {
-          const cost = optionalRecord(ownValue(model, "cost"))
+          const costValue = ownValue(model, "cost")
+          const cost = optionalRecord(costValue)
           const inputCost = ownValue(cost, "input")
           if (typeof inputCost === "number" && Number.isFinite(inputCost)) catalogModelInputCost = inputCost
+          else if (costValue === undefined) catalogModelInputCost = 0
           else credentialSemanticsKnown = false
         }
       }

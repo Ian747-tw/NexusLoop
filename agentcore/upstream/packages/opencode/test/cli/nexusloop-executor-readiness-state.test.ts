@@ -304,6 +304,40 @@ describe("NexusLoop Executor readiness local state", () => {
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, emptyOverride).provider_availability_status).toBe("unavailable")
+
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify({
+      opencode: {
+        id: "opencode",
+        name: "OpenCode",
+        env: ["OPENCODE_API_KEY"],
+        models: {
+          "free-model": {
+            id: "free-model",
+            name: "Free model",
+            release_date: "2025-01-01",
+            attachment: false,
+            reasoning: false,
+            temperature: true,
+            tool_call: true,
+            limit: { context: 128000, output: 16384 },
+          },
+        },
+      },
+    }))
+    const noCost = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog: {},
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness({ ...request, provider_id: "opencode", model_id: "free-model" }, noCost))
+      .toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
   })
 
   test("provider availability and credential connection remain independent", async () => {
