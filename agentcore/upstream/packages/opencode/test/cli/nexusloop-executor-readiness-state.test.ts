@@ -687,6 +687,47 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
   })
 
+  test("distinguishes unreadable config authority from missing files", async () => {
+    const item = await fixture()
+    const globalDirectory = path.join(item.configHome, "opencode")
+    const globalFile = path.join(globalDirectory, "opencode.json")
+    const explicitDirectory = path.join(item.root, "explicit")
+    await fs.mkdir(globalDirectory, { recursive: true })
+    await fs.mkdir(explicitDirectory, { recursive: true })
+    await fs.writeFile(globalFile, JSON.stringify({ disabled_providers: [] }))
+    await fs.writeFile(path.join(explicitDirectory, "opencode.json"), JSON.stringify({ disabled_providers: [] }))
+
+    await fs.chmod(globalFile, 0)
+    try {
+      const unreadableFile = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: {},
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(observeExecutorReadiness(request, unreadableFile).provider_availability_status).toBe("unknown")
+    } finally {
+      await fs.chmod(globalFile, 0o600)
+    }
+
+    await fs.chmod(explicitDirectory, 0)
+    try {
+      const unreadableDirectory = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: { OPENCODE_CONFIG_DIR: explicitDirectory },
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(observeExecutorReadiness(request, unreadableDirectory).provider_availability_status).toBe("unknown")
+    } finally {
+      await fs.chmod(explicitDirectory, 0o700)
+    }
+  })
+
   test("active remote organization state uses the real singleton key and is unknown", async () => {
     const item = await fixture()
     const directory = path.join(item.dataHome, "opencode")

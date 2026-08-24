@@ -1,6 +1,7 @@
 import path from "node:path"
 import os from "node:os"
 import { existsSync } from "node:fs"
+import { open as openFile } from "node:fs/promises"
 import { Database } from "bun:sqlite"
 import { parse, visit, type ParseError } from "jsonc-parser"
 import Ajv2020 from "ajv/dist/2020"
@@ -485,15 +486,29 @@ async function boundedFile(
   file: string,
   max: number,
 ): Promise<{ status: "missing" } | { status: "failed"; value: string } | { status: "ready"; value: string }> {
-  const handle = Bun.file(file)
-  if (!(await handle.exists())) return { status: "missing" }
-  if (handle.size > max) return { status: "failed", value: "" }
+  let handle
   try {
-    const value = await handle.text()
-    if (Buffer.byteLength(value, "utf8") > max) return { status: "failed", value: "" }
-    return { status: "ready", value }
+    handle = await openFile(file, "r")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" }
+    return { status: "failed", value: "" }
+  }
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size > max) return { status: "failed", value: "" }
+    const output = Buffer.alloc(max + 1)
+    let offset = 0
+    while (offset < output.length) {
+      const part = await handle.read(output, offset, output.length - offset, null)
+      if (part.bytesRead === 0) break
+      offset += part.bytesRead
+    }
+    if (offset > max) return { status: "failed", value: "" }
+    return { status: "ready", value: output.subarray(0, offset).toString("utf8") }
   } catch {
     return { status: "failed", value: "" }
+  } finally {
+    await handle.close().catch(() => undefined)
   }
 }
 
