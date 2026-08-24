@@ -36,4 +36,3 @@ The native package build uses the repository's pinned catalog fixture and Bun 1.
 ## Non-Goals
 
 This ADR does not implement Runtime resolver integration, first-run setup, TUI model selection, credential mutation, provider discovery, fallback, or model execution.
-

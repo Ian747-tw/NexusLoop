@@ -10,4 +10,3 @@
 - No copied dependencies, `NODE_PATH`, global package, checked-in binary, or generated dependency directory.
 - No unrelated OpenCode upgrade, dependency refresh, Runtime/TUI manifest change, or capability-flag change.
 - No modification, cherry-pick, or repair of PR #132.
-
