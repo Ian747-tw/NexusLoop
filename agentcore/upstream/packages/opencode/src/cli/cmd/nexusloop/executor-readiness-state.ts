@@ -44,6 +44,11 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const projectConfigDisabled = truthy(environment.OPENCODE_DISABLE_PROJECT_CONFIG)
   const project = await discoverProjectBoundary(options.cwd)
   if (!project.complete) complete = false
+  const configDirectories = unique([
+    ...(!projectConfigDisabled ? upwardProjectDirectories(options.cwd, project.boundary) : []),
+    path.join(home, ".opencode"),
+    ...(options.env.OPENCODE_CONFIG_DIR ? [options.env.OPENCODE_CONFIG_DIR] : []),
+  ])
   const configFiles = [
     ...unique([
       path.join(configHome, "opencode", "config.json"),
@@ -52,19 +57,10 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     ]),
     ...unique(options.env.OPENCODE_CONFIG ? [options.env.OPENCODE_CONFIG] : []),
     ...unique(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd, project.boundary) : []),
-    ...unique(!projectConfigDisabled ? upwardProjectDirectoryConfigFiles(options.cwd, project.boundary) : []),
-    ...unique([
-      path.join(home, ".opencode", "opencode.json"),
-      path.join(home, ".opencode", "opencode.jsonc"),
+    ...configDirectories.flatMap((directory) => [
+      path.join(directory, "opencode.json"),
+      path.join(directory, "opencode.jsonc"),
     ]),
-    ...unique(
-      options.env.OPENCODE_CONFIG_DIR
-        ? [
-            path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.json"),
-            path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.jsonc"),
-          ]
-        : [],
-    ),
   ]
 
   for (let index = 0; index < configFiles.length; index += 1) {
@@ -220,11 +216,8 @@ function upwardProjectConfigFiles(cwd: string, boundary: string): string[] {
   ])
 }
 
-function upwardProjectDirectoryConfigFiles(cwd: string, boundary: string): string[] {
-  return upwardDirectories(cwd, boundary).toReversed().flatMap((directory) => [
-    path.join(directory, ".opencode", "opencode.json"),
-    path.join(directory, ".opencode", "opencode.jsonc"),
-  ])
+function upwardProjectDirectories(cwd: string, boundary: string): string[] {
+  return upwardDirectories(cwd, boundary).toReversed().map((directory) => path.join(directory, ".opencode"))
 }
 
 async function hasPluginFiles(
@@ -381,6 +374,9 @@ async function fsStat(file: string): Promise<"missing" | "directory" | "other"> 
 function validatedOpenCodeConfig(value: unknown): Record<string, unknown> | undefined {
   const config = jsonRecord(value)
   if (!config) return
+  if ([config.theme, config.keybinds, config.tui].some((item) => containsConfigSubstitution(item, /\{file:[^}]+\}/))) {
+    return
+  }
   const normalized = { ...config }
   delete normalized.theme
   delete normalized.keybinds
@@ -398,12 +394,12 @@ function validatedOpenCodeConfig(value: unknown): Record<string, unknown> | unde
   return normalized
 }
 
-function containsConfigSubstitution(value: unknown): boolean {
+function containsConfigSubstitution(value: unknown, pattern = /\{(?:env|file):[^}]+\}/): boolean {
   const pending: unknown[] = [value]
   while (pending.length > 0) {
     const current = pending.pop()
     if (typeof current === "string") {
-      if (/\{(?:env|file):[^}]+\}/.test(current)) return true
+      if (pattern.test(current)) return true
       continue
     }
     if (typeof current !== "object" || current === null) continue
