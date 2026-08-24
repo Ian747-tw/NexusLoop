@@ -7,6 +7,7 @@ import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
 import { Info as AuthInfo } from "../../../auth/schema"
 import { InstallationChannel } from "../../../installation/version"
+import { Glob } from "@opencode-ai/shared/util/glob"
 import type { ExecutorReadinessSource } from "./executor-readiness"
 
 const MAX_CONFIG_BYTES = 1024 * 1024
@@ -113,7 +114,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (managedPreferencesMayExist()) complete = false
 
   if (options.env.OPENCODE_MODELS_PATH || options.env.OPENCODE_MODELS_URL) complete = false
-  if (await hasPluginFiles(
+  if (!truthy(environment.OPENCODE_PURE) && await hasPluginFiles(
     options.cwd,
     project.boundary,
     home,
@@ -220,21 +221,23 @@ async function hasPluginFiles(
   projectConfigDisabled: boolean,
   explicitConfigDir?: string,
 ): Promise<boolean> {
-  const dirs = [path.join(configHome, "opencode", "plugin"), path.join(configHome, "opencode", "plugins")]
+  const roots = [path.join(configHome, "opencode")]
   if (!projectConfigDisabled) {
     for (const current of upwardDirectories(cwd, projectBoundary)) {
-      dirs.push(path.join(current, ".opencode", "plugin"), path.join(current, ".opencode", "plugins"))
+      roots.push(path.join(current, ".opencode"))
     }
   }
-  dirs.push(path.join(home, ".opencode", "plugin"), path.join(home, ".opencode", "plugins"))
-  if (explicitConfigDir) dirs.push(path.join(explicitConfigDir, "plugin"), path.join(explicitConfigDir, "plugins"))
-  for (let index = 0; index < dirs.length; index += 1) {
+  roots.push(path.join(home, ".opencode"))
+  if (explicitConfigDir) roots.push(explicitConfigDir)
+  for (let index = 0; index < roots.length; index += 1) {
     try {
-      for await (const _ of new Bun.Glob("*.{ts,js}").scan({
-        cwd: dirs[index]!,
-        onlyFiles: true,
+      const files = await Glob.scan("{plugin,plugins}/*.{ts,js}", {
+        cwd: roots[index]!,
+        absolute: true,
         dot: true,
-      })) return true
+        symlink: true,
+      })
+      if (files.length > 0) return true
     } catch {}
   }
   return false

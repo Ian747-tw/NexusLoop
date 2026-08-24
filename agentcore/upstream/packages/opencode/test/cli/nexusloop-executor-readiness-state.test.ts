@@ -255,6 +255,30 @@ describe("NexusLoop Executor readiness local state", () => {
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, loadablePlugin).provider_availability_status).toBe("unknown")
+
+    await fs.rm(path.join(pluginDirectory, "provider.js"))
+    const target = path.join(item.root, "linked-provider.js")
+    await fs.writeFile(target, "throw new Error('must not load')")
+    await fs.symlink(target, path.join(pluginDirectory, "linked.js"))
+    const linkedPlugin = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, linkedPlugin).provider_availability_status).toBe("unknown")
+
+    const pure = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { OPENCODE_PURE: "true" },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, pure).provider_availability_status).toBe("available")
   })
 
   test("matches project and managed configuration precedence", async () => {

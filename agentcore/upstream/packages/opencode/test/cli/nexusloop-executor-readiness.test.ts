@@ -180,6 +180,23 @@ describe("NexusLoop Executor readiness protocol", () => {
       env: {},
       observation_complete: true,
     }).provider_availability_status).toBe("unavailable")
+
+    expect(observeExecutorReadiness({ ...request, model_id: "alias" }, {
+      catalog: { openai: { id: "openai", env: [], models: {} } },
+      config_fragments: [{
+        provider: {
+          openai: {
+            models: {
+              old: { status: "deprecated" },
+              alias: { id: "old" },
+            },
+          },
+        },
+      }],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }).provider_availability_status).toBe("unavailable")
   })
 
   test("marks selected dynamic provider packages as unknown", () => {
@@ -198,6 +215,16 @@ describe("NexusLoop Executor readiness protocol", () => {
         credential_connection_status: "connected",
       })
     }
+  })
+
+  test("ignores external plugin authority in OpenCode pure mode", () => {
+    expect(observeExecutorReadiness(request, {
+      catalog,
+      config_fragments: [{ plugin: ["dynamic-provider"] }],
+      auth: {},
+      env: { OPENCODE_PURE: "true" },
+      observation_complete: true,
+    }).provider_availability_status).toBe("available")
   })
 
   test("does not infer connection for provider-specific multi-field credentials", () => {
