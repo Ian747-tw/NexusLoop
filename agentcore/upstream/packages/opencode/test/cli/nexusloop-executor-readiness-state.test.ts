@@ -395,6 +395,51 @@ describe("NexusLoop Executor readiness local state", () => {
         provider_availability_status: "available",
         credential_connection_status: "disconnected",
       })
+
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify({
+      openai: {
+        id: "openai",
+        name: "OpenAI",
+        env: ["OPENAI_API_KEY"],
+        npm: "@ai-sdk/openai",
+        models: {
+          "gpt-5.4": {
+            id: "gpt-5.4",
+            name: "GPT-5.4",
+            release_date: "2026-03-05",
+            attachment: true,
+            reasoning: true,
+            temperature: false,
+            tool_call: true,
+            cost: { input: 2.5, output: 15 },
+            limit: { context: 1_050_000, output: 128_000 },
+            experimental: { modes: { fast: { cost: { input: 5, output: 30 } } } },
+          },
+        },
+      },
+    }))
+    await fs.mkdir(path.join(item.dataHome, "opencode"), { recursive: true })
+    await fs.writeFile(path.join(item.dataHome, "opencode", "auth.json"), JSON.stringify({
+      openai: { type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 0 },
+    }))
+    const oauthMode = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog: {},
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    const oauthModeResult = observeExecutorReadiness(
+      { ...request, model_id: "gpt-5.4-fast" },
+      oauthMode,
+    )
+    expect(oauthModeResult).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(oauthModeResult)).not.toMatch(/access-secret|refresh-secret/)
   })
 
   test("provider availability and credential connection remain independent", async () => {

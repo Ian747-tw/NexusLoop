@@ -351,7 +351,7 @@ function expandCatalogModels(models: Record<string, unknown>): Record<string, un
         ? ownValue(baseCost, "input")
         : ownValue(modeCost, "input")
       output[`${apiID}-${mode}`] = Object.assign(Object.create(null), {
-        id: `${apiID}-${mode}`,
+        id: apiID,
         status: ownValue(model, "status"),
         provider: ownValue(model, "provider"),
         ...(baseCostValue === undefined && modeCostValue === undefined ? {} : { cost: { input: inputCost } }),
