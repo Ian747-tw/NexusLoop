@@ -664,6 +664,29 @@ describe("NexusLoop Executor readiness local state", () => {
     })
   })
 
+  test("treats zero-byte ordinary and managed config files as absent", async () => {
+    const item = await fixture()
+    const managed = path.join(item.root, "managed")
+    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
+    await fs.mkdir(managed, { recursive: true })
+    await fs.writeFile(path.join(item.configHome, "opencode", "opencode.json"), "")
+    await fs.writeFile(path.join(item.cwd, "opencode.jsonc"), "")
+    await fs.writeFile(path.join(managed, "opencode.json"), "")
+    await fs.writeFile(path.join(managed, "opencode.jsonc"), "")
+
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: managed,
+    })
+    expect(source.observation_complete).toBe(true)
+    expect(source.config_fragments).toEqual([])
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
+  })
+
   test("active remote organization state uses the real singleton key and is unknown", async () => {
     const item = await fixture()
     const directory = path.join(item.dataHome, "opencode")

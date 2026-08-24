@@ -66,11 +66,12 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   for (let index = 0; index < configFiles.length; index += 1) {
     const text = await boundedFile(configFiles[index]!, MAX_CONFIG_BYTES)
     if (text.status === "missing") continue
-    if (fragments.length >= MAX_FRAGMENTS) {
+    if (text.status === "failed") {
       complete = false
       continue
     }
-    if (text.status === "failed") {
+    if (text.value.length === 0) continue
+    if (fragments.length >= MAX_FRAGMENTS) {
       complete = false
       continue
     }
@@ -103,11 +104,12 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   for (let index = 0; index < managed.files.length; index += 1) {
     const text = await boundedFile(managed.files[index]!, MAX_CONFIG_BYTES)
     if (text.status === "missing") continue
-    if (fragments.length >= MAX_FRAGMENTS) {
+    if (text.status === "failed") {
       complete = false
       continue
     }
-    if (text.status === "failed") {
+    if (text.value.length === 0) continue
+    if (fragments.length >= MAX_FRAGMENTS) {
       complete = false
       continue
     }
