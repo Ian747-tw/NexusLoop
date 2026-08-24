@@ -349,7 +349,7 @@ function resolveConfiguredModelAuthority(
     status: configured.status ?? inherited.status ?? "active",
     packageID: configured.packageID ?? configuredProviderPackage ?? inherited.packageID ??
       catalogProviderPackage ?? "@ai-sdk/openai-compatible",
-    inputCost: configured.inputCost ?? inherited.inputCost,
+    inputCost: configured.inputCost ?? inherited.inputCost ?? 0,
   }
 }
 

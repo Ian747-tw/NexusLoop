@@ -90,6 +90,18 @@ describe("NexusLoop Executor readiness protocol", () => {
       provider_availability_status: "available",
       credential_connection_status: "disconnected",
     })
+    for (const [model_id, model] of [
+      ["configured-only", {}],
+      ["configured-alias", { id: "non-catalog-target" }],
+    ] as const) {
+      expect(observeExecutorReadiness({ ...opencodeRequest, model_id }, {
+        ...source,
+        config_fragments: [{ provider: { opencode: { models: { [model_id]: model } } } }],
+      })).toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+    }
   })
 
   test("distinguishes unavailable from incomplete or ambiguous observations", () => {
