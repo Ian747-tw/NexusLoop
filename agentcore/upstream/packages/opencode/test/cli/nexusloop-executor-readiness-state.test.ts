@@ -154,6 +154,30 @@ describe("NexusLoop Executor readiness local state", () => {
     }
   })
 
+  test("managed configuration substitutions cannot produce false-ready evidence", async () => {
+    const item = await fixture()
+    const managed = path.join(item.root, "managed")
+    await fs.mkdir(managed, { recursive: true })
+    for (const [file, token] of [
+      ["opencode.json", "{env:BLOCKED_PROVIDER}"],
+      ["opencode.jsonc", "{file:provider-name}"],
+    ] as const) {
+      await fs.rm(path.join(managed, "opencode.json"), { force: true })
+      await fs.rm(path.join(managed, "opencode.jsonc"), { force: true })
+      await fs.writeFile(path.join(managed, file), JSON.stringify({ disabled_providers: [token] }))
+      const source = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: { BLOCKED_PROVIDER: "openai" },
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        managedConfigDir: managed,
+      })
+      expect(source.config_fragments).toEqual([])
+      expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unknown")
+    }
+  })
+
   test("rejects malformed plugin tuples before readiness projection", async () => {
     const item = await fixture()
     await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })

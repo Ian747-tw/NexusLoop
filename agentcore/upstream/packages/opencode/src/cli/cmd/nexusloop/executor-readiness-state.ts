@@ -112,7 +112,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (text.status === "failed") {
+    if (text.status === "failed" || /\{(?:env|file):[^}]+\}/.test(text.value)) {
       complete = false
       continue
     }
