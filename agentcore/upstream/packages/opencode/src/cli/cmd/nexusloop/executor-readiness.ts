@@ -146,7 +146,7 @@ export function observeExecutorReadiness(
     const provider = optionalRecord(catalogProviderValue)
     const id = ownValue(provider, "id")
     const models = optionalRecord(ownValue(provider, "models"))
-    catalogModels = models
+    catalogModels = expandCatalogModels(models)
     const providerPackage = ownValue(provider, "npm")
     if (providerPackage !== undefined) {
       if (typeof providerPackage === "string" && providerPackage.length > 0) catalogProviderPackage = providerPackage
@@ -330,6 +330,35 @@ export function observeExecutorReadiness(
     credential_connection_status: credentialConnection,
     evidence_id: `opencode-readiness-v1-${createHash("sha256").update(JSON.stringify(semantic)).digest("hex")}`,
   })
+}
+
+function expandCatalogModels(models: Record<string, unknown>): Record<string, unknown> {
+  const output = Object.create(null) as Record<string, unknown>
+  for (const key of Object.keys(models)) {
+    const model = optionalRecord(ownValue(models, key))
+    output[key] = model
+    const experimental = optionalRecord(ownValue(model, "experimental"))
+    const modes = optionalRecord(ownValue(experimental, "modes"))
+    for (const mode of Object.keys(modes)) {
+      const apiID = ownValue(model, "id")
+      if (typeof apiID !== "string" || apiID.length === 0) fail()
+      const options = optionalRecord(ownValue(modes, mode))
+      const baseCostValue = ownValue(model, "cost")
+      const baseCost = optionalRecord(baseCostValue)
+      const modeCostValue = ownValue(options, "cost")
+      const modeCost = optionalRecord(modeCostValue)
+      const inputCost = modeCostValue === undefined
+        ? ownValue(baseCost, "input")
+        : ownValue(modeCost, "input")
+      output[`${apiID}-${mode}`] = Object.assign(Object.create(null), {
+        id: `${apiID}-${mode}`,
+        status: ownValue(model, "status"),
+        provider: ownValue(model, "provider"),
+        ...(baseCostValue === undefined && modeCostValue === undefined ? {} : { cost: { input: inputCost } }),
+      })
+    }
+  }
+  return output
 }
 
 function resolveConfiguredModelAuthority(

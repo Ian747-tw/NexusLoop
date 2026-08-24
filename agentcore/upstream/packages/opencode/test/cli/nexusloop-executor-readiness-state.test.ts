@@ -338,6 +338,46 @@ describe("NexusLoop Executor readiness local state", () => {
         provider_availability_status: "available",
         credential_connection_status: "connected",
       })
+
+    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
+    await fs.writeFile(path.join(item.configHome, "opencode", "opencode.json"), JSON.stringify({
+      provider: { opencode: { models: { "paid-model-fast": {} } } },
+    }))
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify({
+      opencode: {
+        id: "opencode",
+        name: "OpenCode",
+        env: ["OPENCODE_API_KEY"],
+        models: {
+          "paid-model": {
+            id: "paid-model",
+            name: "Paid model",
+            release_date: "2025-01-01",
+            attachment: false,
+            reasoning: false,
+            temperature: true,
+            tool_call: true,
+            cost: { input: 2, output: 8 },
+            limit: { context: 128000, output: 16384 },
+            experimental: { modes: { fast: { cost: { input: 5, output: 20 } } } },
+          },
+        },
+      },
+    }))
+    const paidMode = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog: {},
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness({ ...request, provider_id: "opencode", model_id: "paid-model-fast" }, paidMode))
+      .toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "disconnected",
+      })
   })
 
   test("provider availability and credential connection remain independent", async () => {
