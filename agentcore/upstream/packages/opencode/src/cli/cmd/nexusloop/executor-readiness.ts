@@ -144,7 +144,7 @@ export function observeExecutorReadiness(
   let catalogModel = false
   let configuredApiKey = false
   let credentialKeys: string[] = []
-  let credentialSemanticsKnown = true
+  let credentialSemanticsKnown = !COMPLEX_CREDENTIAL_PROVIDERS.has(request.provider_id)
 
   const catalogProviderValue = ownValue(catalog, request.provider_id)
   if (catalogProviderValue !== undefined) {
