@@ -28,8 +28,33 @@ async function fixture() {
   const cwd = path.join(root, "project")
   const configHome = path.join(root, "config")
   const dataHome = path.join(root, "data")
+  const cacheHome = path.join(root, "cache")
   await fs.mkdir(cwd, { recursive: true })
-  return { root, cwd, configHome, dataHome }
+  return { root, cwd, configHome, dataHome, cacheHome }
+}
+
+function cachedCatalog(status?: "alpha" | "beta" | "deprecated") {
+  return {
+    openai: {
+      id: "openai",
+      name: "OpenAI",
+      env: ["OPENAI_API_KEY"],
+      npm: "@ai-sdk/openai",
+      models: {
+        "gpt-5": {
+          id: "gpt-5",
+          name: "GPT-5",
+          release_date: "2025-01-01",
+          attachment: false,
+          reasoning: true,
+          temperature: true,
+          tool_call: true,
+          limit: { context: 128000, output: 16384 },
+          ...(status ? { status } : {}),
+        },
+      },
+    },
+  }
 }
 
 async function tree(root: string) {
@@ -74,6 +99,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
       })
       const result = observeExecutorReadiness(request, source)
       expect(result.provider_availability_status).toBe("available")
@@ -104,6 +130,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
     })
     const result = observeExecutorReadiness(request, source)
     expect(result.provider_availability_status).toBe("unknown")
@@ -130,6 +157,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
       })
       expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unknown")
     }
@@ -147,6 +175,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
         managedConfigDir: path.join(item.root, "managed-missing"),
       })
       expect(source.config_fragments).toEqual([])
@@ -171,6 +200,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
         managedConfigDir: managed,
       })
       expect(source.config_fragments).toEqual([])
@@ -187,6 +217,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: managed,
     })
     expect(observeExecutorReadiness(request, commented).provider_availability_status).toBe("available")
@@ -204,6 +235,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
         managedConfigDir: path.join(item.root, "managed-missing"),
       })
       expect(source.config_fragments).toEqual([])
@@ -222,11 +254,44 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
     })
     expect(observeExecutorReadiness(request, source)).toMatchObject({
       provider_availability_status: "unknown",
       credential_connection_status: "unknown",
     })
+  })
+
+  test("uses the bounded effective OpenCode model cache before the bundled snapshot", async () => {
+    const item = await fixture()
+    const cacheDirectory = path.join(item.cacheHome, "opencode")
+    await fs.mkdir(cacheDirectory, { recursive: true })
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify(cachedCatalog("deprecated")))
+    const deprecated = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, deprecated).provider_availability_status).toBe("unavailable")
+
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify({
+      ...cachedCatalog(),
+      openai: { ...cachedCatalog().openai, models: {} },
+    }))
+    const removed = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, removed).provider_availability_status).toBe("unavailable")
   })
 
   test("provider availability and credential connection remain independent", async () => {
@@ -237,6 +302,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
     })
     expect(observeExecutorReadiness(request, available)).toMatchObject({
       provider_availability_status: "available",
@@ -254,6 +320,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog: {},
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
     })
     expect(observeExecutorReadiness(request, connected)).toMatchObject({
       provider_availability_status: "unavailable",
@@ -280,6 +347,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
@@ -298,6 +366,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, documentationOnly).provider_availability_status).toBe("available")
@@ -309,6 +378,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, loadablePlugin).provider_availability_status).toBe("unknown")
@@ -323,6 +393,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, linkedPlugin).provider_availability_status).toBe("unknown")
@@ -333,6 +404,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, pure).provider_availability_status).toBe("available")
@@ -353,6 +425,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: managed,
     })
     expect(source.config_fragments).toEqual([
@@ -374,6 +447,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, projectFiles).provider_availability_status).toBe("unavailable")
@@ -397,6 +471,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, directories).provider_availability_status).toBe("unavailable")
@@ -417,6 +492,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
 
@@ -445,6 +521,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(source.config_fragments).toEqual([
@@ -471,6 +548,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(source.config_fragments).toEqual([
@@ -530,6 +608,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
@@ -564,6 +643,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
@@ -588,6 +668,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, normalized).provider_availability_status).toBe("available")
@@ -602,6 +683,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, unresolvedLegacyFile).provider_availability_status).toBe("unknown")
@@ -613,6 +695,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, legacy).provider_availability_status).toBe("unknown")
@@ -634,6 +717,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog: {},
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness({ ...request, provider_id: "custom", model_id: "exact" }, source)).toMatchObject({
@@ -656,6 +740,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source)).toMatchObject({
@@ -680,6 +765,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: managed,
     })
     expect(source.observation_complete).toBe(true)
@@ -705,6 +791,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
         managedConfigDir: path.join(item.root, "managed-missing"),
       })
       expect(observeExecutorReadiness(request, unreadableFile).provider_availability_status).toBe("unknown")
@@ -720,6 +807,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
         managedConfigDir: path.join(item.root, "managed-missing"),
       })
       expect(observeExecutorReadiness(request, unreadableDirectory).provider_availability_status).toBe("unknown")
@@ -741,6 +829,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source)).toMatchObject({
@@ -768,6 +857,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source)).toMatchObject({
@@ -790,6 +880,7 @@ describe("NexusLoop Executor readiness local state", () => {
         catalog,
         configHome: item.configHome,
         dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
         managedConfigDir: path.join(item.root, "managed-missing"),
       })
       expect(observeExecutorReadiness(request, source)).toMatchObject({
@@ -811,6 +902,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, invalid).provider_availability_status).toBe("unknown")
@@ -825,6 +917,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, invalidProviderOption).provider_availability_status).toBe("unknown")
@@ -837,6 +930,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: path.join(item.root, "clean-config"),
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: managedFile,
     })
     expect(observeExecutorReadiness(request, uncertain).provider_availability_status).toBe("unknown")
@@ -873,6 +967,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, source)).toMatchObject({
@@ -896,6 +991,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, malformedFile)).toMatchObject({
@@ -915,6 +1011,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     const oauthResult = observeExecutorReadiness(request, oauthFile)
@@ -927,6 +1024,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     const result = observeExecutorReadiness(request, environmentOverride)
@@ -946,6 +1044,7 @@ describe("NexusLoop Executor readiness local state", () => {
       catalog,
       configHome: item.configHome,
       dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     const validResult = observeExecutorReadiness(request, validEnvironmentOverride)

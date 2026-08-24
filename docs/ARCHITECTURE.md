@@ -153,7 +153,7 @@ ADR-038.
 
 Branch 9W4E0 packages an observation-only Executor readiness command into the
 pinned native OpenCode executable. The command reads one exact NexusLoop
-selection assertion, consults only bounded local OpenCode-owned catalog,
+selection assertion, consults only bounded schema-validated local OpenCode catalog,
 configuration, and authentication state, and returns enum-only readiness
 evidence. Dynamic or remote authority is reported as unknown without plugin,
 network, provider, or mutation activity. Runtime source execution under

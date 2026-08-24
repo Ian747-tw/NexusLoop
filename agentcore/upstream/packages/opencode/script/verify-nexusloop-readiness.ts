@@ -41,6 +41,25 @@ try {
   const unavailable = result(run(binary, root, JSON.stringify({ ...request, model_id: "missing-model" }), {}).stdout)
   assert(unavailable.provider_availability_status === "unavailable", "missing exact model was not unavailable")
 
+  assert(JSON.stringify(await tree(root)) === JSON.stringify(before), "snapshot readiness wrote persistent state")
+  const cacheDirectory = path.join(root, "cache", "opencode")
+  await fs.mkdir(cacheDirectory, { recursive: true })
+  await fs.writeFile(
+    path.join(cacheDirectory, "models.json"),
+    JSON.stringify({
+      openai: {
+        id: "openai",
+        name: "OpenAI",
+        env: ["OPENAI_API_KEY"],
+        npm: "@ai-sdk/openai",
+        models: {},
+      },
+    }),
+  )
+  const cachedTree = await tree(root)
+  const cached = result(run(binary, root, JSON.stringify(request), {}).stdout)
+  assert(cached.provider_availability_status === "unavailable", "effective model cache was not observed")
+
   const duplicate = run(
     binary,
     root,
@@ -54,7 +73,7 @@ try {
   const oversized = run(binary, root, "x".repeat(5000), {})
   assert(oversized.exitCode === 2 && oversized.stdout === "", "oversized authority did not fail cleanly")
 
-  const serialized = JSON.stringify({ connected, disconnected, unavailable, duplicate, oversized })
+  const serialized = JSON.stringify({ connected, disconnected, unavailable, cached, duplicate, oversized })
   for (const forbidden of [
     "sk-package-verifier-secret",
     "OPENCODE_AUTH_CONTENT",
@@ -65,7 +84,7 @@ try {
   ]) {
     assert(!serialized.toLowerCase().includes(forbidden.toLowerCase()), `output exposed ${forbidden}`)
   }
-  assert(JSON.stringify(await tree(root)) === JSON.stringify(before), "readiness command wrote persistent state")
+  assert(JSON.stringify(await tree(root)) === JSON.stringify(cachedTree), "readiness command wrote persistent state")
   process.stdout.write("packaged readiness executable: pass\n")
   process.stdout.write("source-tree dependency resolution: absent\n")
   process.stdout.write("persistent writes: 0\n")

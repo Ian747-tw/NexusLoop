@@ -13,6 +13,7 @@
 | Arbitrary executable forges readiness | Command is compiled into the configured OpenCode executable; no command override exists. |
 | Input smuggles authority | Strict bounded JSON, exact keys, own-data reconstruction, duplicate-key rejection, canonical identifier grammar. |
 | Catalog/plugin/auth state selects a different model | Request identity is echoed exactly; output contains no alternatives; Runtime must revalidate it later. |
+| Cached catalog drifts from the bundled snapshot | The bounded observer applies normal default-cache precedence, validates the complete cache with the shared pure schema, and returns `unknown` for partial or unsupported cache authority without refreshing it. |
 | Plugin or remote config causes network/mutation | Such sources produce `unknown`; plugin code and remote reads are not run. |
 | Credential material escapes | Output is an enum-only projection plus a fixed evidence ID; raw errors and source details are discarded. |
 | Missing model is falsely definitive | `unavailable` is emitted only for complete local observations; ambiguity is `unknown`. |

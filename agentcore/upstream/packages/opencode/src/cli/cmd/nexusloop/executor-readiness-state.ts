@@ -4,15 +4,18 @@ import { existsSync } from "node:fs"
 import { open as openFile } from "node:fs/promises"
 import { Database } from "bun:sqlite"
 import { parse, visit, type ParseError } from "jsonc-parser"
+import z from "zod"
 import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
 import { Info as AuthInfo } from "../../../auth/schema"
 import { InstallationChannel } from "../../../installation/version"
 import { Glob } from "@opencode-ai/shared/util/glob"
+import { Provider as ModelsDevProvider } from "../../../provider/models-schema"
 import type { ExecutorReadinessSource } from "./executor-readiness"
 
 const MAX_CONFIG_BYTES = 1024 * 1024
 const MAX_AUTH_BYTES = 1024 * 1024
+const MAX_CATALOG_BYTES = 8 * 1024 * 1024
 const MAX_FRAGMENTS = 64
 const MAX_GIT_OUTPUT_BYTES = 4096
 const GIT_TIMEOUT_MS = 1000
@@ -28,6 +31,7 @@ type LoadOptions = Readonly<{
   catalog: unknown
   configHome?: string
   dataHome?: string
+  cacheHome?: string
   managedConfigDir?: string
 }>
 
@@ -36,8 +40,23 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const home = environment.OPENCODE_TEST_HOME || os.homedir()
   const configHome = options.configHome ?? (options.env.XDG_CONFIG_HOME || path.join(home, ".config"))
   const dataHome = options.dataHome ?? (options.env.XDG_DATA_HOME || path.join(home, ".local", "share"))
+  const cacheHome = options.cacheHome ?? (options.env.XDG_CACHE_HOME || path.join(home, ".cache"))
   const fragments: unknown[] = []
   let complete = true
+  let catalog = options.catalog
+
+  if (!options.env.OPENCODE_MODELS_PATH && !options.env.OPENCODE_MODELS_URL) {
+    const cached = await boundedFile(path.join(cacheHome, "opencode", "models.json"), MAX_CATALOG_BYTES)
+    if (cached.status === "failed") complete = false
+    if (cached.status === "ready" && cached.value.length > 0) {
+      const parsed = strictJson(cached.value, false)
+      const validated = parsed.ok
+        ? zodCatalog(parsed.value)
+        : undefined
+      if (validated) catalog = validated
+      else complete = false
+    }
+  }
 
   const legacyGlobal = await boundedFile(path.join(configHome, "opencode", "config"), MAX_CONFIG_BYTES)
   if (legacyGlobal.status !== "missing") complete = false
@@ -165,13 +184,20 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (remoteAccount !== false) complete = false
 
   return Object.freeze({
-    catalog: options.catalog,
+    catalog,
     config_fragments: Object.freeze(fragments),
     auth,
     env: environment,
     observation_complete: complete,
   })
 }
+
+function zodCatalog(value: unknown): Record<string, unknown> | undefined {
+  const parsed = ModelsDevCatalog.safeParse(value)
+  return parsed.success ? parsed.data : undefined
+}
+
+const ModelsDevCatalog = z.record(z.string(), ModelsDevProvider)
 
 function effectiveDatabasePath(
   dataHome: string,
