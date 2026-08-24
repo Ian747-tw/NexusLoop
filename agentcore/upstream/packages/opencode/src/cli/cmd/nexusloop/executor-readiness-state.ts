@@ -91,8 +91,8 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     fragments.push(parsed.value)
   }
   // The normal macOS path may add MDM preferences through plutil. The bounded
-  // observer does not launch that subprocess, so it cannot prove completeness.
-  if (process.platform === "darwin") complete = false
+  // observer does not launch that subprocess, so a present profile is unknown.
+  if (managedPreferencesMayExist()) complete = false
 
   if (options.env.OPENCODE_MODELS_PATH || options.env.OPENCODE_MODELS_URL) complete = false
   if (await hasPluginFiles(options.cwd, home, configHome, projectConfigDisabled, options.env.OPENCODE_CONFIG_DIR)) {
@@ -302,6 +302,16 @@ function systemManagedConfigDir(): string {
   if (process.platform === "darwin") return "/Library/Application Support/opencode"
   if (process.platform === "win32") return path.join(process.env.ProgramData || "C:\\ProgramData", "opencode")
   return "/etc/opencode"
+}
+
+function managedPreferencesMayExist(): boolean {
+  if (process.platform !== "darwin") return false
+  const domain = "ai.opencode.managed.plist"
+  const user = os.userInfo().username
+  return [
+    path.join("/Library/Managed Preferences", user, domain),
+    path.join("/Library/Managed Preferences", domain),
+  ].some((file) => existsSync(file))
 }
 
 function truthy(value: string | undefined): boolean {
