@@ -96,6 +96,10 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
+    if (containsEffectiveConfigSubstitution(text.value)) {
+      complete = false
+      continue
+    }
     const parsed = strictJson(text.value, true)
     if (!parsed.ok) {
       complete = false
@@ -111,6 +115,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (options.env.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
+    else if (containsEffectiveConfigSubstitution(options.env.OPENCODE_CONFIG_CONTENT)) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
       const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
@@ -131,6 +136,10 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     }
     if (text.value.length === 0) continue
     if (fragments.length >= MAX_FRAGMENTS) {
+      complete = false
+      continue
+    }
+    if (containsEffectiveConfigSubstitution(text.value)) {
       complete = false
       continue
     }
@@ -442,6 +451,15 @@ function containsConfigSubstitution(value: unknown, pattern = /\{(?:env|file):[^
     for (const key of Object.keys(current)) {
       pending.push(key, (current as Record<string, unknown>)[key])
     }
+  }
+  return false
+}
+
+function containsEffectiveConfigSubstitution(text: string): boolean {
+  for (const match of text.matchAll(/\{file:[^}]+\}/g)) {
+    const index = match.index
+    const lineStart = text.lastIndexOf("\n", index - 1) + 1
+    if (!text.slice(lineStart, index).trimStart().startsWith("//")) return true
   }
   return false
 }

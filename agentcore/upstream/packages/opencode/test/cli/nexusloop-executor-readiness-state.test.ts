@@ -183,6 +183,31 @@ describe("NexusLoop Executor readiness local state", () => {
     }
   })
 
+  test("file substitutions discarded by JSONC comments still make readiness unknown", async () => {
+    const item = await fixture()
+    const config = path.join(item.configHome, "opencode", "opencode.jsonc")
+    await fs.mkdir(path.dirname(config), { recursive: true })
+    for (const text of [
+      '/* {file:missing-provider} */\n{"enabled_providers":["openai"]}',
+      '{"enabled_providers":["openai"]} // {file:missing-provider}',
+    ]) {
+      await fs.writeFile(config, text)
+      const source = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: {},
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(observeExecutorReadiness(request, source)).toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+    }
+  })
+
   test("managed configuration substitutions cannot produce false-ready evidence", async () => {
     const item = await fixture()
     const managed = path.join(item.root, "managed")
