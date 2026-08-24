@@ -280,7 +280,7 @@ async function discoverProjectBoundary(cwd: string): Promise<{ boundary: string;
 
   const bareResult = await boundedGit(["config", "--bool", "core.bare"], sandbox)
   if (bareResult.status === "timeout") return { boundary: sandbox, complete: false }
-  const bare = bareResult.status === "ready" && bareResult.value === "true"
+  const bare = bareResult.status === "ready" && bareResult.value.trim() === "true"
   return { boundary: bare ? common : path.dirname(common), complete: true }
 }
 

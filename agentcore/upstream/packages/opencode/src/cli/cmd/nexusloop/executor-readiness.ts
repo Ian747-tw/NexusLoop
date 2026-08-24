@@ -64,6 +64,7 @@ type ConfiguredModelAuthority = {
   id?: string
   status?: unknown
   packageID?: string
+  inputCost?: number
 }
 
 export function parseExecutorReadinessRequestText(text: string): ExecutorReadinessRequest {
@@ -132,7 +133,7 @@ export function observeExecutorReadiness(
   let catalogModelStatus: unknown
   let catalogModelApiID: string | undefined
   let catalogModelPackage: string | undefined
-  let publicCredentialConnection = false
+  let catalogModelInputCost: number | undefined
   let catalogProviderPackage: string | undefined
   let catalogModels: Record<string, unknown> = Object.create(null)
   let catalogModel = false
@@ -170,8 +171,8 @@ export function observeExecutorReadiness(
         if (request.provider_id === "opencode") {
           const cost = optionalRecord(ownValue(model, "cost"))
           const inputCost = ownValue(cost, "input")
-          if (inputCost === 0) publicCredentialConnection = true
-          else if (typeof inputCost !== "number" || !Number.isFinite(inputCost)) credentialSemanticsKnown = false
+          if (typeof inputCost === "number" && Number.isFinite(inputCost)) catalogModelInputCost = inputCost
+          else credentialSemanticsKnown = false
         }
       }
     }
@@ -230,6 +231,12 @@ export function observeExecutorReadiness(
           else complete = false
         }
         if (status !== undefined) authority.status = status
+        const cost = optionalRecord(ownValue(configured, "cost"))
+        const inputCost = ownValue(cost, "input")
+        if (ownValue(configured, "cost") !== undefined) {
+          if (typeof inputCost === "number" && Number.isFinite(inputCost)) authority.inputCost = inputCost
+          else complete = false
+        }
         configuredModels[modelID] = authority
       }
     }
@@ -255,15 +262,6 @@ export function observeExecutorReadiness(
   }
 
   const authValue = ownValue(auth, request.provider_id)
-  const credential = credentialStatus(
-    request.provider_id,
-    authValue,
-    env,
-    credentialKeys,
-    configuredApiKey,
-    credentialSemanticsKnown,
-    publicCredentialConnection,
-  )
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
   const openAiOAuth = request.provider_id === "openai" && ownValue(optionalRecord(authValue), "type") === "oauth"
@@ -280,6 +278,16 @@ export function observeExecutorReadiness(
   const effectiveModelApiID = effectiveConfigured?.apiID ?? catalogModelApiID ?? request.model_id
   const effectiveModelStatus = effectiveConfigured?.status ?? catalogModelStatus
   const effectiveModelPackage = effectiveConfigured?.packageID ?? catalogModelPackage ?? "@ai-sdk/openai-compatible"
+  const effectiveInputCost = effectiveConfigured?.inputCost ?? catalogModelInputCost
+  const credential = credentialStatus(
+    request.provider_id,
+    authValue,
+    env,
+    credentialKeys,
+    configuredApiKey,
+    credentialSemanticsKnown,
+    request.provider_id === "opencode" && effectiveInputCost === 0,
+  )
   if ((catalogModel || configuredModel) && !isBundledProviderPackage(effectiveModelPackage)) ambiguous = true
   const modelAvailable = (catalogModel || configuredModel) && modelAllowed(
     request.provider_id,
@@ -327,7 +335,7 @@ function resolveConfiguredModelAuthority(
   configuredProviderPackage: string | undefined,
   catalogProviderPackage: string | undefined,
   seen = new Set<string>(),
-): { apiID?: string; status?: unknown; packageID?: string } {
+): { apiID?: string; status?: unknown; packageID?: string; inputCost?: number } {
   const configured = configuredModels[modelID]
   if (!configured || seen.has(modelID)) return catalogModelAuthority(modelID, catalogModels, catalogProviderPackage)
   seen.add(modelID)
@@ -341,6 +349,7 @@ function resolveConfiguredModelAuthority(
     status: configured.status ?? inherited.status ?? "active",
     packageID: configured.packageID ?? configuredProviderPackage ?? inherited.packageID ??
       catalogProviderPackage ?? "@ai-sdk/openai-compatible",
+    inputCost: configured.inputCost ?? inherited.inputCost,
   }
 }
 
@@ -348,7 +357,7 @@ function catalogModelAuthority(
   modelID: string,
   catalogModels: Record<string, unknown>,
   catalogProviderPackage: string | undefined,
-): { apiID?: string; status?: unknown; packageID?: string } {
+): { apiID?: string; status?: unknown; packageID?: string; inputCost?: number } {
   const value = ownValue(catalogModels, modelID)
   if (value === undefined) return {}
   const model = optionalRecord(value)
@@ -357,10 +366,14 @@ function catalogModelAuthority(
   const provider = optionalRecord(ownValue(model, "provider"))
   const packageID = ownValue(provider, "npm")
   if (packageID !== undefined && (typeof packageID !== "string" || packageID.length === 0)) fail()
+  const cost = optionalRecord(ownValue(model, "cost"))
+  const inputCost = ownValue(cost, "input")
+  if (inputCost !== undefined && (typeof inputCost !== "number" || !Number.isFinite(inputCost))) fail()
   return {
     apiID: typeof apiID === "string" ? apiID : undefined,
     status: ownValue(model, "status"),
     packageID: typeof packageID === "string" ? packageID : catalogProviderPackage ?? "@ai-sdk/openai-compatible",
+    inputCost: typeof inputCost === "number" ? inputCost : undefined,
   }
 }
 

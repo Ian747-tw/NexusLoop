@@ -425,6 +425,40 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
   })
 
+  test("matches project discovery for worktrees backed by a bare common repository", async () => {
+    const item = await fixture()
+    const seed = path.join(item.root, "seed")
+    const repositories = path.join(item.root, "repositories")
+    const bare = path.join(repositories, "repo.git")
+    const linked = path.join(repositories, "worktrees", "linked")
+    await fs.mkdir(seed, { recursive: true })
+    await fs.mkdir(path.dirname(linked), { recursive: true })
+    const git = async (cwd: string, ...args: string[]) => {
+      const process = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" })
+      const code = await process.exited
+      if (code !== 0) throw new Error(await new Response(process.stderr).text())
+    }
+    await git(seed, "init")
+    await git(seed, "config", "user.email", "readiness@example.invalid")
+    await git(seed, "config", "user.name", "Readiness Test")
+    await fs.writeFile(path.join(seed, "tracked"), "ready")
+    await git(seed, "add", "tracked")
+    await git(seed, "commit", "-m", "fixture")
+    await git(item.root, "clone", "--bare", seed, bare)
+    await git(item.root, `--git-dir=${bare}`, "worktree", "add", "-b", "linked-bare", linked)
+    await fs.writeFile(path.join(item.root, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
+
+    const source = await loadExecutorReadinessSource({
+      cwd: linked,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
+  })
+
   test("normalizes accepted legacy TUI keys and fails closed for legacy global TOML", async () => {
     const item = await fixture()
     const globalDirectory = path.join(item.configHome, "opencode")

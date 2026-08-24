@@ -83,6 +83,13 @@ describe("NexusLoop Executor readiness protocol", () => {
         },
       },
     }).credential_connection_status).toBe("disconnected")
+    expect(observeExecutorReadiness(opencodeRequest, {
+      ...source,
+      config_fragments: [{ provider: { opencode: { models: { "gpt-5-nano": { cost: { input: 1, output: 0 } } } } } }],
+    })).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
   })
 
   test("distinguishes unavailable from incomplete or ambiguous observations", () => {
