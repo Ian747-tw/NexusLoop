@@ -352,6 +352,31 @@ describe("NexusLoop Executor readiness protocol", () => {
       credential_connection_status: "unknown",
     })
 
+    for (const provider of ["cloudflare-workers-ai", "cloudflare-ai-gateway"]) {
+      const configuredEndpoint = observeExecutorReadiness(
+        { ...request, provider_id: provider, model_id: "configured-endpoint" },
+        {
+          catalog: {},
+          config_fragments: [{
+            provider: {
+              [provider]: {
+                options: { apiKey: "configured-secret", baseURL: "https://configured.example.invalid" },
+                models: { "configured-endpoint": {} },
+              },
+            },
+          }],
+          auth: {},
+          env: {},
+          observation_complete: true,
+        },
+      )
+      expect(configuredEndpoint).toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+      expect(JSON.stringify(configuredEndpoint)).not.toMatch(/configured-secret|configured\.example/)
+    }
+
     const explicit = observeExecutorReadiness(
       { ...request, provider_id: "azure", model_id: "exact" },
       {

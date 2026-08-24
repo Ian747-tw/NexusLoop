@@ -25,6 +25,10 @@ const CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS = new Set([
   "azure-cognitive-services",
   "gitlab",
 ])
+const CONFIGURED_ENDPOINT_API_KEY_PROVIDERS = new Set([
+  "cloudflare-ai-gateway",
+  "cloudflare-workers-ai",
+])
 
 const MAX_REQUEST_BYTES = 4096
 const HASH = /^[a-f0-9]{64}$/
@@ -143,6 +147,7 @@ export function observeExecutorReadiness(
   let catalogModels: Record<string, unknown> = Object.create(null)
   let catalogModel = false
   let configuredApiKey = false
+  let configuredBaseURL = false
   let credentialKeys: string[] = []
   let credentialSemanticsKnown = !COMPLEX_CREDENTIAL_PROVIDERS.has(request.provider_id)
 
@@ -261,6 +266,9 @@ export function observeExecutorReadiness(
     const apiKey = ownValue(options, "apiKey")
     if (typeof apiKey === "string" && apiKey.length > 0) configuredApiKey = true
     else if (apiKey !== undefined) complete = false
+    const baseURL = ownValue(options, "baseURL")
+    if (typeof baseURL === "string" && baseURL.length > 0) configuredBaseURL = true
+    else if (baseURL !== undefined) complete = false
 
     const selectedWhitelist = parseStringArray(ownValue(selected, "whitelist"), false)
     const selectedBlacklist = parseStringArray(ownValue(selected, "blacklist"), false)
@@ -294,6 +302,7 @@ export function observeExecutorReadiness(
     env,
     credentialKeys,
     configuredApiKey,
+    configuredBaseURL,
     credentialSemanticsKnown,
     request.provider_id === "opencode" && effectiveInputCost === 0,
   )
@@ -447,11 +456,14 @@ function credentialStatus(
   env: Record<string, unknown>,
   credentialKeys: readonly string[],
   configuredApiKey: boolean,
+  configuredBaseURL: boolean,
   credentialSemanticsKnown: boolean,
   publicCredentialConnection: boolean,
 ): "connected" | "disconnected" | "unknown" {
   if (configuredApiKey && (
-    credentialSemanticsKnown || CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID)
+    credentialSemanticsKnown ||
+    CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID) ||
+    (configuredBaseURL && CONFIGURED_ENDPOINT_API_KEY_PROVIDERS.has(providerID))
   )) return "connected"
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
