@@ -23,6 +23,8 @@ The command runs from the packaged binary, suppresses ordinary models.dev refres
 
 OpenAI OAuth uses the same pure Codex model-allowance predicate as `CodexAuthPlugin`; credential presence cannot make a model available when normal plugin initialization would remove it. Remote account state is read from the exact database path selected by OpenCode's `OPENCODE_DB`, release-channel, channel-isolation, and `OPENCODE_DISABLE_CHANNEL_DB` rules. The database is opened read-only and is never migrated.
 
+Configured model aliases resolve status against the same catalog key used by `Provider` construction. The packaged built-in provider-package set is shared as static code authority; selected non-bundled package or `file://` authority yields `unknown` without installation or import. Auto-discovered plugin ambiguity uses OpenCode's exact `{plugin,plugins}/*.{ts,js}` file suffix contract, so documentation and cache entries do not block readiness.
+
 Before declaring an exact model available, the observation mirrors OpenCode's
 effective local authority: hard-removed, deprecated, and disabled alpha models
 are excluded; project configuration and project plugin directories are omitted

@@ -165,6 +165,41 @@ describe("NexusLoop Executor readiness protocol", () => {
     }).provider_availability_status).toBe("unavailable")
   })
 
+  test("inherits catalog status for configured aliases", () => {
+    const aliasCatalog = {
+      openai: {
+        id: "openai",
+        env: [],
+        models: { old: { id: "old", status: "deprecated" } },
+      },
+    }
+    expect(observeExecutorReadiness({ ...request, model_id: "alias" }, {
+      catalog: aliasCatalog,
+      config_fragments: [{ provider: { openai: { models: { alias: { id: "old" } } } } }],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }).provider_availability_status).toBe("unavailable")
+  })
+
+  test("marks selected dynamic provider packages as unknown", () => {
+    for (const selected of [
+      { npm: "custom-provider", models: { exact: {} } },
+      { models: { exact: { provider: { npm: "file:///tmp/provider.ts" } } } },
+    ]) {
+      expect(observeExecutorReadiness({ ...request, provider_id: "custom", model_id: "exact" }, {
+        catalog: {},
+        config_fragments: [{ provider: { custom: selected } }],
+        auth: { custom: { type: "api", key: "secret" } },
+        env: {},
+        observation_complete: true,
+      })).toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "connected",
+      })
+    }
+  })
+
   test("does not infer connection for provider-specific multi-field credentials", () => {
     const cloudflare = {
       "cloudflare-ai-gateway": {

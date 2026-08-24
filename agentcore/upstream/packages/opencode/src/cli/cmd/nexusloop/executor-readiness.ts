@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { types as nodeUtilTypes } from "node:util"
 import { parse, visit, type ParseError } from "jsonc-parser"
 import { isCodexOAuthModelAllowed } from "../../../plugin/codex-model-authority"
+import { isBundledProviderPackage } from "../../../provider/bundled-provider-authority"
 
 export const EXECUTOR_READINESS_REQUEST_VERSION = "nexusloop_opencode_executor_readiness_request_v1" as const
 export const EXECUTOR_READINESS_OBSERVATION_VERSION = 1 as const
@@ -118,9 +119,15 @@ export function observeExecutorReadiness(
   let whitelist: string[] | undefined
   let blacklist: string[] | undefined
   let configuredModel = false
+  let configuredModelTargetID: string | undefined
   let configuredModelStatus: unknown
+  let configuredModelPackage: string | undefined
+  let configuredProviderPackage: string | undefined
   let catalogModelStatus: unknown
-  let effectiveModelApiID: string | undefined
+  let catalogModelApiID: string | undefined
+  let catalogModelPackage: string | undefined
+  let catalogProviderPackage: string | undefined
+  let catalogModels: Record<string, unknown> = Object.create(null)
   let catalogModel = false
   let configuredApiKey = false
   let credentialKeys: string[] = []
@@ -131,6 +138,12 @@ export function observeExecutorReadiness(
     const provider = optionalRecord(catalogProviderValue)
     const id = ownValue(provider, "id")
     const models = optionalRecord(ownValue(provider, "models"))
+    catalogModels = models
+    const providerPackage = ownValue(provider, "npm")
+    if (providerPackage !== undefined) {
+      if (typeof providerPackage === "string" && providerPackage.length > 0) catalogProviderPackage = providerPackage
+      else complete = false
+    }
     if (id !== request.provider_id) complete = false
     else {
       const modelValue = ownValue(models, request.model_id)
@@ -139,7 +152,12 @@ export function observeExecutorReadiness(
         const status = ownValue(model, "status")
         const apiID = ownValue(model, "id")
         if (typeof apiID !== "string" || apiID.length === 0) complete = false
-        else effectiveModelApiID = apiID
+        else catalogModelApiID = apiID
+        const modelProvider = optionalRecord(ownValue(model, "provider"))
+        const modelPackage = ownValue(modelProvider, "npm")
+        if (modelPackage === undefined) catalogModelPackage = catalogProviderPackage ?? "@ai-sdk/openai-compatible"
+        else if (typeof modelPackage === "string" && modelPackage.length > 0) catalogModelPackage = modelPackage
+        else complete = false
         catalogModelStatus = status
         catalogModel = true
       }
@@ -171,6 +189,11 @@ export function observeExecutorReadiness(
     const selectedValue = ownValue(providers, request.provider_id)
     if (selectedValue === undefined) continue
     const selected = optionalRecord(selectedValue)
+    const selectedPackage = ownValue(selected, "npm")
+    if (selectedPackage !== undefined) {
+      if (typeof selectedPackage === "string" && selectedPackage.length > 0) configuredProviderPackage = selectedPackage
+      else complete = false
+    }
     const models = optionalRecord(ownValue(selected, "models"))
     if (ownValue(selected, "models") !== undefined) {
       const configuredModelValue = ownValue(models, request.model_id)
@@ -179,9 +202,16 @@ export function observeExecutorReadiness(
         const configured = optionalRecord(configuredModelValue)
         const status = ownValue(configured, "status")
         const apiID = ownValue(configured, "id")
-        if (apiID === undefined) effectiveModelApiID ??= request.model_id
-        else if (typeof apiID === "string" && apiID.length > 0) effectiveModelApiID = apiID
-        else complete = false
+        if (apiID !== undefined) {
+          if (typeof apiID === "string" && apiID.length > 0) configuredModelTargetID = apiID
+          else complete = false
+        }
+        const modelProvider = optionalRecord(ownValue(configured, "provider"))
+        const modelPackage = ownValue(modelProvider, "npm")
+        if (modelPackage !== undefined) {
+          if (typeof modelPackage === "string" && modelPackage.length > 0) configuredModelPackage = modelPackage
+          else complete = false
+        }
         if (status !== undefined) configuredModelStatus = status
       }
     }
@@ -218,11 +248,29 @@ export function observeExecutorReadiness(
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
   const openAiOAuth = request.provider_id === "openai" && ownValue(optionalRecord(authValue), "type") === "oauth"
+  const configuredTarget = configuredModel
+    ? optionalRecord(ownValue(catalogModels, configuredModelTargetID ?? request.model_id))
+    : Object.create(null) as Record<string, unknown>
+  const targetStatus = ownValue(configuredTarget, "status")
+  const targetProvider = optionalRecord(ownValue(configuredTarget, "provider"))
+  const targetPackage = ownValue(targetProvider, "npm")
+  if (targetPackage !== undefined && (typeof targetPackage !== "string" || targetPackage.length === 0)) complete = false
+  const targetApiID = ownValue(configuredTarget, "id")
+  if (targetApiID !== undefined && (typeof targetApiID !== "string" || targetApiID.length === 0)) complete = false
+  const effectiveModelApiID = configuredModel
+    ? configuredModelTargetID ?? (typeof targetApiID === "string" ? targetApiID : request.model_id)
+    : catalogModelApiID ?? request.model_id
+  const effectiveModelStatus = configuredModel ? configuredModelStatus ?? targetStatus ?? "active" : catalogModelStatus
+  const effectiveModelPackage = configuredModel
+    ? configuredModelPackage ?? configuredProviderPackage ??
+      (typeof targetPackage === "string" ? targetPackage : catalogProviderPackage ?? "@ai-sdk/openai-compatible")
+    : catalogModelPackage ?? "@ai-sdk/openai-compatible"
+  if ((catalogModel || configuredModel) && !isBundledProviderPackage(effectiveModelPackage)) ambiguous = true
   const modelAvailable = (catalogModel || configuredModel) && modelAllowed(
     request.provider_id,
     request.model_id,
-    effectiveModelApiID ?? request.model_id,
-    configuredModelStatus ?? catalogModelStatus,
+    effectiveModelApiID,
+    effectiveModelStatus,
     enabledExperimental,
     openAiOAuth,
   )

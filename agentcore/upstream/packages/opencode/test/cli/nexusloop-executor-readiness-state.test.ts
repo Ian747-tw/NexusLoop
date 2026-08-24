@@ -228,6 +228,35 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
   })
 
+  test("only treats loadable JavaScript and TypeScript entries as discovered plugins", async () => {
+    const item = await fixture()
+    const pluginDirectory = path.join(item.cwd, ".opencode", "plugin")
+    await fs.mkdir(pluginDirectory, { recursive: true })
+    await fs.writeFile(path.join(pluginDirectory, "README.md"), "documentation only")
+    await fs.mkdir(path.join(pluginDirectory, "cache"), { recursive: true })
+
+    const documentationOnly = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, documentationOnly).provider_availability_status).toBe("available")
+
+    await fs.writeFile(path.join(pluginDirectory, "provider.js"), "throw new Error('must not load')")
+    const loadablePlugin = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, loadablePlugin).provider_availability_status).toBe("unknown")
+  })
+
   test("matches project and managed configuration precedence", async () => {
     const item = await fixture()
     const dotConfig = path.join(item.cwd, ".opencode")

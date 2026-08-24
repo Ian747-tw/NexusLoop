@@ -230,7 +230,11 @@ async function hasPluginFiles(
   if (explicitConfigDir) dirs.push(path.join(explicitConfigDir, "plugin"), path.join(explicitConfigDir, "plugins"))
   for (let index = 0; index < dirs.length; index += 1) {
     try {
-      for await (const _ of new Bun.Glob("*").scan({ cwd: dirs[index]!, onlyFiles: false })) return true
+      for await (const _ of new Bun.Glob("*.{ts,js}").scan({
+        cwd: dirs[index]!,
+        onlyFiles: true,
+        dot: true,
+      })) return true
     } catch {}
   }
   return false
