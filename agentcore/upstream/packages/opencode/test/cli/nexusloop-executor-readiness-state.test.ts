@@ -776,6 +776,31 @@ describe("NexusLoop Executor readiness local state", () => {
     })
   })
 
+  test("treats an inaccessible OpenCode database as unknown rather than missing", async () => {
+    const item = await fixture()
+    const databaseDirectory = path.join(item.root, "private-database")
+    const databasePath = path.join(databaseDirectory, "opencode.db")
+    await fs.mkdir(databaseDirectory, { recursive: true })
+    await fs.writeFile(databasePath, "not a database")
+    await fs.chmod(databaseDirectory, 0)
+    try {
+      const source = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: { OPENCODE_DB: databasePath },
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(observeExecutorReadiness(request, source)).toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "unknown",
+      })
+    } finally {
+      await fs.chmod(databaseDirectory, 0o700)
+    }
+  })
+
   test("invalid OpenCode schema and unreadable managed authority fail closed", async () => {
     const item = await fixture()
     await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })

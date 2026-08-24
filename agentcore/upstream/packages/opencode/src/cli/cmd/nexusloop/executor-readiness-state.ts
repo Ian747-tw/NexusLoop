@@ -161,7 +161,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
 
   const databasePath = effectiveDatabasePath(dataHome, environment)
   if (!databasePath) complete = false
-  const remoteAccount = databasePath ? activeRemoteAccountStatus(databasePath) : undefined
+  const remoteAccount = databasePath ? await activeRemoteAccountStatus(databasePath) : undefined
   if (remoteAccount !== false) complete = false
 
   return Object.freeze({
@@ -459,8 +459,15 @@ function truthy(value: string | undefined): boolean {
   return normalized === "true" || normalized === "1"
 }
 
-function activeRemoteAccountStatus(databasePath: string): boolean | undefined {
-  if (!existsSync(databasePath)) return false
+async function activeRemoteAccountStatus(databasePath: string): Promise<boolean | undefined> {
+  let handle
+  try {
+    handle = await openFile(databasePath, "r")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    return undefined
+  }
+  await handle.close()
   try {
     using database = new Database(databasePath, { readonly: true, strict: true })
     const row = database
