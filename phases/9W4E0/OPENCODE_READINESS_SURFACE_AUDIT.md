@@ -17,7 +17,7 @@
 
 ## Selected Seam
 
-Add an OpenCode-internal read-only observation module and CLI command. The module mirrors the bounded, side-effect-free subset of OpenCode schemas and local source precedence needed for the exact requested provider/model, but excludes side-effecting source classes. Excluded or unsupported source classes make the corresponding state `unknown`; they are not silently ignored and never become `unavailable` evidence.
+Add an OpenCode-internal read-only observation module and CLI command. The module validates ordinary configuration against the committed OpenAPI schema generated from OpenCode's complete `Config.Info` contract and validates file-backed credentials through the schema shared with `Auth.Info`. It then evaluates only the bounded, side-effect-free local precedence needed for the exact requested provider/model. Side-effecting source classes remain excluded; their presence makes the corresponding state `unknown` rather than being ignored.
 
 The command runs from the packaged binary, suppresses ordinary models.dev refresh and database migration, accepts no provider list request, returns no model list, and never constructs a language model.
 
@@ -26,10 +26,11 @@ effective local authority: hard-removed, deprecated, and disabled alpha models
 are excluded; project configuration and project plugin directories are omitted
 when `OPENCODE_DISABLE_PROJECT_CONFIG` is active; and global, explicit,
 project, configuration-content, managed-directory, and macOS managed-preference
-sources retain OpenCode's precedence. The observer accepts only the strict,
-side-effect-free subset of OpenCode's configuration schema that it can evaluate
-completely; valid but unsupported fields conservatively make the observation
-unknown rather than importing the side-effecting Config service. Dynamic remote
+sources retain OpenCode's precedence. Valid unrelated config and model fields
+remain valid because schema acceptance is not narrowed to the readiness
+projection. The committed generated schema is compiled with direct
+`ajv@8.18.0`; this avoids importing the side-effecting Config service into the
+packaged readiness path. Dynamic remote
 account configuration, well-known configuration, plugins, custom catalog
 sources, unreadable managed authority, or malformed fragments likewise make
 the bounded observation unknown.
@@ -37,5 +38,7 @@ the bounded observation unknown.
 ## Packaging Finding
 
 The committed upstream lock fails a frozen install under the pinned Bun version because `packages/app/package.json` names the moving `ghostty-web#main` branch while the lock resolves revision `20bd361`. The authorized repair pins the manifest and workspace lock specifier to that already-resolved revision; no resolved package version changes.
+
+The readiness package also declares `ajv@8.18.0` directly. That exact package was already present in the frozen graph; the manifest and lock changes add a direct ownership edge without changing its resolved artifact or any transitive version.
 
 The supported readiness build embeds `test/tool/fixtures/models-api.json` as an explicit local input. At implementation time it is 2,408,942 bytes with SHA-256 `33f836f532fd8ada58f255f11030ff5500d45b0cf7e63587772221050ffb1f48`. No live catalog fetch is part of the build.

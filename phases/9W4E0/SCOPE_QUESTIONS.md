@@ -14,8 +14,10 @@
 10. **What is packaged?** The ordinary native OpenCode binary. The readiness command is a CLI subcommand compiled into that binary, not a separate source runner.
 11. **What is the protocol?** One strict versioned JSON request on stdin and one strict versioned JSON response on stdout; diagnostics are bounded and stderr-only.
 12. **Does this activate 9W4E?** No. Runtime integration and first-run setup remain blocked until this prerequisite merges.
+13. **How does the side-effect-free observer validate ordinary OpenCode config and auth?** Config fragments are checked against the committed OpenAPI `Config` schema generated from `Config.Info`; file-backed auth entries use the same schema exported by `Auth.Info`. Malformed environment auth overrides make the observation incomplete instead of being silently filtered, preserving their separate OpenCode precedence without claiming readiness.
 
 ## Packaging Decisions
 
 - The lock repair changes only the `ghostty-web` manifest and workspace lock specifier from the moving `main` branch to the already-resolved `20bd361` revision.
+- `packages/opencode` declares `ajv@8.18.0` directly so the packaged command can validate the committed OpenAPI config schema without relying on a transitive dependency. The version was already resolved in the workspace lock; the lock change adds only the direct workspace edge.
 - The packaged build consumes the checked-in model snapshot by explicit path. Its identity is recorded in the surface audit and the detached final gate verifies the build without network catalog input.

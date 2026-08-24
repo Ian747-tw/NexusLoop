@@ -18,7 +18,7 @@ opencode nexusloop executor-readiness-v1
 
 The command accepts one bounded versioned JSON assertion on stdin and emits one bounded versioned observation on stdout. It reports only the exact requested provider/model availability and credential connection status. It never returns alternatives and therefore cannot select, normalize, recommend, or authorize a model.
 
-The readiness entry is dispatched before ordinary OpenCode bootstrap. It does not create global directories, migrate the database, refresh the models catalog, install or execute plugins, initialize provider SDKs, or make a model request. It reads a build-pinned catalog snapshot and bounded local config/auth state. Dynamic plugin, remote configuration, custom catalog, and provider-specific discovery authority produce `unknown` rather than being executed or ignored.
+The readiness entry is dispatched before ordinary OpenCode bootstrap. It does not create global directories, migrate the database, refresh the models catalog, install or execute plugins, initialize provider SDKs, or make a model request. It reads a build-pinned catalog snapshot and bounded local config/auth state. Ordinary config is validated against the committed OpenAPI schema generated from `Config.Info`; file auth uses the schema shared with `Auth.Info`. This keeps schema acceptance complete without importing side-effecting services. Dynamic plugin, remote configuration, custom catalog, and provider-specific discovery authority produce `unknown` rather than being executed or ignored.
 
 Credential values and source details remain inside OpenCode. The observation contains only exact request identity, `available|unavailable|unknown`, `connected|disconnected|unknown`, and a deterministic credential-free evidence ID.
 

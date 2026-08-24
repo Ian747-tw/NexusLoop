@@ -317,4 +317,97 @@ describe("NexusLoop Executor readiness local state", () => {
     })
     expect(observeExecutorReadiness(request, uncertain).provider_availability_status).toBe("unknown")
   })
+
+  test("accepts complete OpenCode config schema outside the readiness projection", async () => {
+    const item = await fixture()
+    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
+    await fs.writeFile(
+      path.join(item.configHome, "opencode", "opencode.json"),
+      JSON.stringify({
+        server: { port: 4096 },
+        instructions: ["AGENTS.md"],
+        permission: { read: "allow" },
+        agent: { build: { model: "openai/gpt-5" } },
+        mcp: { disabled: { enabled: false } },
+        provider: {
+          openai: {
+            models: {
+              "gpt-5": {
+                limit: { context: 200_000, output: 16_384 },
+                modalities: { input: ["text"], output: ["text"] },
+                variants: { fast: { disabled: false } },
+              },
+            },
+          },
+        },
+      }),
+    )
+
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source)).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+  })
+
+  test("validates file auth entries while preserving environment auth override semantics", async () => {
+    const item = await fixture()
+    const authDirectory = path.join(item.dataHome, "opencode")
+    await fs.mkdir(authDirectory, { recursive: true })
+    await fs.writeFile(
+      path.join(authDirectory, "auth.json"),
+      JSON.stringify({ openai: { type: "api", key: "secret", metadata: 5 } }),
+    )
+
+    const malformedFile = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, malformedFile)).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+
+    const environmentOverride = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { OPENCODE_AUTH_CONTENT: JSON.stringify({ openai: { type: "api", key: "secret", metadata: 5 } }) },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    const result = observeExecutorReadiness(request, environmentOverride)
+    expect(result).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
+    expect(JSON.stringify(result)).not.toContain("secret")
+
+    const validEnvironmentOverride = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {
+        OPENCODE_AUTH_CONTENT: JSON.stringify({
+          openai: { type: "api", key: "secret", metadata: { account: "primary" } },
+        }),
+      },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    const validResult = observeExecutorReadiness(request, validEnvironmentOverride)
+    expect(validResult.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(validResult)).not.toMatch(/secret|account/)
+  })
 })

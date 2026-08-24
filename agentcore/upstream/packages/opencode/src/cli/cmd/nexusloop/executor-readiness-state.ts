@@ -3,11 +3,19 @@ import os from "node:os"
 import { existsSync } from "node:fs"
 import { Database } from "bun:sqlite"
 import { parse, visit, type ParseError } from "jsonc-parser"
+import Ajv from "ajv"
+import openapi from "../../../../../sdk/openapi.json"
+import { Info as AuthInfo } from "../../../auth/schema"
 import type { ExecutorReadinessSource } from "./executor-readiness"
 
 const MAX_CONFIG_BYTES = 1024 * 1024
 const MAX_AUTH_BYTES = 1024 * 1024
 const MAX_FRAGMENTS = 64
+
+const validateOpenCodeConfig = new Ajv({ strict: false, allErrors: false }).compile({
+  $ref: "#/components/schemas/Config",
+  components: { schemas: openapi.components.schemas },
+})
 
 type LoadOptions = Readonly<{
   cwd: string
@@ -108,16 +116,23 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     fragments.push({ plugin: ["present"] })
   }
 
-  const authText = options.env.OPENCODE_AUTH_CONTENT
-    ? { status: "ready" as const, value: options.env.OPENCODE_AUTH_CONTENT }
+  const authFromEnvironment = Boolean(options.env.OPENCODE_AUTH_CONTENT)
+  const authText = authFromEnvironment
+    ? { status: "ready" as const, value: options.env.OPENCODE_AUTH_CONTENT! }
     : await boundedFile(path.join(dataHome, "opencode", "auth.json"), MAX_AUTH_BYTES)
   let auth: unknown = {}
   if (authText.status === "failed") complete = false
   if (authText.status === "ready") {
     const parsed = strictJson(authText.value, false)
     if (parsed.ok) {
-      auth = parsed.value
-      if (containsWellKnownAuth(parsed.value)) complete = false
+      const validated = validateAuthRecord(parsed.value)
+      if (authFromEnvironment) {
+        auth = validated.complete ? validated.value : {}
+        if (!validated.complete) complete = false
+      } else {
+        auth = validated.value
+      }
+      if (containsWellKnownAuth(auth)) complete = false
     } else complete = false
   }
 
@@ -232,111 +247,28 @@ async function fsStat(file: string): Promise<"missing" | "directory" | "other"> 
 }
 
 function validOpenCodeConfig(value: unknown): boolean {
-  const config = jsonRecord(value)
-  if (!config) return false
-  const allowed = new Set([
-    "$schema",
-    "autoshare",
-    "autoupdate",
-    "default_agent",
-    "disabled_providers",
-    "enabled_providers",
-    "model",
-    "plugin",
-    "provider",
-    "share",
-    "small_model",
-    "snapshot",
-    "username",
-  ])
-  if (Object.keys(config).some((key) => !allowed.has(key))) return false
-  if (!optionalString(config.$schema) || !optionalString(config.default_agent) || !optionalString(config.model) ||
-    !optionalString(config.small_model) || !optionalString(config.username)) return false
-  if (!optionalBoolean(config.autoshare) || !optionalBoolean(config.snapshot)) return false
-  if (config.autoupdate !== undefined && typeof config.autoupdate !== "boolean" && config.autoupdate !== "notify") return false
-  if (config.share !== undefined && !["manual", "auto", "disabled"].includes(String(config.share))) return false
-  if (!optionalStringArray(config.disabled_providers) || !optionalStringArray(config.enabled_providers)) return false
-  if (!validPluginSpecs(config.plugin)) return false
-  return validProviderConfigRecord(config.provider)
+  return validateOpenCodeConfig(value)
 }
 
-function validProviderConfigRecord(value: unknown): boolean {
-  if (value === undefined) return true
-  const providers = jsonRecord(value)
-  if (!providers) return false
-  for (const provider of Object.values(providers)) {
-    const info = jsonRecord(provider)
-    if (!info) return false
-    const allowed = new Set(["api", "name", "env", "id", "npm", "whitelist", "blacklist", "options", "models"])
-    if (Object.keys(info).some((key) => !allowed.has(key))) return false
-    if (!optionalString(info.api) || !optionalString(info.name) || !optionalString(info.id) || !optionalString(info.npm)) return false
-    if (!optionalStringArray(info.env) || !optionalStringArray(info.whitelist) || !optionalStringArray(info.blacklist)) return false
-    if (!validProviderOptions(info.options)) return false
-    if (!validConfiguredModels(info.models)) return false
+function validateAuthRecord(value: unknown): { value: Record<string, unknown>; complete: boolean } {
+  const record = jsonRecord(value)
+  if (!record) return { value: {}, complete: false }
+  const output = Object.create(null) as Record<string, unknown>
+  let complete = true
+  for (const [providerID, item] of Object.entries(record)) {
+    const parsed = AuthInfo.zod.safeParse(item)
+    if (!parsed.success) {
+      complete = false
+      continue
+    }
+    output[providerID] = parsed.data
   }
-  return true
-}
-
-function validProviderOptions(value: unknown): boolean {
-  if (value === undefined) return true
-  const options = jsonRecord(value)
-  if (!options) return false
-  for (const key of ["apiKey", "baseURL", "enterpriseUrl"]) if (!optionalString(options[key])) return false
-  if (!optionalBoolean(options.setCacheKey)) return false
-  for (const key of ["timeout", "chunkTimeout"]) {
-    const item = options[key]
-    if (item === undefined) continue
-    if (key === "timeout" && item === false) continue
-    if (typeof item !== "number" || !Number.isInteger(item) || item <= 0) return false
-  }
-  return true
-}
-
-function validConfiguredModels(value: unknown): boolean {
-  if (value === undefined) return true
-  const models = jsonRecord(value)
-  if (!models) return false
-  const stringKeys = new Set(["id", "name", "family", "release_date"])
-  const booleanKeys = new Set(["attachment", "reasoning", "temperature", "tool_call", "experimental"])
-  const allowed = new Set([...stringKeys, ...booleanKeys, "status", "options", "headers"])
-  for (const model of Object.values(models)) {
-    const info = jsonRecord(model)
-    if (!info || Object.keys(info).some((key) => !allowed.has(key))) return false
-    for (const key of stringKeys) if (!optionalString(info[key])) return false
-    for (const key of booleanKeys) if (!optionalBoolean(info[key])) return false
-    if (info.status !== undefined && !["alpha", "beta", "deprecated"].includes(String(info.status))) return false
-    if (info.options !== undefined && !jsonRecord(info.options)) return false
-    const headers = info.headers === undefined ? undefined : jsonRecord(info.headers)
-    if (info.headers !== undefined && (!headers || Object.values(headers).some((item) => typeof item !== "string"))) return false
-  }
-  return true
-}
-
-function validPluginSpecs(value: unknown): boolean {
-  if (value === undefined) return true
-  if (!Array.isArray(value)) return false
-  for (const spec of value) {
-    if (typeof spec === "string") continue
-    if (!Array.isArray(spec) || spec.length !== 2 || typeof spec[0] !== "string" || !jsonRecord(spec[1])) return false
-  }
-  return true
+  return { value: output, complete }
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) return
   return value as Record<string, unknown>
-}
-
-function optionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string"
-}
-
-function optionalBoolean(value: unknown): boolean {
-  return value === undefined || typeof value === "boolean"
-}
-
-function optionalStringArray(value: unknown): boolean {
-  return value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string"))
 }
 
 function systemManagedConfigDir(): string {
