@@ -44,11 +44,11 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const projectConfigDisabled = truthy(environment.OPENCODE_DISABLE_PROJECT_CONFIG)
   const project = await discoverProjectBoundary(options.cwd)
   if (!project.complete) complete = false
-  const configDirectories = unique([
+  const configDirectories = uniqueLiteral([
     ...(!projectConfigDisabled ? upwardProjectDirectories(options.cwd, project.boundary) : []),
     path.join(home, ".opencode"),
     ...(options.env.OPENCODE_CONFIG_DIR ? [options.env.OPENCODE_CONFIG_DIR] : []),
-  ])
+  ]).map((directory) => path.isAbsolute(directory) ? directory : path.resolve(options.cwd, directory))
   const configFiles = [
     ...unique([
       path.join(configHome, "opencode", "config.json"),
@@ -533,6 +533,18 @@ function unique(values: readonly string[]): string[] {
   const output: string[] = []
   for (let index = 0; index < values.length; index += 1) {
     const value = path.resolve(values[index]!)
+    if (seen.has(value)) continue
+    seen.add(value)
+    output.push(value)
+  }
+  return output
+}
+
+function uniqueLiteral(values: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const output: string[] = []
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!
     if (seen.has(value)) continue
     seen.add(value)
     output.push(value)

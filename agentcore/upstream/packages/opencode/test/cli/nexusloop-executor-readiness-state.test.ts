@@ -454,6 +454,33 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
   })
 
+  test("preserves relative explicit config-directory reload precedence", async () => {
+    const item = await fixture()
+    const nested = path.join(item.cwd, "nested")
+    const rootDirectory = path.join(item.cwd, ".opencode")
+    const nestedDirectory = path.join(nested, ".opencode")
+    await fs.mkdir(path.join(item.cwd, ".git"), { recursive: true })
+    await fs.mkdir(rootDirectory, { recursive: true })
+    await fs.mkdir(nestedDirectory, { recursive: true })
+    await fs.writeFile(path.join(nestedDirectory, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
+    await fs.writeFile(path.join(rootDirectory, "opencode.json"), JSON.stringify({ disabled_providers: [] }))
+
+    const source = await loadExecutorReadinessSource({
+      cwd: nested,
+      env: { OPENCODE_CONFIG_DIR: ".opencode" },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(source.config_fragments).toEqual([
+      { disabled_providers: ["openai"] },
+      { disabled_providers: [] },
+      { disabled_providers: ["openai"] },
+    ])
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
+  })
+
   test("empty XDG overrides retain standard home config and data authority", async () => {
     const item = await fixture()
     const home = path.join(item.root, "home")
