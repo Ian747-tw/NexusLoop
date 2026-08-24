@@ -292,6 +292,18 @@ describe("NexusLoop Executor readiness local state", () => {
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, removed).provider_availability_status).toBe("unavailable")
+
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify(cachedCatalog()))
+    const emptyOverride = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { OPENCODE_MODELS_PATH: "" },
+      catalog: { openai: { id: "openai", env: ["OPENAI_API_KEY"], models: {} } },
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, emptyOverride).provider_availability_status).toBe("unavailable")
   })
 
   test("provider availability and credential connection remain independent", async () => {

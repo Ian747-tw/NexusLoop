@@ -45,7 +45,8 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   let complete = true
   let catalog = options.catalog
 
-  if (!options.env.OPENCODE_MODELS_PATH && !options.env.OPENCODE_MODELS_URL) {
+  const modelsPathConfigured = options.env.OPENCODE_MODELS_PATH !== undefined
+  if (!modelsPathConfigured && !options.env.OPENCODE_MODELS_URL) {
     const cached = await boundedFile(path.join(cacheHome, "opencode", "models.json"), MAX_CATALOG_BYTES)
     if (cached.status === "failed") complete = false
     if (cached.status === "ready" && cached.value.length > 0) {
@@ -145,7 +146,9 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   // observer does not launch that subprocess, so a present profile is unknown.
   if (managedPreferencesMayExist()) complete = false
 
-  if (options.env.OPENCODE_MODELS_PATH || options.env.OPENCODE_MODELS_URL) complete = false
+  if ((modelsPathConfigured && options.env.OPENCODE_MODELS_PATH!.length > 0) || options.env.OPENCODE_MODELS_URL) {
+    complete = false
+  }
   if (!truthy(environment.OPENCODE_PURE) && await hasPluginFiles(
     options.cwd,
     project.boundary,
