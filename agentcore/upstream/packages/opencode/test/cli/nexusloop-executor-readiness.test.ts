@@ -93,6 +93,61 @@ describe("NexusLoop Executor readiness protocol", () => {
     ).toBe("unknown")
   })
 
+  test("applies OpenCode hard-removal and model status filters", () => {
+    const filteredCatalog = {
+      openai: {
+        id: "openai",
+        env: [],
+        models: {
+          "gpt-5-chat-latest": { id: "gpt-5-chat-latest" },
+          alpha: { id: "alpha", status: "alpha" },
+          deprecated: { id: "deprecated", status: "deprecated" },
+          beta: { id: "beta", status: "beta" },
+        },
+      },
+      openrouter: {
+        id: "openrouter",
+        env: [],
+        models: { "openai/gpt-5-chat": { id: "openai/gpt-5-chat" } },
+      },
+    }
+    for (const [provider_id, model_id] of [
+      ["openai", "gpt-5-chat-latest"],
+      ["openai", "alpha"],
+      ["openai", "deprecated"],
+      ["openrouter", "openai/gpt-5-chat"],
+    ] as const) {
+      expect(observeExecutorReadiness({ ...request, provider_id, model_id }, {
+        catalog: filteredCatalog,
+        config_fragments: [],
+        auth: {},
+        env: {},
+        observation_complete: true,
+      }).provider_availability_status).toBe("unavailable")
+    }
+    expect(observeExecutorReadiness({ ...request, model_id: "alpha" }, {
+      catalog: filteredCatalog,
+      config_fragments: [],
+      auth: {},
+      env: { OPENCODE_ENABLE_EXPERIMENTAL_MODELS: "true" },
+      observation_complete: true,
+    }).provider_availability_status).toBe("available")
+    expect(observeExecutorReadiness({ ...request, model_id: "beta" }, {
+      catalog: filteredCatalog,
+      config_fragments: [],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }).provider_availability_status).toBe("available")
+    expect(observeExecutorReadiness({ ...request, model_id: "gpt-5-chat-latest" }, {
+      catalog: {},
+      config_fragments: [{ provider: { openai: { models: { "gpt-5-chat-latest": {} } } } }],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }).provider_availability_status).toBe("unavailable")
+  })
+
   test("requires provider and model identity to agree exactly", () => {
     const result = observeExecutorReadiness({ ...request, provider_id: "anthropic" }, {
       catalog,

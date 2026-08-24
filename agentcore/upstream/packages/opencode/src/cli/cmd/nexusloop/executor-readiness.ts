@@ -101,6 +101,7 @@ export function observeExecutorReadiness(
   let ambiguous = false
   let providerEnabled = true
   let configuredModel = false
+  let configuredModelStatus: unknown
   let catalogModel = false
   let configuredApiKey = false
   let credentialKeys: string[] = []
@@ -111,9 +112,18 @@ export function observeExecutorReadiness(
     const id = ownValue(provider, "id")
     const models = optionalRecord(ownValue(provider, "models"))
     if (id !== request.provider_id) complete = false
-    else catalogModel = ownValue(models, request.model_id) !== undefined
+    else {
+      const modelValue = ownValue(models, request.model_id)
+      if (modelValue !== undefined) {
+        const model = optionalRecord(modelValue)
+        const status = ownValue(model, "status")
+        const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
+        const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
+        catalogModel = modelAllowed(request.provider_id, request.model_id, status, enabledExperimental)
+      }
+    }
     credentialKeys = parseStringArray(ownValue(provider, "env"), true) ?? []
-    if (ownValue(provider, "env") !== undefined && credentialKeys.length === 0) complete = false
+    if (ownValue(provider, "env") !== undefined && !parseStringArray(ownValue(provider, "env"), true)) complete = false
   }
 
   for (let index = 0; index < configs.length; index += 1) {
@@ -136,7 +146,13 @@ export function observeExecutorReadiness(
     if (selectedValue === undefined) continue
     const selected = optionalRecord(selectedValue)
     const models = optionalRecord(ownValue(selected, "models"))
-    if (ownValue(selected, "models") !== undefined) configuredModel ||= ownValue(models, request.model_id) !== undefined
+    if (ownValue(selected, "models") !== undefined) {
+      const configuredModelValue = ownValue(models, request.model_id)
+      if (configuredModelValue !== undefined) {
+        configuredModel = true
+        configuredModelStatus = ownValue(optionalRecord(configuredModelValue), "status")
+      }
+    }
     const selectedEnv = parseStringArray(ownValue(selected, "env"), false)
     if (ownValue(selected, "env") !== undefined) {
       if (!selectedEnv) complete = false
@@ -157,6 +173,9 @@ export function observeExecutorReadiness(
 
   const authValue = ownValue(auth, request.provider_id)
   const credential = credentialStatus(authValue, env, credentialKeys, configuredApiKey)
+  const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
+  const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
+  configuredModel &&= modelAllowed(request.provider_id, request.model_id, configuredModelStatus, enabledExperimental)
   const availability = !complete || ambiguous
     ? "unknown"
     : providerEnabled && (catalogModel || configuredModel)
@@ -182,6 +201,13 @@ export function observeExecutorReadiness(
     credential_connection_status: credentialConnection,
     evidence_id: `opencode-readiness-v1-${createHash("sha256").update(JSON.stringify(semantic)).digest("hex")}`,
   })
+}
+
+function modelAllowed(providerID: string, modelID: string, status: unknown, experimental: boolean): boolean {
+  if (modelID === "gpt-5-chat-latest") return false
+  if (providerID === "openrouter" && modelID === "openai/gpt-5-chat") return false
+  if (status === "deprecated") return false
+  return status !== "alpha" || experimental
 }
 
 function parseSource(value: unknown): ExecutorReadinessSource {

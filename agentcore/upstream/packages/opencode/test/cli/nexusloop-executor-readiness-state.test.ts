@@ -181,4 +181,79 @@ describe("NexusLoop Executor readiness local state", () => {
       credential_connection_status: "connected",
     })
   })
+
+  test("honors project disable while retaining explicit configuration", async () => {
+    const item = await fixture()
+    const projectConfig = path.join(item.cwd, "opencode.json")
+    const projectPlugin = path.join(item.cwd, ".opencode", "plugin")
+    const explicitDir = path.join(item.root, "explicit")
+    await fs.mkdir(projectPlugin, { recursive: true })
+    await fs.mkdir(explicitDir, { recursive: true })
+    await fs.writeFile(projectConfig, JSON.stringify({ disabled_providers: ["openai"] }))
+    await fs.writeFile(path.join(projectPlugin, "ignored.ts"), "throw new Error('must not load')")
+    await fs.writeFile(
+      path.join(explicitDir, "opencode.json"),
+      JSON.stringify({ enabled_providers: ["openai"] }),
+    )
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_CONFIG_DIR: explicitDir },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
+  })
+
+  test("matches project and managed configuration precedence", async () => {
+    const item = await fixture()
+    const dotConfig = path.join(item.cwd, ".opencode")
+    const managed = path.join(item.root, "managed")
+    await fs.mkdir(dotConfig, { recursive: true })
+    await fs.mkdir(managed, { recursive: true })
+    await fs.writeFile(path.join(item.cwd, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
+    await fs.writeFile(path.join(dotConfig, "opencode.json"), JSON.stringify({ enabled_providers: ["openai"] }))
+    await fs.writeFile(path.join(managed, "opencode.json"), JSON.stringify({ disabled_providers: [] }))
+    const source = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: managed,
+    })
+    expect(source.config_fragments).toEqual([
+      { disabled_providers: ["openai"] },
+      { enabled_providers: ["openai"] },
+      { disabled_providers: [] },
+    ])
+  })
+
+  test("invalid OpenCode schema and unreadable managed authority fail closed", async () => {
+    const item = await fixture()
+    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
+    await fs.writeFile(path.join(item.configHome, "opencode", "opencode.json"), JSON.stringify({ share: "invalid" }))
+    const invalid = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, invalid).provider_availability_status).toBe("unknown")
+
+    const managedFile = path.join(item.root, "managed-file")
+    await fs.writeFile(managedFile, "not a directory")
+    const uncertain = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: path.join(item.root, "clean-config"),
+      dataHome: item.dataHome,
+      managedConfigDir: managedFile,
+    })
+    expect(observeExecutorReadiness(request, uncertain).provider_availability_status).toBe("unknown")
+  })
 })

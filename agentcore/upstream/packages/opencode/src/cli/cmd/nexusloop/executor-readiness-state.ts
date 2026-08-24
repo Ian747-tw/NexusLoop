@@ -15,6 +15,7 @@ type LoadOptions = Readonly<{
   catalog: unknown
   configHome?: string
   dataHome?: string
+  managedConfigDir?: string
 }>
 
 export async function loadExecutorReadinessSource(options: LoadOptions): Promise<ExecutorReadinessSource> {
@@ -25,12 +26,16 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const fragments: unknown[] = []
   let complete = true
 
+  const projectConfigDisabled = truthy(environment.OPENCODE_DISABLE_PROJECT_CONFIG)
   const configFiles = unique([
     path.join(configHome, "opencode", "config.json"),
     path.join(configHome, "opencode", "opencode.json"),
     path.join(configHome, "opencode", "opencode.jsonc"),
-    ...upwardConfigFiles(options.cwd),
     ...(options.env.OPENCODE_CONFIG ? [options.env.OPENCODE_CONFIG] : []),
+    ...(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd) : []),
+    ...(!projectConfigDisabled ? upwardProjectDirectoryConfigFiles(options.cwd) : []),
+    path.join(home, ".opencode", "opencode.json"),
+    path.join(home, ".opencode", "opencode.jsonc"),
     ...(options.env.OPENCODE_CONFIG_DIR
       ? [
           path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.json"),
@@ -51,6 +56,10 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
+    if (!validOpenCodeConfig(parsed.value)) {
+      complete = false
+      continue
+    }
     fragments.push(parsed.value)
   }
   if (configFiles.length > MAX_FRAGMENTS) complete = false
@@ -59,13 +68,36 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
-      if (parsed.ok) fragments.push(parsed.value)
+      if (parsed.ok && validOpenCodeConfig(parsed.value)) fragments.push(parsed.value)
       else complete = false
     }
   }
 
+  const managedDir = options.managedConfigDir ?? environment.OPENCODE_TEST_MANAGED_CONFIG_DIR ?? systemManagedConfigDir()
+  const managed = await managedConfigFiles(managedDir)
+  if (!managed.ok) complete = false
+  for (let index = 0; index < managed.files.length && fragments.length < MAX_FRAGMENTS; index += 1) {
+    const text = await boundedFile(managed.files[index]!, MAX_CONFIG_BYTES)
+    if (text.status === "missing") continue
+    if (text.status === "failed") {
+      complete = false
+      continue
+    }
+    const parsed = strictJson(text.value, true)
+    if (!parsed.ok || !validOpenCodeConfig(parsed.value)) {
+      complete = false
+      continue
+    }
+    fragments.push(parsed.value)
+  }
+  // The normal macOS path may add MDM preferences through plutil. The bounded
+  // observer does not launch that subprocess, so it cannot prove completeness.
+  if (process.platform === "darwin") complete = false
+
   if (options.env.OPENCODE_MODELS_PATH || options.env.OPENCODE_MODELS_URL) complete = false
-  if (await hasPluginFiles(options.cwd, configHome)) fragments.push({ plugin: ["present"] })
+  if (await hasPluginFiles(options.cwd, home, configHome, projectConfigDisabled, options.env.OPENCODE_CONFIG_DIR)) {
+    fragments.push({ plugin: ["present"] })
+  }
 
   const authText = options.env.OPENCODE_AUTH_CONTENT
     ? { status: "ready" as const, value: options.env.OPENCODE_AUTH_CONTENT }
@@ -101,33 +133,180 @@ function snapshotEnvironment(value: Readonly<Record<string, string | undefined>>
   return Object.freeze(output)
 }
 
-function upwardConfigFiles(cwd: string): string[] {
+function upwardDirectories(cwd: string): string[] {
   const output: string[] = []
   let current = path.resolve(cwd)
   for (;;) {
-    output.unshift(path.join(current, "opencode.jsonc"), path.join(current, "opencode.json"))
-    output.unshift(path.join(current, ".opencode", "opencode.jsonc"), path.join(current, ".opencode", "opencode.json"))
+    output.unshift(current)
     const parent = path.dirname(current)
     if (parent === current) return output
     current = parent
   }
 }
 
-async function hasPluginFiles(cwd: string, configHome: string): Promise<boolean> {
+function upwardProjectConfigFiles(cwd: string): string[] {
+  return upwardDirectories(cwd).flatMap((directory) => [
+    path.join(directory, "opencode.jsonc"),
+    path.join(directory, "opencode.json"),
+  ])
+}
+
+function upwardProjectDirectoryConfigFiles(cwd: string): string[] {
+  return upwardDirectories(cwd).flatMap((directory) => [
+    path.join(directory, ".opencode", "opencode.json"),
+    path.join(directory, ".opencode", "opencode.jsonc"),
+  ])
+}
+
+async function hasPluginFiles(
+  cwd: string,
+  home: string,
+  configHome: string,
+  projectConfigDisabled: boolean,
+  explicitConfigDir?: string,
+): Promise<boolean> {
   const dirs = [path.join(configHome, "opencode", "plugin"), path.join(configHome, "opencode", "plugins")]
-  let current = path.resolve(cwd)
-  for (;;) {
-    dirs.push(path.join(current, ".opencode", "plugin"), path.join(current, ".opencode", "plugins"))
-    const parent = path.dirname(current)
-    if (parent === current) break
-    current = parent
+  if (!projectConfigDisabled) {
+    for (const current of upwardDirectories(cwd)) {
+      dirs.push(path.join(current, ".opencode", "plugin"), path.join(current, ".opencode", "plugins"))
+    }
   }
+  dirs.push(path.join(home, ".opencode", "plugin"), path.join(home, ".opencode", "plugins"))
+  if (explicitConfigDir) dirs.push(path.join(explicitConfigDir, "plugin"), path.join(explicitConfigDir, "plugins"))
   for (let index = 0; index < dirs.length; index += 1) {
     try {
       for await (const _ of new Bun.Glob("*").scan({ cwd: dirs[index]!, onlyFiles: false })) return true
     } catch {}
   }
   return false
+}
+
+async function managedConfigFiles(directory: string): Promise<{ ok: boolean; files: string[] }> {
+  try {
+    const stat = await fsStat(directory)
+    if (stat === "missing") return { ok: true, files: [] }
+    if (stat !== "directory") return { ok: false, files: [] }
+    return {
+      ok: true,
+      files: [path.join(directory, "opencode.json"), path.join(directory, "opencode.jsonc")],
+    }
+  } catch {
+    return { ok: false, files: [] }
+  }
+}
+
+async function fsStat(file: string): Promise<"missing" | "directory" | "other"> {
+  try {
+    const stat = await import("node:fs/promises").then((module) => module.stat(file))
+    return stat.isDirectory() ? "directory" : "other"
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing"
+    throw error
+  }
+}
+
+function validOpenCodeConfig(value: unknown): boolean {
+  const config = jsonRecord(value)
+  if (!config) return false
+  const allowed = new Set([
+    "$schema",
+    "autoshare",
+    "autoupdate",
+    "default_agent",
+    "disabled_providers",
+    "enabled_providers",
+    "model",
+    "plugin",
+    "provider",
+    "share",
+    "small_model",
+    "snapshot",
+    "username",
+  ])
+  if (Object.keys(config).some((key) => !allowed.has(key))) return false
+  if (!optionalString(config.$schema) || !optionalString(config.default_agent) || !optionalString(config.model) ||
+    !optionalString(config.small_model) || !optionalString(config.username)) return false
+  if (!optionalBoolean(config.autoshare) || !optionalBoolean(config.snapshot)) return false
+  if (config.autoupdate !== undefined && typeof config.autoupdate !== "boolean" && config.autoupdate !== "notify") return false
+  if (config.share !== undefined && !["manual", "auto", "disabled"].includes(String(config.share))) return false
+  if (!optionalStringArray(config.disabled_providers) || !optionalStringArray(config.enabled_providers)) return false
+  if (!validPluginSpecs(config.plugin)) return false
+  return validProviderConfigRecord(config.provider)
+}
+
+function validProviderConfigRecord(value: unknown): boolean {
+  if (value === undefined) return true
+  const providers = jsonRecord(value)
+  if (!providers) return false
+  for (const provider of Object.values(providers)) {
+    const info = jsonRecord(provider)
+    if (!info) return false
+    const allowed = new Set(["api", "name", "env", "id", "npm", "whitelist", "blacklist", "options", "models"])
+    if (Object.keys(info).some((key) => !allowed.has(key))) return false
+    if (!optionalString(info.api) || !optionalString(info.name) || !optionalString(info.id) || !optionalString(info.npm)) return false
+    if (!optionalStringArray(info.env) || !optionalStringArray(info.whitelist) || !optionalStringArray(info.blacklist)) return false
+    if (info.options !== undefined && !jsonRecord(info.options)) return false
+    if (!validConfiguredModels(info.models)) return false
+  }
+  return true
+}
+
+function validConfiguredModels(value: unknown): boolean {
+  if (value === undefined) return true
+  const models = jsonRecord(value)
+  if (!models) return false
+  const stringKeys = new Set(["id", "name", "family", "release_date"])
+  const booleanKeys = new Set(["attachment", "reasoning", "temperature", "tool_call", "experimental"])
+  const allowed = new Set([...stringKeys, ...booleanKeys, "status", "options", "headers"])
+  for (const model of Object.values(models)) {
+    const info = jsonRecord(model)
+    if (!info || Object.keys(info).some((key) => !allowed.has(key))) return false
+    for (const key of stringKeys) if (!optionalString(info[key])) return false
+    for (const key of booleanKeys) if (!optionalBoolean(info[key])) return false
+    if (info.status !== undefined && !["alpha", "beta", "deprecated"].includes(String(info.status))) return false
+    if (info.options !== undefined && !jsonRecord(info.options)) return false
+    const headers = info.headers === undefined ? undefined : jsonRecord(info.headers)
+    if (info.headers !== undefined && (!headers || Object.values(headers).some((item) => typeof item !== "string"))) return false
+  }
+  return true
+}
+
+function validPluginSpecs(value: unknown): boolean {
+  if (value === undefined) return true
+  if (!Array.isArray(value)) return false
+  for (const spec of value) {
+    if (typeof spec === "string") continue
+    if (!Array.isArray(spec) || spec.length !== 2 || typeof spec[0] !== "string" || !jsonRecord(spec[1])) return false
+  }
+  return true
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) return
+  return value as Record<string, unknown>
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string"
+}
+
+function optionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean"
+}
+
+function optionalStringArray(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string"))
+}
+
+function systemManagedConfigDir(): string {
+  if (process.platform === "darwin") return "/Library/Application Support/opencode"
+  if (process.platform === "win32") return path.join(process.env.ProgramData || "C:\\ProgramData", "opencode")
+  return "/etc/opencode"
+}
+
+function truthy(value: string | undefined): boolean {
+  const normalized = value?.toLowerCase()
+  return normalized === "true" || normalized === "1"
 }
 
 function activeRemoteAccountStatus(databasePath: string): boolean | undefined {

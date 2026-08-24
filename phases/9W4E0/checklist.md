@@ -8,5 +8,7 @@
 - [x] 6. Implement the native readiness command.
 - [ ] 7. Prove native packaging from a detached checkout.
 - [x] 8. Update ADR and architecture documentation.
+- [x] Match OpenCode model filtering, project-disable, managed, schema, and precedence semantics.
+- [x] Add a phase-tagged packaged-command user-simulation E2E.
 - [ ] 9. Run complete repository validation.
 - [ ] 10. Commit a clean local-only handoff.

@@ -17,9 +17,22 @@
 
 ## Selected Seam
 
-Add an OpenCode-internal read-only observation module and CLI command. The module shares the authoritative OpenCode schemas and local source precedence needed for the exact requested provider/model, but excludes side-effecting source classes. Excluded source classes make the corresponding state `unknown`; they are not silently ignored and never become `unavailable` evidence.
+Add an OpenCode-internal read-only observation module and CLI command. The module mirrors the bounded, side-effect-free subset of OpenCode schemas and local source precedence needed for the exact requested provider/model, but excludes side-effecting source classes. Excluded or unsupported source classes make the corresponding state `unknown`; they are not silently ignored and never become `unavailable` evidence.
 
 The command runs from the packaged binary, suppresses ordinary models.dev refresh and database migration, accepts no provider list request, returns no model list, and never constructs a language model.
+
+Before declaring an exact model available, the observation mirrors OpenCode's
+effective local authority: hard-removed, deprecated, and disabled alpha models
+are excluded; project configuration and project plugin directories are omitted
+when `OPENCODE_DISABLE_PROJECT_CONFIG` is active; and global, explicit,
+project, configuration-content, managed-directory, and macOS managed-preference
+sources retain OpenCode's precedence. The observer accepts only the strict,
+side-effect-free subset of OpenCode's configuration schema that it can evaluate
+completely; valid but unsupported fields conservatively make the observation
+unknown rather than importing the side-effecting Config service. Dynamic remote
+account configuration, well-known configuration, plugins, custom catalog
+sources, unreadable managed authority, or malformed fragments likewise make
+the bounded observation unknown.
 
 ## Packaging Finding
 
