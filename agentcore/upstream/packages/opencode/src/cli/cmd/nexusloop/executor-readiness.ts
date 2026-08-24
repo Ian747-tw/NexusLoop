@@ -445,9 +445,9 @@ function credentialStatus(
   credentialSemanticsKnown: boolean,
   publicCredentialConnection: boolean,
 ): "connected" | "disconnected" | "unknown" {
+  if (configuredApiKey) return "connected"
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
-  if (configuredApiKey) return "connected"
   for (let index = 0; index < credentialKeys.length; index += 1) {
     const value = ownValue(env, credentialKeys[index]!)
     if (typeof value === "string" && value.length > 0) return "connected"

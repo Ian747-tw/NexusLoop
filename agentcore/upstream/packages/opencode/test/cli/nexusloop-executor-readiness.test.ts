@@ -308,6 +308,28 @@ describe("NexusLoop Executor readiness protocol", () => {
         credential_connection_status: "unknown",
       })
     }
+
+    const explicit = observeExecutorReadiness(
+      { ...request, provider_id: "azure", model_id: "exact" },
+      {
+        catalog: {
+          azure: {
+            id: "azure",
+            env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"],
+            models: { exact: { id: "exact" } },
+          },
+        },
+        config_fragments: [{ provider: { azure: { options: { apiKey: "configured-secret" } } } }],
+        auth: {},
+        env: {},
+        observation_complete: true,
+      },
+    )
+    expect(explicit).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+    expect(JSON.stringify(explicit)).not.toContain("configured-secret")
   })
 
   test("recognizes catalog-declared alternative credential keys for generic providers", () => {
