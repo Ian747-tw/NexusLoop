@@ -251,7 +251,7 @@ describe("NexusLoop Executor readiness protocol", () => {
     expect(JSON.stringify(result)).not.toMatch(/CUSTOM_EXECUTOR_KEY|ghp_|header-value|Configured/)
   })
 
-  test("fails closed for dynamic, partial, and unsupported credential semantics", () => {
+  test("fails closed for partial and unsupported credential semantics", () => {
     const oauth = observeExecutorReadiness(request, {
       catalog,
       config_fragments: [],
@@ -260,7 +260,7 @@ describe("NexusLoop Executor readiness protocol", () => {
       observation_complete: true,
     })
     expect(oauth.provider_availability_status).toBe("available")
-    expect(oauth.credential_connection_status).toBe("unknown")
+    expect(oauth.credential_connection_status).toBe("connected")
 
     const remote = observeExecutorReadiness(request, {
       catalog,
@@ -272,6 +272,38 @@ describe("NexusLoop Executor readiness protocol", () => {
     expect(remote.provider_availability_status).toBe("unknown")
     expect(remote.credential_connection_status).toBe("unknown")
     expect(JSON.stringify(remote)).not.toMatch(/auth\.example|TOKEN_ENV|secret/)
+  })
+
+  test("recognizes the built-in OpenAI OAuth credential path without broad OAuth inference", () => {
+    const oauthCatalog = {
+      openai: {
+        id: "openai",
+        env: ["OPENAI_API_KEY"],
+        models: { "gpt-5.4": { id: "gpt-5.4" } },
+      },
+    }
+    expect(observeExecutorReadiness({ ...request, model_id: "gpt-5.4" }, {
+      catalog: oauthCatalog,
+      config_fragments: [],
+      auth: {
+        openai: { type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 0 },
+      },
+      env: {},
+      observation_complete: true,
+    })).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "connected",
+    })
+
+    expect(observeExecutorReadiness({ ...request, provider_id: "custom" }, {
+      catalog: { custom: { id: "custom", env: [], models: { "gpt-5": { id: "gpt-5" } } } },
+      config_fragments: [],
+      auth: {
+        custom: { type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 0 },
+      },
+      env: {},
+      observation_complete: true,
+    }).credential_connection_status).toBe("unknown")
   })
 
   test("strict request parsing rejects malformed oversized duplicate and unknown authority", () => {

@@ -39,6 +39,6 @@ the bounded observation unknown.
 
 The committed upstream lock fails a frozen install under the pinned Bun version because `packages/app/package.json` names the moving `ghostty-web#main` branch while the lock resolves revision `20bd361`. The authorized repair pins the manifest and workspace lock specifier to that already-resolved revision; no resolved package version changes.
 
-The readiness package also declares `ajv@8.18.0` directly. That exact package was already present in the frozen graph; the manifest and lock changes add a direct ownership edge without changing its resolved artifact or any transitive version.
+The readiness package also declares `ajv@8.18.0` directly and uses its JSON Schema 2020 entrypoint. That exact package was already present in the frozen graph; the manifest and lock changes add a direct ownership edge without changing its resolved artifact or any transitive version. The observer separately enforces the exact two-item plugin tuple because the committed generated schema contains `prefixItems` but omits tuple cardinality.
 
 The supported readiness build embeds `test/tool/fixtures/models-api.json` as an explicit local input. At implementation time it is 2,408,942 bytes with SHA-256 `33f836f532fd8ada58f255f11030ff5500d45b0cf7e63587772221050ffb1f48`. No live catalog fetch is part of the build.

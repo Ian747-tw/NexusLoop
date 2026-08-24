@@ -20,7 +20,7 @@ The command accepts one bounded versioned JSON assertion on stdin and emits one 
 
 The readiness entry is dispatched before ordinary OpenCode bootstrap. It does not create global directories, migrate the database, refresh the models catalog, install or execute plugins, initialize provider SDKs, or make a model request. It reads a build-pinned catalog snapshot and bounded local config/auth state. Ordinary config is validated against the committed OpenAPI schema generated from `Config.Info`; file auth uses the schema shared with `Auth.Info`. This keeps schema acceptance complete without importing side-effecting services. Dynamic plugin, remote configuration, custom catalog, and provider-specific discovery authority produce `unknown` rather than being executed or ignored.
 
-Credential values and source details remain inside OpenCode. The observation contains only exact request identity, `available|unavailable|unknown`, `connected|disconnected|unknown`, and a deterministic credential-free evidence ID.
+Credential values and source details remain inside OpenCode. Valid built-in OpenAI OAuth refresh authority can establish `connected`; OAuth mechanisms without equally exact offline semantics remain `unknown`. The observation contains only exact request identity, `available|unavailable|unknown`, `connected|disconnected|unknown`, and a deterministic credential-free evidence ID.
 
 The native package build uses the repository's pinned catalog fixture and Bun 1.3.13. The upstream workspace pins the previously locked `ghostty-web` revision instead of resolving a moving branch during frozen install.
 

@@ -17,6 +17,7 @@ const COMPLEX_CREDENTIAL_PROVIDERS = new Set([
   "google-vertex-anthropic",
   "sap-ai-core",
 ])
+const OFFLINE_OAUTH_CREDENTIAL_PROVIDERS = new Set(["openai"])
 
 const MAX_REQUEST_BYTES = 4096
 const HASH = /^[a-f0-9]{64}$/
@@ -196,7 +197,14 @@ export function observeExecutorReadiness(
   }
 
   const authValue = ownValue(auth, request.provider_id)
-  const credential = credentialStatus(authValue, env, credentialKeys, configuredApiKey, credentialSemanticsKnown)
+  const credential = credentialStatus(
+    request.provider_id,
+    authValue,
+    env,
+    credentialKeys,
+    configuredApiKey,
+    credentialSemanticsKnown,
+  )
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
   const modelAvailable = (catalogModel || configuredModel) && modelAllowed(
@@ -251,6 +259,7 @@ function parseSource(value: unknown): ExecutorReadinessSource {
 }
 
 function credentialStatus(
+  providerID: string,
   authValue: unknown,
   env: Record<string, unknown>,
   credentialKeys: readonly string[],
@@ -269,6 +278,11 @@ function credentialStatus(
   if (type === "api") return typeof ownValue(info, "key") === "string" && ownValue(info, "key") !== ""
     ? "connected"
     : "unknown"
+  if (type === "oauth" && OFFLINE_OAUTH_CREDENTIAL_PROVIDERS.has(providerID)) {
+    return typeof ownValue(info, "refresh") === "string" && ownValue(info, "refresh") !== ""
+      ? "connected"
+      : "unknown"
+  }
   return "unknown"
 }
 

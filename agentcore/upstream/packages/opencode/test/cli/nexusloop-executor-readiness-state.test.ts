@@ -119,6 +119,8 @@ describe("NexusLoop Executor readiness local state", () => {
       '{"provider":{},"provider":{}}',
       '{"provider":',
       '{"provider":{"openai":{"options":{"apiKey":"{env:OPENAI_API_KEY}"}}}}',
+      '{"plugin":[[5,{}]]}',
+      '{"plugin":[["package-only"]]}',
       JSON.stringify({ padding: "x".repeat(1024 * 1024) }),
     ]) {
       await fs.writeFile(file, value)
@@ -130,6 +132,25 @@ describe("NexusLoop Executor readiness local state", () => {
         dataHome: item.dataHome,
       })
       expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unknown")
+    }
+  })
+
+  test("rejects malformed plugin tuples before readiness projection", async () => {
+    const item = await fixture()
+    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
+    const file = path.join(item.configHome, "opencode", "opencode.json")
+    for (const value of ['{"plugin":[[5,{}]]}', '{"plugin":[["package-only"]]}']) {
+      await fs.writeFile(file, value)
+      const source = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: {},
+        catalog,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(source.config_fragments).toEqual([])
+      expect(source.observation_complete).toBe(false)
     }
   })
 
@@ -256,6 +277,28 @@ describe("NexusLoop Executor readiness local state", () => {
     })
   })
 
+  test("does not charge missing config candidates against the fragment ceiling", async () => {
+    const item = await fixture()
+    const repository = path.join(item.root, "repository")
+    let cwd = repository
+    await fs.mkdir(path.join(repository, ".git"), { recursive: true })
+    for (let index = 0; index < 20; index += 1) cwd = path.join(cwd, `level-${index}`)
+    await fs.mkdir(cwd, { recursive: true })
+
+    const source = await loadExecutorReadinessSource({
+      cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, source)).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+  })
+
   test("active remote organization state uses the real singleton key and is unknown", async () => {
     const item = await fixture()
     const directory = path.join(item.dataHome, "opencode")
@@ -378,6 +421,24 @@ describe("NexusLoop Executor readiness local state", () => {
       provider_availability_status: "available",
       credential_connection_status: "disconnected",
     })
+
+    await fs.writeFile(
+      path.join(authDirectory, "auth.json"),
+      JSON.stringify({
+        openai: { type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 0 },
+      }),
+    )
+    const oauthFile = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    const oauthResult = observeExecutorReadiness(request, oauthFile)
+    expect(oauthResult.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(oauthResult)).not.toMatch(/access-secret|refresh-secret/)
 
     const environmentOverride = await loadExecutorReadinessSource({
       cwd: item.cwd,

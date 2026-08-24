@@ -3,7 +3,7 @@ import os from "node:os"
 import { existsSync } from "node:fs"
 import { Database } from "bun:sqlite"
 import { parse, visit, type ParseError } from "jsonc-parser"
-import Ajv from "ajv"
+import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
 import { Info as AuthInfo } from "../../../auth/schema"
 import type { ExecutorReadinessSource } from "./executor-readiness"
@@ -12,7 +12,7 @@ const MAX_CONFIG_BYTES = 1024 * 1024
 const MAX_AUTH_BYTES = 1024 * 1024
 const MAX_FRAGMENTS = 64
 
-const validateOpenCodeConfig = new Ajv({ strict: false, allErrors: false }).compile({
+const validateOpenCodeConfigSchema = new Ajv2020({ strict: false, allErrors: false }).compile({
   $ref: "#/components/schemas/Config",
   components: { schemas: openapi.components.schemas },
 })
@@ -54,9 +54,13 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       : []),
   ])
 
-  for (let index = 0; index < configFiles.length && fragments.length < MAX_FRAGMENTS; index += 1) {
+  for (let index = 0; index < configFiles.length; index += 1) {
     const text = await boundedFile(configFiles[index]!, MAX_CONFIG_BYTES)
     if (text.status === "missing") continue
+    if (fragments.length >= MAX_FRAGMENTS) {
+      complete = false
+      continue
+    }
     if (text.status === "failed" || /\{(?:env|file):[^}]+\}/.test(text.value)) {
       complete = false
       continue
@@ -72,10 +76,9 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     }
     fragments.push(parsed.value)
   }
-  if (configFiles.length > MAX_FRAGMENTS) complete = false
-
   if (options.env.OPENCODE_CONFIG_CONTENT) {
-    if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
+    if (fragments.length >= MAX_FRAGMENTS) complete = false
+    else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
       if (parsed.ok && validOpenCodeConfig(parsed.value)) fragments.push(parsed.value)
@@ -86,9 +89,13 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const managedDir = options.managedConfigDir ?? environment.OPENCODE_TEST_MANAGED_CONFIG_DIR ?? systemManagedConfigDir()
   const managed = await managedConfigFiles(managedDir)
   if (!managed.ok) complete = false
-  for (let index = 0; index < managed.files.length && fragments.length < MAX_FRAGMENTS; index += 1) {
+  for (let index = 0; index < managed.files.length; index += 1) {
     const text = await boundedFile(managed.files[index]!, MAX_CONFIG_BYTES)
     if (text.status === "missing") continue
+    if (fragments.length >= MAX_FRAGMENTS) {
+      complete = false
+      continue
+    }
     if (text.status === "failed") {
       complete = false
       continue
@@ -113,7 +120,8 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     projectConfigDisabled,
     options.env.OPENCODE_CONFIG_DIR,
   )) {
-    fragments.push({ plugin: ["present"] })
+    if (fragments.length >= MAX_FRAGMENTS) complete = false
+    else fragments.push({ plugin: ["present"] })
   }
 
   const authFromEnvironment = Boolean(options.env.OPENCODE_AUTH_CONTENT)
@@ -247,7 +255,18 @@ async function fsStat(file: string): Promise<"missing" | "directory" | "other"> 
 }
 
 function validOpenCodeConfig(value: unknown): boolean {
-  return validateOpenCodeConfig(value)
+  if (!validateOpenCodeConfigSchema(value)) return false
+  const config = jsonRecord(value)
+  if (!config) return false
+  const plugin = config.plugin
+  if (plugin === undefined) return true
+  if (!Array.isArray(plugin)) return false
+  for (let index = 0; index < plugin.length; index += 1) {
+    const item = plugin[index]
+    if (typeof item === "string") continue
+    if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || !jsonRecord(item[1])) return false
+  }
+  return true
 }
 
 function validateAuthRecord(value: unknown): { value: Record<string, unknown>; complete: boolean } {
