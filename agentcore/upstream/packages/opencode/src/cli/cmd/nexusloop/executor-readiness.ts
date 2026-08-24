@@ -154,7 +154,7 @@ export function observeExecutorReadiness(
     }
     if (id !== request.provider_id) complete = false
     else {
-      const modelValue = ownValue(models, request.model_id)
+      const modelValue = ownValue(catalogModels, request.model_id)
       if (modelValue !== undefined) {
         const model = optionalRecord(modelValue)
         const status = ownValue(model, "status")

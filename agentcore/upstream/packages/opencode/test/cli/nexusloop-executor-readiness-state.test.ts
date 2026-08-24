@@ -339,10 +339,6 @@ describe("NexusLoop Executor readiness local state", () => {
         credential_connection_status: "connected",
       })
 
-    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
-    await fs.writeFile(path.join(item.configHome, "opencode", "opencode.json"), JSON.stringify({
-      provider: { opencode: { models: { "paid-model-fast": {} } } },
-    }))
     await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify({
       opencode: {
         id: "opencode",
@@ -363,6 +359,27 @@ describe("NexusLoop Executor readiness local state", () => {
           },
         },
       },
+    }))
+    const directPaidMode = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog: {},
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(
+      { ...request, provider_id: "opencode", model_id: "paid-model-fast" },
+      directPaidMode,
+    )).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+
+    await fs.mkdir(path.join(item.configHome, "opencode"), { recursive: true })
+    await fs.writeFile(path.join(item.configHome, "opencode", "opencode.json"), JSON.stringify({
+      provider: { opencode: { models: { "paid-model-fast": {} } } },
     }))
     const paidMode = await loadExecutorReadinessSource({
       cwd: item.cwd,
