@@ -29,10 +29,6 @@ const CONFIGURED_ENDPOINT_API_KEY_PROVIDERS = new Set([
   "cloudflare-ai-gateway",
   "cloudflare-workers-ai",
 ])
-const CONFIGURED_ENDPOINT_CREDENTIAL_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "cloudflare-ai-gateway": Object.freeze(["CLOUDFLARE_API_TOKEN", "CF_AIG_TOKEN"]),
-  "cloudflare-workers-ai": Object.freeze(["CLOUDFLARE_API_KEY"]),
-})
 
 const MAX_REQUEST_BYTES = 4096
 const HASH = /^[a-f0-9]{64}$/
@@ -466,9 +462,8 @@ function credentialStatus(
 ): "connected" | "disconnected" | "unknown" {
   if (configuredBaseURL && CONFIGURED_ENDPOINT_API_KEY_PROVIDERS.has(providerID)) {
     if (configuredApiKey) return "connected"
-    const keys = CONFIGURED_ENDPOINT_CREDENTIAL_KEYS[providerID] ?? []
-    for (let index = 0; index < keys.length; index += 1) {
-      const value = ownValue(env, keys[index]!)
+    if (credentialKeys.length === 1) {
+      const value = ownValue(env, credentialKeys[0]!)
       if (typeof value === "string" && value.length > 0) return "connected"
     }
     if (authValue === undefined) return "disconnected"

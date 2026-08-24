@@ -398,6 +398,50 @@ describe("NexusLoop Executor readiness protocol", () => {
         credential_connection_status: "connected",
       })
       expect(JSON.stringify(storedEndpoint)).not.toMatch(/stored-secret|configured\.example/)
+
+      const catalogEnv = provider === "cloudflare-workers-ai"
+        ? ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"]
+        : ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "CLOUDFLARE_API_TOKEN"]
+      const ignoredAmbient = observeExecutorReadiness(
+        { ...request, provider_id: provider, model_id: "configured-endpoint" },
+        {
+          catalog: {
+            [provider]: {
+              id: provider,
+              env: catalogEnv,
+              models: { "configured-endpoint": { id: "configured-endpoint" } },
+            },
+          },
+          config_fragments: [{
+            provider: { [provider]: { options: { baseURL: "https://configured.example.invalid" } } },
+          }],
+          auth: {},
+          env: { [catalogEnv.at(-1)!]: "ambient-secret" },
+          observation_complete: true,
+        },
+      )
+      expect(ignoredAmbient.credential_connection_status).toBe("disconnected")
+
+      const configuredEnvironment = observeExecutorReadiness(
+        { ...request, provider_id: provider, model_id: "configured-endpoint" },
+        {
+          catalog: {},
+          config_fragments: [{
+            provider: {
+              [provider]: {
+                env: ["CUSTOM_PROVIDER_TOKEN"],
+                options: { baseURL: "https://configured.example.invalid" },
+                models: { "configured-endpoint": {} },
+              },
+            },
+          }],
+          auth: {},
+          env: { CUSTOM_PROVIDER_TOKEN: "effective-secret" },
+          observation_complete: true,
+        },
+      )
+      expect(configuredEnvironment.credential_connection_status).toBe("connected")
+      expect(JSON.stringify(configuredEnvironment)).not.toMatch(/effective-secret|configured\.example/)
     }
 
     const explicit = observeExecutorReadiness(
