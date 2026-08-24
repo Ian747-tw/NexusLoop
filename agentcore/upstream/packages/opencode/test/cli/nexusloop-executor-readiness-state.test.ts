@@ -345,6 +345,32 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, directories).provider_availability_status).toBe("unavailable")
   })
 
+  test("preserves repeated explicit and discovered project config precedence", async () => {
+    const item = await fixture()
+    const nested = path.join(item.cwd, "nested")
+    const explicit = path.join(nested, "opencode.json")
+    await fs.mkdir(path.join(item.cwd, ".git"), { recursive: true })
+    await fs.mkdir(nested, { recursive: true })
+    await fs.writeFile(path.join(item.cwd, "opencode.json"), JSON.stringify({ disabled_providers: [] }))
+    await fs.writeFile(explicit, JSON.stringify({ disabled_providers: ["openai"] }))
+
+    const source = await loadExecutorReadinessSource({
+      cwd: nested,
+      env: { OPENCODE_CONFIG: explicit },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+
+    expect(source.config_fragments).toEqual([
+      { disabled_providers: ["openai"] },
+      { disabled_providers: [] },
+      { disabled_providers: ["openai"] },
+    ])
+    expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
+  })
+
   test("normalizes accepted legacy TUI keys and fails closed for legacy global TOML", async () => {
     const item = await fixture()
     const globalDirectory = path.join(item.configHome, "opencode")

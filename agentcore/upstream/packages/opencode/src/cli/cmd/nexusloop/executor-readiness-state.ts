@@ -42,22 +42,28 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const projectConfigDisabled = truthy(environment.OPENCODE_DISABLE_PROJECT_CONFIG)
   const project = await discoverProjectBoundary(options.cwd)
   if (!project.complete) complete = false
-  const configFiles = unique([
-    path.join(configHome, "opencode", "config.json"),
-    path.join(configHome, "opencode", "opencode.json"),
-    path.join(configHome, "opencode", "opencode.jsonc"),
-    ...(options.env.OPENCODE_CONFIG ? [options.env.OPENCODE_CONFIG] : []),
-    ...(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd, project.boundary) : []),
-    ...(!projectConfigDisabled ? upwardProjectDirectoryConfigFiles(options.cwd, project.boundary) : []),
-    path.join(home, ".opencode", "opencode.json"),
-    path.join(home, ".opencode", "opencode.jsonc"),
-    ...(options.env.OPENCODE_CONFIG_DIR
-      ? [
-          path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.json"),
-          path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.jsonc"),
-        ]
-      : []),
-  ])
+  const configFiles = [
+    ...unique([
+      path.join(configHome, "opencode", "config.json"),
+      path.join(configHome, "opencode", "opencode.json"),
+      path.join(configHome, "opencode", "opencode.jsonc"),
+    ]),
+    ...unique(options.env.OPENCODE_CONFIG ? [options.env.OPENCODE_CONFIG] : []),
+    ...unique(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd, project.boundary) : []),
+    ...unique(!projectConfigDisabled ? upwardProjectDirectoryConfigFiles(options.cwd, project.boundary) : []),
+    ...unique([
+      path.join(home, ".opencode", "opencode.json"),
+      path.join(home, ".opencode", "opencode.jsonc"),
+    ]),
+    ...unique(
+      options.env.OPENCODE_CONFIG_DIR
+        ? [
+            path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.json"),
+            path.join(options.env.OPENCODE_CONFIG_DIR, "opencode.jsonc"),
+          ]
+        : [],
+    ),
+  ]
 
   for (let index = 0; index < configFiles.length; index += 1) {
     const text = await boundedFile(configFiles[index]!, MAX_CONFIG_BYTES)
