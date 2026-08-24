@@ -146,6 +146,42 @@ describe("NexusLoop Executor readiness protocol", () => {
       env: {},
       observation_complete: true,
     }).provider_availability_status).toBe("unavailable")
+    expect(observeExecutorReadiness({ ...request, model_id: "deprecated" }, {
+      catalog: filteredCatalog,
+      config_fragments: [{ provider: { openai: { models: { deprecated: { name: "overlay" } } } } }],
+      auth: {},
+      env: {},
+      observation_complete: true,
+    }).provider_availability_status).toBe("unavailable")
+  })
+
+  test("does not infer connection for provider-specific multi-field credentials", () => {
+    const cloudflare = {
+      "cloudflare-ai-gateway": {
+        id: "cloudflare-ai-gateway",
+        env: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "CLOUDFLARE_API_TOKEN"],
+        models: { exact: { id: "exact" } },
+      },
+    }
+    for (const env of [
+      { CLOUDFLARE_ACCOUNT_ID: "account" },
+      {
+        CLOUDFLARE_ACCOUNT_ID: "account",
+        CLOUDFLARE_GATEWAY_ID: "gateway",
+        CLOUDFLARE_API_TOKEN: "token",
+      },
+    ]) {
+      expect(observeExecutorReadiness({ ...request, provider_id: "cloudflare-ai-gateway", model_id: "exact" }, {
+        catalog: cloudflare,
+        config_fragments: [],
+        auth: {},
+        env,
+        observation_complete: true,
+      })).toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "unknown",
+      })
+    }
   })
 
   test("requires provider and model identity to agree exactly", () => {

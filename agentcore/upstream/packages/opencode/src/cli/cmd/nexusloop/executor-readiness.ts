@@ -105,9 +105,11 @@ export function observeExecutorReadiness(
   let blacklist: string[] | undefined
   let configuredModel = false
   let configuredModelStatus: unknown
+  let catalogModelStatus: unknown
   let catalogModel = false
   let configuredApiKey = false
   let credentialKeys: string[] = []
+  let credentialSemanticsKnown = true
 
   const catalogProviderValue = ownValue(catalog, request.provider_id)
   if (catalogProviderValue !== undefined) {
@@ -120,13 +122,18 @@ export function observeExecutorReadiness(
       if (modelValue !== undefined) {
         const model = optionalRecord(modelValue)
         const status = ownValue(model, "status")
+        catalogModelStatus = status
         const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
         const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
         catalogModel = modelAllowed(request.provider_id, request.model_id, status, enabledExperimental)
       }
     }
-    credentialKeys = parseStringArray(ownValue(provider, "env"), true) ?? []
-    if (ownValue(provider, "env") !== undefined && !parseStringArray(ownValue(provider, "env"), true)) complete = false
+    const catalogEnv = parseStringArray(ownValue(provider, "env"), false)
+    if (!catalogEnv) complete = false
+    else {
+      credentialKeys = catalogEnv
+      credentialSemanticsKnown = catalogEnv.length <= 1
+    }
   }
 
   for (let index = 0; index < configs.length; index += 1) {
@@ -159,7 +166,10 @@ export function observeExecutorReadiness(
     const selectedEnv = parseStringArray(ownValue(selected, "env"), false)
     if (ownValue(selected, "env") !== undefined) {
       if (!selectedEnv) complete = false
-      else credentialKeys = selectedEnv
+      else {
+        credentialKeys = selectedEnv
+        credentialSemanticsKnown &&= selectedEnv.length <= 1
+      }
     }
     const options = optionalRecord(ownValue(selected, "options"))
     const apiKey = ownValue(options, "apiKey")
@@ -175,10 +185,15 @@ export function observeExecutorReadiness(
   }
 
   const authValue = ownValue(auth, request.provider_id)
-  const credential = credentialStatus(authValue, env, credentialKeys, configuredApiKey)
+  const credential = credentialStatus(authValue, env, credentialKeys, configuredApiKey, credentialSemanticsKnown)
   const experimental = ownValue(env, "OPENCODE_ENABLE_EXPERIMENTAL_MODELS")
   const enabledExperimental = typeof experimental === "string" && ["true", "1"].includes(experimental.toLowerCase())
-  configuredModel &&= modelAllowed(request.provider_id, request.model_id, configuredModelStatus, enabledExperimental)
+  configuredModel &&= modelAllowed(
+    request.provider_id,
+    request.model_id,
+    configuredModelStatus ?? catalogModelStatus,
+    enabledExperimental,
+  )
   const providerEnabled = (enabledProviders === undefined || enabledProviders.includes(request.provider_id)) &&
     !disabledProviders?.includes(request.provider_id) &&
     (whitelist === undefined || whitelist.includes(request.model_id)) &&
@@ -229,7 +244,9 @@ function credentialStatus(
   env: Record<string, unknown>,
   credentialKeys: readonly string[],
   configuredApiKey: boolean,
+  credentialSemanticsKnown: boolean,
 ): "connected" | "disconnected" | "unknown" {
+  if (!credentialSemanticsKnown) return "unknown"
   if (configuredApiKey) return "connected"
   for (let index = 0; index < credentialKeys.length; index += 1) {
     const value = ownValue(env, credentialKeys[index]!)
