@@ -375,6 +375,29 @@ describe("NexusLoop Executor readiness protocol", () => {
         credential_connection_status: "connected",
       })
       expect(JSON.stringify(configuredEndpoint)).not.toMatch(/configured-secret|configured\.example/)
+
+      const storedEndpoint = observeExecutorReadiness(
+        { ...request, provider_id: provider, model_id: "configured-endpoint" },
+        {
+          catalog: {},
+          config_fragments: [{
+            provider: {
+              [provider]: {
+                options: { baseURL: "https://configured.example.invalid" },
+                models: { "configured-endpoint": {} },
+              },
+            },
+          }],
+          auth: { [provider]: { type: "api", key: "stored-secret" } },
+          env: {},
+          observation_complete: true,
+        },
+      )
+      expect(storedEndpoint).toMatchObject({
+        provider_availability_status: "available",
+        credential_connection_status: "connected",
+      })
+      expect(JSON.stringify(storedEndpoint)).not.toMatch(/stored-secret|configured\.example/)
     }
 
     const explicit = observeExecutorReadiness(

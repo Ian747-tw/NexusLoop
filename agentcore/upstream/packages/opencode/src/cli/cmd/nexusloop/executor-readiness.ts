@@ -29,6 +29,10 @@ const CONFIGURED_ENDPOINT_API_KEY_PROVIDERS = new Set([
   "cloudflare-ai-gateway",
   "cloudflare-workers-ai",
 ])
+const CONFIGURED_ENDPOINT_CREDENTIAL_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "cloudflare-ai-gateway": Object.freeze(["CLOUDFLARE_API_TOKEN", "CF_AIG_TOKEN"]),
+  "cloudflare-workers-ai": Object.freeze(["CLOUDFLARE_API_KEY"]),
+})
 
 const MAX_REQUEST_BYTES = 4096
 const HASH = /^[a-f0-9]{64}$/
@@ -460,10 +464,23 @@ function credentialStatus(
   credentialSemanticsKnown: boolean,
   publicCredentialConnection: boolean,
 ): "connected" | "disconnected" | "unknown" {
+  if (configuredBaseURL && CONFIGURED_ENDPOINT_API_KEY_PROVIDERS.has(providerID)) {
+    if (configuredApiKey) return "connected"
+    const keys = CONFIGURED_ENDPOINT_CREDENTIAL_KEYS[providerID] ?? []
+    for (let index = 0; index < keys.length; index += 1) {
+      const value = ownValue(env, keys[index]!)
+      if (typeof value === "string" && value.length > 0) return "connected"
+    }
+    if (authValue === undefined) return "disconnected"
+    const endpointAuth = optionalRecord(authValue)
+    if (ownValue(endpointAuth, "type") !== "api") return "unknown"
+    return typeof ownValue(endpointAuth, "key") === "string" && ownValue(endpointAuth, "key") !== ""
+      ? "connected"
+      : "unknown"
+  }
   if (configuredApiKey && (
     credentialSemanticsKnown ||
-    CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID) ||
-    (configuredBaseURL && CONFIGURED_ENDPOINT_API_KEY_PROVIDERS.has(providerID))
+    CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID)
   )) return "connected"
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
