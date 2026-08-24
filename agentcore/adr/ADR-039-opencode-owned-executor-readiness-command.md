@@ -24,6 +24,8 @@ Credential values and source details remain inside OpenCode. Valid built-in Open
 
 The bounded remote-configuration check resolves the same effective database path as OpenCode: an exact `OPENCODE_DB` override, the standard database for release channels or `OPENCODE_DISABLE_CHANNEL_DB`, and otherwise the sanitized channel-specific database. An in-memory database cannot be observed by the separate command and therefore yields incomplete evidence rather than an absent-account claim.
 
+Configuration loading mirrors the pinned `ConfigPaths` precedence for project JSON/JSONC files and nested `.opencode` directories. Deprecated `theme`, `keybinds`, and `tui` keys are removed before server-config validation, matching normal normalization. Presence of the mutating legacy global TOML migration source makes the bounded read-only observation incomplete; readiness never performs that migration.
+
 The native package build uses the repository's pinned catalog fixture and Bun 1.3.13. The upstream workspace pins the previously locked `ghostty-web` revision instead of resolving a moving branch during frozen install.
 
 ## Consequences

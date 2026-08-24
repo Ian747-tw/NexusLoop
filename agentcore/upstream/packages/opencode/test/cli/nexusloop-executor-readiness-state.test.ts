@@ -306,6 +306,75 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("available")
   })
 
+  test("matches project JSON, JSONC, and nested directory precedence", async () => {
+    const item = await fixture()
+    await fs.mkdir(path.join(item.cwd, ".git"), { recursive: true })
+    await fs.writeFile(path.join(item.cwd, "opencode.json"), JSON.stringify({ disabled_providers: [] }))
+    await fs.writeFile(path.join(item.cwd, "opencode.jsonc"), JSON.stringify({ disabled_providers: ["openai"] }))
+    const projectFiles = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, projectFiles).provider_availability_status).toBe("unavailable")
+
+    await fs.rm(path.join(item.cwd, "opencode.json"))
+    await fs.rm(path.join(item.cwd, "opencode.jsonc"))
+    const nested = path.join(item.cwd, "nested")
+    await fs.mkdir(path.join(item.cwd, ".opencode"), { recursive: true })
+    await fs.mkdir(path.join(nested, ".opencode"), { recursive: true })
+    await fs.writeFile(
+      path.join(item.cwd, ".opencode", "opencode.json"),
+      JSON.stringify({ disabled_providers: ["openai"] }),
+    )
+    await fs.writeFile(
+      path.join(nested, ".opencode", "opencode.json"),
+      JSON.stringify({ disabled_providers: [] }),
+    )
+    const directories = await loadExecutorReadinessSource({
+      cwd: nested,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, directories).provider_availability_status).toBe("unavailable")
+  })
+
+  test("normalizes accepted legacy TUI keys and fails closed for legacy global TOML", async () => {
+    const item = await fixture()
+    const globalDirectory = path.join(item.configHome, "opencode")
+    await fs.mkdir(globalDirectory, { recursive: true })
+    await fs.writeFile(
+      path.join(globalDirectory, "opencode.json"),
+      JSON.stringify({ theme: "legacy", keybinds: {}, tui: {}, enabled_providers: ["openai"] }),
+    )
+    const normalized = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, normalized).provider_availability_status).toBe("available")
+
+    await fs.writeFile(path.join(globalDirectory, "config"), 'disabled_providers = ["openai"]')
+    const legacy = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, legacy).provider_availability_status).toBe("unknown")
+  })
+
   test("stops project configuration discovery at the nearest git boundary", async () => {
     const item = await fixture()
     const repository = path.join(item.root, "repository")

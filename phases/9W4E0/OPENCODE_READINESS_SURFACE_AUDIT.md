@@ -25,6 +25,8 @@ OpenAI OAuth uses the same pure Codex model-allowance predicate as `CodexAuthPlu
 
 Configured model aliases resolve status against the same earlier catalog or configured model target used by `Provider` construction. The packaged built-in provider-package set is shared as static code authority; selected non-bundled package or `file://` authority yields `unknown` without installation or import. Auto-discovered plugin ambiguity uses OpenCode's shared `{plugin,plugins}/*.{ts,js}` scanner with symlink following, so documentation and cache entries do not block readiness while loadable symlink entries do. Pure mode suppresses both configured and discovered external plugins.
 
+Project files load root-to-leaf with JSON before JSONC, while `.opencode` directories follow `ConfigPaths.directories()` nearest-to-root precedence. Accepted legacy TUI keys are removed before validating the server configuration. The old global TOML source normally triggers a migration write, so its presence yields incomplete evidence instead of being imported or mutated by readiness.
+
 Before declaring an exact model available, the observation mirrors OpenCode's
 effective local authority: hard-removed, deprecated, and disabled alpha models
 are excluded; project configuration and project plugin directories are omitted

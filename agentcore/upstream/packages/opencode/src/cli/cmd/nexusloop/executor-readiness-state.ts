@@ -36,6 +36,9 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const fragments: unknown[] = []
   let complete = true
 
+  const legacyGlobal = await boundedFile(path.join(configHome, "opencode", "config"), MAX_CONFIG_BYTES)
+  if (legacyGlobal.status !== "missing") complete = false
+
   const projectConfigDisabled = truthy(environment.OPENCODE_DISABLE_PROJECT_CONFIG)
   const project = await discoverProjectBoundary(options.cwd)
   if (!project.complete) complete = false
@@ -72,18 +75,20 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (!validOpenCodeConfig(parsed.value)) {
+    const validated = validatedOpenCodeConfig(parsed.value)
+    if (!validated) {
       complete = false
       continue
     }
-    fragments.push(parsed.value)
+    fragments.push(validated)
   }
   if (options.env.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
-      if (parsed.ok && validOpenCodeConfig(parsed.value)) fragments.push(parsed.value)
+      const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
+      if (validated) fragments.push(validated)
       else complete = false
     }
   }
@@ -103,11 +108,12 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       continue
     }
     const parsed = strictJson(text.value, true)
-    if (!parsed.ok || !validOpenCodeConfig(parsed.value)) {
+    const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
+    if (!validated) {
       complete = false
       continue
     }
-    fragments.push(parsed.value)
+    fragments.push(validated)
   }
   // The normal macOS path may add MDM preferences through plutil. The bounded
   // observer does not launch that subprocess, so a present profile is unknown.
@@ -201,13 +207,13 @@ function upwardDirectories(cwd: string, boundary = path.parse(path.resolve(cwd))
 
 function upwardProjectConfigFiles(cwd: string, boundary: string): string[] {
   return upwardDirectories(cwd, boundary).flatMap((directory) => [
-    path.join(directory, "opencode.jsonc"),
     path.join(directory, "opencode.json"),
+    path.join(directory, "opencode.jsonc"),
   ])
 }
 
 function upwardProjectDirectoryConfigFiles(cwd: string, boundary: string): string[] {
-  return upwardDirectories(cwd, boundary).flatMap((directory) => [
+  return upwardDirectories(cwd, boundary).toReversed().flatMap((directory) => [
     path.join(directory, ".opencode", "opencode.json"),
     path.join(directory, ".opencode", "opencode.jsonc"),
   ])
@@ -281,19 +287,23 @@ async function fsStat(file: string): Promise<"missing" | "directory" | "other"> 
   }
 }
 
-function validOpenCodeConfig(value: unknown): boolean {
-  if (!validateOpenCodeConfigSchema(value)) return false
+function validatedOpenCodeConfig(value: unknown): Record<string, unknown> | undefined {
   const config = jsonRecord(value)
-  if (!config) return false
-  const plugin = config.plugin
-  if (plugin === undefined) return true
-  if (!Array.isArray(plugin)) return false
+  if (!config) return
+  const normalized = { ...config }
+  delete normalized.theme
+  delete normalized.keybinds
+  delete normalized.tui
+  if (!validateOpenCodeConfigSchema(normalized)) return
+  const plugin = normalized.plugin
+  if (plugin === undefined) return normalized
+  if (!Array.isArray(plugin)) return
   for (let index = 0; index < plugin.length; index += 1) {
     const item = plugin[index]
     if (typeof item === "string") continue
-    if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || !jsonRecord(item[1])) return false
+    if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || !jsonRecord(item[1])) return
   }
-  return true
+  return normalized
 }
 
 function validateAuthRecord(value: unknown): { value: Record<string, unknown>; complete: boolean } {
