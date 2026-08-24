@@ -83,10 +83,6 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsConfigSubstitution(parsed.value)) {
-      complete = false
-      continue
-    }
     const validated = validatedOpenCodeConfig(parsed.value)
     if (!validated) {
       complete = false
@@ -99,9 +95,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
-      const validated = parsed.ok && !containsConfigSubstitution(parsed.value)
-        ? validatedOpenCodeConfig(parsed.value)
-        : undefined
+      const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
       if (validated) fragments.push(validated)
       else complete = false
     }
@@ -122,9 +116,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       continue
     }
     const parsed = strictJson(text.value, true)
-    const validated = parsed.ok && !containsConfigSubstitution(parsed.value)
-      ? validatedOpenCodeConfig(parsed.value)
-      : undefined
+    const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
     if (!validated) {
       complete = false
       continue
@@ -393,6 +385,7 @@ function validatedOpenCodeConfig(value: unknown): Record<string, unknown> | unde
   delete normalized.theme
   delete normalized.keybinds
   delete normalized.tui
+  if (containsConfigSubstitution(normalized)) return
   if (!validateOpenCodeConfigSchema(normalized)) return
   const plugin = normalized.plugin
   if (plugin === undefined) return normalized

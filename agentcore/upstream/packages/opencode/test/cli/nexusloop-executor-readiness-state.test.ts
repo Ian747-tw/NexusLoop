@@ -522,7 +522,12 @@ describe("NexusLoop Executor readiness local state", () => {
     await fs.mkdir(globalDirectory, { recursive: true })
     await fs.writeFile(
       path.join(globalDirectory, "opencode.json"),
-      JSON.stringify({ theme: "legacy", keybinds: {}, tui: {}, enabled_providers: ["openai"] }),
+      JSON.stringify({
+        theme: "{env:THEME}",
+        keybinds: { note: "{file:keybinds}" },
+        tui: { note: "{env:TUI}" },
+        enabled_providers: ["openai"],
+      }),
     )
     const normalized = await loadExecutorReadinessSource({
       cwd: item.cwd,
