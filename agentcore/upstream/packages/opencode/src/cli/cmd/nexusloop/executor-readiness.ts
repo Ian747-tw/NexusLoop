@@ -20,6 +20,11 @@ const COMPLEX_CREDENTIAL_PROVIDERS = new Set([
   "sap-ai-core",
 ])
 const OFFLINE_OAUTH_CREDENTIAL_PROVIDERS = new Set(["openai"])
+const CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS = new Set([
+  "azure",
+  "azure-cognitive-services",
+  "gitlab",
+])
 
 const MAX_REQUEST_BYTES = 4096
 const HASH = /^[a-f0-9]{64}$/
@@ -445,7 +450,9 @@ function credentialStatus(
   credentialSemanticsKnown: boolean,
   publicCredentialConnection: boolean,
 ): "connected" | "disconnected" | "unknown" {
-  if (configuredApiKey) return "connected"
+  if (configuredApiKey && (
+    credentialSemanticsKnown || CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID)
+  )) return "connected"
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
   for (let index = 0; index < credentialKeys.length; index += 1) {

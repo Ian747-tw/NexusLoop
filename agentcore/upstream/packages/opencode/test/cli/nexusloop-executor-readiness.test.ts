@@ -309,6 +309,28 @@ describe("NexusLoop Executor readiness protocol", () => {
       })
     }
 
+    expect(observeExecutorReadiness(
+      { ...request, provider_id: "cloudflare-workers-ai", model_id: "exact" },
+      {
+        catalog: {
+          "cloudflare-workers-ai": {
+            id: "cloudflare-workers-ai",
+            env: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"],
+            models: { exact: { id: "exact" } },
+          },
+        },
+        config_fragments: [{
+          provider: { "cloudflare-workers-ai": { options: { apiKey: "configured-secret" } } },
+        }],
+        auth: {},
+        env: {},
+        observation_complete: true,
+      },
+    )).toMatchObject({
+      provider_availability_status: "available",
+      credential_connection_status: "unknown",
+    })
+
     const explicit = observeExecutorReadiness(
       { ...request, provider_id: "azure", model_id: "exact" },
       {
