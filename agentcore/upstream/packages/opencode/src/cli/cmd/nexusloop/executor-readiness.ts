@@ -479,13 +479,14 @@ function credentialStatus(
   )) return "connected"
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
+  let ambiguousEnvironmentCredential = false
   for (let index = 0; index < credentialKeys.length; index += 1) {
-    const key = credentialKeys[index]!
-    if (credentialKeys.length > 1 && !credentialEnvironmentKey(key)) continue
-    const value = ownValue(env, key)
-    if (typeof value === "string" && value.length > 0) return "connected"
+    const value = ownValue(env, credentialKeys[index]!)
+    if (typeof value !== "string" || value.length === 0) continue
+    if (credentialKeys.length === 1) return "connected"
+    ambiguousEnvironmentCredential = true
   }
-  if (authValue === undefined) return "disconnected"
+  if (authValue === undefined) return ambiguousEnvironmentCredential ? "unknown" : "disconnected"
   const info = optionalRecord(authValue)
   const type = ownValue(info, "type")
   if (type === "api") return typeof ownValue(info, "key") === "string" && ownValue(info, "key") !== ""
@@ -497,10 +498,6 @@ function credentialStatus(
       : "unknown"
   }
   return "unknown"
-}
-
-function credentialEnvironmentKey(value: string): boolean {
-  return /(?:^|_)(?:API_KEY|API_TOKEN|ACCESS_TOKEN|TOKEN|SECRET_KEY)$/.test(value)
 }
 
 function parseStringArray(value: unknown, missingAsEmpty: boolean): string[] | undefined {

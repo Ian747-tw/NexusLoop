@@ -467,7 +467,7 @@ describe("NexusLoop Executor readiness protocol", () => {
     expect(JSON.stringify(explicit)).not.toContain("configured-secret")
   })
 
-  test("recognizes catalog-declared alternative credential keys for generic providers", () => {
+  test("keeps multi-field generic environment credentials unknown", () => {
     const google = {
       google: {
         id: "google",
@@ -483,7 +483,7 @@ describe("NexusLoop Executor readiness protocol", () => {
       observation_complete: true,
     })).toMatchObject({
       provider_availability_status: "available",
-      credential_connection_status: "connected",
+      credential_connection_status: "unknown",
     })
 
     const privateMode = {
@@ -502,7 +502,7 @@ describe("NexusLoop Executor readiness protocol", () => {
         env: { PRIVATEMODE_ENDPOINT: "https://endpoint.example.invalid" },
         observation_complete: true,
       },
-    ).credential_connection_status).toBe("disconnected")
+    ).credential_connection_status).toBe("unknown")
     const keyed = observeExecutorReadiness(
       { ...request, provider_id: "privatemode-ai", model_id: "exact" },
       {
@@ -513,7 +513,7 @@ describe("NexusLoop Executor readiness protocol", () => {
         observation_complete: true,
       },
     )
-    expect(keyed.credential_connection_status).toBe("connected")
+    expect(keyed.credential_connection_status).toBe("unknown")
     expect(JSON.stringify(keyed)).not.toContain("private-secret")
   })
 
