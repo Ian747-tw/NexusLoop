@@ -946,6 +946,20 @@ describe("NexusLoop Executor readiness local state", () => {
     })
     expect(observeExecutorReadiness(request, normalizedEffective).provider_availability_status).toBe("available")
 
+    const injectedLegacy = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { THEME: 'dark\",\"disabled_providers\":[\"openai\"],\"note\":\"x' },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, injectedLegacy)).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
+
     await fs.writeFile(
       path.join(globalDirectory, "opencode.json"),
       JSON.stringify({ theme: "{file:missing-theme}", enabled_providers: ["openai"] }),

@@ -3,7 +3,7 @@ import os from "node:os"
 import { existsSync } from "node:fs"
 import { open as openFile } from "node:fs/promises"
 import { Database } from "bun:sqlite"
-import { findNodeAtLocation, parse, parseTree, visit, type ParseError } from "jsonc-parser"
+import { parse, visit, type ParseError } from "jsonc-parser"
 import z from "zod"
 import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
@@ -474,17 +474,16 @@ function containsEffectiveConfigSubstitution(
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
 ): boolean {
-  const root = parseTree(text, [], { disallowComments: false, allowTrailingComma: true, allowEmptyContent: false })
-  const ignoredLegacyRanges = ["theme", "keybinds", "tui"]
-    .map((key) => root ? findNodeAtLocation(root, [key]) : undefined)
-    .filter((node) => node !== undefined)
-    .map((node) => ({ start: node.offset, end: node.offset + node.length }))
-  for (const match of text.matchAll(/\{env:([^}]+)\}/g)) {
-    const index = match.index
-    if (ignoredLegacyRanges.some((range) => index >= range.start && index < range.end)) continue
-    const key = platform === "win32" ? match[1]!.toUpperCase() : match[1]!
-    const value = environment[key]
-    if (typeof value === "string" && value.length > 0) return true
+  const before = strictJson(text, true)
+  const beforeNormalized = before.ok ? validatedOpenCodeConfig(before.value) : undefined
+  const expanded = text.replace(/\{env:([^}]+)\}/g, (_token, name: string) => {
+    const key = platform === "win32" ? name.toUpperCase() : name
+    return environment[key] || ""
+  })
+  const after = strictJson(expanded, true)
+  const afterNormalized = after.ok ? validatedOpenCodeConfig(after.value) : undefined
+  if (!beforeNormalized || !afterNormalized || canonicalJson(beforeNormalized) !== canonicalJson(afterNormalized)) {
+    return true
   }
   for (const match of text.matchAll(/\{file:[^}]+\}/g)) {
     const index = match.index
@@ -492,6 +491,15 @@ function containsEffectiveConfigSubstitution(
     if (!text.slice(lineStart, index).trimStart().startsWith("//")) return true
   }
   return false
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
+  }
+  return JSON.stringify(value)
 }
 
 function validateAuthRecord(value: unknown): { value: Record<string, unknown>; complete: boolean } {
