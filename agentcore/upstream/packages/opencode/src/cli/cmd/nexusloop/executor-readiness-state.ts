@@ -3,7 +3,7 @@ import os from "node:os"
 import { existsSync } from "node:fs"
 import { open as openFile } from "node:fs/promises"
 import { Database } from "bun:sqlite"
-import { parse, visit, type ParseError } from "jsonc-parser"
+import { findNodeAtLocation, parse, parseTree, visit, type ParseError } from "jsonc-parser"
 import z from "zod"
 import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
@@ -106,12 +106,13 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    const parsed = strictJson(text.value, true)
-    if (!parsed.ok) {
+    const effective = effectiveConfigText(text.value, environment, platform)
+    if (effective === undefined) {
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value, environment, platform)) {
+    const parsed = strictJson(effective, true)
+    if (!parsed.ok) {
       complete = false
       continue
     }
@@ -126,12 +127,13 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(environment.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
     else {
-      const parsed = strictJson(environment.OPENCODE_CONFIG_CONTENT, true)
-      const validated = parsed.ok && !containsEffectiveConfigSubstitution(
+      const effective = effectiveConfigText(
         environment.OPENCODE_CONFIG_CONTENT,
         environment,
         platform,
-      ) ? validatedOpenCodeConfig(parsed.value) : undefined
+      )
+      const parsed = effective === undefined ? { ok: false as const } : strictJson(effective, true)
+      const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
       if (validated) fragments.push(validated)
       else complete = false
     }
@@ -152,10 +154,9 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    const parsed = strictJson(text.value, true)
-    const validated = parsed.ok && !containsEffectiveConfigSubstitution(text.value, environment, platform)
-      ? validatedOpenCodeConfig(parsed.value)
-      : undefined
+    const effective = effectiveConfigText(text.value, environment, platform)
+    const parsed = effective === undefined ? { ok: false as const } : strictJson(effective, true)
+    const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
     if (!validated) {
       complete = false
       continue
@@ -469,37 +470,41 @@ function containsConfigSubstitution(value: unknown, pattern = /\{(?:env|file):[^
   return false
 }
 
-function containsEffectiveConfigSubstitution(
+function effectiveConfigText(
   text: string,
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
-): boolean {
-  const before = strictJson(text, true)
-  const beforeNormalized = before.ok ? validatedOpenCodeConfig(before.value) : undefined
-  const expanded = text.replace(/\{env:([^}]+)\}/g, (_token, name: string) => {
+): string | undefined {
+  const replacements: Array<{ start: number; end: number }> = []
+  let cursor = 0
+  let expanded = ""
+  for (const match of text.matchAll(/\{env:([^}]+)\}/g)) {
+    expanded += text.slice(cursor, match.index)
+    const name = match[1]!
     const key = platform === "win32" ? name.toUpperCase() : name
-    return environment[key] || ""
-  })
-  const after = strictJson(expanded, true)
-  const afterNormalized = after.ok ? validatedOpenCodeConfig(after.value) : undefined
-  if (!beforeNormalized || !afterNormalized || canonicalJson(beforeNormalized) !== canonicalJson(afterNormalized)) {
-    return true
+    const value = environment[key] || ""
+    const start = expanded.length
+    expanded += value
+    replacements.push({ start, end: expanded.length })
+    cursor = match.index + match[0].length
   }
+  expanded += text.slice(cursor)
+  const parsed = strictJson(expanded, true)
+  if (!parsed.ok) return
+  const tree = parseTree(expanded, [], { disallowComments: false, allowTrailingComma: true, allowEmptyContent: false })
+  if (!tree) return
+  const legacy = ["theme", "keybinds", "tui"]
+    .map((key) => findNodeAtLocation(tree, [key]))
+    .filter((node) => node !== undefined)
+  if (replacements.some((replacement) => !legacy.some((node) => (
+    replacement.start >= node.offset && replacement.end <= node.offset + node.length
+  )))) return
   for (const match of expanded.matchAll(/\{file:[^}]+\}/g)) {
     const index = match.index
     const lineStart = expanded.lastIndexOf("\n", index - 1) + 1
-    if (!expanded.slice(lineStart, index).trimStart().startsWith("//")) return true
+    if (!expanded.slice(lineStart, index).trimStart().startsWith("//")) return
   }
-  return false
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
-  }
-  return JSON.stringify(value)
+  return expanded
 }
 
 function validateAuthRecord(value: unknown): { value: Record<string, unknown>; complete: boolean } {

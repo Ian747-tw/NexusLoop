@@ -961,6 +961,31 @@ describe("NexusLoop Executor readiness local state", () => {
     })
     expect(observeExecutorReadiness(request, normalizedEffective).provider_availability_status).toBe("available")
 
+    await fs.writeFile(
+      path.join(globalDirectory, "opencode.json"),
+      '{"theme":{env:THEME},"enabled_providers":["openai"]}',
+    )
+    const normalizedUnquoted = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { THEME: '"dark"' },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, normalizedUnquoted).provider_availability_status).toBe("available")
+
+    await fs.writeFile(
+      path.join(globalDirectory, "opencode.json"),
+      JSON.stringify({
+        theme: "{env:THEME}",
+        keybinds: { note: "{env:KEYBINDS}" },
+        tui: { note: "{env:TUI}" },
+        enabled_providers: ["openai"],
+      }),
+    )
+
     const injectedLegacy = await loadExecutorReadinessSource({
       cwd: item.cwd,
       env: { THEME: 'dark\",\"disabled_providers\":[\"openai\"],\"note\":\"x' },
