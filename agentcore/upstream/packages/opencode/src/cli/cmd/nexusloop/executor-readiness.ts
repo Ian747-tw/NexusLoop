@@ -480,7 +480,9 @@ function credentialStatus(
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
   for (let index = 0; index < credentialKeys.length; index += 1) {
-    const value = ownValue(env, credentialKeys[index]!)
+    const key = credentialKeys[index]!
+    if (credentialKeys.length > 1 && !credentialEnvironmentKey(key)) continue
+    const value = ownValue(env, key)
     if (typeof value === "string" && value.length > 0) return "connected"
   }
   if (authValue === undefined) return "disconnected"
@@ -495,6 +497,10 @@ function credentialStatus(
       : "unknown"
   }
   return "unknown"
+}
+
+function credentialEnvironmentKey(value: string): boolean {
+  return /(?:^|_)(?:API_KEY|API_TOKEN|ACCESS_TOKEN|TOKEN|SECRET_KEY)$/.test(value)
 }
 
 function parseStringArray(value: unknown, missingAsEmpty: boolean): string[] | undefined {

@@ -485,6 +485,36 @@ describe("NexusLoop Executor readiness protocol", () => {
       provider_availability_status: "available",
       credential_connection_status: "connected",
     })
+
+    const privateMode = {
+      "privatemode-ai": {
+        id: "privatemode-ai",
+        env: ["PRIVATEMODE_API_KEY", "PRIVATEMODE_ENDPOINT"],
+        models: { exact: { id: "exact" } },
+      },
+    }
+    expect(observeExecutorReadiness(
+      { ...request, provider_id: "privatemode-ai", model_id: "exact" },
+      {
+        catalog: privateMode,
+        config_fragments: [],
+        auth: {},
+        env: { PRIVATEMODE_ENDPOINT: "https://endpoint.example.invalid" },
+        observation_complete: true,
+      },
+    ).credential_connection_status).toBe("disconnected")
+    const keyed = observeExecutorReadiness(
+      { ...request, provider_id: "privatemode-ai", model_id: "exact" },
+      {
+        catalog: privateMode,
+        config_fragments: [],
+        auth: {},
+        env: { PRIVATEMODE_API_KEY: "private-secret" },
+        observation_complete: true,
+      },
+    )
+    expect(keyed.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(keyed)).not.toContain("private-secret")
   })
 
   test("requires provider and model identity to agree exactly", () => {
