@@ -485,10 +485,10 @@ function containsEffectiveConfigSubstitution(
   if (!beforeNormalized || !afterNormalized || canonicalJson(beforeNormalized) !== canonicalJson(afterNormalized)) {
     return true
   }
-  for (const match of text.matchAll(/\{file:[^}]+\}/g)) {
+  for (const match of expanded.matchAll(/\{file:[^}]+\}/g)) {
     const index = match.index
-    const lineStart = text.lastIndexOf("\n", index - 1) + 1
-    if (!text.slice(lineStart, index).trimStart().startsWith("//")) return true
+    const lineStart = expanded.lastIndexOf("\n", index - 1) + 1
+    if (!expanded.slice(lineStart, index).trimStart().startsWith("//")) return true
   }
   return false
 }

@@ -223,6 +223,21 @@ describe("NexusLoop Executor readiness local state", () => {
       credential_connection_status: "unknown",
     })
 
+    await fs.writeFile(config, '{ /* {env:INJECT} */ "enabled_providers":["openai"] }')
+    const introducedFile = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { INJECT: "{file:missing-provider}" },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, introducedFile)).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
+
     await fs.writeFile(config, '{ /* {env:inject} */ "enabled_providers":["openai"] }')
     const windowsInjected = await loadExecutorReadinessSource({
       cwd: item.cwd,
