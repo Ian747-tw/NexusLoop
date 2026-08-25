@@ -12,6 +12,7 @@ import { InstallationChannel } from "../../../installation/version"
 import { Glob } from "@opencode-ai/shared/util/glob"
 import { Provider as ModelsDevProvider } from "../../../provider/models-schema"
 import type { ExecutorReadinessSource } from "./executor-readiness"
+import { CACHE_VERSION } from "../../../global/cache-version"
 
 const MAX_CONFIG_BYTES = 1024 * 1024
 const MAX_AUTH_BYTES = 1024 * 1024
@@ -51,15 +52,20 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
 
   const modelsPathConfigured = environment.OPENCODE_MODELS_PATH !== undefined
   if (!modelsPathConfigured && !environment.OPENCODE_MODELS_URL) {
-    const cached = await boundedFile(path.join(cacheHome, "opencode", "models.json"), MAX_CATALOG_BYTES)
-    if (cached.status === "failed") complete = false
-    if (cached.status === "ready" && cached.value.length > 0) {
-      const parsed = strictJson(cached.value, false)
-      const validated = parsed.ok
-        ? zodCatalog(parsed.value)
-        : undefined
-      if (validated) catalog = validated
-      else complete = false
+    const cacheDirectory = path.join(cacheHome, "opencode")
+    const version = await boundedFile(path.join(cacheDirectory, "version"), 64)
+    if (version.status === "failed") complete = false
+    if (version.status === "ready" && version.value === CACHE_VERSION) {
+      const cached = await boundedFile(path.join(cacheDirectory, "models.json"), MAX_CATALOG_BYTES)
+      if (cached.status === "failed") complete = false
+      if (cached.status === "ready" && cached.value.length > 0) {
+        const parsed = strictJson(cached.value, false)
+        const validated = parsed.ok
+          ? zodCatalog(parsed.value)
+          : undefined
+        if (validated) catalog = validated
+        else complete = false
+      }
     }
   }
 

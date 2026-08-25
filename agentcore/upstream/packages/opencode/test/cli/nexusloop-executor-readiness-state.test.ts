@@ -5,6 +5,7 @@ import os from "node:os"
 import { Database } from "bun:sqlite"
 import { loadExecutorReadinessSource } from "../../src/cli/cmd/nexusloop/executor-readiness-state"
 import { observeExecutorReadiness } from "../../src/cli/cmd/nexusloop/executor-readiness"
+import { CACHE_VERSION } from "../../src/global/cache-version"
 
 const roots: string[] = []
 const request = {
@@ -322,6 +323,7 @@ describe("NexusLoop Executor readiness local state", () => {
     const item = await fixture()
     const cacheDirectory = path.join(item.cacheHome, "opencode")
     await fs.mkdir(cacheDirectory, { recursive: true })
+    await fs.writeFile(path.join(cacheDirectory, "version"), CACHE_VERSION)
     await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify(cachedCatalog("deprecated")))
     const deprecated = await loadExecutorReadinessSource({
       cwd: item.cwd,
@@ -496,6 +498,42 @@ describe("NexusLoop Executor readiness local state", () => {
       credential_connection_status: "connected",
     })
     expect(JSON.stringify(oauthModeResult)).not.toMatch(/access-secret|refresh-secret/)
+  })
+
+  test("ignores model cache authority without the exact OpenCode cache version", async () => {
+    const item = await fixture()
+    const cacheDirectory = path.join(item.cacheHome, "opencode")
+    await fs.mkdir(cacheDirectory, { recursive: true })
+    await fs.writeFile(path.join(cacheDirectory, "models.json"), JSON.stringify(cachedCatalog()))
+    const bundledWithoutModel = { openai: { id: "openai", env: ["OPENAI_API_KEY"], models: {} } }
+
+    for (const version of [undefined, "20", `${CACHE_VERSION}\n`]) {
+      const marker = path.join(cacheDirectory, "version")
+      if (version === undefined) await fs.rm(marker, { force: true })
+      else await fs.writeFile(marker, version)
+      const source = await loadExecutorReadinessSource({
+        cwd: item.cwd,
+        env: {},
+        catalog: bundledWithoutModel,
+        configHome: item.configHome,
+        dataHome: item.dataHome,
+        cacheHome: item.cacheHome,
+        managedConfigDir: path.join(item.root, "managed-missing"),
+      })
+      expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
+    }
+
+    await fs.writeFile(path.join(cacheDirectory, "version"), CACHE_VERSION)
+    const current = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog: bundledWithoutModel,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, current).provider_availability_status).toBe("available")
   })
 
   test("provider availability and credential connection remain independent", async () => {
@@ -776,6 +814,7 @@ describe("NexusLoop Executor readiness local state", () => {
     await fs.mkdir(cache, { recursive: true })
     await fs.writeFile(path.join(config, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
     await fs.writeFile(path.join(data, "auth.json"), JSON.stringify({ openai: { type: "api", key: "secret" } }))
+    await fs.writeFile(path.join(cache, "version"), CACHE_VERSION)
     await fs.writeFile(path.join(cache, "models.json"), JSON.stringify(effectiveCatalog))
 
     const source = await loadExecutorReadinessSource({

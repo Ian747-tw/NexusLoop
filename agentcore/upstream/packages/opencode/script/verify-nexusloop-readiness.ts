@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { CACHE_VERSION } from "../src/global/cache-version"
 
 const platform = process.platform === "win32" ? "windows" : process.platform
 const executable = process.platform === "win32" ? "opencode.exe" : "opencode"
@@ -44,6 +45,7 @@ try {
   assert(JSON.stringify(await tree(root)) === JSON.stringify(before), "snapshot readiness wrote persistent state")
   const cacheDirectory = path.join(root, "cache", "opencode")
   await fs.mkdir(cacheDirectory, { recursive: true })
+  await fs.writeFile(path.join(cacheDirectory, "version"), CACHE_VERSION)
   await fs.writeFile(
     path.join(cacheDirectory, "models.json"),
     JSON.stringify({
