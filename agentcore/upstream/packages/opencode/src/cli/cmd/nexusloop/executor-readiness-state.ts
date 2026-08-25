@@ -33,20 +33,24 @@ type LoadOptions = Readonly<{
   dataHome?: string
   cacheHome?: string
   managedConfigDir?: string
+  platform?: NodeJS.Platform
+  systemHome?: string
 }>
 
 export async function loadExecutorReadinessSource(options: LoadOptions): Promise<ExecutorReadinessSource> {
-  const environment = snapshotEnvironment(options.env)
-  const home = environment.OPENCODE_TEST_HOME || os.homedir()
-  const configHome = options.configHome ?? (options.env.XDG_CONFIG_HOME || path.join(home, ".config"))
-  const dataHome = options.dataHome ?? (options.env.XDG_DATA_HOME || path.join(home, ".local", "share"))
-  const cacheHome = options.cacheHome ?? (options.env.XDG_CACHE_HOME || path.join(home, ".cache"))
+  const platform = options.platform ?? process.platform
+  const environment = snapshotEnvironment(options.env, platform)
+  const systemHome = options.systemHome ?? os.homedir()
+  const home = environment.OPENCODE_TEST_HOME || systemHome
+  const configHome = options.configHome ?? (environment.XDG_CONFIG_HOME || path.join(systemHome, ".config"))
+  const dataHome = options.dataHome ?? (environment.XDG_DATA_HOME || path.join(systemHome, ".local", "share"))
+  const cacheHome = options.cacheHome ?? (environment.XDG_CACHE_HOME || path.join(systemHome, ".cache"))
   const fragments: unknown[] = []
   let complete = true
   let catalog = options.catalog
 
-  const modelsPathConfigured = options.env.OPENCODE_MODELS_PATH !== undefined
-  if (!modelsPathConfigured && !options.env.OPENCODE_MODELS_URL) {
+  const modelsPathConfigured = environment.OPENCODE_MODELS_PATH !== undefined
+  if (!modelsPathConfigured && !environment.OPENCODE_MODELS_URL) {
     const cached = await boundedFile(path.join(cacheHome, "opencode", "models.json"), MAX_CATALOG_BYTES)
     if (cached.status === "failed") complete = false
     if (cached.status === "ready" && cached.value.length > 0) {
@@ -68,7 +72,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   const configDirectories = uniqueLiteral([
     ...(!projectConfigDisabled ? upwardProjectDirectories(options.cwd, project.boundary) : []),
     path.join(home, ".opencode"),
-    ...(options.env.OPENCODE_CONFIG_DIR ? [options.env.OPENCODE_CONFIG_DIR] : []),
+    ...(environment.OPENCODE_CONFIG_DIR ? [environment.OPENCODE_CONFIG_DIR] : []),
   ]).map((directory) => path.isAbsolute(directory) ? directory : path.resolve(options.cwd, directory))
   const configFiles = [
     ...unique([
@@ -76,7 +80,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       path.join(configHome, "opencode", "opencode.json"),
       path.join(configHome, "opencode", "opencode.jsonc"),
     ]),
-    ...unique(options.env.OPENCODE_CONFIG ? [options.env.OPENCODE_CONFIG] : []),
+    ...unique(environment.OPENCODE_CONFIG ? [environment.OPENCODE_CONFIG] : []),
     ...unique(!projectConfigDisabled ? upwardProjectConfigFiles(options.cwd, project.boundary) : []),
     ...configDirectories.flatMap((directory) => [
       path.join(directory, "opencode.json"),
@@ -96,7 +100,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value, environment)) {
+    if (containsEffectiveConfigSubstitution(text.value, environment, platform)) {
       complete = false
       continue
     }
@@ -112,12 +116,12 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     }
     fragments.push(validated)
   }
-  if (options.env.OPENCODE_CONFIG_CONTENT) {
+  if (environment.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
-    else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
-    else if (containsEffectiveConfigSubstitution(options.env.OPENCODE_CONFIG_CONTENT, environment)) complete = false
+    else if (Buffer.byteLength(environment.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
+    else if (containsEffectiveConfigSubstitution(environment.OPENCODE_CONFIG_CONTENT, environment, platform)) complete = false
     else {
-      const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
+      const parsed = strictJson(environment.OPENCODE_CONFIG_CONTENT, true)
       const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
       if (validated) fragments.push(validated)
       else complete = false
@@ -139,7 +143,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value, environment)) {
+    if (containsEffectiveConfigSubstitution(text.value, environment, platform)) {
       complete = false
       continue
     }
@@ -155,7 +159,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   // observer does not launch that subprocess, so a present profile is unknown.
   if (managedPreferencesMayExist()) complete = false
 
-  if ((modelsPathConfigured && options.env.OPENCODE_MODELS_PATH!.length > 0) || options.env.OPENCODE_MODELS_URL) {
+  if ((modelsPathConfigured && environment.OPENCODE_MODELS_PATH!.length > 0) || environment.OPENCODE_MODELS_URL) {
     complete = false
   }
   if (!truthy(environment.OPENCODE_PURE) && await hasPluginFiles(
@@ -164,15 +168,15 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     home,
     configHome,
     projectConfigDisabled,
-    options.env.OPENCODE_CONFIG_DIR,
+    environment.OPENCODE_CONFIG_DIR,
   )) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else fragments.push({ plugin: ["present"] })
   }
 
-  const authFromEnvironment = Boolean(options.env.OPENCODE_AUTH_CONTENT)
+  const authFromEnvironment = Boolean(environment.OPENCODE_AUTH_CONTENT)
   const authText = authFromEnvironment
-    ? { status: "ready" as const, value: options.env.OPENCODE_AUTH_CONTENT! }
+    ? { status: "ready" as const, value: environment.OPENCODE_AUTH_CONTENT! }
     : await boundedFile(path.join(dataHome, "opencode", "auth.json"), MAX_AUTH_BYTES)
   let auth: unknown = {}
   if (authText.status === "failed") complete = false
@@ -228,11 +232,14 @@ function effectiveDatabasePath(
   return path.join(dataDirectory, `opencode-${channel}.db`)
 }
 
-function snapshotEnvironment(value: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
+function snapshotEnvironment(
+  value: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+): Record<string, string | undefined> {
   const output = Object.create(null) as Record<string, string | undefined>
   for (const key of Object.keys(value)) {
     const item = value[key]
-    if (typeof item === "string" || item === undefined) output[key] = item
+    if (typeof item === "string" || item === undefined) output[platform === "win32" ? key.toUpperCase() : key] = item
   }
   return Object.freeze(output)
 }
@@ -458,9 +465,11 @@ function containsConfigSubstitution(value: unknown, pattern = /\{(?:env|file):[^
 function containsEffectiveConfigSubstitution(
   text: string,
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
 ): boolean {
   for (const match of text.matchAll(/\{env:([^}]+)\}/g)) {
-    const value = environment[match[1]!]
+    const key = platform === "win32" ? match[1]!.toUpperCase() : match[1]!
+    const value = environment[key]
     if (typeof value === "string" && value.length > 0) return true
   }
   for (const match of text.matchAll(/\{file:[^}]+\}/g)) {

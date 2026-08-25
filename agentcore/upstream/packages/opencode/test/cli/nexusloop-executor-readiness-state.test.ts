@@ -221,6 +221,22 @@ describe("NexusLoop Executor readiness local state", () => {
       provider_availability_status: "unknown",
       credential_connection_status: "unknown",
     })
+
+    await fs.writeFile(config, '{ /* {env:inject} */ "enabled_providers":["openai"] }')
+    const windowsInjected = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { INJECT: '*/ "disabled_providers":["openai"], /*' },
+      platform: "win32",
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, windowsInjected)).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
   })
 
   test("managed configuration substitutions cannot produce false-ready evidence", async () => {
@@ -747,22 +763,29 @@ describe("NexusLoop Executor readiness local state", () => {
     expect(observeExecutorReadiness(request, source).provider_availability_status).toBe("unavailable")
   })
 
-  test("empty XDG overrides retain standard home config and data authority", async () => {
+  test("OPENCODE_TEST_HOME does not replace system XDG config and data authority", async () => {
     const item = await fixture()
-    const home = path.join(item.root, "home")
-    const config = path.join(home, ".config", "opencode")
-    const data = path.join(home, ".local", "share", "opencode")
+    const testHome = path.join(item.root, "test-home")
+    const systemHome = path.join(item.root, "system-home")
+    const config = path.join(systemHome, ".config", "opencode")
+    const data = path.join(systemHome, ".local", "share", "opencode")
+    const cache = path.join(systemHome, ".cache", "opencode")
+    const effectiveCatalog = cachedCatalog()
     await fs.mkdir(config, { recursive: true })
     await fs.mkdir(data, { recursive: true })
+    await fs.mkdir(cache, { recursive: true })
     await fs.writeFile(path.join(config, "opencode.json"), JSON.stringify({ disabled_providers: ["openai"] }))
     await fs.writeFile(path.join(data, "auth.json"), JSON.stringify({ openai: { type: "api", key: "secret" } }))
+    await fs.writeFile(path.join(cache, "models.json"), JSON.stringify(effectiveCatalog))
 
     const source = await loadExecutorReadinessSource({
       cwd: item.cwd,
-      env: { OPENCODE_TEST_HOME: home, XDG_CONFIG_HOME: "", XDG_DATA_HOME: "" },
+      env: { OPENCODE_TEST_HOME: testHome, XDG_CONFIG_HOME: "", XDG_DATA_HOME: "", XDG_CACHE_HOME: "" },
+      systemHome,
       catalog,
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
+    expect(source.catalog).toEqual(effectiveCatalog)
     expect(observeExecutorReadiness(request, source)).toMatchObject({
       provider_availability_status: "unavailable",
       credential_connection_status: "connected",
