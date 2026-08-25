@@ -3,7 +3,7 @@ import os from "node:os"
 import { existsSync } from "node:fs"
 import { open as openFile } from "node:fs/promises"
 import { Database } from "bun:sqlite"
-import { parse, visit, type ParseError } from "jsonc-parser"
+import { findNodeAtLocation, parse, parseTree, visit, type ParseError } from "jsonc-parser"
 import z from "zod"
 import Ajv2020 from "ajv/dist/2020"
 import openapi from "../../../../../sdk/openapi.json"
@@ -57,7 +57,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     if (version.status === "failed") complete = false
     if (version.status === "ready" && version.value === CACHE_VERSION) {
       const cached = await boundedFile(path.join(cacheDirectory, "models.json"), MAX_CATALOG_BYTES)
-      if (cached.status === "failed") complete = false
+      if (cached.status === "failed" || cached.status === "oversized") complete = false
       if (cached.status === "ready" && cached.value.length > 0) {
         const parsed = strictJson(cached.value, false)
         const validated = parsed.ok
@@ -97,7 +97,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   for (let index = 0; index < configFiles.length; index += 1) {
     const text = await boundedFile(configFiles[index]!, MAX_CONFIG_BYTES)
     if (text.status === "missing") continue
-    if (text.status === "failed") {
+    if (text.status === "failed" || text.status === "oversized") {
       complete = false
       continue
     }
@@ -106,12 +106,12 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value, environment, platform)) {
+    const parsed = strictJson(text.value, true)
+    if (!parsed.ok) {
       complete = false
       continue
     }
-    const parsed = strictJson(text.value, true)
-    if (!parsed.ok) {
+    if (containsEffectiveConfigSubstitution(text.value, environment, platform)) {
       complete = false
       continue
     }
@@ -125,10 +125,13 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (environment.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(environment.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
-    else if (containsEffectiveConfigSubstitution(environment.OPENCODE_CONFIG_CONTENT, environment, platform)) complete = false
     else {
       const parsed = strictJson(environment.OPENCODE_CONFIG_CONTENT, true)
-      const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
+      const validated = parsed.ok && !containsEffectiveConfigSubstitution(
+        environment.OPENCODE_CONFIG_CONTENT,
+        environment,
+        platform,
+      ) ? validatedOpenCodeConfig(parsed.value) : undefined
       if (validated) fragments.push(validated)
       else complete = false
     }
@@ -140,7 +143,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   for (let index = 0; index < managed.files.length; index += 1) {
     const text = await boundedFile(managed.files[index]!, MAX_CONFIG_BYTES)
     if (text.status === "missing") continue
-    if (text.status === "failed") {
+    if (text.status === "failed" || text.status === "oversized") {
       complete = false
       continue
     }
@@ -149,12 +152,10 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value, environment, platform)) {
-      complete = false
-      continue
-    }
     const parsed = strictJson(text.value, true)
-    const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
+    const validated = parsed.ok && !containsEffectiveConfigSubstitution(text.value, environment, platform)
+      ? validatedOpenCodeConfig(parsed.value)
+      : undefined
     if (!validated) {
       complete = false
       continue
@@ -185,7 +186,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
     ? { status: "ready" as const, value: environment.OPENCODE_AUTH_CONTENT! }
     : await boundedFile(path.join(dataHome, "opencode", "auth.json"), MAX_AUTH_BYTES)
   let auth: unknown = {}
-  if (authText.status === "failed") complete = false
+  if (authText.status === "failed" || authText.status === "oversized") complete = false
   if (authText.status === "ready") {
     const parsed = strictJson(authText.value, false)
     if (parsed.ok) {
@@ -473,7 +474,14 @@ function containsEffectiveConfigSubstitution(
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
 ): boolean {
+  const root = parseTree(text, [], { disallowComments: false, allowTrailingComma: true, allowEmptyContent: false })
+  const ignoredLegacyRanges = ["theme", "keybinds", "tui"]
+    .map((key) => root ? findNodeAtLocation(root, [key]) : undefined)
+    .filter((node) => node !== undefined)
+    .map((node) => ({ start: node.offset, end: node.offset + node.length }))
   for (const match of text.matchAll(/\{env:([^}]+)\}/g)) {
+    const index = match.index
+    if (ignoredLegacyRanges.some((range) => index >= range.start && index < range.end)) continue
     const key = platform === "win32" ? match[1]!.toUpperCase() : match[1]!
     const value = environment[key]
     if (typeof value === "string" && value.length > 0) return true
@@ -561,7 +569,12 @@ function containsWellKnownAuth(value: unknown): boolean {
 async function boundedFile(
   file: string,
   max: number,
-): Promise<{ status: "missing" } | { status: "failed"; value: string } | { status: "ready"; value: string }> {
+): Promise<
+  | { status: "missing" }
+  | { status: "failed"; value: string }
+  | { status: "oversized" }
+  | { status: "ready"; value: string }
+> {
   let handle
   try {
     handle = await openFile(file, "r")
@@ -571,7 +584,8 @@ async function boundedFile(
   }
   try {
     const stat = await handle.stat()
-    if (!stat.isFile() || stat.size > max) return { status: "failed", value: "" }
+    if (!stat.isFile()) return { status: "failed", value: "" }
+    if (stat.size > max) return { status: "oversized" }
     const output = Buffer.alloc(max + 1)
     let offset = 0
     while (offset < output.length) {
@@ -579,7 +593,7 @@ async function boundedFile(
       if (part.bytesRead === 0) break
       offset += part.bytesRead
     }
-    if (offset > max) return { status: "failed", value: "" }
+    if (offset > max) return { status: "oversized" }
     return { status: "ready", value: output.subarray(0, offset).toString("utf8") }
   } catch {
     return { status: "failed", value: "" }

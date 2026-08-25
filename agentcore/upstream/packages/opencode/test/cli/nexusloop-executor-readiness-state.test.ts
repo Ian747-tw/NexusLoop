@@ -534,6 +534,18 @@ describe("NexusLoop Executor readiness local state", () => {
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, current).provider_availability_status).toBe("available")
+
+    await fs.writeFile(path.join(cacheDirectory, "version"), "x".repeat(65))
+    const oversizedStale = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: {},
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, oversizedStale).provider_availability_status).toBe("available")
   })
 
   test("provider availability and credential connection remain independent", async () => {
@@ -922,6 +934,17 @@ describe("NexusLoop Executor readiness local state", () => {
       managedConfigDir: path.join(item.root, "managed-missing"),
     })
     expect(observeExecutorReadiness(request, normalized).provider_availability_status).toBe("available")
+
+    const normalizedEffective = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { THEME: "dark", KEYBINDS: "ignored", TUI: "ignored" },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, normalizedEffective).provider_availability_status).toBe("available")
 
     await fs.writeFile(
       path.join(globalDirectory, "opencode.json"),

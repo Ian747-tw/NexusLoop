@@ -319,8 +319,15 @@ export function observeExecutorReadiness(
     !disabledProviders?.includes(request.provider_id) &&
     (whitelist === undefined || whitelist.includes(request.model_id)) &&
     !blacklist?.includes(request.model_id)
+  const gitlabDiscoveryMayAddModel = request.provider_id === "gitlab" &&
+    providerEnabled &&
+    !catalogModel &&
+    !configuredModel &&
+    credential === "connected"
   const availability = !complete || ambiguous
     ? "unknown"
+    : gitlabDiscoveryMayAddModel
+      ? "unknown"
     : providerEnabled && modelAvailable
       ? "available"
       : "unavailable"

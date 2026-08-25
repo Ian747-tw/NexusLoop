@@ -520,6 +520,27 @@ describe("NexusLoop Executor readiness protocol", () => {
     })
     expect(environment.credential_connection_status).toBe("connected")
     expect(JSON.stringify(environment)).not.toContain("environment-gitlab-secret")
+
+    for (const auth of [
+      { type: "api", key: "stored-gitlab-secret" },
+      { type: "oauth", access: "oauth-gitlab-secret" },
+    ]) {
+      const discoverable = observeExecutorReadiness(
+        { ...gitlabRequest, model_id: "duo-workflow-discovered" },
+        {
+          catalog: gitlabCatalog,
+          config_fragments: [],
+          auth: { gitlab: auth },
+          env: {},
+          observation_complete: true,
+        },
+      )
+      expect(discoverable).toMatchObject({
+        provider_availability_status: "unknown",
+        credential_connection_status: "connected",
+      })
+      expect(JSON.stringify(discoverable)).not.toMatch(/stored-gitlab-secret|oauth-gitlab-secret/)
+    }
   })
 
   test("keeps multi-field generic environment credentials unknown", () => {
