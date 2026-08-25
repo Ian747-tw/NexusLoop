@@ -467,6 +467,46 @@ describe("NexusLoop Executor readiness protocol", () => {
     expect(JSON.stringify(explicit)).not.toContain("configured-secret")
   })
 
+  test("recognizes the pinned GitLab token sources without exposing them", () => {
+    const gitlabRequest = { ...request, provider_id: "gitlab", model_id: "duo-chat" }
+    const gitlabCatalog = {
+      gitlab: {
+        id: "gitlab",
+        env: ["GITLAB_TOKEN"],
+        models: { "duo-chat": { id: "duo-chat" } },
+      },
+    }
+    const stored = observeExecutorReadiness(gitlabRequest, {
+      catalog: gitlabCatalog,
+      config_fragments: [],
+      auth: { gitlab: { type: "api", key: "stored-gitlab-secret" } },
+      env: {},
+      observation_complete: true,
+    })
+    expect(stored.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(stored)).not.toContain("stored-gitlab-secret")
+
+    const oauth = observeExecutorReadiness(gitlabRequest, {
+      catalog: gitlabCatalog,
+      config_fragments: [],
+      auth: { gitlab: { type: "oauth", access: "oauth-gitlab-secret" } },
+      env: {},
+      observation_complete: true,
+    })
+    expect(oauth.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(oauth)).not.toContain("oauth-gitlab-secret")
+
+    const environment = observeExecutorReadiness(gitlabRequest, {
+      catalog: gitlabCatalog,
+      config_fragments: [],
+      auth: {},
+      env: { GITLAB_TOKEN: "environment-gitlab-secret" },
+      observation_complete: true,
+    })
+    expect(environment.credential_connection_status).toBe("connected")
+    expect(JSON.stringify(environment)).not.toContain("environment-gitlab-secret")
+  })
+
   test("keeps multi-field generic environment credentials unknown", () => {
     const google = {
       google: {

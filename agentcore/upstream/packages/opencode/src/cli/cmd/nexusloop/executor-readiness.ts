@@ -477,6 +477,24 @@ function credentialStatus(
     credentialSemanticsKnown ||
     CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID)
   )) return "connected"
+  if (providerID === "gitlab") {
+    const environmentToken = ownValue(env, "GITLAB_TOKEN")
+    if (typeof environmentToken === "string" && environmentToken.length > 0) return "connected"
+    if (authValue === undefined) return "disconnected"
+    const gitlabAuth = optionalRecord(authValue)
+    const type = ownValue(gitlabAuth, "type")
+    if (type === "api") {
+      return typeof ownValue(gitlabAuth, "key") === "string" && ownValue(gitlabAuth, "key") !== ""
+        ? "connected"
+        : "unknown"
+    }
+    if (type === "oauth") {
+      return typeof ownValue(gitlabAuth, "access") === "string" && ownValue(gitlabAuth, "access") !== ""
+        ? "connected"
+        : "unknown"
+    }
+    return "unknown"
+  }
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
   let ambiguousEnvironmentCredential = false
