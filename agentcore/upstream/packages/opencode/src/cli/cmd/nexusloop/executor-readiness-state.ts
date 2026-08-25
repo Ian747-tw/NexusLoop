@@ -96,7 +96,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value)) {
+    if (containsEffectiveConfigSubstitution(text.value, environment)) {
       complete = false
       continue
     }
@@ -115,7 +115,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
   if (options.env.OPENCODE_CONFIG_CONTENT) {
     if (fragments.length >= MAX_FRAGMENTS) complete = false
     else if (Buffer.byteLength(options.env.OPENCODE_CONFIG_CONTENT, "utf8") > MAX_CONFIG_BYTES) complete = false
-    else if (containsEffectiveConfigSubstitution(options.env.OPENCODE_CONFIG_CONTENT)) complete = false
+    else if (containsEffectiveConfigSubstitution(options.env.OPENCODE_CONFIG_CONTENT, environment)) complete = false
     else {
       const parsed = strictJson(options.env.OPENCODE_CONFIG_CONTENT, true)
       const validated = parsed.ok ? validatedOpenCodeConfig(parsed.value) : undefined
@@ -139,7 +139,7 @@ export async function loadExecutorReadinessSource(options: LoadOptions): Promise
       complete = false
       continue
     }
-    if (containsEffectiveConfigSubstitution(text.value)) {
+    if (containsEffectiveConfigSubstitution(text.value, environment)) {
       complete = false
       continue
     }
@@ -455,7 +455,14 @@ function containsConfigSubstitution(value: unknown, pattern = /\{(?:env|file):[^
   return false
 }
 
-function containsEffectiveConfigSubstitution(text: string): boolean {
+function containsEffectiveConfigSubstitution(
+  text: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): boolean {
+  for (const match of text.matchAll(/\{env:([^}]+)\}/g)) {
+    const value = environment[match[1]!]
+    if (typeof value === "string" && value.length > 0) return true
+  }
   for (const match of text.matchAll(/\{file:[^}]+\}/g)) {
     const index = match.index
     const lineStart = text.lastIndexOf("\n", index - 1) + 1

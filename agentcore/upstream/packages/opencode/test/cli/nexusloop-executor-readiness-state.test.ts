@@ -206,6 +206,21 @@ describe("NexusLoop Executor readiness local state", () => {
         credential_connection_status: "unknown",
       })
     }
+
+    await fs.writeFile(config, '{ /* {env:INJECT} */ "enabled_providers":["openai"] }')
+    const injected = await loadExecutorReadinessSource({
+      cwd: item.cwd,
+      env: { INJECT: '*/ "disabled_providers":["openai"], /*' },
+      catalog,
+      configHome: item.configHome,
+      dataHome: item.dataHome,
+      cacheHome: item.cacheHome,
+      managedConfigDir: path.join(item.root, "managed-missing"),
+    })
+    expect(observeExecutorReadiness(request, injected)).toMatchObject({
+      provider_availability_status: "unknown",
+      credential_connection_status: "unknown",
+    })
   })
 
   test("managed configuration substitutions cannot produce false-ready evidence", async () => {
