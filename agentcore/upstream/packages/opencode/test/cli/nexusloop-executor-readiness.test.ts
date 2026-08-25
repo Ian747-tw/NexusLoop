@@ -496,6 +496,21 @@ describe("NexusLoop Executor readiness protocol", () => {
     expect(oauth.credential_connection_status).toBe("connected")
     expect(JSON.stringify(oauth)).not.toContain("oauth-gitlab-secret")
 
+    for (const emptyAuth of [
+      { type: "api", key: "" },
+      { type: "oauth", access: "" },
+    ]) {
+      const storedEmpty = observeExecutorReadiness(gitlabRequest, {
+        catalog: gitlabCatalog,
+        config_fragments: [],
+        auth: { gitlab: emptyAuth },
+        env: { GITLAB_TOKEN: "must-not-override-stored-auth" },
+        observation_complete: true,
+      })
+      expect(storedEmpty.credential_connection_status).toBe("disconnected")
+      expect(JSON.stringify(storedEmpty)).not.toContain("must-not-override-stored-auth")
+    }
+
     const environment = observeExecutorReadiness(gitlabRequest, {
       catalog: gitlabCatalog,
       config_fragments: [],

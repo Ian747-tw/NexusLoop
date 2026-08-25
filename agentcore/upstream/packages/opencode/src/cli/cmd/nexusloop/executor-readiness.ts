@@ -478,22 +478,23 @@ function credentialStatus(
     CONFIGURED_API_KEY_SUFFICIENT_COMPLEX_PROVIDERS.has(providerID)
   )) return "connected"
   if (providerID === "gitlab") {
+    if (authValue !== undefined) {
+      const gitlabAuth = optionalRecord(authValue)
+      const type = ownValue(gitlabAuth, "type")
+      if (type === "api") {
+        return typeof ownValue(gitlabAuth, "key") === "string" && ownValue(gitlabAuth, "key") !== ""
+          ? "connected"
+          : "disconnected"
+      }
+      if (type === "oauth") {
+        return typeof ownValue(gitlabAuth, "access") === "string" && ownValue(gitlabAuth, "access") !== ""
+          ? "connected"
+          : "disconnected"
+      }
+      return "unknown"
+    }
     const environmentToken = ownValue(env, "GITLAB_TOKEN")
-    if (typeof environmentToken === "string" && environmentToken.length > 0) return "connected"
-    if (authValue === undefined) return "disconnected"
-    const gitlabAuth = optionalRecord(authValue)
-    const type = ownValue(gitlabAuth, "type")
-    if (type === "api") {
-      return typeof ownValue(gitlabAuth, "key") === "string" && ownValue(gitlabAuth, "key") !== ""
-        ? "connected"
-        : "unknown"
-    }
-    if (type === "oauth") {
-      return typeof ownValue(gitlabAuth, "access") === "string" && ownValue(gitlabAuth, "access") !== ""
-        ? "connected"
-        : "unknown"
-    }
-    return "unknown"
+    return typeof environmentToken === "string" && environmentToken.length > 0 ? "connected" : "disconnected"
   }
   if (!credentialSemanticsKnown) return "unknown"
   if (publicCredentialConnection) return "connected"
