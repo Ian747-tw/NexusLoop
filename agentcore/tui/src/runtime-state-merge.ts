@@ -4,8 +4,8 @@ import type { UiState } from "./state"
 export function mergeRuntimeEffectState(current: UiState, next: UiState, previousActionCount = 0, baseline?: UiState): UiState {
   const addedActions = addedSystemActions(next.systemActions, previousActionCount, baseline?.systemActions)
   const canUpdateNavigation = baseline !== undefined
-    && current.screen === baseline.screen
-    && current.focus === baseline.focus
+    && ((current.screen === baseline.screen && current.focus === baseline.focus)
+      || isStreamInitializedMissingSetupNavigation(current, next, baseline))
   const canUpdateRuntimeStatus = baseline === undefined || stableEqual(current.runtimeStatus, baseline.runtimeStatus)
   const canUpdateAdapterStatus = baseline === undefined || stableEqual(current.adapterStatus, baseline.adapterStatus)
   const canUpdateResearchProjection =
@@ -160,6 +160,17 @@ export function mergeRuntimeEffectState(current: UiState, next: UiState, previou
       activeMissionId: missionExecutionActiveMissionId ?? (canUpdateActiveMissionId ? next.header.activeMissionId : current.header.activeMissionId),
     },
   }
+}
+
+function isStreamInitializedMissingSetupNavigation(current: UiState, next: UiState, baseline: UiState): boolean {
+  return baseline.screen === "boot"
+    && current.screen === "resume"
+    && current.focus === "resume-choice"
+    && current.resumeSelection === baseline.resumeSelection
+    && current.lastCommand === baseline.lastCommand
+    && next.screen === "model-setup"
+    && next.focus === "init-choice"
+    && next.modelSetup.stage === "commander"
 }
 
 function stableEqual(left: unknown, right: unknown): boolean {

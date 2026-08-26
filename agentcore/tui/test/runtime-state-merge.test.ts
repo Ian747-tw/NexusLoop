@@ -24,6 +24,33 @@ describe("interactive runtime effect state merge", () => {
     })
   })
 
+  test("lets missing setup supersede the stream-driven boot to resume transition", () => {
+    const baseline = initialState("/tmp/demo")
+    const streamInitialized: UiState = {
+      ...baseline,
+      screen: "resume",
+      focus: "resume-choice",
+    }
+    const missingSetup: UiState = {
+      ...baseline,
+      screen: "model-setup",
+      focus: "init-choice",
+      modelSetup: { ...baseline.modelSetup, origin: "main", stage: "commander" },
+    }
+
+    expect(mergeRuntimeEffectState(streamInitialized, missingSetup, 0, baseline)).toMatchObject({
+      screen: "model-setup",
+      focus: "init-choice",
+    })
+
+    const operatorMoved = { ...streamInitialized, resumeSelection: 1 }
+    expect(mergeRuntimeEffectState(operatorMoved, missingSetup, 0, baseline)).toMatchObject({
+      screen: "resume",
+      focus: "resume-choice",
+      resumeSelection: 1,
+    })
+  })
+
   test("rebases async runtime effect fields without dropping newer stream state", () => {
     const base: UiState = {
       ...initialState("/tmp/demo"),
