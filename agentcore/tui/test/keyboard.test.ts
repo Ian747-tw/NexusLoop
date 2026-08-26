@@ -115,6 +115,7 @@ describe("TUI keyboard command model", () => {
     expect(result.state.screen).toBe("model-setup")
     expect(result.state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true })
     expect(result.effects).toEqual([])
+    expect(applyKeyCommandWithEffects(state, { type: "cancel" })).toEqual({ state, effects: [] })
   })
 
   test("unchanged committed setup returns to its originating main screen", () => {
