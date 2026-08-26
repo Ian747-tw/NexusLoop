@@ -150,6 +150,9 @@ describe("packaged OpenCode Executor readiness resolver", () => {
   test("identity, protocol, extra fields, multiple records, and trailing output fail closed", async () => {
     for (const response of [
       JSON.stringify(observation({ provider_id: "google" })) + "\n",
+      JSON.stringify(observation({ model_id: "gemini-2.5-flash" })) + "\n",
+      JSON.stringify(observation({ selection_projection_hash: "4".repeat(64) })) + "\n",
+      JSON.stringify(observation({ credential_binding_id: "credential-executor-other" })) + "\n",
       JSON.stringify(observation({ observation_version: 2 })) + "\n",
       JSON.stringify(observation({ extra: true })) + "\n",
       "{\"observation_version\":1,\"observation_version\":1}\n",
@@ -162,6 +165,28 @@ describe("packaged OpenCode Executor readiness resolver", () => {
         command: "/opt/opencode", cwd: "/tmp/project", spawn: fixture.spawn,
       })
       await expect(resolver.observe(selection)).rejects.toThrow()
+    }
+  })
+
+  test("availability and credential observations remain independent tri-state evidence", async () => {
+    for (const [providerStatus, credentialStatus] of [
+      ["available", "disconnected"],
+      ["unavailable", "connected"],
+      ["unknown", "unknown"],
+    ] as const) {
+      const expected = observation({
+        provider_availability_status: providerStatus,
+        credential_connection_status: credentialStatus,
+      })
+      const fixture = spawnFixture(JSON.stringify(expected) + "\n")
+      const resolver = new OpenCodeExecutorModelReadinessResolver({
+        command: "/opt/opencode", cwd: "/tmp/project", spawn: fixture.spawn,
+      })
+      await expect(resolver.observe(selection)).resolves.toMatchObject({
+        provider_availability_status: providerStatus,
+        credential_connection_status: credentialStatus,
+      })
+      expect(fixture.calls).toHaveLength(1)
     }
   })
 
