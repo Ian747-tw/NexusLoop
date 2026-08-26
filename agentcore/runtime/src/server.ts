@@ -7,6 +7,7 @@ import type { RuntimeEvent, RuntimeMode, RuntimeResearchProjectionHealth, Runtim
 import { modeRequiresApprovedSpec } from "./project/project-status"
 import { locateProjectRoot, projectName } from "./project/project-root"
 import { RunLock } from "./project/run-lock"
+import { buildModelSetupCandidate, ModelSetupService, readPersistedModelSetupAuthority, type ModelSetupCandidate } from "./model-configuration/model-setup"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
 import type { ExecutorToolHandlerAdapter, OpenCodeRuntimeAdapter } from "./opencode/adapter"
 import { createOpenCodeAdapter, type OpenCodeAdapterConfig, type OpenCodeAdapterFactoryOptions } from "./opencode/adapter-config"
@@ -259,6 +260,7 @@ import { redactText, redactValue } from "./security/redaction"
 import { adaptLegacyCommanderModelAuthority } from "./model-configuration/model-profile-legacy-commander-adapter"
 import { evaluateCommanderModelRoleReadiness, evaluateExecutorModelRoleReadiness, ModelProfileRuntimeRegistry } from "./model-configuration/model-profile-runtime-registry"
 import type { ExecutorModelReadinessResolver, ModelRoleReadinessEvidence } from "./model-configuration/model-profile-runtime-registry-types"
+import type { ExecutorModelSelectionProjection } from "./model-configuration/model-configuration-types"
 import {
   ResearchDb,
   type ListResearchEventsOptions,
@@ -281,6 +283,38 @@ const READ_ONLY_RESEARCH_INGESTION_DB: ResearchIngestionDbWriter = {
   acceptResearchResult() {
     throw new Error("read-only research ingestion projection cannot accept research memory")
   },
+}
+
+function modelProfileRuntimeCapabilities(
+  commanderConfig: CommanderInvestigationProviderConfig | undefined,
+  executorSelection: ExecutorModelSelectionProjection | undefined,
+): ModelCapability[] {
+  const commander = commanderConfig ? commanderInvestigationModelCapability(commanderConfig) : undefined
+  if (!executorSelection) return commander ? [commander] : []
+  const executor: ModelCapability = {
+    capability_id: `runtime-executor-${stableHash({
+      provider_kind: executorSelection.provider_kind,
+      provider_id: executorSelection.provider_id,
+      model_id: executorSelection.model_id,
+      projection_hash: executorSelection.projection_hash,
+    }).slice(0, 16)}`,
+    provider_kind: executorSelection.provider_kind,
+    provider_id: executorSelection.provider_id,
+    model_id: executorSelection.model_id,
+    display_name: `${executorSelection.provider_kind} primary Executor model`,
+    role_support: ["executor"],
+    supports_tools: "unknown",
+    supports_json_schema: "unknown",
+    supports_mcp: "unknown",
+    supports_long_context: "unknown",
+    supports_streaming: "unknown",
+    supports_local_execution: "unknown",
+    safety_margin_ratio: 0.25,
+    source: "runtime_config",
+    warnings: ["exact primary Executor selection; context limits remain unknown and conservative"],
+    created_at: "1970-01-01T00:00:00.000Z",
+  }
+  return commander ? [commander, executor] : [executor]
 }
 
 export interface RuntimeServerOptions {
@@ -350,6 +384,9 @@ export interface RuntimeServerOptions {
   commanderModelStepAdapter?: CommanderModelStepAdapter
   commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
+  modelSetupActiveHash?: string
+  modelSetupActiveCandidate?: ModelSetupCandidate
+  revalidatePersistedModelSetupOnStart?: boolean
   executorModelReadinessResolver?: ExecutorModelReadinessResolver
   commanderInvestigationControlGate?: CommanderInvestigationControlGate
   commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
@@ -447,6 +484,10 @@ export class RuntimeServer {
   private readonly commanderModelStepAdapter?: CommanderModelStepAdapter
   private readonly commanderInvestigationProviderConfig?: CommanderInvestigationProviderConfig
   private readonly modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry
+  private readonly modelSetupActiveHash?: string
+  private readonly modelSetupActiveCandidate?: ModelSetupCandidate
+  private readonly revalidatePersistedModelSetupOnStart: boolean
+  private readonly activeModelSetupWrites = new Set<Promise<unknown>>()
   private readonly executorModelReadinessResolver?: ExecutorModelReadinessResolver
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
@@ -489,6 +530,7 @@ export class RuntimeServer {
   private commanderInvestigationRecoveryExecutionServiceInstance: CommanderInvestigationRecoveryExecutionService | null = null
   private commanderInvestigationRecoveryTransactionServiceInstance: CommanderInvestigationRecoveryTransactionService | null = null
   private commanderInvestigationRecoveryOperatorServiceInstance: CommanderInvestigationRecoveryOperatorService | null = null
+  private modelSetupServiceInstance: ModelSetupService | null = null
   private opencodeSessionContinuityServiceInstance: OpenCodeSessionContinuityService | null = null
   private opencodeContextRefreshServiceInstance: OpenCodeContextRefreshService | null = null
   private contextBudgetServiceInstance: ContextBudgetService | null = null
@@ -586,6 +628,18 @@ export class RuntimeServer {
     this.commanderInvestigationProviderConfig = options.commanderInvestigationProviderConfig ? validateCommanderInvestigationProviderConfig(options.commanderInvestigationProviderConfig) : undefined
     this.modelProfileRuntimeRegistry = options.modelProfileRuntimeRegistry
       ?? (this.commanderInvestigationProviderConfig ? adaptLegacyCommanderModelAuthority(this.commanderInvestigationProviderConfig).registry : undefined)
+    if ((options.modelSetupActiveHash === undefined) !== (options.modelSetupActiveCandidate === undefined)) {
+      throw new Error("active model setup hash and candidate must be supplied together")
+    }
+    this.modelSetupActiveHash = options.modelSetupActiveHash
+    this.revalidatePersistedModelSetupOnStart = options.revalidatePersistedModelSetupOnStart === true
+    if (options.modelSetupActiveCandidate) {
+      const rebuilt = buildModelSetupCandidate(options.modelSetupActiveCandidate.choices)
+      if (rebuilt.candidate_hash !== options.modelSetupActiveCandidate.candidate_hash) {
+        throw new Error("active model setup candidate does not match current setup authority")
+      }
+      this.modelSetupActiveCandidate = rebuilt
+    }
     this.executorModelReadinessResolver = options.executorModelReadinessResolver
     if (options.modelProfileRuntimeRegistry && this.commanderInvestigationProviderConfig) {
       requireCommanderRegistryAssertion(options.modelProfileRuntimeRegistry, this.commanderInvestigationProviderConfig)
@@ -596,7 +650,10 @@ export class RuntimeServer {
     this.reasoningProviderConfig = validateReasoningProviderConfig(options.reasoningProviderConfig ?? defaultReasoningProviderConfig())
     this.modelCapabilityRegistry = new ModelCapabilityRegistry({
       reasoningProviderConfig: this.reasoningProviderConfig,
-      runtimeCapabilities: this.commanderInvestigationProviderConfig ? [commanderInvestigationModelCapability(this.commanderInvestigationProviderConfig)] : [],
+      runtimeCapabilities: modelProfileRuntimeCapabilities(
+        this.commanderInvestigationProviderConfig,
+        this.modelProfileRuntimeRegistry?.executorSelection(),
+      ),
     })
     const minimaxProvider = this.reasoningProviderConfig.kind === "minimax" ? this.createMiniMaxReasoningProvider() : null
     this.researchSynthesisProvider = options.researchSynthesisProvider ?? (minimaxProvider ?? new FakeResearchSynthesisProvider())
@@ -684,6 +741,8 @@ export class RuntimeServer {
       this.commanderInvestigationLifecycleAbort = new AbortController()
     }
     try {
+      this.requireCurrentPersistedModelSetupAuthority()
+      await this.executorModelReadinessResolver?.start?.()
       this.ensureResearchProjectionUsable("startup")
       this.started = true
       if (this.mode === "active") {
@@ -701,6 +760,17 @@ export class RuntimeServer {
     } catch (error) {
       await this.cleanupFailedStartup()
       throw error
+    }
+  }
+
+  private requireCurrentPersistedModelSetupAuthority(): void {
+    if (!this.revalidatePersistedModelSetupOnStart) return
+    const current = readPersistedModelSetupAuthority(this.projectDir)
+    const currentHash = current?.setup_hash
+    const currentCandidateHash = current?.candidate.candidate_hash
+    if (currentHash !== this.modelSetupActiveHash
+      || currentCandidateHash !== this.modelSetupActiveCandidate?.candidate_hash) {
+      throw new Error("persisted model setup changed before runtime start; reconstruct RuntimeServer")
     }
   }
 
@@ -763,6 +833,15 @@ export class RuntimeServer {
     this.executorStreamAbort = true
     this.lifecycleState = "stopping"
     this.commanderInvestigationLifecycleAbort.abort(new Error("RuntimeServer startup failed before Commander investigations became ready"))
+    try {
+      await this.executorModelReadinessResolver?.shutdown?.()
+    } catch (error) {
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-executor-readiness-observer-startup-cleanup-error",
+        message: "Executor readiness observer startup cleanup failed",
+      })
+    }
     await this.drainConfiguredCommanderInvestigations()
     this.started = false
     try {
@@ -808,6 +887,20 @@ export class RuntimeServer {
     switch (name) {
       case "runtime.status":
         return this.status()
+      case "runtime.model_setup_catalog":
+        return this.modelSetupService().catalog()
+      case "runtime.model_setup_status":
+        return this.modelSetupStatus()
+      case "runtime.preview_model_setup":
+        return this.modelSetupService().preview(payload)
+      case "runtime.confirm_model_setup":
+        return this.withModelSetupWriteLock(async () => {
+          const confirmation = await this.modelSetupService().confirm(payload)
+          return Object.freeze({
+            ...confirmation,
+            restart_required: confirmation.setup_hash !== this.modelSetupActiveHash,
+          })
+        })
       case "runtime.reasoning_provider_status":
         return this.reasoningProviderStatus()
       case "runtime.command_authority_summary":
@@ -3446,6 +3539,22 @@ export class RuntimeServer {
     )
   }
 
+  private async modelSetupStatus(): Promise<Awaited<ReturnType<ModelSetupService["status"]>> & {
+    active_candidate?: ModelSetupCandidate
+    commander_role_readiness?: ModelRoleReadinessEvidence
+    executor_role_readiness?: ModelRoleReadinessEvidence
+  }> {
+    const status = await this.modelSetupService().status(this.modelSetupActiveHash)
+    const commander = this.previewCommanderModelRoleReadiness()
+    const executor = await this.previewExecutorModelRoleReadiness()
+    return {
+      ...status,
+      ...(this.modelSetupActiveCandidate ? { active_candidate: this.modelSetupActiveCandidate } : {}),
+      ...(commander ? { commander_role_readiness: commander } : {}),
+      ...(executor ? { executor_role_readiness: executor } : {}),
+    }
+  }
+
   async previewExecutorModelRoleReadiness(): Promise<ModelRoleReadinessEvidence | undefined> {
     if (!this.modelProfileRuntimeRegistry) return undefined
     return evaluateExecutorModelRoleReadiness(
@@ -4158,6 +4267,17 @@ export class RuntimeServer {
         firstError ??= error
       }
     }
+    try {
+      await this.executorModelReadinessResolver?.shutdown?.()
+    } catch (error) {
+      firstError ??= error
+      this.eventBus.emit({
+        type: "ExecutorLifecycle",
+        phase: "runtime-executor-readiness-observer-shutdown-error",
+        message: "Executor readiness observer shutdown failed",
+      })
+    }
+    await this.drainModelSetupWrites()
     if (this.started || this.runLock.isHeld()) {
       this.lifecycleState = "stopping"
       this.commanderInvestigationLifecycleAbort.abort(new Error("RuntimeServer shutdown cancelled Commander investigation"))
@@ -4311,6 +4431,46 @@ export class RuntimeServer {
     } finally {
       await this.runLock.release()
     }
+  }
+
+  private async withModelSetupWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    const task = this.runModelSetupWrite(operation)
+    this.activeModelSetupWrites.add(task)
+    try {
+      return await task
+    } finally {
+      this.activeModelSetupWrites.delete(task)
+    }
+  }
+
+  private async runModelSetupWrite<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.modelSetupWritesBlocked()) {
+      throw new Error("runtime lifecycle is stopping")
+    }
+    if (this.runLock.isHeld()) return operation()
+    await this.runLock.acquire()
+    try {
+      if (this.modelSetupWritesBlocked()) {
+        throw new Error("runtime lifecycle is stopping")
+      }
+      return await operation()
+    } finally {
+      await this.runLock.release()
+    }
+  }
+
+  private modelSetupWritesBlocked(): boolean {
+    return this.lifecycleShutdownRequested || this.lifecycleState === "stopping" || this.lifecycleState === "stopped"
+  }
+
+  private async drainModelSetupWrites(): Promise<void> {
+    while (this.activeModelSetupWrites.size > 0) {
+      await Promise.allSettled([...this.activeModelSetupWrites])
+    }
+  }
+
+  private modelSetupService(): ModelSetupService {
+    return this.modelSetupServiceInstance ??= new ModelSetupService({ eventStore: this.eventStore })
   }
 
   private updateResearchProjectionHealth(integrity: ResearchProjectionIntegrity): void {

@@ -5,6 +5,10 @@ import type { RuntimeClient, SubmitUserMessageResult } from "./runtime-client"
 
 const serverStartTasks = new WeakMap<RuntimeServer, Promise<void>>()
 const noStartCommands = new Set([
+  "runtime.model_setup_catalog",
+  "runtime.model_setup_status",
+  "runtime.preview_model_setup",
+  "runtime.confirm_model_setup",
   "runtime.command_authority_summary",
   "runtime.command_authority_list",
   "runtime.command_authority_get",
