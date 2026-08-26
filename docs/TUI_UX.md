@@ -31,8 +31,8 @@ detached setup script.
 
 ### Model Setup
 
-After project/spec onboarding, OpenTUI presents the existing in-shell model
-setup view. Commander and primary Executor choices are independent and each
+After project/spec onboarding, a missing durable setup automatically enters
+the existing in-shell model setup view. Commander and primary Executor choices are independent and each
 supports an explicit unconfigured state. The view separates selected,
 connected, and ready status; it never asks for or displays credentials.
 

@@ -7,7 +7,7 @@
 3. Reconstruct candidates from recipe IDs, validate with ADR-035, project both
    roles, and return bounded safe hashes/readiness fields.
 4. Confirm via expected revision/candidate hash and EventStore
-   `appendIfLatest`; identical writes are idempotent and all others are stale or
+   `appendIfLatestKind`; identical writes are idempotent and all others are stale or
    conflicting.
 5. Add a bounded Runtime resolver for the packaged 9W4E0 command. It accepts
    only the exact immutable projection and invokes the exact process-adapter
