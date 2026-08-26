@@ -56,7 +56,7 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
     state = { ...state, screen: "main", focus: "message-box" }
   }
 
-  if (!noStartInspectionScript) {
+  if (!noStartInspectionScript && state.screen !== "init" && state.screen !== "model-setup") {
     state = await refreshRuntimeRecords(state, runtime)
   }
 

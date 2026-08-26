@@ -1,6 +1,6 @@
 import type { OperatorCommandExecutionResult, OperatorStagedCommand } from "./operator-actions"
 
-export type Screen = "boot" | "init" | "resume" | "main"
+export type Screen = "boot" | "init" | "model-setup" | "resume" | "main"
 
 export type FocusTarget =
   | "init-choice"
@@ -55,6 +55,28 @@ export type ProviderOnboardingState = {
   credentialSource: string
   localEndpoint: string
   connectionStatus: string
+}
+
+export type ModelSetupState = {
+  origin: "init" | "main"
+  stage: "loading" | "commander" | "executor" | "preview" | "confirmation" | "confirming" | "committed"
+  commanderChoices: Choice[]
+  executorChoices: Choice[]
+  commanderSelection: number
+  executorSelection: number
+  activeCommanderLabel: string
+  activeExecutorLabel: string
+  pendingCommanderLabel: string
+  pendingExecutorLabel: string
+  expectedRevision?: number
+  candidateHash?: string
+  configurationHash?: string
+  activeSetupHash?: string
+  pendingSetupHash?: string
+  pendingRestart: boolean
+  commanderReadiness: string
+  executorReadiness: string
+  commandError?: string
 }
 
 export type ProjectOnboardingState = {
@@ -5776,6 +5798,7 @@ export type UiState = {
   search: SearchState
   approval: ApprovalState
   providerOnboarding: ProviderOnboardingState
+  modelSetup: ModelSetupState
   projectOnboarding: ProjectOnboardingState
   messageDraft: string
   submittedMessages: string[]
@@ -5900,6 +5923,21 @@ export function initialState(projectDir: string): UiState {
       credentialSource: "not selected",
       localEndpoint: "",
       connectionStatus: "not tested",
+    },
+    modelSetup: {
+      origin: "init",
+      stage: "loading",
+      commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }],
+      executorChoices: [{ id: "", label: "Leave Executor unconfigured" }],
+      commanderSelection: 0,
+      executorSelection: 0,
+      activeCommanderLabel: "Unconfigured",
+      activeExecutorLabel: "Unconfigured",
+      pendingCommanderLabel: "Unconfigured",
+      pendingExecutorLabel: "Unconfigured",
+      pendingRestart: false,
+      commanderReadiness: "unconfigured",
+      executorReadiness: "unconfigured",
     },
     projectOnboarding: {
       plainTextSpec: "",

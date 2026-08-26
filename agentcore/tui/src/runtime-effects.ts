@@ -736,6 +736,46 @@ export async function applyRuntimeUiEffect(
 ): Promise<UiState> {
   try {
     switch (effect.type) {
+      case "load-model-setup": {
+        const [catalog, status] = await Promise.all([
+          runtime.command("runtime.model_setup_catalog"),
+          runtime.command("runtime.model_setup_status"),
+        ])
+        const next = applyModelSetupCatalogAndStatus(state, catalog, status)
+        if (effect.enterIfMissing && isMissingModelSetupStatus(status)) {
+          return {
+            ...next,
+            screen: "model-setup",
+            focus: "init-choice",
+            modelSetup: { ...next.modelSetup, origin: state.screen === "init" ? "init" : "main", stage: "commander" },
+          }
+        }
+        if (effect.continueInitializationIfActive && isActiveModelSetupStatus(status)) {
+          return {
+            ...next,
+            screen: "main",
+            focus: "message-box",
+            lastCommand: "initialize",
+            commander: { ...next.commander, workIntent: "TUI onboarding shell" },
+            systemActions: [...next.systemActions, { title: "Initialize selected", detail: "Active model setup verified; entered onboarding shell" }],
+          }
+        }
+        return next
+      }
+      case "preview-model-setup":
+        return applyModelSetupPreview(state, await runtime.command("runtime.preview_model_setup", {
+          commander_recipe_id: effect.commanderRecipeId,
+          executor_recipe_id: effect.executorRecipeId,
+        }))
+      case "confirm-model-setup":
+        return applyModelSetupCommit(state, await runtime.command("runtime.confirm_model_setup", {
+          commander_recipe_id: effect.commanderRecipeId,
+          executor_recipe_id: effect.executorRecipeId,
+          expected_revision: effect.expectedRevision,
+          candidate_hash: effect.candidateHash,
+          confirmed_by: "tui-operator",
+          confirmation: "CONFIRM_MODEL_SETUP",
+        }))
       case "load-runtime-status":
         return applyRuntimeStatus(state, await runtime.command("runtime.status"))
       case "load-command-authority-summary":
@@ -2290,6 +2330,17 @@ export async function applyRuntimeUiEffect(
       }
     }
   } catch (error) {
+    if (effect.type === "load-model-setup" || effect.type === "preview-model-setup" || effect.type === "confirm-model-setup") {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        ...state,
+        modelSetup: {
+          ...state.modelSetup,
+          ...(effect.type === "confirm-model-setup" && state.modelSetup.stage === "confirming" ? { stage: "confirmation" as const } : {}),
+          commandError: redactText(message).slice(0, 240),
+        },
+      }
+    }
     if (isOperatorActionEffect(effect)) return recordOperatorActionCommandError(state, error)
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
     if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
@@ -2350,6 +2401,7 @@ export async function applyRuntimeUiEffect(
 export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = state
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-model-setup", enterIfMissing: true })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
@@ -2357,6 +2409,113 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbooks", limit: PLAYBOOK_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbook-drafts", limit: WORKBENCH_DRAFT_LIMIT })
   return next
+}
+
+function isMissingModelSetupStatus(value: unknown): boolean {
+  return isRecord(value) && value.status === "missing" && value.revision === 0 && value.pending_restart === false
+}
+
+function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, statusValue: unknown): UiState {
+  if (!isRecord(catalogValue) || !isRecord(statusValue)) throw new Error("model setup returned malformed state")
+  const choices = (value: unknown, role: string) => {
+    if (!Array.isArray(value) || value.length > 20) throw new Error(`model setup ${role} recipes are malformed`)
+    return value.map((item) => {
+      if (!isRecord(item)) throw new Error(`model setup ${role} recipe is malformed`)
+      const id = readString(item.recipe_id, "")
+      const label = readString(item.display_name, "")
+      if (!id || !label) throw new Error(`model setup ${role} recipe is malformed`)
+      return { id: id.slice(0, 160), label: label.slice(0, 120) }
+    })
+  }
+  const commanderChoices = [{ id: "", label: "Leave Commander unconfigured" }, ...choices(catalogValue.commander_recipes, "Commander")]
+  const executorChoices = [{ id: "", label: "Leave Executor unconfigured" }, ...choices(catalogValue.executor_recipes, "Executor")]
+  const candidate = isRecord(statusValue.candidate) && isRecord(statusValue.candidate.choices) ? statusValue.candidate.choices : undefined
+  const activeCandidate = isRecord(statusValue.active_candidate) && isRecord(statusValue.active_candidate.choices) ? statusValue.active_candidate.choices : undefined
+  const selectedIndex = (items: Array<{ id: string }>, value: unknown) => {
+    if (value === null) return 0
+    if (typeof value !== "string") return 0
+    const index = items.findIndex((item) => item.id === value)
+    return index < 0 ? 0 : index
+  }
+  const readiness = (value: unknown) => {
+    if (!isRecord(value)) return "unconfigured"
+    const selected = readString(value.selection_status, "unknown")
+    const connected = readString(value.credential_connection_status, "unknown")
+    const lifecycle = readString(value.lifecycle_status, "unknown")
+    return `${selected}; credential ${connected}; lifecycle ${lifecycle}`.slice(0, 180)
+  }
+  const label = (items: Array<{ id: string; label: string }>, value: unknown) => items[selectedIndex(items, value)]?.label ?? "Unconfigured"
+  const pendingCommanderLabel = label(commanderChoices, candidate?.commander_recipe_id)
+  const pendingExecutorLabel = label(executorChoices, candidate?.executor_recipe_id)
+  const activeCommanderLabel = label(commanderChoices, activeCandidate?.commander_recipe_id)
+  const activeExecutorLabel = label(executorChoices, activeCandidate?.executor_recipe_id)
+  return {
+    ...state,
+    modelSetup: {
+      ...state.modelSetup,
+      stage: "commander",
+      commanderChoices,
+      executorChoices,
+      commanderSelection: selectedIndex(commanderChoices, candidate?.commander_recipe_id),
+      executorSelection: selectedIndex(executorChoices, candidate?.executor_recipe_id),
+      activeCommanderLabel,
+      activeExecutorLabel,
+      pendingCommanderLabel,
+      pendingExecutorLabel,
+      activeSetupHash: typeof statusValue.active_setup_hash === "string" ? statusValue.active_setup_hash.slice(0, 64) : undefined,
+      pendingSetupHash: typeof statusValue.setup_hash === "string" ? statusValue.setup_hash.slice(0, 64) : undefined,
+      pendingRestart: statusValue.pending_restart === true,
+      commanderReadiness: readiness(statusValue.commander_role_readiness),
+      executorReadiness: readiness(statusValue.executor_role_readiness),
+      commandError: undefined,
+    },
+  }
+}
+
+function isActiveModelSetupStatus(value: unknown): boolean {
+  if (!isRecord(value) || value.status !== "ready" || value.pending_restart !== false) return false
+  return typeof value.setup_hash === "string"
+    && value.setup_hash.length === 64
+    && value.active_setup_hash === value.setup_hash
+}
+
+function applyModelSetupPreview(state: UiState, value: unknown): UiState {
+  if (!isRecord(value) || !Number.isInteger(value.expected_revision) || typeof value.candidate_hash !== "string" || typeof value.configuration_hash !== "string") {
+    throw new Error("model setup preview is malformed")
+  }
+  return {
+    ...state,
+    modelSetup: {
+      ...state.modelSetup,
+      stage: "preview",
+      expectedRevision: Number(value.expected_revision),
+      candidateHash: value.candidate_hash.slice(0, 64),
+      configurationHash: value.configuration_hash.slice(0, 64),
+      commandError: undefined,
+    },
+  }
+}
+
+function applyModelSetupCommit(state: UiState, value: unknown): UiState {
+  if (!isRecord(value) || (value.status !== "committed" && value.status !== "idempotent") || typeof value.setup_hash !== "string") {
+    throw new Error("model setup confirmation result is malformed")
+  }
+  return {
+    ...state,
+    modelSetup: {
+      ...state.modelSetup,
+      stage: "committed",
+      pendingSetupHash: value.setup_hash.slice(0, 64),
+      pendingRestart: value.restart_required === true,
+      pendingCommanderLabel: state.modelSetup.commanderChoices[state.modelSetup.commanderSelection]?.label ?? "Unconfigured",
+      pendingExecutorLabel: state.modelSetup.executorChoices[state.modelSetup.executorSelection]?.label ?? "Unconfigured",
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, {
+      title: value.restart_required === true ? "Model setup recorded" : "Model setup unchanged",
+      detail: value.restart_required === true ? "Selection activates after a clean restart" : "The active selection already matches this setup",
+    }].slice(-12),
+  }
 }
 
 export async function refreshResearchRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
@@ -6103,6 +6262,16 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
+    case "model-setup":
+      if (args.length > 0) throw new Error("/model-setup accepts no arguments")
+      if (runtime.modelSetupAuthority === "restart_required") {
+        throw new Error("Restart NexusLoop after spec approval before opening model setup")
+      }
+      return applyRuntimeUiEffect({
+        ...commandState,
+        screen: "model-setup",
+        modelSetup: { ...commandState.modelSetup, origin: "main", stage: "loading", commandError: undefined },
+      }, runtime, { type: "load-model-setup" })
     case "stage":
       return Promise.resolve(stageSuggestedOperatorCommand(commandState, args))
     case "stage-command":

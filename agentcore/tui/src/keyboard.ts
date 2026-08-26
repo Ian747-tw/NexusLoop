@@ -1,4 +1,4 @@
-import type { FocusTarget, UiState } from "./state"
+import type { FocusTarget, ModelSetupState, UiState } from "./state"
 import { redactText } from "./redaction"
 
 export type KeyCommand =
@@ -14,6 +14,9 @@ export type KeyCommand =
 export type KeySideEffect =
   | { type: "send-command"; command: string; args?: string[] }
   | { type: "send-user-message"; message: string }
+  | { type: "load-model-setup"; continueInitializationIfActive?: boolean; enterIfMissing?: boolean }
+  | { type: "preview-model-setup"; commanderRecipeId: string | null; executorRecipeId: string | null }
+  | { type: "confirm-model-setup"; commanderRecipeId: string | null; executorRecipeId: string | null; expectedRevision: number; candidateHash: string }
 
 export type KeyCommandResult = {
   state: UiState
@@ -46,6 +49,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
     case "focus-prev":
       return { state: state.screen === "main" ? { ...state, focus: moveFocus(state.focus, -1) } : state, effects: [] }
     case "select-next":
+      if (state.screen === "model-setup") return selectModelSetup(state, 1)
       if (state.screen === "init") {
         return { state: { ...state, initSelection: (state.initSelection + 1) % state.initChoices.length }, effects: [] }
       }
@@ -54,6 +58,7 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
       }
       return { state, effects: [] }
     case "select-prev":
+      if (state.screen === "model-setup") return selectModelSetup(state, -1)
       if (state.screen === "init") {
         return {
           state: { ...state, initSelection: (state.initSelection - 1 + state.initChoices.length) % state.initChoices.length },
@@ -81,13 +86,14 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
               focus: "message-box",
               lastCommand: "initialize",
               commander: { ...state.commander, workIntent: "TUI onboarding shell" },
-              systemActions: [...state.systemActions, { title: "Initialize selected", detail: "Entered onboarding shell" }],
+              systemActions: [...state.systemActions, { title: "Initialize selected", detail: "Entered spec onboarding shell" }],
             },
             effects: [{ type: "send-command", command: "initialize" }],
           }
         }
         return { state: { ...state, lastCommand: "cancel" }, effects: [{ type: "send-command", command: "cancel" }] }
       }
+      if (state.screen === "model-setup") return submitModelSetup(state)
       if (state.screen === "resume") {
         const choice = state.resumeChoices[state.resumeSelection]
         const selected = choice?.id ?? "resume"
@@ -131,6 +137,21 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
         effects: [{ type: "send-user-message", message: state.messageDraft }],
       }
     case "cancel":
+      if (state.screen === "model-setup") {
+        if (state.modelSetup.stage === "confirming") return { state, effects: [] }
+        if (state.modelSetup.stage === "executor") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(state.modelSetup), stage: "commander" } }, effects: [] }
+        if (state.modelSetup.stage === "preview" || state.modelSetup.stage === "confirmation") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(state.modelSetup), stage: "executor" } }, effects: [] }
+        const screen = state.modelSetup.origin
+        return {
+          state: {
+            ...state,
+            screen,
+            focus: screen === "main" ? "message-box" : "init-choice",
+            modelSetup: { ...state.modelSetup, stage: "loading" },
+          },
+          effects: [],
+        }
+      }
       return {
         state: state.screen === "init" || state.screen === "resume" ? { ...state, lastCommand: "cancel" } : { ...state, messageDraft: "" },
         effects: [],
@@ -146,6 +167,67 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
         effects: [],
       }
   }
+}
+
+function selectModelSetup(state: UiState, direction: 1 | -1): KeyCommandResult {
+  const setup = state.modelSetup
+  const key = setup.stage === "commander" ? "commanderSelection" : setup.stage === "executor" ? "executorSelection" : undefined
+  if (!key) return { state, effects: [] }
+  const choices = setup.stage === "commander" ? setup.commanderChoices : setup.executorChoices
+  const next = (setup[key] + direction + choices.length) % choices.length
+  return { state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), [key]: next } }, effects: [] }
+}
+
+function submitModelSetup(state: UiState): KeyCommandResult {
+  const setup = state.modelSetup
+  if (setup.stage === "commander") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), stage: "executor" } }, effects: [] }
+  if (setup.stage === "executor") {
+    const commanderRecipeId = setup.commanderChoices[setup.commanderSelection]?.id || null
+    const executorRecipeId = setup.executorChoices[setup.executorSelection]?.id || null
+    return {
+      state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), stage: "preview", commandError: undefined } },
+      effects: [{ type: "preview-model-setup", commanderRecipeId, executorRecipeId }],
+    }
+  }
+  if (setup.stage === "preview" && setup.candidateHash !== undefined && setup.expectedRevision !== undefined) {
+    return { state: { ...state, modelSetup: { ...setup, stage: "confirmation" } }, effects: [] }
+  }
+  if (setup.stage === "confirmation" && setup.candidateHash !== undefined && setup.expectedRevision !== undefined) {
+    return {
+      state: { ...state, modelSetup: { ...setup, stage: "confirming", commandError: undefined } },
+      effects: [{
+        type: "confirm-model-setup",
+        commanderRecipeId: setup.commanderChoices[setup.commanderSelection]?.id || null,
+        executorRecipeId: setup.executorChoices[setup.executorSelection]?.id || null,
+        expectedRevision: setup.expectedRevision,
+        candidateHash: setup.candidateHash,
+      }],
+    }
+  }
+  if (setup.stage === "committed") {
+    if (setup.pendingRestart) return { state, effects: [] }
+    const screen = setup.origin
+    return {
+      state: {
+        ...state,
+        screen,
+        focus: screen === "main" ? "message-box" : "init-choice",
+        modelSetup: { ...setup, stage: "loading" },
+      },
+      effects: [],
+    }
+  }
+  return { state, effects: [] }
+}
+
+function clearModelSetupPreview(setup: ModelSetupState): ModelSetupState {
+  const {
+    expectedRevision: _expectedRevision,
+    candidateHash: _candidateHash,
+    configurationHash: _configurationHash,
+    ...current
+  } = setup
+  return current
 }
 
 export function parseRuntimeCommand(value: string): { command: string; args: string[] } | undefined {
@@ -182,6 +264,7 @@ export function parseRuntimeCommand(value: string): { command: string; args: str
 
 const runtimeCommands = new Set([
   "status",
+  "model-setup",
   "missions",
   "resume",
   "new-session",

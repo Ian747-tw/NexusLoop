@@ -35,6 +35,26 @@ export function layoutSnapshot(state: UiState): string {
     return out.join("\n")
   }
 
+  if (state.screen === "model-setup") {
+    const setup = state.modelSetup
+    out.push("Model setup")
+    out.push(`  stage=${setup.stage}`)
+    out.push(`  candidate_commander=${setup.commanderChoices[setup.commanderSelection]?.label ?? "unconfigured"}`)
+    out.push(`  candidate_executor=${setup.executorChoices[setup.executorSelection]?.label ?? "unconfigured"}`)
+    out.push(`  active_commander=${setup.activeCommanderLabel}`)
+    out.push(`  active_executor=${setup.activeExecutorLabel}`)
+    out.push(`  active_commander_readiness=${setup.commanderReadiness}`)
+    out.push(`  active_executor_readiness=${setup.executorReadiness}`)
+    if (setup.pendingRestart) {
+      out.push(`  pending_commander=${setup.pendingCommanderLabel}`)
+      out.push(`  pending_executor=${setup.pendingExecutorLabel}`)
+    }
+    out.push(`  candidate=${setup.candidateHash?.slice(0, 12) ?? "none"}`)
+    out.push(`  pending_restart=${setup.pendingRestart}`)
+    if (setup.commandError) out.push(`  error=${setup.commandError}`)
+    return out.join("\n")
+  }
+
   out.push("Executor")
   out.push(...lines(state.executor))
   out.push("Commander")
@@ -51,6 +71,9 @@ export function layoutSnapshot(state: UiState): string {
   out.push("Live system actions")
   out.push(...lines(state.systemActions))
   out.push("Onboarding")
+  out.push(`  active_model_setup=${state.modelSetup.activeSetupHash?.slice(0, 12) ?? "none"}`)
+  out.push(`  pending_model_setup=${state.modelSetup.pendingSetupHash?.slice(0, 12) ?? "none"}`)
+  out.push(`  model_setup_restart_required=${state.modelSetup.pendingRestart}`)
   out.push(`  provider=${state.providerOnboarding.provider}`)
   out.push(`  model=${state.providerOnboarding.model}`)
   out.push(`  credential=${state.providerOnboarding.credentialSource}`)
