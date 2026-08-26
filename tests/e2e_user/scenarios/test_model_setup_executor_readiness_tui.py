@@ -12,6 +12,7 @@ import pytest
 
 @pytest.mark.phase_m4
 def test_first_run_model_setup_activates_exact_executor_through_production_observer(sandbox) -> None:
+    sandbox.require_manual_model_setup()
     install = sandbox.install_from_current_repo()
     assert install.exit_code == 0, install.stdout + install.stderr
 

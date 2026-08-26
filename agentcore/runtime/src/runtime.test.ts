@@ -267,6 +267,22 @@ describe("9W4E runtime model setup", () => {
     expect(await server.command("runtime.model_setup_status")).toMatchObject({ status: "ready", revision: 1, pending_restart: true })
   })
 
+  test("setup status distinguishes active registry authority from missing durable setup", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      modelProfileRuntimeRegistry: executorOnlyRuntimeRegistry(),
+    })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      status: "missing",
+      revision: 0,
+      pending_restart: false,
+      active_authority_source: "explicit",
+    })
+    await server.shutdown()
+  })
+
   test("RuntimeServerClient keeps setup preview and confirmation pre-start", async () => {
     const dir = await tempProject()
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })

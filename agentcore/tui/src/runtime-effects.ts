@@ -2412,7 +2412,9 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
 }
 
 function isMissingModelSetupStatus(value: unknown): boolean {
-  return isRecord(value) && value.status === "missing" && value.revision === 0 && value.pending_restart === false
+  if (!isRecord(value) || value.status !== "missing" || value.revision !== 0 || value.pending_restart !== false) return false
+  return value.active_authority_source !== "explicit"
+    && value.active_authority_source !== "legacy_commander_environment"
 }
 
 function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, statusValue: unknown): UiState {

@@ -3540,6 +3540,7 @@ export class RuntimeServer {
   }
 
   private async modelSetupStatus(): Promise<Awaited<ReturnType<ModelSetupService["status"]>> & {
+    active_authority_source?: "explicit" | "legacy_commander_environment"
     active_candidate?: ModelSetupCandidate
     commander_role_readiness?: ModelRoleReadinessEvidence
     executor_role_readiness?: ModelRoleReadinessEvidence
@@ -3549,6 +3550,9 @@ export class RuntimeServer {
     const executor = await this.previewExecutorModelRoleReadiness()
     return {
       ...status,
+      ...(this.modelProfileRuntimeRegistry
+        ? { active_authority_source: this.modelProfileRuntimeRegistry.snapshot().authority_source }
+        : {}),
       ...(this.modelSetupActiveCandidate ? { active_candidate: this.modelSetupActiveCandidate } : {}),
       ...(commander ? { commander_role_readiness: commander } : {}),
       ...(executor ? { executor_role_readiness: executor } : {}),

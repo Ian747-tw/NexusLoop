@@ -1,5 +1,12 @@
 # 9W4E Implementation Brief
 
+Migration compatibility: when an explicit or legacy Commander registry is
+already active, missing durable setup remains visible but does not replace that
+mutually exclusive authority with first-run onboarding. Historical user-flow
+fixtures establish an explicit unconfigured setup through the real TUI before
+testing unrelated post-setup behavior; the dedicated first-run scenario keeps
+the missing-setup path intact.
+
 1. Add versioned setup catalog/types/service/projection under
    `agentcore/runtime/src/model-configuration/`.
 2. Define three exact Commander recipes and three exact Executor recipes from

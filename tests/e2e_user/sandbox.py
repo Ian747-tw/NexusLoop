@@ -35,6 +35,8 @@ class Sandbox:
         self._create_venv()
         self.env = self._build_env()
         self.runner = CliRunner(self.nxl_executable, self.env, recorded_dir)
+        self._automatic_model_setup = True
+        self._model_setup_bootstrap_active = False
 
     @property
     def python(self) -> Path:
@@ -100,13 +102,64 @@ class Sandbox:
         timeout: int = 300,
         transcript_name: str | None = None,
     ) -> CommandResult:
+        target = cwd or self.root
+        self._bootstrap_unconfigured_model_setup(target, args)
         return self.runner.run(
             args,
-            cwd=cwd or self.root,
+            cwd=target,
             stdin=stdin,
             timeout=timeout,
             transcript_name=transcript_name,
         )
+
+    def require_manual_model_setup(self) -> None:
+        """Keep a scenario on the genuine missing-setup first-run path."""
+        self._automatic_model_setup = False
+
+    def _bootstrap_unconfigured_model_setup(self, project: Path, args: Sequence[str]) -> None:
+        """Give pre-9W4E scenarios explicit setup through the real TUI boundary."""
+        if not self._automatic_model_setup or self._model_setup_bootstrap_active or args:
+            return
+        if self.env.get("NXL_TUI_HEADLESS") != "1" or self.env.get("NXL_RUNTIME_CLIENT") != "real":
+            return
+        if any(
+            key.startswith("NXL_COMMANDER_INVESTIGATION_") and value not in (None, "0")
+            for key, value in self.env.items()
+        ):
+            return
+        spec_path = project / ".nxl" / "spec" / "current.json"
+        try:
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return
+        if not isinstance(spec, dict) or spec.get("status") != "approved":
+            return
+        events_path = project / ".nxl" / "events.jsonl"
+        if events_path.exists() and '"kind":"runtime_model_setup_committed"' in events_path.read_text(encoding="utf-8"):
+            return
+        prior_keys = self.env.get("NXL_TUI_KEYS")
+        prior_runner_keys = self.runner.env.get("NXL_TUI_KEYS")
+        keys = json.dumps([{"type": "submit"}] * 4)
+        self.env["NXL_TUI_KEYS"] = keys
+        self.runner.env["NXL_TUI_KEYS"] = keys
+        self._model_setup_bootstrap_active = True
+        try:
+            result = self.runner.run([], cwd=project, timeout=300)
+        finally:
+            self._model_setup_bootstrap_active = False
+            if prior_keys is None:
+                self.env.pop("NXL_TUI_KEYS", None)
+            else:
+                self.env["NXL_TUI_KEYS"] = prior_keys
+            if prior_runner_keys is None:
+                self.runner.env.pop("NXL_TUI_KEYS", None)
+            else:
+                self.runner.env["NXL_TUI_KEYS"] = prior_runner_keys
+        if result.exit_code != 0:
+            raise AssertionError(result.stdout + result.stderr)
+        events = events_path.read_text(encoding="utf-8") if events_path.exists() else ""
+        if '"kind":"runtime_model_setup_committed"' not in events:
+            raise AssertionError("real TUI did not commit the historical scenario model setup prerequisite")
 
     def run_cli_background(
         self,

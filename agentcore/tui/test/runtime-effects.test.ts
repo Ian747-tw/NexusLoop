@@ -1159,6 +1159,25 @@ describe("runtime UI effects", () => {
     const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
     expect(state).toMatchObject({ screen: "model-setup", modelSetup: { origin: "main", stage: "commander" } })
   })
+  test("runtime refresh preserves the shell when mutually exclusive registry authority is already active", async () => {
+    for (const authoritySource of ["explicit", "legacy_commander_environment"] as const) {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      runtime.command = (async (name: string) => {
+        if (name === "runtime.status") return {}
+        if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+        if (name === "runtime.model_setup_status") return {
+          status: "missing",
+          revision: 0,
+          pending_restart: false,
+          active_authority_source: authoritySource,
+        }
+        if (name.startsWith("runtime.")) return []
+        throw new Error(`unexpected ${name}`)
+      }) as RuntimeClient["command"]
+      const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "main" }, runtime)
+      expect(state.screen).toBe("main")
+    }
+  })
   test("Commander recovery staged commands classify mutations as writes", () => {
     for (const command of [
       "/commander-recovery-approve",
