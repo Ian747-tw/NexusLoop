@@ -4,6 +4,7 @@ import path from "path"
 import os from "os"
 import { Filesystem } from "../util"
 import { Flock } from "@opencode-ai/shared/util/flock"
+import { CACHE_VERSION } from "./cache-version"
 
 const app = "opencode"
 
@@ -35,8 +36,6 @@ await Promise.all([
   fs.mkdir(Path.log, { recursive: true }),
   fs.mkdir(Path.bin, { recursive: true }),
 ])
-
-const CACHE_VERSION = "21"
 
 const version = await Filesystem.readText(path.join(Path.cache, "version")).catch(() => "0")
 

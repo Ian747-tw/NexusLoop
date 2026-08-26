@@ -151,6 +151,15 @@ changing v1/v2 hashes. A pure immutable four-entry compatibility matrix records
 tested protocol facts but creates no selection or readiness authority. See
 ADR-038.
 
+Branch 9W4E0 packages an observation-only Executor readiness command into the
+pinned native OpenCode executable. The command reads one exact NexusLoop
+selection assertion, consults only bounded schema-validated local OpenCode catalog,
+configuration, and authentication state, and returns enum-only readiness
+evidence. Dynamic or remote authority is reported as unknown without plugin,
+network, provider, or mutation activity. Runtime source execution under
+`agentcore/upstream` is not a supported boundary. See ADR-039. First-run setup
+and Runtime integration remain 9W4E work.
+
 ```text
 NexusLoop domain control plane
 -> RuntimeServer provider config
@@ -361,6 +370,7 @@ Follow-on sequencing:
   scoped primary Executor projection, and independent role readiness.
 - 9W4C: native Gemini `generateContent` through unified model profiles.
 - 9W4D: native OpenAI Responses and verified compatibility matrix.
+- 9W4E0: reproducibly packaged OpenCode-owned Executor readiness command.
 - 9W4E: first-run provider setup and TUI role-model selection.
 - post-v1 9XB1: first exact external-research descriptor only after fresh
   provider requalification; v1 does not activate external MCP or
