@@ -90,16 +90,7 @@ def test_user_inspects_context_budget_registry_without_launching_or_mutating(san
     assert "vendor-secret" not in result.stdout
     assert "model-secret" not in result.stdout
 
-    events_path = project / ".nxl" / "events.jsonl"
-    events = (
-        [
-            json.loads(line)
-            for line in events_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        if events_path.exists()
-        else []
-    )
+    events = sandbox.events_after_model_setup_bootstrap(project)
     event_kinds = [event["kind"] for event in events]
     assert event_kinds.count("runtime_started") == 0
     assert event_kinds.count("opencode_session_planned") == 0

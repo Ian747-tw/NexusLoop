@@ -74,12 +74,7 @@ def test_user_previews_executor_review_proposal_drafts_without_mutation(sandbox)
     assert "executor-draft-secret-abc123" not in result.stdout
     assert "abc123" not in result.stdout
 
-    events_path = project / ".nxl" / "events.jsonl"
-    events = [
-        json.loads(line)
-        for line in events_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ] if events_path.exists() else []
+    events = sandbox.events_after_model_setup_bootstrap(project)
     event_kinds = [event["kind"] for event in events]
     forbidden = {
         "opencode_handoff_started",
