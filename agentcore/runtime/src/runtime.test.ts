@@ -552,6 +552,17 @@ describe("9W4E runtime model setup", () => {
       ...base,
       opencodeLaunchSpawn: (() => { throw new Error("must not run") }) as never,
     })).toThrow("same packaged OpenCode execution target")
+    let aliasedSpawnCalls = 0
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      openCodeAdapterFactoryOptions: {
+        spawn: (() => {
+          aliasedSpawnCalls += 1
+          throw new Error("must not run")
+        }) as never,
+      },
+    })).toThrow("same packaged OpenCode execution target")
+    expect(aliasedSpawnCalls).toBe(0)
   })
 
   test("shutdown terminates and drains production Executor observation before runtime_shutdown", async () => {
