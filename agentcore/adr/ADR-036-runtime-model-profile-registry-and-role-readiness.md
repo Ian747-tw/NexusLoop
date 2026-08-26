@@ -83,3 +83,8 @@ External research MCP remains post-v1.
 
 `resume_supported=false`, `provider_tool_loop_enabled=false`, and
 `external_read_execution_enabled=false` remain unchanged.
+
+Branch 9W4E activates persisted setup only during the next RuntimeServer
+construction. Executor readiness uses the exact packaged OpenCode executable
+selected for launch and remains separate non-authoritative evidence; the
+registry and projection hashes remain immutable for the process lifetime.
