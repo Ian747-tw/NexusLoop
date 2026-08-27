@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises"
-import { join } from "path"
+import { basename, join } from "path"
 import { tmpdir } from "os"
 import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
@@ -154,6 +154,20 @@ describe("TUI runtime client factory", () => {
 
     expect(client).toBeInstanceOf(TuiRuntimeServerClient)
     await (client as TuiRuntimeServerClient).runtime.shutdown()
+  })
+
+  test("auto mode resolves an approved ancestor before selecting and constructing the real client", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const nested = join(dir, "src", "nested")
+    await mkdir(nested, { recursive: true })
+
+    const client = createTuiRuntimeClient({ projectDir: nested, env: { NXL_OPENCODE_ADAPTER: "fake" } })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    const runtime = (client as TuiRuntimeServerClient).runtime
+    await expect(runtime.command("runtime.status")).resolves.toMatchObject({ projectName: basename(dir) })
+    await runtime.shutdown()
   })
 
   test("no env routes a valid large approved spec through the real RuntimeServer client", async () => {

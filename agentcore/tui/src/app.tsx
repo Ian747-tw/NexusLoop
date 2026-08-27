@@ -2,7 +2,7 @@ import { createCliRenderer, type CliRendererConfig, type TextareaRenderable } fr
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { createEffect, For, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
+import { applyKeyCommandWithModelSetupStartupGate, type KeyCommand } from "./keyboard"
 import {
   modelSetupStartupGateAllowsInput,
   reduceRuntimeEventDuringModelSetupGate,
@@ -630,7 +630,8 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
   let modelSetupStartupGate: ModelSetupStartupGate = "pending"
 
   function apply(command: KeyCommand) {
-    const result = applyKeyCommandWithEffects(state, command)
+    const result = applyKeyCommandWithModelSetupStartupGate(state, command, modelSetupStartupGate)
+    if (result.state === state && result.effects.length === 0) return
     setState(result.state)
     for (const effect of result.effects) {
       const baseline = snapshotUiState(result.state)
@@ -685,7 +686,13 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
       when={state.screen === "main" || state.screen === "boot"}
       fallback={state.screen === "model-setup" ? <ModelSetupScreen state={state} /> : <ChoiceScreen state={state} kind={state.screen === "init" ? "init" : "resume"} />}
     >
-      <MainShell state={state} onDraft={(value) => setState("messageDraft", value)} onSubmit={() => apply({ type: "submit" })} />
+      <MainShell
+        state={state}
+        onDraft={(value) => {
+          if (modelSetupStartupGateAllowsInput(modelSetupStartupGate)) setState("messageDraft", value)
+        }}
+        onSubmit={() => apply({ type: "submit" })}
+      />
     </Show>
   )
 }

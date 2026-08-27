@@ -1,5 +1,6 @@
 import type { FocusTarget, ModelSetupState, UiState } from "./state"
 import { redactText } from "./redaction"
+import { modelSetupStartupGateAllowsInput, type ModelSetupStartupGate } from "./reducer"
 
 export type KeyCommand =
   | { type: "focus-next" }
@@ -21,6 +22,16 @@ export type KeySideEffect =
 export type KeyCommandResult = {
   state: UiState
   effects: KeySideEffect[]
+}
+
+export function applyKeyCommandWithModelSetupStartupGate(
+  state: UiState,
+  command: KeyCommand,
+  gate: ModelSetupStartupGate,
+): KeyCommandResult {
+  return modelSetupStartupGateAllowsInput(gate)
+    ? applyKeyCommandWithEffects(state, command)
+    : { state, effects: [] }
 }
 
 const mainFocusOrder: FocusTarget[] = [

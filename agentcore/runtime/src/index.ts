@@ -1,5 +1,6 @@
 export { RuntimeServer } from "./server"
 export type { RuntimeResearchDbProjection, RuntimeResearchDbReader, RuntimeServerOptions } from "./server"
+export { locateProjectRoot } from "./project/project-root"
 export { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv, readWakeSchedulerBootstrapConfigFromEnv } from "./launch-config"
 export type { RuntimeServerLaunchConfig } from "./launch-config"
 export { EventStore } from "./events/event-store"

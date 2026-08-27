@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test"
-import { applyKeyCommand, applyKeyCommandWithEffects, parseRuntimeCommand } from "../src/keyboard"
+import { applyKeyCommand, applyKeyCommandWithEffects, applyKeyCommandWithModelSetupStartupGate, parseRuntimeCommand } from "../src/keyboard"
 import { initialState, type UiState } from "../src/state"
 
 describe("TUI keyboard command model", () => {
+  test("startup setup authority gates direct submit dispatch", () => {
+    const state = { ...initialState("/tmp/demo"), screen: "main" as const, focus: "message-box" as const, messageDraft: "start mission" }
+    for (const gate of ["pending", "blocked"] as const) {
+      expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, gate)).toEqual({ state, effects: [] })
+    }
+    for (const gate of ["required", "clear"] as const) {
+      expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, gate).effects).toEqual([
+        { type: "send-user-message", message: "start mission" },
+      ])
+    }
+  })
   test("recovery approval slash parsing preserves the terminal raw note suffix", () => {
     expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
       command: "commander-recovery-approve",

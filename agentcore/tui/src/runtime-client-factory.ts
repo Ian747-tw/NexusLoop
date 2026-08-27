@@ -2,6 +2,7 @@ import { readFileSync } from "fs"
 import { basename, join } from "path"
 import {
   createRuntimeServerFromLaunchConfig,
+  locateProjectRoot,
   RuntimeServer,
   RuntimeServerClient,
   type OpenCodeAdapterFactoryOptions,
@@ -31,14 +32,15 @@ export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions):
   }
   const env = options.env ?? {}
   const kind = readRuntimeClientKind(env)
+  const projectDir = locateProjectRoot(options.projectDir)
   if (kind === "fake") {
-    return new FakeRuntimeClient(options.projectDir, options.projectName ?? basename(options.projectDir))
+    return new FakeRuntimeClient(projectDir, options.projectName ?? basename(projectDir))
   }
-  if (kind === "auto" && !hasApprovedSpec(options.projectDir)) {
-    return new FakeRuntimeClient(options.projectDir, options.projectName ?? basename(options.projectDir), "restart_required")
+  if (kind === "auto" && !hasApprovedSpec(projectDir)) {
+    return new FakeRuntimeClient(projectDir, options.projectName ?? basename(projectDir), "restart_required")
   }
   const server = createRuntimeServerFromLaunchConfig({
-    projectDir: options.projectDir,
+    projectDir,
     env,
     openCodeAdapterFactoryOptions: options.openCodeAdapterFactoryOptions,
   })
