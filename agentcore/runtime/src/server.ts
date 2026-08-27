@@ -488,6 +488,7 @@ export class RuntimeServer {
   private readonly modelSetupActiveCandidate?: ModelSetupCandidate
   private readonly revalidatePersistedModelSetupOnStart: boolean
   private readonly activeModelSetupWrites = new Set<Promise<unknown>>()
+  private modelSetupStartupMutex = Promise.resolve()
   private readonly executorModelReadinessResolver?: ExecutorModelReadinessResolver
   private readonly commanderInvestigationControlGate?: CommanderInvestigationControlGate
   private readonly commanderGithubGatewayConfig?: CommanderGithubGatewayConfig
@@ -719,7 +720,7 @@ export class RuntimeServer {
   async start(): Promise<void> {
     if (this.lifecycleShutdownRequested || this.lifecycleState === "stopping") throw new Error("runtime lifecycle is stopping")
     if (this.lifecycleStartTask) return this.lifecycleStartTask
-    const task = this.startUnserialized()
+    const task = this.withModelSetupStartupMutex(() => this.startUnserialized())
     this.lifecycleStartTask = task
     try {
       await task
@@ -4441,12 +4442,26 @@ export class RuntimeServer {
   }
 
   private async withModelSetupWriteLock<T>(operation: () => Promise<T>): Promise<T> {
-    const task = this.runModelSetupWrite(operation)
+    if (this.lifecycleStartTask) throw new Error("runtime lifecycle is starting")
+    const task = this.withModelSetupStartupMutex(() => this.runModelSetupWrite(operation))
     this.activeModelSetupWrites.add(task)
     try {
       return await task
     } finally {
       this.activeModelSetupWrites.delete(task)
+    }
+  }
+
+  private async withModelSetupStartupMutex<T>(operation: () => Promise<T>): Promise<T> {
+    const predecessor = this.modelSetupStartupMutex
+    let release!: () => void
+    const owned = new Promise<void>((resolve) => { release = resolve })
+    this.modelSetupStartupMutex = predecessor.then(() => owned)
+    await predecessor
+    try {
+      return await operation()
+    } finally {
+      release()
     }
   }
 

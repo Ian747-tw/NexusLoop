@@ -234,6 +234,43 @@ describe("9W4E runtime model setup", () => {
     await server.shutdown()
   })
 
+  test("startup owns lifecycle when setup confirmation is already waiting for the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const internal = server as unknown as { runLock: { acquire(): Promise<void> } }
+    const originalAcquire = internal.runLock.acquire.bind(internal.runLock)
+    let entered!: () => void
+    let release!: () => void
+    const waiting = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let acquisitions = 0
+    internal.runLock.acquire = async () => {
+      acquisitions += 1
+      if (acquisitions === 1) {
+        entered()
+        await gate
+      }
+      await originalAcquire()
+    }
+    const confirmation = server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })
+    await waiting
+    const starting = server.start()
+    release()
+    await expect(confirmation).rejects.toThrow("runtime lifecycle is starting")
+    await starting
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
   test("pre-start shutdown drains setup lock acquisition and prevents a later append", async () => {
     const dir = await tempProject()
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
