@@ -102,14 +102,18 @@ async function openCodeObservationEnvironment(
   dir: string,
   providerId: "anthropic" | "google" | "openai",
   modelId: string,
-  options: { connected?: boolean; launchCapture?: string } = {},
+  options: { connected?: boolean; launchCapture?: string; runtimeSession?: boolean } = {},
 ): Promise<Record<string, string>> {
   const commandPath = join(dir, "opencode")
   await writeFile(commandPath, `#!/usr/bin/env bun
 import { createHash } from "node:crypto"
 import { writeFileSync } from "node:fs"
 if (process.argv[2] !== "nexusloop" || process.argv[3] !== "executor-readiness-v1") {
-  ${options.launchCapture ? `if (process.argv.includes("--model")) { writeFileSync(${JSON.stringify(options.launchCapture)}, JSON.stringify(process.argv.slice(2))); process.exit(0) }` : ""}
+  ${options.launchCapture ? `if (process.argv.includes("run") && process.argv.includes("--model")) { writeFileSync(${JSON.stringify(options.launchCapture)}, JSON.stringify(process.argv.slice(2))); process.exit(0) }` : ""}
+  ${options.runtimeSession ? `process.stdin.resume()
+  process.on("SIGTERM", () => process.exit(0))
+  process.on("SIGINT", () => process.exit(0))
+  await new Promise(() => {})` : ""}
   process.exit(3)
 }
 const input = JSON.parse(await new Response(Bun.stdin.stream()).text())
@@ -430,6 +434,7 @@ describe("9W4E runtime model setup", () => {
       projectDir: dir,
       env: {},
       modelProfileRuntimeRegistry: executorOnlyRuntimeRegistry(),
+      openCodeAdapterConfig: { kind: "process", command: "/opt/opencode" },
     })
     expect(await server.command("runtime.model_setup_status")).toMatchObject({
       status: "missing",
@@ -509,7 +514,11 @@ describe("9W4E runtime model setup", () => {
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
 
-    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "/opt/opencode" },
+    })
     expect(await server.command("runtime.model_setup_status")).toMatchObject({
       status: "ready",
       revision: 1,
@@ -590,12 +599,11 @@ describe("9W4E runtime model setup", () => {
     } as const
     const preview = await setup.preview(choices)
     await setup.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observationEnv = await openCodeObservationEnvironment(dir, "anthropic", "claude-sonnet-4-5-20250929")
+    const observationEnv = await openCodeObservationEnvironment(dir, "anthropic", "claude-sonnet-4-5-20250929", { runtimeSession: true })
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {},
       openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
-      adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
     })
     const commander = await server.command("runtime.preview_context_budget", {
@@ -634,7 +642,7 @@ describe("9W4E runtime model setup", () => {
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { runtimeSession: true })
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {},
@@ -752,6 +760,32 @@ describe("9W4E runtime model setup", () => {
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
     const base = { projectDir: dir, env: {}, openCodeAdapterConfig: { kind: "process" as const, command: "/opt/opencode" } }
+    const directAdapter = new LongLivedAdapter()
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      adapter: directAdapter,
+    })).toThrow("same packaged OpenCode execution target")
+    expect(directAdapter.startCalls).toBe(0)
+    let injectedReadinessCalls = 0
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      executorModelReadinessResolver: {
+        observe: () => {
+          injectedReadinessCalls += 1
+          throw new Error("must not run")
+        },
+      },
+    } as unknown as RuntimeServerLaunchConfig)).toThrow("custom Executor readiness resolver is not supported")
+    expect(injectedReadinessCalls).toBe(0)
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+    })).toThrow("requires a packaged process OpenCode execution target")
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "fake" },
+    })).toThrow("requires a packaged process OpenCode execution target")
     expect(() => createRuntimeServerFromLaunchConfig({
       ...base,
       opencodeLaunchAdapter: {} as never,
@@ -771,6 +805,7 @@ describe("9W4E runtime model setup", () => {
       },
     })).toThrow("same packaged OpenCode execution target")
     expect(aliasedSpawnCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
   })
 
   test("shutdown terminates and drains production Executor observation before runtime_shutdown", async () => {
@@ -785,7 +820,6 @@ describe("9W4E runtime model setup", () => {
       projectDir: dir,
       env: {},
       openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
-      adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
     })
     await server.start()
@@ -805,12 +839,11 @@ describe("9W4E runtime model setup", () => {
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
     const preview = await service.preview(choices)
     await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
-    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { runtimeSession: true })
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {},
       openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
-      adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
     })
     await server.start()
@@ -21967,11 +22000,10 @@ describe("OpenCode launch readiness", () => {
     const setupPreview = await setup.preview(choices)
     await setup.confirm({ ...choices, expected_revision: 0, candidate_hash: setupPreview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
     const launchCapture = join(dir, "opencode-launch-args.json")
-    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { launchCapture })
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { launchCapture, runtimeSession: true })
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
       env: {},
-      adapter: new LongLivedAdapter(),
       researchProjectionMode: "disabled",
       openCodeAdapterConfig: { kind: "process", command: "opencode", args: ["--format", "json"], env: observationEnv },
       opencodeLaunchEnv: { NXL_REAL_OPENCODE_LAUNCH: "1" },

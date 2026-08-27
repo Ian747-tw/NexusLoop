@@ -89,17 +89,18 @@ export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchC
     : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
   const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
   if (options.modelProfileRuntimeRegistry?.executorSelection()) {
-    if (options.opencodeLaunchAdapter || options.opencodeLaunchSpawn || options.openCodeAdapterFactoryOptions?.spawn) {
-      throw new Error("persisted Executor setup requires the same packaged OpenCode execution target for readiness and launch")
+    if (options.adapter || options.opencodeLaunchAdapter || options.opencodeLaunchSpawn || options.openCodeAdapterFactoryOptions?.spawn) {
+      throw new Error("Executor model-profile selection requires the same packaged OpenCode execution target for readiness and launch")
     }
-    if (!options.executorModelReadinessResolver && options.openCodeAdapterConfig?.kind === "process") {
-      const executionTarget = snapshotPackagedOpenCodeAdapterConfig(options.openCodeAdapterConfig)
-      options.openCodeAdapterConfig = executionTarget
-      options.executorModelReadinessResolver = createPackagedOpenCodeExecutorReadinessResolver({
-        projectDir,
-        openCodeAdapterConfig: executionTarget,
-      })
+    if (options.openCodeAdapterConfig?.kind !== "process") {
+      throw new Error("Executor model-profile selection requires a packaged process OpenCode execution target for readiness and launch")
     }
+    const executionTarget = snapshotPackagedOpenCodeAdapterConfig(options.openCodeAdapterConfig)
+    options.openCodeAdapterConfig = executionTarget
+    options.executorModelReadinessResolver = createPackagedOpenCodeExecutorReadinessResolver({
+      projectDir,
+      openCodeAdapterConfig: executionTarget,
+    })
   }
   return new RuntimeServer(options)
 }
