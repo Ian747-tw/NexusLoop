@@ -994,6 +994,44 @@ describe("TUI launch boundary", () => {
     await nextClient.shutdown()
   })
 
+  test("headless explicit-resume inspection cannot bypass missing model setup", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify([
+          { type: "submit" },
+          { type: "insert", text: "/opencode-session-plan objective=must not start" },
+          { type: "submit" },
+        ]),
+      },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("screen=model-setup")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual([])
+  })
+
   test("real first-run TUI never reaches the configured process spawn seam", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
@@ -2148,8 +2186,9 @@ describe("TUI launch boundary", () => {
   test("headless executor review on stopped real runtime does not start OpenCode", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const adapter = new SpyOpenCodeAdapter()
-    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter })
     const runtime = createTuiRuntimeClient({ projectDir: dir, server, env: {} })
     const output: string[] = []
     const keys = [

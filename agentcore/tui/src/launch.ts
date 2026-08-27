@@ -52,6 +52,13 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
     else await close
   }
 
+  if (noStartInspectionScript && state.screen !== "init" && state.screen !== "model-setup") {
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "load-model-setup",
+      enterIfMissing: true,
+    })
+  }
+
   if (noStartInspectionScript && !needsExplicitRuntimeResume && state.screen === "resume") {
     state = { ...state, screen: "main", focus: "message-box" }
   }
