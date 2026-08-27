@@ -4451,12 +4451,18 @@ export class RuntimeServer {
   }
 
   private async runModelSetupWrite<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.lifecycleStartTask) {
+      throw new Error("runtime lifecycle is starting")
+    }
     if (this.modelSetupWritesBlocked()) {
       throw new Error("runtime lifecycle is stopping")
     }
     if (this.runLock.isHeld()) return operation()
     await this.runLock.acquire()
     try {
+      if (this.lifecycleStartTask) {
+        throw new Error("runtime lifecycle is starting")
+      }
       if (this.modelSetupWritesBlocked()) {
         throw new Error("runtime lifecycle is stopping")
       }

@@ -198,6 +198,42 @@ afterEach(async () => {
 })
 
 describe("9W4E runtime model setup", () => {
+  test("setup confirmation cannot append across RuntimeServer startup", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      executorModelReadinessResolver: {
+        start: async () => {
+          entered()
+          await gate
+        },
+        observe: async () => { throw new Error("readiness is not selected") },
+      },
+    })
+    const starting = server.start()
+    await started
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).rejects.toThrow("runtime lifecycle is starting")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    release()
+    await starting
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
   test("pre-start shutdown drains setup lock acquisition and prevents a later append", async () => {
     const dir = await tempProject()
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
