@@ -54,7 +54,8 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
   readonly #maxConcurrency: number
   readonly #spawn: OpenCodeSpawn
   readonly #active = new Set<ActiveObservation>()
-  #stopping = false
+  #lifecycleState: "available" | "starting" | "stopping" = "available"
+  #startTask: Promise<void> | null = null
 
   constructor(options: ResolverOptions) {
     const input = resolverOptions(options)
@@ -69,7 +70,8 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
   }
 
   observe(selection: ExecutorModelSelectionProjection): Promise<ExecutorModelReadinessObservation> {
-    if (this.#stopping) return Promise.reject(new Error("Executor readiness observation failed: Runtime shutdown is in progress"))
+    if (this.#lifecycleState === "stopping") return Promise.reject(new Error("Executor readiness observation failed: Runtime shutdown is in progress"))
+    if (this.#lifecycleState === "starting") return Promise.reject(new Error("Executor readiness observation failed: Runtime startup is in progress"))
     if (this.#active.size >= this.#maxConcurrency) return Promise.reject(new Error("Executor readiness observation failed: observer capacity is exhausted"))
     const input = requestFor(selection)
     const requestText = `${JSON.stringify(input)}\n`
@@ -150,13 +152,26 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
     return promise
   }
 
-  start(): void {
-    if (this.#active.size > 0) throw new Error("Executor readiness observation failed: observer is still draining")
-    this.#stopping = false
+  start(): Promise<void> {
+    if (this.#startTask) return this.#startTask
+    this.#lifecycleState = "starting"
+    const active = [...this.#active]
+    const task = (async () => {
+      await Promise.allSettled(active.map((item) => item.promise))
+      if (this.#lifecycleState === "stopping") {
+        throw new Error("Executor readiness observation failed: Runtime shutdown is in progress")
+      }
+      this.#lifecycleState = "available"
+    })()
+    this.#startTask = task
+    void task.finally(() => {
+      if (this.#startTask === task) this.#startTask = null
+    }).catch(() => {})
+    return task
   }
 
   async shutdown(): Promise<void> {
-    this.#stopping = true
+    this.#lifecycleState = "stopping"
     const active = [...this.#active]
     for (const item of active) item.rejectForShutdown()
     await Promise.allSettled(active.map((item) => item.promise))

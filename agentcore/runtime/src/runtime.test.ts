@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
+import { EventEmitter } from "node:events"
 import { existsSync } from "node:fs"
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { delimiter, join } from "node:path"
@@ -35,7 +36,7 @@ import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycl
 import type { CommanderExecutorReviewProvider, CommanderExecutorReviewProviderInput, CommanderExecutorReviewProviderResult } from "./commander-executor-review/commander-executor-review-provider"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
-import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
+import { ProcessOpenCodeAdapter, type OpenCodeSpawn, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
@@ -86,6 +87,7 @@ import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-regist
 import { readBoundedDirectoryEntries } from "./commander-tools/commander-repo-read-service"
 import { RestrictedGitReadAdapter, restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
 import { MODEL_SETUP_EVENT_KIND, ModelSetupService } from "./model-configuration/model-setup"
+import { OpenCodeExecutorModelReadinessResolver } from "./model-configuration/opencode-executor-readiness-resolver"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -198,6 +200,88 @@ afterEach(async () => {
 })
 
 describe("9W4E runtime model setup", () => {
+  test("startup waits for an active model-setup status readiness inspection", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let observationStarted!: () => void
+    let releaseObservation!: () => void
+    const entered = new Promise<void>((resolve) => { observationStarted = resolve })
+    const gate = new Promise<void>((resolve) => { releaseObservation = resolve })
+    const spawn: OpenCodeSpawn = (_command, _args, _options) => {
+      const child = new EventEmitter() as EventEmitter & OpenCodeSpawnedProcess
+      const stdout = new EventEmitter()
+      const stderr = new EventEmitter()
+      let requestText = ""
+      child.stdout = stdout
+      child.stderr = stderr
+      child.stdin = {
+        write(data: string, callback?: (error?: Error | null) => void) {
+          requestText += data
+          callback?.(null)
+          return true
+        },
+        end() {
+          observationStarted()
+          void gate.then(() => {
+            const request = JSON.parse(requestText) as Record<string, string>
+            const semantic = {
+              policy_version: "nexusloop_opencode_executor_readiness_policy_v1",
+              selection_projection_hash: request.selection_projection_hash,
+              provider_id: request.provider_id,
+              model_id: request.model_id,
+              credential_binding_id: request.credential_binding_id,
+              provider_availability_status: "available",
+              credential_connection_status: "connected",
+            }
+            stdout.emit("data", Buffer.from(JSON.stringify({
+              observation_version: 1,
+              selection_projection_hash: request.selection_projection_hash,
+              provider_id: request.provider_id,
+              model_id: request.model_id,
+              credential_binding_id: request.credential_binding_id,
+              provider_availability_status: "available",
+              credential_connection_status: "connected",
+              evidence_id: `opencode-readiness-v1-${createHash("sha256").update(JSON.stringify(semantic)).digest("hex")}`,
+            }) + "\n"))
+            child.emit("close", 0, null)
+          })
+        },
+        on() { return child.stdin },
+      }
+      child.kill = () => { child.emit("close", null, "SIGTERM"); return true }
+      return child
+    }
+    const resolver = new OpenCodeExecutorModelReadinessResolver({
+      command: "/opt/opencode",
+      cwd: dir,
+      spawn,
+    })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      modelProfileRuntimeRegistry: executorOnlyRuntimeRegistry(),
+      executorModelReadinessResolver: resolver,
+      researchProjectionMode: "disabled",
+    })
+
+    const status = server.command("runtime.model_setup_status") as Promise<Record<string, any>>
+    await entered
+    const starting = server.start()
+    await expect(Promise.race([
+      starting.then(() => "started" as const),
+      Bun.sleep(20).then(() => "waiting" as const),
+    ])).resolves.toBe("waiting")
+    expect(adapter.startCalls).toBe(0)
+
+    releaseObservation()
+    await expect(status).resolves.toMatchObject({ executor_role_readiness: { ready: true } })
+    await expect(starting).resolves.toBeUndefined()
+    expect(adapter.startCalls).toBe(1)
+    expect((await server.eventStore.readAll()).some((event) => event.kind === "runtime_started")).toBe(true)
+    await server.shutdown()
+  })
+
   test("setup confirmation cannot append across RuntimeServer startup", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })

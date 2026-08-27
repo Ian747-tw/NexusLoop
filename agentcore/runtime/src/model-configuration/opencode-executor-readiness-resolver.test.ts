@@ -252,6 +252,25 @@ describe("packaged OpenCode Executor readiness resolver", () => {
     expect(resolver.activeCount()).toBe(0)
   })
 
+  test("startup waits for an owned pre-start observation without cancelling it", async () => {
+    const fixture = spawnFixture(JSON.stringify(observation()) + "\n", { delayMs: 50 })
+    const resolver = new OpenCodeExecutorModelReadinessResolver({
+      command: "/opt/opencode", cwd: "/tmp/project", spawn: fixture.spawn,
+    })
+    const pending = resolver.observe(selection)
+    const starting = resolver.start()
+    await expect(Promise.race([
+      starting.then(() => "started" as const),
+      new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 10)),
+    ])).resolves.toBe("waiting")
+    await expect(resolver.observe(selection)).rejects.toThrow("startup is in progress")
+    await expect(pending).resolves.toEqual(observation())
+    await expect(starting).resolves.toBeUndefined()
+    await expect(resolver.observe(selection)).resolves.toEqual(observation())
+    expect(fixture.calls).toHaveLength(2)
+    await resolver.shutdown()
+  })
+
   test("production factory rejects proxy and accessor authority without executing caller code", () => {
     let traps = 0
     const proxied = new Proxy({
