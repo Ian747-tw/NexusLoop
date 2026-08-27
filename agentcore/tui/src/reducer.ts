@@ -213,6 +213,26 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
   }
 }
 
+export type ModelSetupStartupGate = "pending" | "required" | "clear"
+
+export function modelSetupStartupGateAllowsInput(gate: ModelSetupStartupGate): boolean {
+  return gate !== "pending"
+}
+
+export function reduceRuntimeEventDuringModelSetupGate(
+  state: UiState,
+  event: RuntimeEvent,
+  gate: ModelSetupStartupGate,
+): UiState {
+  const next = reduceRuntimeEvent(state, event)
+  if (event.type !== "ProjectInitialized" || gate === "clear") return next
+  return {
+    ...next,
+    screen: gate === "pending" ? "boot" : state.screen,
+    focus: state.focus,
+  }
+}
+
 export function reduceRuntimeEvents(projectDir: string, events: RuntimeEvent[]): UiState {
   return events.reduce(reduceRuntimeEvent, initialState(projectDir))
 }

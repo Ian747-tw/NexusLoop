@@ -1,9 +1,34 @@
 import { describe, expect, test } from "bun:test"
-import { reduceRuntimeEvent } from "../src/reducer"
+import {
+  modelSetupStartupGateAllowsInput,
+  reduceRuntimeEvent,
+  reduceRuntimeEventDuringModelSetupGate,
+} from "../src/reducer"
 import { layoutSnapshot } from "../src/snapshot"
 import { initialState } from "../src/state"
 
 describe("TUI runtime event reducer", () => {
+  test("ProjectInitialized cannot expose Resume before model setup authority settles", () => {
+    const boot = initialState("/tmp/demo")
+    const initialized = { type: "ProjectInitialized", projectDir: "/tmp/demo" } as const
+    expect(reduceRuntimeEventDuringModelSetupGate(boot, initialized, "pending")).toMatchObject({
+      screen: "boot",
+      projectDir: "/tmp/demo",
+    })
+
+    const setup = { ...boot, screen: "model-setup" as const, focus: "init-choice" as const }
+    expect(reduceRuntimeEventDuringModelSetupGate(setup, initialized, "required")).toMatchObject({
+      screen: "model-setup",
+      focus: "init-choice",
+    })
+    expect(reduceRuntimeEventDuringModelSetupGate(boot, initialized, "clear")).toMatchObject({
+      screen: "resume",
+      focus: "resume-choice",
+    })
+    expect(modelSetupStartupGateAllowsInput("pending")).toBe(false)
+    expect(modelSetupStartupGateAllowsInput("required")).toBe(true)
+    expect(modelSetupStartupGateAllowsInput("clear")).toBe(true)
+  })
   test("ProjectUninitialized routes to init screen", () => {
     const state = reduceRuntimeEvent(initialState("/tmp/demo"), { type: "ProjectUninitialized", projectDir: "/tmp/demo" })
 

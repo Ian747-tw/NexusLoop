@@ -3,7 +3,11 @@ import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentu
 import { createEffect, For, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
-import { reduceRuntimeEvent } from "./reducer"
+import {
+  modelSetupStartupGateAllowsInput,
+  reduceRuntimeEventDuringModelSetupGate,
+  type ModelSetupStartupGate,
+} from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { mergeRuntimeEffectState } from "./runtime-state-merge"
 import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "./commander-recovery-view"
@@ -623,6 +627,7 @@ function toCommand(evt: { name: string; shift: boolean; ctrl: boolean; raw?: str
 export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }) {
   const renderer = useRenderer()
   const [state, setState] = createStore<UiState>(props.initial)
+  let modelSetupStartupGate: ModelSetupStartupGate = "pending"
 
   function apply(command: KeyCommand) {
     const result = applyKeyCommandWithEffects(state, command)
@@ -641,19 +646,26 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
   onMount(() => {
     void (async () => {
       for await (const event of props.runtime.stream()) {
-        setState((current) => reduceRuntimeEvent(current, event))
+        setState((current) => reduceRuntimeEventDuringModelSetupGate(current, event, modelSetupStartupGate))
         renderer.requestRender()
       }
     })()
     const baseline = snapshotUiState(state)
     void (async () => {
       const next = await refreshRuntimeRecords(baseline, props.runtime)
+      modelSetupStartupGate = next.screen === "model-setup" ? "required" : "clear"
       setState((current) => mergeRuntimeEffectState(current, next, 0, baseline))
+      if (modelSetupStartupGate === "clear") {
+        setState((current) => current.screen === "boot"
+          ? { ...current, screen: "resume", focus: "resume-choice" }
+          : current)
+      }
       renderer.requestRender()
     })()
   })
 
   useKeyboard((evt) => {
+    if (!modelSetupStartupGateAllowsInput(modelSetupStartupGate)) return
     const command = toCommand(evt)
     if (!command) return
     evt.preventDefault()
