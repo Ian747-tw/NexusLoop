@@ -91,7 +91,7 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
     const promise = new Promise<ExecutorModelReadinessObservation>((resolve, reject) => {
       let stdout = Buffer.alloc(0)
       let settled = false
-      let forcedError: Error | null = null
+      let terminationError: Error | null = null
       let timer: ReturnType<typeof setTimeout> | undefined
       let terminationTimer: ReturnType<typeof setTimeout> | undefined
       const finish = (error?: Error, value?: ExecutorModelReadinessObservation) => {
@@ -103,34 +103,36 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
         else resolve(value!)
       }
       let terminating = false
-      const terminate = () => {
+      const terminate = (error: Error) => {
         if (terminating) return
         terminating = true
+        terminationError = error
+        if (timer) clearTimeout(timer)
         try { child.kill?.("SIGTERM") } catch {}
         terminationTimer = setTimeout(() => {
           try { child.kill?.("SIGKILL") } catch {}
-          finish(forcedError ?? new Error("Executor readiness observation failed: observer process did not complete"))
+          finish(terminationError ?? new Error("Executor readiness observation failed: observer process did not complete"))
         }, TERMINATION_GRACE_MS)
       }
       rejectForShutdown = () => {
-        forcedError = new Error("Executor readiness observation failed: Runtime shutdown cancelled the observation")
-        terminate()
+        terminate(new Error("Executor readiness observation failed: Runtime shutdown cancelled the observation"))
       }
       child.stdout?.on("data", (chunk: unknown) => {
         if (settled) return
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
         if (stdout.length + bytes.length > this.#maxOutputBytes) {
-          forcedError = new Error("Executor readiness observation failed: output exceeded its bound")
-          terminate()
+          terminate(new Error("Executor readiness observation failed: output exceeded its bound"))
           return
         }
         stdout = Buffer.concat([stdout, bytes])
       })
       child.stderr?.on("data", () => {})
-      child.on("error", () => finish(new Error("Executor readiness observation failed: process start failed")))
+      child.on("error", () => {
+        if (!terminating) finish(new Error("Executor readiness observation failed: process start failed"))
+      })
       child.on("close", (code, signal) => {
         if (settled) return
-        if (forcedError) return finish(forcedError)
+        if (terminationError) return finish(terminationError)
         if (code !== 0 || signal !== null) return finish(new Error("Executor readiness observation failed: observer process did not complete"))
         try {
           finish(undefined, parseResponse(stdout.toString("utf8"), input))
@@ -141,13 +143,11 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
         }
       })
       timer = setTimeout(() => {
-        forcedError = new Error(`Executor readiness observation failed: timed out after ${this.#timeoutMs}ms`)
-        terminate()
+        terminate(new Error(`Executor readiness observation failed: timed out after ${this.#timeoutMs}ms`))
       }, this.#timeoutMs)
       timer.unref()
       child.stdin?.on?.("error", () => {
-        forcedError = new Error("Executor readiness observation failed: request delivery failed")
-        terminate()
+        terminate(new Error("Executor readiness observation failed: request delivery failed"))
       })
       child.stdin?.write?.(requestText)
       child.stdin?.end?.()

@@ -282,7 +282,11 @@ describe("packaged OpenCode Executor readiness resolver", () => {
         end() {},
         on() { return child.stdin },
       }
-      child.kill = (signal) => { signals.push(String(signal)); return true }
+      child.kill = (signal) => {
+        signals.push(String(signal))
+        if (signal === "SIGTERM") queueMicrotask(() => child.emit("error", new Error("termination failed")))
+        return true
+      }
       return child
     }
     const resolver = new OpenCodeExecutorModelReadinessResolver({
@@ -298,7 +302,7 @@ describe("packaged OpenCode Executor readiness resolver", () => {
 
     signals.length = 0
     const shutdownResolver = new OpenCodeExecutorModelReadinessResolver({
-      command: "/opt/opencode", cwd: "/tmp/project", spawn, timeoutMs: 60_000,
+      command: "/opt/opencode", cwd: "/tmp/project", spawn, timeoutMs: 50,
     })
     const shutdownPending = shutdownResolver.observe(selection)
     await expect(shutdownResolver.shutdown()).resolves.toBeUndefined()
