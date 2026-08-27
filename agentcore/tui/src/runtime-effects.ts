@@ -750,6 +750,19 @@ export async function applyRuntimeUiEffect(
           ...next,
           modelSetup: { ...next.modelSetup, startupCheckStatus: setupRequired ? "required" as const : "clear" as const },
         }
+        if (isExternalModelSetupAuthorityStatus(status)) {
+          if (effect.continueInitializationIfActive) return enterInitializedShell(checked)
+          if (state.screen === "model-setup") {
+            const screen = state.modelSetup.origin
+            return {
+              ...checked,
+              screen,
+              focus: screen === "main" ? "message-box" : "init-choice",
+              systemActions: [...checked.systemActions, { title: "Model setup unavailable", detail: "Non-setup model authority is active" }],
+            }
+          }
+          return checked
+        }
         if (effect.enterIfMissing && setupRequired) {
           return {
             ...checked,
@@ -758,16 +771,7 @@ export async function applyRuntimeUiEffect(
             modelSetup: { ...checked.modelSetup, origin: state.screen === "init" ? "init" : "main", stage: "commander" },
           }
         }
-        if (effect.continueInitializationIfActive && (isActiveModelSetupStatus(status) || isExternalModelSetupAuthorityStatus(status))) {
-          return {
-            ...checked,
-            screen: "main",
-            focus: "message-box",
-            lastCommand: "initialize",
-            commander: { ...checked.commander, workIntent: "TUI onboarding shell" },
-            systemActions: [...checked.systemActions, { title: "Initialize selected", detail: "Active model setup verified; entered onboarding shell" }],
-          }
-        }
+        if (effect.continueInitializationIfActive && isActiveModelSetupStatus(status)) return enterInitializedShell(checked)
         return checked
       }
       case "preview-model-setup":
@@ -2451,6 +2455,7 @@ function classifyModelSetupStatus(value: unknown): "required" | "clear" {
   }
   if (value.pending_restart === false) {
     if (activeHash !== value.setup_hash) throw new Error("model setup returned malformed status")
+    if (!exactSetupValue(value.candidate, value.active_candidate)) throw new Error("model setup returned malformed status")
     return "clear"
   }
   if (activeHash === value.setup_hash) throw new Error("model setup returned malformed status")
@@ -2590,6 +2595,17 @@ function isExternalModelSetupAuthorityStatus(value: unknown): boolean {
     && value.revision === 0
     && value.pending_restart === false
     && (value.active_authority_source === "explicit" || value.active_authority_source === "legacy_commander_environment")
+}
+
+function enterInitializedShell(state: UiState): UiState {
+  return {
+    ...state,
+    screen: "main",
+    focus: "message-box",
+    lastCommand: "initialize",
+    commander: { ...state.commander, workIntent: "TUI onboarding shell" },
+    systemActions: [...state.systemActions, { title: "Initialize selected", detail: "Active model authority verified; entered onboarding shell" }],
+  }
 }
 
 function applyModelSetupPreview(state: UiState, value: unknown): UiState {
