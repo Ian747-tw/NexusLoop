@@ -271,6 +271,42 @@ describe("packaged OpenCode Executor readiness resolver", () => {
     await resolver.shutdown()
   })
 
+  test("startup remains bounded when a timed-out observer never closes", async () => {
+    const signals: string[] = []
+    const spawn: OpenCodeSpawn = () => {
+      const child = new EventEmitter() as EventEmitter & OpenCodeSpawnedProcess
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.stdin = {
+        write(_data: string, callback?: (error?: Error | null) => void) { callback?.(null); return true },
+        end() {},
+        on() { return child.stdin },
+      }
+      child.kill = (signal) => { signals.push(String(signal)); return true }
+      return child
+    }
+    const resolver = new OpenCodeExecutorModelReadinessResolver({
+      command: "/opt/opencode", cwd: "/tmp/project", spawn, timeoutMs: 5,
+    })
+    const pending = resolver.observe(selection)
+    const starting = resolver.start()
+    await expect(pending).rejects.toThrow("timed out")
+    await expect(starting).resolves.toBeUndefined()
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"])
+    expect(resolver.activeCount()).toBe(0)
+    await resolver.shutdown()
+
+    signals.length = 0
+    const shutdownResolver = new OpenCodeExecutorModelReadinessResolver({
+      command: "/opt/opencode", cwd: "/tmp/project", spawn, timeoutMs: 60_000,
+    })
+    const shutdownPending = shutdownResolver.observe(selection)
+    await expect(shutdownResolver.shutdown()).resolves.toBeUndefined()
+    await expect(shutdownPending).rejects.toThrow("shutdown")
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"])
+    expect(shutdownResolver.activeCount()).toBe(0)
+  })
+
   test("production factory rejects proxy and accessor authority without executing caller code", () => {
     let traps = 0
     const proxied = new Proxy({

@@ -93,18 +93,24 @@ export class OpenCodeExecutorModelReadinessResolver implements ExecutorModelRead
       let settled = false
       let forcedError: Error | null = null
       let timer: ReturnType<typeof setTimeout> | undefined
+      let terminationTimer: ReturnType<typeof setTimeout> | undefined
       const finish = (error?: Error, value?: ExecutorModelReadinessObservation) => {
         if (settled) return
         settled = true
         if (timer) clearTimeout(timer)
+        if (terminationTimer) clearTimeout(terminationTimer)
         if (error) reject(error)
         else resolve(value!)
       }
+      let terminating = false
       const terminate = () => {
+        if (terminating) return
+        terminating = true
         try { child.kill?.("SIGTERM") } catch {}
-        setTimeout(() => {
+        terminationTimer = setTimeout(() => {
           try { child.kill?.("SIGKILL") } catch {}
-        }, TERMINATION_GRACE_MS).unref()
+          finish(forcedError ?? new Error("Executor readiness observation failed: observer process did not complete"))
+        }, TERMINATION_GRACE_MS)
       }
       rejectForShutdown = () => {
         forcedError = new Error("Executor readiness observation failed: Runtime shutdown cancelled the observation")
