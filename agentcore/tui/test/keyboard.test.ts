@@ -14,6 +14,18 @@ describe("TUI keyboard command model", () => {
       ])
     }
   })
+  test("failed startup setup inspection exposes only a no-start retry", () => {
+    const base = initialState("/tmp/demo")
+    const state = {
+      ...base,
+      screen: "model-setup" as const,
+      modelSetup: { ...base.modelSetup, stage: "loading" as const, commandError: "setup unavailable" },
+    }
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, "blocked")).toMatchObject({
+      effects: [{ type: "load-model-setup", enterIfMissing: true, continueInitializationIfActive: true }],
+    })
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "insert", text: "start" }, "blocked")).toEqual({ state, effects: [] })
+  })
   test("recovery approval slash parsing preserves the terminal raw note suffix", () => {
     expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
       command: "commander-recovery-approve",

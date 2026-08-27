@@ -1,6 +1,6 @@
 import type { FocusTarget, ModelSetupState, UiState } from "./state"
 import { redactText } from "./redaction"
-import { modelSetupStartupGateAllowsInput, type ModelSetupStartupGate } from "./reducer"
+import { modelSetupStartupGateAllowsCommand, type ModelSetupStartupGate } from "./reducer"
 
 export type KeyCommand =
   | { type: "focus-next" }
@@ -29,7 +29,7 @@ export function applyKeyCommandWithModelSetupStartupGate(
   command: KeyCommand,
   gate: ModelSetupStartupGate,
 ): KeyCommandResult {
-  return modelSetupStartupGateAllowsInput(gate)
+  return modelSetupStartupGateAllowsCommand(state, command, gate)
     ? applyKeyCommandWithEffects(state, command)
     : { state, effects: [] }
 }
@@ -194,6 +194,12 @@ function selectModelSetup(state: UiState, direction: 1 | -1): KeyCommandResult {
 
 function submitModelSetup(state: UiState): KeyCommandResult {
   const setup = state.modelSetup
+  if (setup.stage === "loading" && setup.commandError !== undefined) {
+    return {
+      state: { ...state, modelSetup: { ...setup, commandError: undefined } },
+      effects: [{ type: "load-model-setup", enterIfMissing: true, continueInitializationIfActive: true }],
+    }
+  }
   if (setup.stage === "commander") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(setup), stage: "executor" } }, effects: [] }
   if (setup.stage === "executor") {
     const commanderRecipeId = setup.commanderChoices[setup.commanderSelection]?.id || null

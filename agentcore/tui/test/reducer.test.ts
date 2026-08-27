@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   modelSetupStartupGateAllowsInput,
+  modelSetupStartupGateAllowsCommand,
   reduceRuntimeEvent,
   reduceRuntimeEventDuringModelSetupGate,
 } from "../src/reducer"
@@ -29,6 +30,13 @@ describe("TUI runtime event reducer", () => {
     expect(modelSetupStartupGateAllowsInput("blocked")).toBe(false)
     expect(modelSetupStartupGateAllowsInput("required")).toBe(true)
     expect(modelSetupStartupGateAllowsInput("clear")).toBe(true)
+    const failed = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup" as const,
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, stage: "loading" as const, commandError: "setup unavailable" },
+    }
+    expect(modelSetupStartupGateAllowsCommand(failed, { type: "submit" }, "blocked")).toBe(true)
+    expect(modelSetupStartupGateAllowsCommand(failed, { type: "insert", text: "x" }, "blocked")).toBe(false)
   })
   test("ProjectUninitialized routes to init screen", () => {
     const state = reduceRuntimeEvent(initialState("/tmp/demo"), { type: "ProjectUninitialized", projectDir: "/tmp/demo" })

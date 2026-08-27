@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from "./events"
+import type { KeyCommand } from "./keyboard"
 import { initialState, type UiState } from "./state"
 import { redactText } from "./redaction"
 
@@ -217,6 +218,15 @@ export type ModelSetupStartupGate = "pending" | "required" | "clear" | "blocked"
 
 export function modelSetupStartupGateAllowsInput(gate: ModelSetupStartupGate): boolean {
   return gate === "required" || gate === "clear"
+}
+
+export function modelSetupStartupGateAllowsCommand(state: UiState, command: KeyCommand, gate: ModelSetupStartupGate): boolean {
+  return modelSetupStartupGateAllowsInput(gate)
+    || (gate === "blocked"
+      && command.type === "submit"
+      && state.screen === "model-setup"
+      && state.modelSetup.stage === "loading"
+      && state.modelSetup.commandError !== undefined)
 }
 
 export function reduceRuntimeEventDuringModelSetupGate(

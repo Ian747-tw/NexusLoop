@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { applyKeyCommandWithModelSetupStartupGate, type KeyCommand } from "./keyboard"
 import {
   modelSetupStartupGateAllowsInput,
+  modelSetupStartupGateAllowsCommand,
   reduceRuntimeEventDuringModelSetupGate,
   type ModelSetupStartupGate,
 } from "./reducer"
@@ -203,6 +204,8 @@ function ModelSetupScreen(props: { state: UiState }) {
           ? completionCopy().instructions
           : setup.stage === "confirming"
             ? "Confirmation is in progress and cannot be cancelled locally."
+            : setup.stage === "loading" && setup.commandError
+              ? "Enter retries the no-start setup authority check."
             : "Enter selects. Up/Down changes selection. Esc returns."}</text>
       </box>
     </box>
@@ -629,6 +632,14 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
   const [state, setState] = createStore<UiState>(props.initial)
   let modelSetupStartupGate: ModelSetupStartupGate = "pending"
 
+  function updateModelSetupStartupGate(next: UiState) {
+    modelSetupStartupGate = next.modelSetup.startupCheckStatus === "required"
+      ? "required"
+      : next.modelSetup.startupCheckStatus === "clear"
+        ? "clear"
+        : "blocked"
+  }
+
   function apply(command: KeyCommand) {
     const result = applyKeyCommandWithModelSetupStartupGate(state, command, modelSetupStartupGate)
     if (result.state === state && result.effects.length === 0) return
@@ -637,6 +648,7 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
       const baseline = snapshotUiState(result.state)
       void (async () => {
         const next = await applyRuntimeUiEffect(baseline, props.runtime, effect)
+        if (effect.type === "load-model-setup") updateModelSetupStartupGate(next)
         setState((current) => mergeRuntimeEffectState(current, next, baseline.systemActions.length, baseline))
         renderer.requestRender()
       })()
@@ -654,11 +666,7 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
     const baseline = snapshotUiState(state)
     void (async () => {
       const next = await refreshRuntimeRecords(baseline, props.runtime)
-      modelSetupStartupGate = next.modelSetup.startupCheckStatus === "required"
-        ? "required"
-        : next.modelSetup.startupCheckStatus === "clear"
-          ? "clear"
-          : "blocked"
+      updateModelSetupStartupGate(next)
       setState((current) => mergeRuntimeEffectState(current, next, 0, baseline))
       if (modelSetupStartupGate === "clear") {
         setState((current) => current.screen === "boot"
@@ -670,9 +678,9 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
   })
 
   useKeyboard((evt) => {
-    if (!modelSetupStartupGateAllowsInput(modelSetupStartupGate)) return
     const command = toCommand(evt)
     if (!command) return
+    if (!modelSetupStartupGateAllowsCommand(state, command, modelSetupStartupGate)) return
     evt.preventDefault()
     apply(command)
   })

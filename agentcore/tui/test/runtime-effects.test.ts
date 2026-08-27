@@ -66,6 +66,8 @@ class RefreshFailAfterSubmitRuntime implements RuntimeClient {
       setup_hash: "5".repeat(64),
       active_setup_hash: "5".repeat(64),
       pending_restart: false,
+      candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+      active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
     }
     throw new Error("refresh failed after accepted mission")
   }
@@ -556,6 +558,18 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
   async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
     this.calls.push({ name, payload })
     switch (name) {
+      case "runtime.model_setup_catalog":
+        return { commander_recipes: [], executor_recipes: [] }
+      case "runtime.model_setup_status":
+        return {
+          status: "ready",
+          revision: 1,
+          setup_hash: "5".repeat(64),
+          active_setup_hash: "5".repeat(64),
+          pending_restart: false,
+          candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+          active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+        }
       case "runtime.preview_opencode_handoff":
         return {
           proposal_id: payload?.proposalId,
@@ -820,6 +834,8 @@ class MissionExecutionRuntime implements RuntimeClient {
           setup_hash: "5".repeat(64),
           active_setup_hash: "5".repeat(64),
           pending_restart: false,
+          candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+          active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
         }
       case "runtime.status":
         return {
@@ -1155,7 +1171,15 @@ describe("runtime UI effects", () => {
 
     runtime.command = (async (name: string) => {
       if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
-      if (name === "runtime.model_setup_status") return { status: "ready", revision: 2, setup_hash: "5".repeat(64), active_setup_hash: "4".repeat(64), pending_restart: true }
+      if (name === "runtime.model_setup_status") return {
+        status: "ready",
+        revision: 2,
+        setup_hash: "5".repeat(64),
+        active_setup_hash: "4".repeat(64),
+        pending_restart: true,
+        candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+        active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+      }
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
     state = await applyRuntimeUiEffect(
@@ -1189,6 +1213,7 @@ describe("runtime UI effects", () => {
         revision: 1,
         setup_hash: "5".repeat(64),
         pending_restart: true,
+        candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
       }
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
@@ -1197,21 +1222,26 @@ describe("runtime UI effects", () => {
     expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
   })
   test("runtime refresh fails closed when model setup authority cannot be inspected", async () => {
-    for (const failure of ["reject", "malformed"] as const) {
+    for (const failure of ["reject", "malformed_catalog", "malformed_status"] as const) {
       const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
       const commands: string[] = []
       runtime.command = (async (name: string) => {
         commands.push(name)
         if (name === "runtime.model_setup_catalog") {
           if (failure === "reject") throw new Error("setup status unavailable")
-          return { commander_recipes: "malformed", executor_recipes: [] }
+          return failure === "malformed_catalog"
+            ? { commander_recipes: "malformed", executor_recipes: [] }
+            : { commander_recipes: [], executor_recipes: [] }
         }
-        if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
+        if (name === "runtime.model_setup_status") return failure === "malformed_status"
+          ? { status: "missing", revision: 1, pending_restart: false }
+          : { status: "missing", revision: 0, pending_restart: false }
         throw new Error(`unexpected ${name}`)
       }) as RuntimeClient["command"]
       const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
-      expect(state.modelSetup).toMatchObject({ startupCheckStatus: "failed" })
+      expect(state).toMatchObject({ screen: "model-setup", modelSetup: { startupCheckStatus: "failed", stage: "loading" } })
       expect(state.modelSetup.commandError).toBeDefined()
+      expect(layoutSnapshot(state)).toContain("  error=")
       expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
     }
   })

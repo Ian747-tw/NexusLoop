@@ -741,8 +741,9 @@ export async function applyRuntimeUiEffect(
           runtime.command("runtime.model_setup_catalog"),
           runtime.command("runtime.model_setup_status"),
         ])
+        const setupDisposition = classifyModelSetupStatus(status)
         const next = applyModelSetupCatalogAndStatus(state, catalog, status)
-        const setupRequired = requiresModelSetupBeforeRuntimeStart(status)
+        const setupRequired = setupDisposition === "required"
         const checked = {
           ...next,
           modelSetup: { ...next.modelSetup, startupCheckStatus: setupRequired ? "required" as const : "clear" as const },
@@ -2339,9 +2340,14 @@ export async function applyRuntimeUiEffect(
       const message = error instanceof Error ? error.message : String(error)
       return {
         ...state,
+        ...(effect.type === "load-model-setup" ? { screen: "model-setup" as const, focus: "init-choice" as const } : {}),
         modelSetup: {
           ...state.modelSetup,
-          ...(effect.type === "load-model-setup" ? { startupCheckStatus: "failed" as const } : {}),
+          ...(effect.type === "load-model-setup" ? {
+            startupCheckStatus: "failed" as const,
+            origin: state.screen === "init" ? "init" as const : "main" as const,
+            stage: "loading" as const,
+          } : {}),
           ...(effect.type === "confirm-model-setup" && state.modelSetup.stage === "confirming" ? { stage: "confirmation" as const } : {}),
           commandError: redactText(message).slice(0, 240),
         },
@@ -2418,20 +2424,48 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   return next
 }
 
-function isMissingModelSetupStatus(value: unknown): boolean {
-  if (!isRecord(value) || value.status !== "missing" || value.revision !== 0 || value.pending_restart !== false) return false
-  return value.active_authority_source !== "explicit"
-    && value.active_authority_source !== "legacy_commander_environment"
+function classifyModelSetupStatus(value: unknown): "required" | "clear" {
+  if (!isRecord(value) || !Number.isInteger(value.revision) || typeof value.pending_restart !== "boolean") {
+    throw new Error("model setup returned malformed status")
+  }
+  const authority = value.active_authority_source
+  if (authority !== undefined && authority !== "explicit" && authority !== "legacy_commander_environment") {
+    throw new Error("model setup returned malformed status")
+  }
+  if (value.status === "missing") {
+    if (value.revision !== 0 || value.pending_restart !== false || value.setup_hash !== undefined || value.active_setup_hash !== undefined) {
+      throw new Error("model setup returned malformed status")
+    }
+    return authority === undefined ? "required" : "clear"
+  }
+  if (value.status !== "ready" || (value.revision as number) < 1 || !isSetupHash(value.setup_hash)) {
+    throw new Error("model setup returned malformed status")
+  }
+  if (!hasModelSetupChoices(value.candidate)) throw new Error("model setup returned malformed status")
+  const activeHash = value.active_setup_hash
+  if (activeHash !== undefined && !isSetupHash(activeHash)) throw new Error("model setup returned malformed status")
+  if (activeHash === undefined ? value.active_candidate !== undefined : !hasModelSetupChoices(value.active_candidate)) {
+    throw new Error("model setup returned malformed status")
+  }
+  if (value.pending_restart === false) {
+    if (activeHash !== value.setup_hash) throw new Error("model setup returned malformed status")
+    return "clear"
+  }
+  if (activeHash === value.setup_hash) throw new Error("model setup returned malformed status")
+  return activeHash === undefined ? "required" : "clear"
 }
 
-function requiresModelSetupBeforeRuntimeStart(value: unknown): boolean {
-  if (isMissingModelSetupStatus(value)) return true
-  return isRecord(value)
-    && value.status === "ready"
-    && value.pending_restart === true
-    && typeof value.setup_hash === "string"
-    && value.setup_hash.length === 64
-    && typeof value.active_setup_hash !== "string"
+function isSetupHash(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
+}
+
+function hasModelSetupChoices(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.choices)) return false
+  for (const key of ["commander_recipe_id", "executor_recipe_id"] as const) {
+    const choice = value.choices[key]
+    if (choice !== null && (typeof choice !== "string" || choice.length < 1 || choice.length > 160)) return false
+  }
+  return true
 }
 
 function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, statusValue: unknown): UiState {
@@ -2492,9 +2526,10 @@ function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, 
 }
 
 function isActiveModelSetupStatus(value: unknown): boolean {
-  if (!isRecord(value) || value.status !== "ready" || value.pending_restart !== false) return false
-  return typeof value.setup_hash === "string"
-    && value.setup_hash.length === 64
+  return isRecord(value)
+    && value.status === "ready"
+    && value.pending_restart === false
+    && isSetupHash(value.setup_hash)
     && value.active_setup_hash === value.setup_hash
 }
 

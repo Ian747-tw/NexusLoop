@@ -41,6 +41,8 @@ class TestRuntimeClient implements RuntimeClient {
       setup_hash: "5".repeat(64),
       active_setup_hash: "5".repeat(64),
       pending_restart: false,
+      candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+      active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
     }
     if (name === "runtime.status") {
       return {
