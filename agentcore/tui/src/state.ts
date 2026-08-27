@@ -59,6 +59,7 @@ export type ProviderOnboardingState = {
 
 export type ModelSetupState = {
   origin: "init" | "main"
+  startupCheckStatus: "pending" | "required" | "clear" | "failed"
   stage: "loading" | "commander" | "executor" | "preview" | "confirmation" | "confirming" | "committed"
   commanderChoices: Choice[]
   executorChoices: Choice[]
@@ -5926,6 +5927,7 @@ export function initialState(projectDir: string): UiState {
     },
     modelSetup: {
       origin: "init",
+      startupCheckStatus: "pending",
       stage: "loading",
       commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }],
       executorChoices: [{ id: "", label: "Leave Executor unconfigured" }],

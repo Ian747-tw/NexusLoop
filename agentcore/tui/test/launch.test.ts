@@ -34,6 +34,14 @@ class TestRuntimeClient implements RuntimeClient {
 
   async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
     this.commandNames.push(name)
+    if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+    if (name === "runtime.model_setup_status") return {
+      status: "ready",
+      revision: 1,
+      setup_hash: "5".repeat(64),
+      active_setup_hash: "5".repeat(64),
+      pending_restart: false,
+    }
     if (name === "runtime.status") {
       return {
         runtimeStatus: "started",

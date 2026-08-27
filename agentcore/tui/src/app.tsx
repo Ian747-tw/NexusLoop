@@ -653,7 +653,11 @@ export function NexusLoopTui(props: { runtime: RuntimeClient; initial: UiState }
     const baseline = snapshotUiState(state)
     void (async () => {
       const next = await refreshRuntimeRecords(baseline, props.runtime)
-      modelSetupStartupGate = next.screen === "model-setup" ? "required" : "clear"
+      modelSetupStartupGate = next.modelSetup.startupCheckStatus === "required"
+        ? "required"
+        : next.modelSetup.startupCheckStatus === "clear"
+          ? "clear"
+          : "blocked"
       setState((current) => mergeRuntimeEffectState(current, next, 0, baseline))
       if (modelSetupStartupGate === "clear") {
         setState((current) => current.screen === "boot"

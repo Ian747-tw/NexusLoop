@@ -58,7 +58,15 @@ class RefreshFailAfterSubmitRuntime implements RuntimeClient {
   async sendCommand(): Promise<unknown> {
     return { ok: true }
   }
-  async command(): Promise<unknown> {
+  async command(name: string): Promise<unknown> {
+    if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+    if (name === "runtime.model_setup_status") return {
+      status: "ready",
+      revision: 1,
+      setup_hash: "5".repeat(64),
+      active_setup_hash: "5".repeat(64),
+      pending_restart: false,
+    }
     throw new Error("refresh failed after accepted mission")
   }
 }
@@ -803,6 +811,16 @@ class MissionExecutionRuntime implements RuntimeClient {
     this.calls.push(`${name}:${JSON.stringify(payload)}`)
     const missionId = String(payload.missionId ?? payload.mission_id ?? "mission-1")
     switch (name) {
+      case "runtime.model_setup_catalog":
+        return { commander_recipes: [], executor_recipes: [] }
+      case "runtime.model_setup_status":
+        return {
+          status: "ready",
+          revision: 1,
+          setup_hash: "5".repeat(64),
+          active_setup_hash: "5".repeat(64),
+          pending_restart: false,
+        }
       case "runtime.status":
         return {
           runtimeStatus: "started",
@@ -1177,6 +1195,25 @@ describe("runtime UI effects", () => {
     const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
     expect(state).toMatchObject({ screen: "model-setup", modelSetup: { pendingRestart: true } })
     expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
+  })
+  test("runtime refresh fails closed when model setup authority cannot be inspected", async () => {
+    for (const failure of ["reject", "malformed"] as const) {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      const commands: string[] = []
+      runtime.command = (async (name: string) => {
+        commands.push(name)
+        if (name === "runtime.model_setup_catalog") {
+          if (failure === "reject") throw new Error("setup status unavailable")
+          return { commander_recipes: "malformed", executor_recipes: [] }
+        }
+        if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
+        throw new Error(`unexpected ${name}`)
+      }) as RuntimeClient["command"]
+      const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
+      expect(state.modelSetup).toMatchObject({ startupCheckStatus: "failed" })
+      expect(state.modelSetup.commandError).toBeDefined()
+      expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
+    }
   })
   test("runtime refresh preserves the shell when mutually exclusive registry authority is already active", async () => {
     for (const authoritySource of ["explicit", "legacy_commander_environment"] as const) {

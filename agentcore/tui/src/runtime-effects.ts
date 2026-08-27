@@ -742,25 +742,30 @@ export async function applyRuntimeUiEffect(
           runtime.command("runtime.model_setup_status"),
         ])
         const next = applyModelSetupCatalogAndStatus(state, catalog, status)
-        if (effect.enterIfMissing && requiresModelSetupBeforeRuntimeStart(status)) {
+        const setupRequired = requiresModelSetupBeforeRuntimeStart(status)
+        const checked = {
+          ...next,
+          modelSetup: { ...next.modelSetup, startupCheckStatus: setupRequired ? "required" as const : "clear" as const },
+        }
+        if (effect.enterIfMissing && setupRequired) {
           return {
-            ...next,
+            ...checked,
             screen: "model-setup",
             focus: "init-choice",
-            modelSetup: { ...next.modelSetup, origin: state.screen === "init" ? "init" : "main", stage: "commander" },
+            modelSetup: { ...checked.modelSetup, origin: state.screen === "init" ? "init" : "main", stage: "commander" },
           }
         }
         if (effect.continueInitializationIfActive && isActiveModelSetupStatus(status)) {
           return {
-            ...next,
+            ...checked,
             screen: "main",
             focus: "message-box",
             lastCommand: "initialize",
-            commander: { ...next.commander, workIntent: "TUI onboarding shell" },
-            systemActions: [...next.systemActions, { title: "Initialize selected", detail: "Active model setup verified; entered onboarding shell" }],
+            commander: { ...checked.commander, workIntent: "TUI onboarding shell" },
+            systemActions: [...checked.systemActions, { title: "Initialize selected", detail: "Active model setup verified; entered onboarding shell" }],
           }
         }
-        return next
+        return checked
       }
       case "preview-model-setup":
         return applyModelSetupPreview(state, await runtime.command("runtime.preview_model_setup", {
@@ -2336,6 +2341,7 @@ export async function applyRuntimeUiEffect(
         ...state,
         modelSetup: {
           ...state.modelSetup,
+          ...(effect.type === "load-model-setup" ? { startupCheckStatus: "failed" as const } : {}),
           ...(effect.type === "confirm-model-setup" && state.modelSetup.stage === "confirming" ? { stage: "confirmation" as const } : {}),
           commandError: redactText(message).slice(0, 240),
         },
@@ -2401,7 +2407,7 @@ export async function applyRuntimeUiEffect(
 export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = state
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-model-setup", enterIfMissing: true })
-  if (next.screen === "model-setup") return next
+  if (next.modelSetup.startupCheckStatus !== "clear" || next.screen === "model-setup") return next
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })

@@ -213,10 +213,10 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
   }
 }
 
-export type ModelSetupStartupGate = "pending" | "required" | "clear"
+export type ModelSetupStartupGate = "pending" | "required" | "clear" | "blocked"
 
 export function modelSetupStartupGateAllowsInput(gate: ModelSetupStartupGate): boolean {
-  return gate !== "pending"
+  return gate === "required" || gate === "clear"
 }
 
 export function reduceRuntimeEventDuringModelSetupGate(

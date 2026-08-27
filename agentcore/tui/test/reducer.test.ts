@@ -26,6 +26,7 @@ describe("TUI runtime event reducer", () => {
       focus: "resume-choice",
     })
     expect(modelSetupStartupGateAllowsInput("pending")).toBe(false)
+    expect(modelSetupStartupGateAllowsInput("blocked")).toBe(false)
     expect(modelSetupStartupGateAllowsInput("required")).toBe(true)
     expect(modelSetupStartupGateAllowsInput("clear")).toBe(true)
   })
