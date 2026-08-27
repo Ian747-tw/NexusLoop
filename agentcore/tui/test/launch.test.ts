@@ -4,11 +4,13 @@ import { tmpdir } from "os"
 import { join } from "path"
 import {
   createRuntimeServerFromLaunchConfig,
+  buildModelSetupCandidate,
   EventStore,
   FakeOpenCodeAdapter,
   ModelSetupService,
   RuntimeServer,
   RuntimeServerClient,
+  modelSetupCatalog,
 } from "../../runtime/src/index"
 import type { RuntimeEvent } from "../src/events"
 import { buildHeadlessSnapshot, runTuiEntrypoint } from "../src/launch"
@@ -34,15 +36,15 @@ class TestRuntimeClient implements RuntimeClient {
 
   async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
     this.commandNames.push(name)
-    if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+    if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
     if (name === "runtime.model_setup_status") return {
       status: "ready",
       revision: 1,
       setup_hash: "5".repeat(64),
       active_setup_hash: "5".repeat(64),
       pending_restart: false,
-      candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
-      active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+      candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+      active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
     }
     if (name === "runtime.status") {
       return {

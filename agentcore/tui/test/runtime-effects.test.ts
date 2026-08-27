@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { buildModelSetupCandidate, modelSetupCatalog } from "../../runtime/src/index"
 import { commanderRecoveryApprovalDisplay, commanderRecoveryAuthorityValues, commanderRecoveryPreviewDiagnostics } from "../src/commander-recovery-view"
 import type { RuntimeEvent } from "../src/events"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "../src/runtime-effects"
@@ -59,15 +60,15 @@ class RefreshFailAfterSubmitRuntime implements RuntimeClient {
     return { ok: true }
   }
   async command(name: string): Promise<unknown> {
-    if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+    if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
     if (name === "runtime.model_setup_status") return {
       status: "ready",
       revision: 1,
       setup_hash: "5".repeat(64),
       active_setup_hash: "5".repeat(64),
       pending_restart: false,
-      candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
-      active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+      candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+      active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
     }
     throw new Error("refresh failed after accepted mission")
   }
@@ -559,7 +560,7 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
     this.calls.push({ name, payload })
     switch (name) {
       case "runtime.model_setup_catalog":
-        return { commander_recipes: [], executor_recipes: [] }
+        return modelSetupCatalog()
       case "runtime.model_setup_status":
         return {
           status: "ready",
@@ -567,8 +568,8 @@ class OpenCodeHandoffRuntime implements RuntimeClient {
           setup_hash: "5".repeat(64),
           active_setup_hash: "5".repeat(64),
           pending_restart: false,
-          candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
-          active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+          candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+          active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
         }
       case "runtime.preview_opencode_handoff":
         return {
@@ -826,7 +827,7 @@ class MissionExecutionRuntime implements RuntimeClient {
     const missionId = String(payload.missionId ?? payload.mission_id ?? "mission-1")
     switch (name) {
       case "runtime.model_setup_catalog":
-        return { commander_recipes: [], executor_recipes: [] }
+        return modelSetupCatalog()
       case "runtime.model_setup_status":
         return {
           status: "ready",
@@ -834,8 +835,8 @@ class MissionExecutionRuntime implements RuntimeClient {
           setup_hash: "5".repeat(64),
           active_setup_hash: "5".repeat(64),
           pending_restart: false,
-          candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
-          active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+          candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+          active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
         }
       case "runtime.status":
         return {
@@ -1017,10 +1018,7 @@ describe("runtime UI effects", () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     runtime.command = (async (name: string, payload: Record<string, unknown> = {}) => {
       calls.push({ name, payload })
-      if (name === "runtime.model_setup_catalog") return {
-        commander_recipes: [{ recipe_id: "commander-a", display_name: "Commander A" }],
-        executor_recipes: [{ recipe_id: "executor-b", display_name: "Executor B" }],
-      }
+      if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
       if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
       if (name === "runtime.preview_model_setup") return { expected_revision: 0, candidate_hash: "a".repeat(64), configuration_hash: "b".repeat(64), restart_required: true }
       if (name === "runtime.confirm_model_setup") return { status: "committed", revision: 1, setup_hash: "c".repeat(64), candidate_hash: "a".repeat(64), restart_required: true }
@@ -1028,11 +1026,11 @@ describe("runtime UI effects", () => {
     }) as RuntimeClient["command"]
 
     let state = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "model-setup" }, runtime, { type: "load-model-setup" })
-    expect(state.modelSetup.commanderChoices.map((item) => item.id)).toEqual(["", "commander-a"])
-    state = await applyRuntimeUiEffect(state, runtime, { type: "preview-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b" })
+    expect(state.modelSetup.commanderChoices.map((item) => item.id)).toEqual(["", "commander-anthropic-claude-sonnet-4-5", "commander-google-gemini-2-5-flash", "commander-openai-gpt-4-1-mini-responses"])
+    state = await applyRuntimeUiEffect(state, runtime, { type: "preview-model-setup", commanderRecipeId: "commander-anthropic-claude-sonnet-4-5", executorRecipeId: "executor-anthropic-claude-sonnet-4-5" })
     expect(state.modelSetup.candidateHash).toBe("a".repeat(64))
     expect(state.modelSetup.pendingRestart).toBe(false)
-    state = await applyRuntimeUiEffect(state, runtime, { type: "confirm-model-setup", commanderRecipeId: "commander-a", executorRecipeId: "executor-b", expectedRevision: 0, candidateHash: "a".repeat(64) })
+    state = await applyRuntimeUiEffect(state, runtime, { type: "confirm-model-setup", commanderRecipeId: "commander-anthropic-claude-sonnet-4-5", executorRecipeId: "executor-anthropic-claude-sonnet-4-5", expectedRevision: 0, candidateHash: "a".repeat(64) })
     expect(state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true, pendingSetupHash: "c".repeat(64) })
     expect(calls.map((item) => item.name)).toEqual([
       "runtime.model_setup_catalog",
@@ -1044,7 +1042,7 @@ describe("runtime UI effects", () => {
   test("model setup slash command enters the async screen with main-shell origin", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     runtime.command = (async (name: string) => {
-      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
       if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
@@ -1125,24 +1123,15 @@ describe("runtime UI effects", () => {
   test("model setup keeps active readiness attached to active selection while a replacement is pending", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
     runtime.command = (async (name: string) => {
-      if (name === "runtime.model_setup_catalog") return {
-        commander_recipes: [
-          { recipe_id: "commander-active", display_name: "Commander Active" },
-          { recipe_id: "commander-pending", display_name: "Commander Pending" },
-        ],
-        executor_recipes: [
-          { recipe_id: "executor-active", display_name: "Executor Active" },
-          { recipe_id: "executor-pending", display_name: "Executor Pending" },
-        ],
-      }
+      if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
       if (name === "runtime.model_setup_status") return {
         status: "ready",
         revision: 2,
         setup_hash: "2".repeat(64),
         active_setup_hash: "1".repeat(64),
         pending_restart: true,
-        active_candidate: { choices: { commander_recipe_id: "commander-active", executor_recipe_id: "executor-active" } },
-        candidate: { choices: { commander_recipe_id: "commander-pending", executor_recipe_id: "executor-pending" } },
+        active_candidate: buildModelSetupCandidate({ commander_recipe_id: "commander-anthropic-claude-sonnet-4-5", executor_recipe_id: "executor-anthropic-claude-sonnet-4-5" }),
+        candidate: buildModelSetupCandidate({ commander_recipe_id: "commander-google-gemini-2-5-flash", executor_recipe_id: "executor-google-gemini-2-5-flash" }),
         commander_role_readiness: { selection_status: "selected", credential_connection_status: "connected", lifecycle_status: "ready" },
         executor_role_readiness: { selection_status: "selected", credential_connection_status: "connected", lifecycle_status: "ready" },
       }
@@ -1150,10 +1139,10 @@ describe("runtime UI effects", () => {
     }) as RuntimeClient["command"]
     const state = await applyRuntimeUiEffect({ ...initialState("/tmp/demo"), screen: "model-setup" }, runtime, { type: "load-model-setup" })
     expect(state.modelSetup).toMatchObject({
-      activeCommanderLabel: "Commander Active",
-      activeExecutorLabel: "Executor Active",
-      pendingCommanderLabel: "Commander Pending",
-      pendingExecutorLabel: "Executor Pending",
+      activeCommanderLabel: "Anthropic Claude Sonnet 4.5",
+      activeExecutorLabel: "Anthropic Claude Sonnet 4.5",
+      pendingCommanderLabel: "Google Gemini 2.5 Flash",
+      pendingExecutorLabel: "Google Gemini 2.5 Flash",
       commanderReadiness: "selected; credential connected; lifecycle ready",
       executorReadiness: "selected; credential connected; lifecycle ready",
       pendingRestart: true,
@@ -1170,15 +1159,15 @@ describe("runtime UI effects", () => {
     expect(state.systemActions.at(-1)?.detail).toContain("Active model setup verified")
 
     runtime.command = (async (name: string) => {
-      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
       if (name === "runtime.model_setup_status") return {
         status: "ready",
         revision: 2,
         setup_hash: "5".repeat(64),
         active_setup_hash: "4".repeat(64),
         pending_restart: true,
-        candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
-        active_candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+        candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+        active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
       }
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
@@ -1194,7 +1183,7 @@ describe("runtime UI effects", () => {
     const commands: string[] = []
     runtime.command = (async (name: string) => {
       commands.push(name)
-      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
       if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
@@ -1207,13 +1196,13 @@ describe("runtime UI effects", () => {
     const commands: string[] = []
     runtime.command = (async (name: string) => {
       commands.push(name)
-      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
       if (name === "runtime.model_setup_status") return {
         status: "ready",
         revision: 1,
         setup_hash: "5".repeat(64),
         pending_restart: true,
-        candidate: { choices: { commander_recipe_id: null, executor_recipe_id: null } },
+        candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
       }
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
@@ -1222,7 +1211,7 @@ describe("runtime UI effects", () => {
     expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
   })
   test("runtime refresh fails closed when model setup authority cannot be inspected", async () => {
-    for (const failure of ["reject", "malformed_catalog", "malformed_status"] as const) {
+    for (const failure of ["reject", "malformed_catalog", "malformed_status", "malformed_candidate"] as const) {
       const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
       const commands: string[] = []
       runtime.command = (async (name: string) => {
@@ -1231,11 +1220,21 @@ describe("runtime UI effects", () => {
           if (failure === "reject") throw new Error("setup status unavailable")
           return failure === "malformed_catalog"
             ? { commander_recipes: "malformed", executor_recipes: [] }
-            : { commander_recipes: [], executor_recipes: [] }
+            : modelSetupCatalog()
         }
-        if (name === "runtime.model_setup_status") return failure === "malformed_status"
-          ? { status: "missing", revision: 1, pending_restart: false }
-          : { status: "missing", revision: 0, pending_restart: false }
+        if (name === "runtime.model_setup_status") {
+          if (failure === "malformed_status") return { status: "missing", revision: 1, pending_restart: false }
+          if (failure === "malformed_candidate") return {
+            status: "ready",
+            revision: 1,
+            setup_hash: "5".repeat(64),
+            active_setup_hash: "5".repeat(64),
+            pending_restart: false,
+            candidate: { choices: { commander_recipe_id: "commander-forged", executor_recipe_id: null } },
+            active_candidate: { choices: { commander_recipe_id: "commander-forged", executor_recipe_id: null } },
+          }
+          return { status: "missing", revision: 0, pending_restart: false }
+        }
         throw new Error(`unexpected ${name}`)
       }) as RuntimeClient["command"]
       const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
@@ -1250,7 +1249,7 @@ describe("runtime UI effects", () => {
       const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
       runtime.command = (async (name: string) => {
         if (name === "runtime.status") return {}
-        if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+        if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
         if (name === "runtime.model_setup_status") return {
           status: "missing",
           revision: 0,
@@ -1262,6 +1261,38 @@ describe("runtime UI effects", () => {
       }) as RuntimeClient["command"]
       const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "main" }, runtime)
       expect(state.screen).toBe("main")
+    }
+  })
+  test("setup inspection retry continues when mutually exclusive registry authority is active", async () => {
+    for (const authoritySource of ["explicit", "legacy_commander_environment"] as const) {
+      const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+      runtime.command = (async (name: string) => {
+        if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
+        if (name === "runtime.model_setup_status") return {
+          status: "missing",
+          revision: 0,
+          pending_restart: false,
+          active_authority_source: authoritySource,
+        }
+        throw new Error(`unexpected ${name}`)
+      }) as RuntimeClient["command"]
+      const failed = {
+        ...initialState("/tmp/demo"),
+        screen: "model-setup" as const,
+        modelSetup: {
+          ...initialState("/tmp/demo").modelSetup,
+          stage: "loading" as const,
+          startupCheckStatus: "failed" as const,
+          commandError: "model setup status unavailable",
+        },
+      }
+      const state = await applyRuntimeUiEffect(failed, runtime, {
+        type: "load-model-setup",
+        enterIfMissing: true,
+        continueInitializationIfActive: true,
+      })
+      expect(state).toMatchObject({ screen: "main", modelSetup: { startupCheckStatus: "clear", commandError: undefined } })
+      expect(state.systemActions.at(-1)?.detail).toContain("Active model setup verified")
     }
   })
   test("Commander recovery staged commands classify mutations as writes", () => {

@@ -1,4 +1,6 @@
 import { redactText, redactUnknown } from "./redaction"
+import { buildModelSetupCandidate, modelSetupCatalog } from "../../runtime/src/model-configuration/model-setup"
+import { types as nodeUtilTypes } from "node:util"
 import { parseRuntimeCommand, type KeySideEffect } from "./keyboard"
 import {
   executionCommandFor,
@@ -756,7 +758,7 @@ export async function applyRuntimeUiEffect(
             modelSetup: { ...checked.modelSetup, origin: state.screen === "init" ? "init" : "main", stage: "commander" },
           }
         }
-        if (effect.continueInitializationIfActive && isActiveModelSetupStatus(status)) {
+        if (effect.continueInitializationIfActive && (isActiveModelSetupStatus(status) || isExternalModelSetupAuthorityStatus(status))) {
           return {
             ...checked,
             screen: "main",
@@ -2441,10 +2443,10 @@ function classifyModelSetupStatus(value: unknown): "required" | "clear" {
   if (value.status !== "ready" || (value.revision as number) < 1 || !isSetupHash(value.setup_hash)) {
     throw new Error("model setup returned malformed status")
   }
-  if (!hasModelSetupChoices(value.candidate)) throw new Error("model setup returned malformed status")
+  if (!isCurrentModelSetupCandidate(value.candidate)) throw new Error("model setup returned malformed status")
   const activeHash = value.active_setup_hash
   if (activeHash !== undefined && !isSetupHash(activeHash)) throw new Error("model setup returned malformed status")
-  if (activeHash === undefined ? value.active_candidate !== undefined : !hasModelSetupChoices(value.active_candidate)) {
+  if (activeHash === undefined ? value.active_candidate !== undefined : !isCurrentModelSetupCandidate(value.active_candidate)) {
     throw new Error("model setup returned malformed status")
   }
   if (value.pending_restart === false) {
@@ -2459,17 +2461,66 @@ function isSetupHash(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
 }
 
-function hasModelSetupChoices(value: unknown): boolean {
-  if (!isRecord(value) || !isRecord(value.choices)) return false
-  for (const key of ["commander_recipe_id", "executor_recipe_id"] as const) {
-    const choice = value.choices[key]
-    if (choice !== null && (typeof choice !== "string" || choice.length < 1 || choice.length > 160)) return false
+function isCurrentModelSetupCandidate(value: unknown): boolean {
+  if (!isRecord(value) || nodeUtilTypes.isProxy(value)) return false
+  const descriptor = Object.getOwnPropertyDescriptor(value, "choices")
+  if (!descriptor || !("value" in descriptor) || !isRecord(descriptor.value) || nodeUtilTypes.isProxy(descriptor.value)) return false
+  try {
+    return exactSetupValue(value, buildModelSetupCandidate(descriptor.value))
+  } catch {
+    return false
   }
-  return true
+}
+
+function exactSetupValue(actual: unknown, expected: unknown): boolean {
+  if (actual === null || expected === null || typeof actual !== "object" || typeof expected !== "object") return actual === expected
+  if (nodeUtilTypes.isProxy(actual) || nodeUtilTypes.isProxy(expected)) return false
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false
+    if (Object.getPrototypeOf(actual) !== Array.prototype || Object.getPrototypeOf(expected) !== Array.prototype) return false
+    if (!hasDenseDataElements(actual) || !hasDenseDataElements(expected)) return false
+    for (let index = 0; index < expected.length; index += 1) {
+      if (!exactSetupValue(actual[index], expected[index])) return false
+    }
+    return true
+  }
+  const actualRecord = actual as Record<string, unknown>
+  const expectedRecord = expected as Record<string, unknown>
+  if (!hasPlainDataPrototype(actualRecord) || !hasPlainDataPrototype(expectedRecord)) return false
+  const actualDescriptors = Object.getOwnPropertyDescriptors(actualRecord)
+  const expectedDescriptors = Object.getOwnPropertyDescriptors(expectedRecord)
+  if (!hasOnlyEnumerableDataProperties(actualDescriptors) || !hasOnlyEnumerableDataProperties(expectedDescriptors)) return false
+  const actualKeys = Object.keys(actualDescriptors).sort()
+  const expectedKeys = Object.keys(expectedDescriptors).sort()
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) return false
+  return expectedKeys.every((key) => exactSetupValue(actualDescriptors[key]!.value, expectedDescriptors[key]!.value))
+}
+
+function hasDenseDataElements(value: unknown[]): boolean {
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === "symbol")) return false
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)]
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) return false
+  }
+  return keys.every((key) => key === "length" || (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < value.length))
+}
+
+function hasPlainDataPrototype(value: Record<string, unknown>): boolean {
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasOnlyEnumerableDataProperties(descriptors: PropertyDescriptorMap): boolean {
+  return Reflect.ownKeys(descriptors).every((key) => typeof key === "string"
+    && "value" in descriptors[key]!
+    && descriptors[key]!.enumerable === true)
 }
 
 function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, statusValue: unknown): UiState {
   if (!isRecord(catalogValue) || !isRecord(statusValue)) throw new Error("model setup returned malformed state")
+  if (!exactSetupValue(catalogValue, modelSetupCatalog())) throw new Error("model setup returned malformed catalog")
   const choices = (value: unknown, role: string) => {
     if (!Array.isArray(value) || value.length > 20) throw new Error(`model setup ${role} recipes are malformed`)
     return value.map((item) => {
@@ -2531,6 +2582,14 @@ function isActiveModelSetupStatus(value: unknown): boolean {
     && value.pending_restart === false
     && isSetupHash(value.setup_hash)
     && value.active_setup_hash === value.setup_hash
+}
+
+function isExternalModelSetupAuthorityStatus(value: unknown): boolean {
+  return isRecord(value)
+    && value.status === "missing"
+    && value.revision === 0
+    && value.pending_restart === false
+    && (value.active_authority_source === "explicit" || value.active_authority_source === "legacy_commander_environment")
 }
 
 function applyModelSetupPreview(state: UiState, value: unknown): UiState {

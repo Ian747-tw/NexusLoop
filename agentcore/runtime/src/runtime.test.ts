@@ -280,6 +280,57 @@ describe("9W4E runtime model setup", () => {
       pending_restart: false,
       active_authority_source: "explicit",
     })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).rejects.toThrow("non-setup model authority is active")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("legacy Commander authority rejects model setup confirmation without appending", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "1",
+        NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND: "anthropic_messages_connector",
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ID: "anthropic-primary",
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND: "anthropic",
+        NXL_COMMANDER_INVESTIGATION_CONNECTOR_ID: "anthropic-main",
+        NXL_COMMANDER_INVESTIGATION_MODEL_ID: "claude-sonnet-4-5-20250929",
+        NXL_COMMANDER_INVESTIGATION_ENABLED_PHASES: "proposal_investigation",
+        NXL_COMMANDER_INVESTIGATION_TIMEOUT_MS: "30000",
+        NXL_COMMANDER_INVESTIGATION_MAX_REQUEST_BYTES: "65536",
+        NXL_COMMANDER_INVESTIGATION_MAX_RESPONSE_BYTES: "65536",
+        NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_BYTES: "48000",
+        NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_TOKENS: "16000",
+        NXL_COMMANDER_INVESTIGATION_MAX_OUTPUT_TOKENS: "4096",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_TOOLS: "1",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_JSON_SCHEMA: "0",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_LONG_CONTEXT: "1",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_LOCAL_EXECUTION: "0",
+      },
+    })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      status: "missing",
+      active_authority_source: "legacy_commander_environment",
+    })
+    const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).rejects.toThrow("non-setup model authority is active")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
     await server.shutdown()
   })
 

@@ -895,6 +895,9 @@ export class RuntimeServer {
         return this.modelSetupService().preview(payload)
       case "runtime.confirm_model_setup":
         return this.withModelSetupWriteLock(async () => {
+          if (this.modelProfileRuntimeRegistry && !this.modelSetupActiveHash) {
+            throw new Error("model setup cannot be committed while non-setup model authority is active")
+          }
           const confirmation = await this.modelSetupService().confirm(payload)
           return Object.freeze({
             ...confirmation,
