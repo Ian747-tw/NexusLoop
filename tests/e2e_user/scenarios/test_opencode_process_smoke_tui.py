@@ -77,8 +77,9 @@ def test_user_inspects_opencode_process_smoke_without_live_process(sandbox) -> N
     assert "opencode-smoke-secret" not in result.stdout
     assert "opencode-smoke-secret-abc123" not in result.stdout
 
-    events = sandbox.events_after_model_setup_bootstrap(project)
+    events = sandbox.list_events(project)
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_model_setup_committed") == 1
     assert "runtime_started" not in event_kinds
     assert "opencode_process_smoke_blocked" in event_kinds
     assert "opencode_process_smoke_started" not in event_kinds

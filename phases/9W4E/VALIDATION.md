@@ -33,10 +33,12 @@ uv run pytest tests/e2e_user -q
 git diff --check
 ```
 
-## Candidate historical gate
+## Superseded candidate historical gate
 
-The repaired implementation candidate `26de3cc0afb0254b3d81737e16761c96a9f4f9c1`
-completed the unfiltered historical suite:
+The earlier implementation candidate `26de3cc0afb0254b3d81737e16761c96a9f4f9c1`
+completed the historical suite, but its harness excluded the setup prerequisite
+event prefix from six scenario assertions. That evidence is superseded by the
+startup-gate repair and must not be used as final-head validation:
 
 ```text
 ........................................................................ [ 80%]
@@ -71,6 +73,7 @@ sys 489.74
 - The first full historical run produced `47 failed, 43 passed` because
   established scenarios lacked durable setup. The second produced
   `6 failed, 84 passed` because six no-mutation assertions included the real
-  setup prerequisite lifecycle. The harness now records that exact boundary;
-  those assertions inspect only later events. The next identical unfiltered
-  run passed all 90 scenarios as shown above.
+  setup prerequisite lifecycle. The temporary event-prefix filtering that made
+  the next run pass concealed the first-run startup defect and has been removed.
+  The repaired scenarios inspect the complete journal, including the setup
+  commit, and assert that the prerequisite creates no runtime lifecycle events.

@@ -742,7 +742,7 @@ export async function applyRuntimeUiEffect(
           runtime.command("runtime.model_setup_status"),
         ])
         const next = applyModelSetupCatalogAndStatus(state, catalog, status)
-        if (effect.enterIfMissing && isMissingModelSetupStatus(status)) {
+        if (effect.enterIfMissing && requiresModelSetupBeforeRuntimeStart(status)) {
           return {
             ...next,
             screen: "model-setup",
@@ -2400,8 +2400,9 @@ export async function applyRuntimeUiEffect(
 
 export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = state
-  next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-model-setup", enterIfMissing: true })
+  if (next.screen === "model-setup") return next
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-proposals", limit: PROPOSAL_LIMIT })
@@ -2415,6 +2416,16 @@ function isMissingModelSetupStatus(value: unknown): boolean {
   if (!isRecord(value) || value.status !== "missing" || value.revision !== 0 || value.pending_restart !== false) return false
   return value.active_authority_source !== "explicit"
     && value.active_authority_source !== "legacy_commander_environment"
+}
+
+function requiresModelSetupBeforeRuntimeStart(value: unknown): boolean {
+  if (isMissingModelSetupStatus(value)) return true
+  return isRecord(value)
+    && value.status === "ready"
+    && value.pending_restart === true
+    && typeof value.setup_hash === "string"
+    && value.setup_hash.length === 64
+    && typeof value.active_setup_hash !== "string"
 }
 
 function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, statusValue: unknown): UiState {

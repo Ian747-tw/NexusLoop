@@ -76,8 +76,9 @@ def test_user_runs_commander_executor_review_without_live_execution(sandbox) -> 
     assert "executor-review-secret-abc123" not in result.stdout
     assert "abc123" not in result.stdout
 
-    events = sandbox.events_after_model_setup_bootstrap(project)
+    events = sandbox.list_events(project)
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_model_setup_committed") == 1
     forbidden = {
         "opencode_handoff_started",
         "opencode_handoff_created",
@@ -114,7 +115,7 @@ def test_user_runs_commander_executor_review_without_live_execution(sandbox) -> 
     assert forbidden.isdisjoint(event_kinds)
     assert "runtime_started" not in event_kinds
     assert not any(kind.startswith("commander_executor_review_") for kind in event_kinds)
-    assert all(kind == "runtime_shutdown" for kind in event_kinds)
+    assert event_kinds == ["runtime_model_setup_committed"]
     serialized_events = json.dumps(events)
     assert "executor-review-secret" not in serialized_events
     assert "executor-review-secret-abc123" not in serialized_events

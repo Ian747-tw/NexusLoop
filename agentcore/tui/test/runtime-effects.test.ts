@@ -1149,15 +1149,34 @@ describe("runtime UI effects", () => {
   })
   test("runtime refresh enters the existing onboarding screen when durable setup is missing", async () => {
     const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const commands: string[] = []
     runtime.command = (async (name: string) => {
-      if (name === "runtime.status") return {}
+      commands.push(name)
       if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
       if (name === "runtime.model_setup_status") return { status: "missing", revision: 0, pending_restart: false }
-      if (name.startsWith("runtime.")) return []
       throw new Error(`unexpected ${name}`)
     }) as RuntimeClient["command"]
     const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
     expect(state).toMatchObject({ screen: "model-setup", modelSetup: { origin: "main", stage: "commander" } })
+    expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
+  })
+  test("runtime refresh keeps a first committed setup pre-start until fresh reconstruction", async () => {
+    const runtime = new FakeRuntimeClient("/tmp/demo", "demo")
+    const commands: string[] = []
+    runtime.command = (async (name: string) => {
+      commands.push(name)
+      if (name === "runtime.model_setup_catalog") return { commander_recipes: [], executor_recipes: [] }
+      if (name === "runtime.model_setup_status") return {
+        status: "ready",
+        revision: 1,
+        setup_hash: "5".repeat(64),
+        pending_restart: true,
+      }
+      throw new Error(`unexpected ${name}`)
+    }) as RuntimeClient["command"]
+    const state = await refreshRuntimeRecords({ ...initialState("/tmp/demo"), screen: "resume" }, runtime)
+    expect(state).toMatchObject({ screen: "model-setup", modelSetup: { pendingRestart: true } })
+    expect(commands.sort()).toEqual(["runtime.model_setup_catalog", "runtime.model_setup_status"])
   })
   test("runtime refresh preserves the shell when mutually exclusive registry authority is already active", async () => {
     for (const authoritySource of ["explicit", "legacy_commander_environment"] as const) {

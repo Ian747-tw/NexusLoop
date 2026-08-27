@@ -2,7 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises"
 import { tmpdir } from "os"
 import { join } from "path"
-import { EventStore, FakeOpenCodeAdapter, ModelSetupService, RuntimeServer } from "../../runtime/src/index"
+import {
+  createRuntimeServerFromLaunchConfig,
+  EventStore,
+  FakeOpenCodeAdapter,
+  ModelSetupService,
+  RuntimeServer,
+  RuntimeServerClient,
+} from "../../runtime/src/index"
 import type { RuntimeEvent } from "../src/events"
 import { buildHeadlessSnapshot, runTuiEntrypoint } from "../src/launch"
 import type { RuntimeClient } from "../src/runtime"
@@ -930,9 +937,80 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("pending_restart=true")
     expect(snapshot).not.toContain("screen=main")
     const eventKinds = await readEventKinds(dir)
-    expect(eventKinds.filter((kind) => kind === "runtime_model_setup_committed")).toHaveLength(1)
-    expect(eventKinds.indexOf("runtime_model_setup_committed")).toBeLessThan(eventKinds.lastIndexOf("runtime_shutdown"))
-    expect(eventKinds.at(-1)).toBe("runtime_shutdown")
+    expect(eventKinds).toEqual(["runtime_model_setup_committed"])
+  })
+
+  test("real RuntimeServerClient keeps first-run setup before every runtime lifecycle boundary", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify([{ type: "submit" }, { type: "submit" }, { type: "submit" }, { type: "submit" }]) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("stage=committed")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual(["runtime_model_setup_committed"])
+    await client.shutdown()
+    expect(await readEventKinds(dir)).toEqual(["runtime_model_setup_committed"])
+
+    const nextAdapter = new SpyOpenCodeAdapter()
+    const nextServer = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: nextAdapter })
+    const nextClient = new RuntimeServerClient({ server: nextServer, autoStart: true, ownsServer: true })
+    await nextClient.command("runtime.status")
+    expect(nextAdapter.startCalls).toBe(1)
+    expect(await readEventKinds(dir)).toContain("runtime_started")
+    await nextClient.shutdown()
+  })
+
+  test("real first-run TUI never reaches the configured process spawn seam", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    let spawnCalls = 0
+    const runtime = createTuiRuntimeClient({
+      projectDir: dir,
+      env: {
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+      },
+      openCodeAdapterFactoryOptions: {
+        spawn: (() => {
+          spawnCalls += 1
+          throw new Error("first-run setup must not spawn OpenCode")
+        }) as never,
+      },
+    })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify([{ type: "submit" }, { type: "submit" }, { type: "submit" }, { type: "submit" }]) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("stage=committed")
+    expect(spawnCalls).toBe(0)
+    expect(await readEventKinds(dir)).toEqual(["runtime_model_setup_committed"])
   })
 
   test("same-process spec approval cannot open model setup through the bootstrap fake client", async () => {

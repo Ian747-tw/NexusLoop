@@ -90,8 +90,9 @@ def test_user_inspects_context_budget_registry_without_launching_or_mutating(san
     assert "vendor-secret" not in result.stdout
     assert "model-secret" not in result.stdout
 
-    events = sandbox.events_after_model_setup_bootstrap(project)
+    events = sandbox.list_events(project)
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_model_setup_committed") == 1
     assert event_kinds.count("runtime_started") == 0
     assert event_kinds.count("opencode_session_planned") == 0
     forbidden = {

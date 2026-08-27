@@ -9,4 +9,4 @@
 - [x] 7. Integrate packaged Executor readiness and exact launch gating.
 - [x] 8. Add canonical runtime/client commands and OpenTUI role selection.
 - [x] 9. Add ADR-040 and update implemented canonical documentation.
-- [x] 10. Run complete final validation, detached historical E2E, and mechanical guards.
+- [ ] 10. Run complete final validation, detached historical E2E, and mechanical guards for the startup-gate repair head.

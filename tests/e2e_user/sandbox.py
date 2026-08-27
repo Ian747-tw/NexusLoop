@@ -37,7 +37,6 @@ class Sandbox:
         self.runner = CliRunner(self.nxl_executable, self.env, recorded_dir)
         self._automatic_model_setup = True
         self._model_setup_bootstrap_active = False
-        self._model_setup_bootstrap_event_counts: dict[Path, int] = {}
 
     @property
     def python(self) -> Path:
@@ -161,11 +160,6 @@ class Sandbox:
         events = events_path.read_text(encoding="utf-8") if events_path.exists() else ""
         if '"kind":"runtime_model_setup_committed"' not in events:
             raise AssertionError("real TUI did not commit the historical scenario model setup prerequisite")
-        self._model_setup_bootstrap_event_counts[project.resolve()] = len([line for line in events.splitlines() if line.strip()])
-
-    def events_after_model_setup_bootstrap(self, project: Path) -> list[dict[str, object]]:
-        events = self.list_events(project)
-        return events[self._model_setup_bootstrap_event_counts.get(project.resolve(), 0) :]
 
     def run_cli_background(
         self,
