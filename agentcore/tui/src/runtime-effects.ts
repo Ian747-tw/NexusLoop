@@ -1,4 +1,6 @@
 import { redactText, redactUnknown } from "./redaction"
+import { buildModelSetupCandidate, modelSetupCatalog } from "../../runtime/src/model-configuration/model-setup"
+import { types as nodeUtilTypes } from "node:util"
 import { parseRuntimeCommand, type KeySideEffect } from "./keyboard"
 import {
   executionCommandFor,
@@ -736,6 +738,56 @@ export async function applyRuntimeUiEffect(
 ): Promise<UiState> {
   try {
     switch (effect.type) {
+      case "load-model-setup": {
+        const [catalog, status] = await Promise.all([
+          runtime.command("runtime.model_setup_catalog"),
+          runtime.command("runtime.model_setup_status"),
+        ])
+        const setupDisposition = classifyModelSetupStatus(status)
+        const next = applyModelSetupCatalogAndStatus(state, catalog, status)
+        const setupRequired = setupDisposition === "required"
+        const checked = {
+          ...next,
+          modelSetup: { ...next.modelSetup, startupCheckStatus: setupRequired ? "required" as const : "clear" as const },
+        }
+        if (isExternalModelSetupAuthorityStatus(status)) {
+          if (effect.continueInitializationIfActive) return enterInitializedShell(checked)
+          if (state.screen === "model-setup") {
+            const screen = state.modelSetup.origin
+            return {
+              ...checked,
+              screen,
+              focus: screen === "main" ? "message-box" : "init-choice",
+              systemActions: [...checked.systemActions, { title: "Model setup unavailable", detail: "Non-setup model authority is active" }],
+            }
+          }
+          return checked
+        }
+        if (effect.enterIfMissing && setupRequired) {
+          return {
+            ...checked,
+            screen: "model-setup",
+            focus: "init-choice",
+            modelSetup: { ...checked.modelSetup, origin: state.screen === "init" ? "init" : "main", stage: "commander" },
+          }
+        }
+        if (effect.continueInitializationIfActive && isActiveModelSetupStatus(status)) return enterInitializedShell(checked)
+        return checked
+      }
+      case "preview-model-setup":
+        return applyModelSetupPreview(state, await runtime.command("runtime.preview_model_setup", {
+          commander_recipe_id: effect.commanderRecipeId,
+          executor_recipe_id: effect.executorRecipeId,
+        }))
+      case "confirm-model-setup":
+        return applyModelSetupCommit(state, await runtime.command("runtime.confirm_model_setup", {
+          commander_recipe_id: effect.commanderRecipeId,
+          executor_recipe_id: effect.executorRecipeId,
+          expected_revision: effect.expectedRevision,
+          candidate_hash: effect.candidateHash,
+          confirmed_by: "tui-operator",
+          confirmation: "CONFIRM_MODEL_SETUP",
+        }))
       case "load-runtime-status":
         return applyRuntimeStatus(state, await runtime.command("runtime.status"))
       case "load-command-authority-summary":
@@ -2286,10 +2338,34 @@ export async function applyRuntimeUiEffect(
       }
       case "send-command": {
         const next = await applyNamedRuntimeCommand(state, runtime, effect.command, effect.args ?? [])
+        if (effect.command === "initialize") {
+          return await applyRuntimeUiEffect(next, runtime, {
+            type: "load-model-setup",
+            enterIfMissing: true,
+            continueInitializationIfActive: true,
+          })
+        }
         return shouldRefreshAfterCommand(effect.command) ? await refreshRuntimeRecordsOrRecordError(next, runtime) : next
       }
     }
   } catch (error) {
+    if (effect.type === "load-model-setup" || effect.type === "preview-model-setup" || effect.type === "confirm-model-setup") {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        ...state,
+        ...(effect.type === "load-model-setup" ? { screen: "model-setup" as const, focus: "init-choice" as const } : {}),
+        modelSetup: {
+          ...state.modelSetup,
+          ...(effect.type === "load-model-setup" ? {
+            startupCheckStatus: "failed" as const,
+            origin: state.screen === "init" ? "init" as const : "main" as const,
+            stage: "loading" as const,
+          } : {}),
+          ...(effect.type === "confirm-model-setup" && state.modelSetup.stage === "confirming" ? { stage: "confirmation" as const } : {}),
+          commandError: redactText(message).slice(0, 240),
+        },
+      }
+    }
     if (isOperatorActionEffect(effect)) return recordOperatorActionCommandError(state, error)
     if (isMissionExecutionEffect(effect)) return recordMissionExecutionCommandError(state, error)
     if (isReviewEffect(effect)) return recordReviewCommandError(state, error)
@@ -2349,6 +2425,8 @@ export async function applyRuntimeUiEffect(
 
 export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
   let next = state
+  next = await applyRuntimeUiEffect(next, runtime, { type: "load-model-setup", enterIfMissing: true })
+  if (next.modelSetup.startupCheckStatus !== "clear" || next.screen === "model-setup") return next
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-runtime-status" })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-recent-missions", limit: 5 })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-reviews", limit: REVIEW_LIMIT })
@@ -2357,6 +2435,223 @@ export async function refreshRuntimeRecords(state: UiState, runtime: RuntimeClie
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbooks", limit: PLAYBOOK_LIMIT })
   next = await applyRuntimeUiEffect(next, runtime, { type: "load-playbook-drafts", limit: WORKBENCH_DRAFT_LIMIT })
   return next
+}
+
+function classifyModelSetupStatus(value: unknown): "required" | "clear" {
+  if (!isRecord(value) || !Number.isInteger(value.revision) || typeof value.pending_restart !== "boolean") {
+    throw new Error("model setup returned malformed status")
+  }
+  const authority = value.active_authority_source
+  if (authority !== undefined && authority !== "explicit" && authority !== "legacy_commander_environment") {
+    throw new Error("model setup returned malformed status")
+  }
+  if (value.status === "missing") {
+    if (value.revision !== 0 || value.pending_restart !== false || value.setup_hash !== undefined || value.active_setup_hash !== undefined) {
+      throw new Error("model setup returned malformed status")
+    }
+    return authority === undefined ? "required" : "clear"
+  }
+  if (value.status !== "ready" || (value.revision as number) < 1 || !isSetupHash(value.setup_hash)) {
+    throw new Error("model setup returned malformed status")
+  }
+  if (!isCurrentModelSetupCandidate(value.candidate)) throw new Error("model setup returned malformed status")
+  const activeHash = value.active_setup_hash
+  if (activeHash !== undefined && !isSetupHash(activeHash)) throw new Error("model setup returned malformed status")
+  if (activeHash === undefined ? value.active_candidate !== undefined : !isCurrentModelSetupCandidate(value.active_candidate)) {
+    throw new Error("model setup returned malformed status")
+  }
+  if (value.pending_restart === false) {
+    if (activeHash !== value.setup_hash) throw new Error("model setup returned malformed status")
+    if (!exactSetupValue(value.candidate, value.active_candidate)) throw new Error("model setup returned malformed status")
+    return "clear"
+  }
+  if (activeHash === value.setup_hash) throw new Error("model setup returned malformed status")
+  return activeHash === undefined ? "required" : "clear"
+}
+
+function isSetupHash(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
+}
+
+function isCurrentModelSetupCandidate(value: unknown): boolean {
+  if (!isRecord(value) || nodeUtilTypes.isProxy(value)) return false
+  const descriptor = Object.getOwnPropertyDescriptor(value, "choices")
+  if (!descriptor || !("value" in descriptor) || !isRecord(descriptor.value) || nodeUtilTypes.isProxy(descriptor.value)) return false
+  try {
+    return exactSetupValue(value, buildModelSetupCandidate(descriptor.value))
+  } catch {
+    return false
+  }
+}
+
+function exactSetupValue(actual: unknown, expected: unknown): boolean {
+  if (actual === null || expected === null || typeof actual !== "object" || typeof expected !== "object") return actual === expected
+  if (nodeUtilTypes.isProxy(actual) || nodeUtilTypes.isProxy(expected)) return false
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false
+    if (Object.getPrototypeOf(actual) !== Array.prototype || Object.getPrototypeOf(expected) !== Array.prototype) return false
+    if (!hasDenseDataElements(actual) || !hasDenseDataElements(expected)) return false
+    for (let index = 0; index < expected.length; index += 1) {
+      if (!exactSetupValue(actual[index], expected[index])) return false
+    }
+    return true
+  }
+  const actualRecord = actual as Record<string, unknown>
+  const expectedRecord = expected as Record<string, unknown>
+  if (!hasPlainDataPrototype(actualRecord) || !hasPlainDataPrototype(expectedRecord)) return false
+  const actualDescriptors = Object.getOwnPropertyDescriptors(actualRecord)
+  const expectedDescriptors = Object.getOwnPropertyDescriptors(expectedRecord)
+  if (!hasOnlyEnumerableDataProperties(actualDescriptors) || !hasOnlyEnumerableDataProperties(expectedDescriptors)) return false
+  const actualKeys = Object.keys(actualDescriptors).sort()
+  const expectedKeys = Object.keys(expectedDescriptors).sort()
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) return false
+  return expectedKeys.every((key) => exactSetupValue(actualDescriptors[key]!.value, expectedDescriptors[key]!.value))
+}
+
+function hasDenseDataElements(value: unknown[]): boolean {
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== value.length + 1 || keys.some((key) => typeof key === "symbol")) return false
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)]
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) return false
+  }
+  return keys.every((key) => key === "length" || (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < value.length))
+}
+
+function hasPlainDataPrototype(value: Record<string, unknown>): boolean {
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasOnlyEnumerableDataProperties(descriptors: PropertyDescriptorMap): boolean {
+  return Reflect.ownKeys(descriptors).every((key) => typeof key === "string"
+    && "value" in descriptors[key]!
+    && descriptors[key]!.enumerable === true)
+}
+
+function applyModelSetupCatalogAndStatus(state: UiState, catalogValue: unknown, statusValue: unknown): UiState {
+  if (!isRecord(catalogValue) || !isRecord(statusValue)) throw new Error("model setup returned malformed state")
+  if (!exactSetupValue(catalogValue, modelSetupCatalog())) throw new Error("model setup returned malformed catalog")
+  const choices = (value: unknown, role: string) => {
+    if (!Array.isArray(value) || value.length > 20) throw new Error(`model setup ${role} recipes are malformed`)
+    return value.map((item) => {
+      if (!isRecord(item)) throw new Error(`model setup ${role} recipe is malformed`)
+      const id = readString(item.recipe_id, "")
+      const label = readString(item.display_name, "")
+      if (!id || !label) throw new Error(`model setup ${role} recipe is malformed`)
+      return { id: id.slice(0, 160), label: label.slice(0, 120) }
+    })
+  }
+  const commanderChoices = [{ id: "", label: "Leave Commander unconfigured" }, ...choices(catalogValue.commander_recipes, "Commander")]
+  const executorChoices = [{ id: "", label: "Leave Executor unconfigured" }, ...choices(catalogValue.executor_recipes, "Executor")]
+  const candidate = isRecord(statusValue.candidate) && isRecord(statusValue.candidate.choices) ? statusValue.candidate.choices : undefined
+  const activeCandidate = isRecord(statusValue.active_candidate) && isRecord(statusValue.active_candidate.choices) ? statusValue.active_candidate.choices : undefined
+  const selectedIndex = (items: Array<{ id: string }>, value: unknown) => {
+    if (value === null) return 0
+    if (typeof value !== "string") return 0
+    const index = items.findIndex((item) => item.id === value)
+    return index < 0 ? 0 : index
+  }
+  const readiness = (value: unknown) => {
+    if (!isRecord(value)) return "unconfigured"
+    const selected = readString(value.selection_status, "unknown")
+    const connected = readString(value.credential_connection_status, "unknown")
+    const lifecycle = readString(value.lifecycle_status, "unknown")
+    return `${selected}; credential ${connected}; lifecycle ${lifecycle}`.slice(0, 180)
+  }
+  const label = (items: Array<{ id: string; label: string }>, value: unknown) => items[selectedIndex(items, value)]?.label ?? "Unconfigured"
+  const pendingCommanderLabel = label(commanderChoices, candidate?.commander_recipe_id)
+  const pendingExecutorLabel = label(executorChoices, candidate?.executor_recipe_id)
+  const activeCommanderLabel = label(commanderChoices, activeCandidate?.commander_recipe_id)
+  const activeExecutorLabel = label(executorChoices, activeCandidate?.executor_recipe_id)
+  return {
+    ...state,
+    modelSetup: {
+      ...state.modelSetup,
+      stage: "commander",
+      commanderChoices,
+      executorChoices,
+      commanderSelection: selectedIndex(commanderChoices, candidate?.commander_recipe_id),
+      executorSelection: selectedIndex(executorChoices, candidate?.executor_recipe_id),
+      activeCommanderLabel,
+      activeExecutorLabel,
+      pendingCommanderLabel,
+      pendingExecutorLabel,
+      activeSetupHash: typeof statusValue.active_setup_hash === "string" ? statusValue.active_setup_hash.slice(0, 64) : undefined,
+      pendingSetupHash: typeof statusValue.setup_hash === "string" ? statusValue.setup_hash.slice(0, 64) : undefined,
+      pendingRestart: statusValue.pending_restart === true,
+      commanderReadiness: readiness(statusValue.commander_role_readiness),
+      executorReadiness: readiness(statusValue.executor_role_readiness),
+      commandError: undefined,
+    },
+  }
+}
+
+function isActiveModelSetupStatus(value: unknown): boolean {
+  return isRecord(value)
+    && value.status === "ready"
+    && value.pending_restart === false
+    && isSetupHash(value.setup_hash)
+    && value.active_setup_hash === value.setup_hash
+}
+
+function isExternalModelSetupAuthorityStatus(value: unknown): boolean {
+  return isRecord(value)
+    && value.status === "missing"
+    && value.revision === 0
+    && value.pending_restart === false
+    && (value.active_authority_source === "explicit" || value.active_authority_source === "legacy_commander_environment")
+}
+
+function enterInitializedShell(state: UiState): UiState {
+  return {
+    ...state,
+    screen: "main",
+    focus: "message-box",
+    lastCommand: "initialize",
+    commander: { ...state.commander, workIntent: "TUI onboarding shell" },
+    systemActions: [...state.systemActions, { title: "Initialize selected", detail: "Active model authority verified; entered onboarding shell" }],
+  }
+}
+
+function applyModelSetupPreview(state: UiState, value: unknown): UiState {
+  if (!isRecord(value) || !Number.isInteger(value.expected_revision) || typeof value.candidate_hash !== "string" || typeof value.configuration_hash !== "string") {
+    throw new Error("model setup preview is malformed")
+  }
+  return {
+    ...state,
+    modelSetup: {
+      ...state.modelSetup,
+      stage: "preview",
+      expectedRevision: Number(value.expected_revision),
+      candidateHash: value.candidate_hash.slice(0, 64),
+      configurationHash: value.configuration_hash.slice(0, 64),
+      commandError: undefined,
+    },
+  }
+}
+
+function applyModelSetupCommit(state: UiState, value: unknown): UiState {
+  if (!isRecord(value) || (value.status !== "committed" && value.status !== "idempotent") || typeof value.setup_hash !== "string") {
+    throw new Error("model setup confirmation result is malformed")
+  }
+  return {
+    ...state,
+    modelSetup: {
+      ...state.modelSetup,
+      stage: "committed",
+      pendingSetupHash: value.setup_hash.slice(0, 64),
+      pendingRestart: value.restart_required === true,
+      pendingCommanderLabel: state.modelSetup.commanderChoices[state.modelSetup.commanderSelection]?.label ?? "Unconfigured",
+      pendingExecutorLabel: state.modelSetup.executorChoices[state.modelSetup.executorSelection]?.label ?? "Unconfigured",
+      commandError: undefined,
+    },
+    systemActions: [...state.systemActions, {
+      title: value.restart_required === true ? "Model setup recorded" : "Model setup unchanged",
+      detail: value.restart_required === true ? "Selection activates after a clean restart" : "The active selection already matches this setup",
+    }].slice(-12),
+  }
 }
 
 export async function refreshResearchRecords(state: UiState, runtime: RuntimeClient): Promise<UiState> {
@@ -6103,6 +6398,16 @@ function clearCommandErrorFor(command: string, state: UiState): UiState {
 function applyNamedRuntimeCommand(state: UiState, runtime: RuntimeClient, command: string, args: string[]): Promise<UiState> {
   const commandState = { ...state, lastCommand: command }
   switch (command) {
+    case "model-setup":
+      if (args.length > 0) throw new Error("/model-setup accepts no arguments")
+      if (runtime.modelSetupAuthority === "restart_required") {
+        throw new Error("Restart NexusLoop after spec approval before opening model setup")
+      }
+      return applyRuntimeUiEffect({
+        ...commandState,
+        screen: "model-setup",
+        modelSetup: { ...commandState.modelSetup, origin: "main", stage: "loading", commandError: undefined },
+      }, runtime, { type: "load-model-setup" })
     case "stage":
       return Promise.resolve(stageSuggestedOperatorCommand(commandState, args))
     case "stage-command":

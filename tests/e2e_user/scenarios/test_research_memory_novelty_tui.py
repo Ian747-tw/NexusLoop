@@ -85,17 +85,9 @@ def test_user_previews_research_memory_and_novelty_without_execution_or_mutation
     assert "research-memory-secret-abc123" not in result.stdout
     assert "token=abc123" not in result.stdout
 
-    events_path = project / ".nxl" / "events.jsonl"
-    events = (
-        [
-            json.loads(line)
-            for line in events_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        if events_path.exists()
-        else []
-    )
+    events = sandbox.list_events(project)
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_model_setup_committed") == 1
     assert event_kinds.count("runtime_started") == 0
     forbidden = {
         "opencode_session_planned",

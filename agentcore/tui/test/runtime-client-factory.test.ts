@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises"
-import { join } from "path"
+import { basename, join } from "path"
 import { tmpdir } from "os"
 import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
-import { EventStore, ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { EventStore, ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ModelSetupService, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 
 const cleanup: string[] = []
@@ -43,6 +43,16 @@ async function makeApprovedProject(dir: string): Promise<void> {
       2,
     ),
   )
+  const setup = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+  const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+  const preview = await setup.preview(choices)
+  await setup.confirm({
+    ...choices,
+    expected_revision: preview.expected_revision,
+    candidate_hash: preview.candidate_hash,
+    confirmed_by: "tui-runtime-test-operator",
+    confirmation: "CONFIRM_MODEL_SETUP",
+  })
 }
 
 function minimaxConnector() {
@@ -139,11 +149,52 @@ async function readFirst<T>(stream: AsyncIterable<T>): Promise<T> {
 }
 
 describe("TUI runtime client factory", () => {
-  test("no env keeps fake default behavior", async () => {
+  test("no env keeps legacy fake behavior only before spec approval", async () => {
     const dir = await tempProject()
     const client = createTuiRuntimeClient({ projectDir: dir, env: {} })
 
     expect(client).toBeInstanceOf(FakeRuntimeClient)
+    expect(client.modelSetupAuthority).toBe("restart_required")
+  })
+
+  test("no env routes an approved project through the real RuntimeServer client", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const client = createTuiRuntimeClient({ projectDir: dir, env: { NXL_OPENCODE_ADAPTER: "fake" } })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    await (client as TuiRuntimeServerClient).runtime.shutdown()
+  })
+
+  test("auto mode resolves an approved ancestor before selecting and constructing the real client", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const nested = join(dir, "src", "nested")
+    await mkdir(nested, { recursive: true })
+
+    const client = createTuiRuntimeClient({ projectDir: nested, env: { NXL_OPENCODE_ADAPTER: "fake" } })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    const runtime = (client as TuiRuntimeServerClient).runtime
+    await expect(runtime.command("runtime.status")).resolves.toMatchObject({ projectName: basename(dir) })
+    await runtime.shutdown()
+  })
+
+  test("no env routes a valid large approved spec through the real RuntimeServer client", async () => {
+    const dir = await tempProject()
+    await mkdir(join(dir, ".nxl", "spec"), { recursive: true })
+    await writeFile(join(dir, ".nxl", "spec", "current.json"), JSON.stringify({
+      spec_id: "spec_large_approved",
+      version: 1,
+      status: "approved",
+      objective: "x".repeat(70_000),
+      success_metrics: ["tests pass"],
+    }))
+
+    const client = createTuiRuntimeClient({ projectDir: dir, env: { NXL_OPENCODE_ADAPTER: "fake" } })
+
+    expect(client).toBeInstanceOf(TuiRuntimeServerClient)
+    await (client as TuiRuntimeServerClient).runtime.shutdown()
   })
 
   test("NXL_RUNTIME_CLIENT=fake explicitly selects fake", async () => {
@@ -152,6 +203,7 @@ describe("TUI runtime client factory", () => {
 
     expect(readRuntimeClientKind({ NXL_RUNTIME_CLIENT: "fake" })).toBe("fake")
     expect(client).toBeInstanceOf(FakeRuntimeClient)
+    expect(client.modelSetupAuthority).toBe("fixture")
   })
 
   test("NXL_RUNTIME_CLIENT=real creates RuntimeServer-backed client", async () => {
@@ -411,6 +463,20 @@ describe("TUI runtime client factory", () => {
     const state = reduceRuntimeEvent(initialState(dir), event)
     expect(state).toBeDefined()
 
+    await client.runtime.shutdown()
+  })
+
+  test("real runtime stream exposes an uninitialized project without starting it", async () => {
+    const dir = await tempProject()
+    const client = createTuiRuntimeClient({
+      projectDir: dir,
+      env: { NXL_RUNTIME_CLIENT: "real", NXL_OPENCODE_ADAPTER: "fake" },
+    }) as TuiRuntimeServerClient
+    const iterator = client.stream()[Symbol.asyncIterator]()
+    expect((await iterator.next()).value).toMatchObject({ type: "RuntimeReady" })
+    expect((await iterator.next()).value).toEqual({ type: "ProjectUninitialized", projectDir: dir })
+    expect(await client.runtime.server.status()).toMatchObject({ runtimeStatus: "created", specApproved: false, lockHeld: false })
+    await iterator.return?.()
     await client.runtime.shutdown()
   })
 

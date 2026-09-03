@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from "./events"
+import type { KeyCommand } from "./keyboard"
 import { initialState, type UiState } from "./state"
 import { redactText } from "./redaction"
 
@@ -210,6 +211,39 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
           detail: `${redactText(event.summary)}${event.pauseRecommended ? " | commander should review pause" : ""}`,
         }),
       }
+  }
+}
+
+export type ModelSetupStartupGate = "pending" | "required" | "clear" | "blocked"
+
+export function modelSetupStartupGateAllowsInput(gate: ModelSetupStartupGate): boolean {
+  return gate === "clear"
+}
+
+export function modelSetupStartupGateAllowsCommand(state: UiState, command: KeyCommand, gate: ModelSetupStartupGate): boolean {
+  if (gate === "clear") return true
+  if (gate === "required") {
+    return state.screen === "model-setup"
+      && !(command.type === "cancel" && (state.modelSetup.stage === "loading" || state.modelSetup.stage === "commander"))
+  }
+  return gate === "blocked"
+      && command.type === "submit"
+      && state.screen === "model-setup"
+      && state.modelSetup.stage === "loading"
+      && state.modelSetup.commandError !== undefined
+}
+
+export function reduceRuntimeEventDuringModelSetupGate(
+  state: UiState,
+  event: RuntimeEvent,
+  gate: ModelSetupStartupGate,
+): UiState {
+  const next = reduceRuntimeEvent(state, event)
+  if (event.type !== "ProjectInitialized" || gate === "clear") return next
+  return {
+    ...next,
+    screen: gate === "pending" ? "boot" : state.screen,
+    focus: state.focus,
   }
 }
 

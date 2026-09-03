@@ -6,8 +6,8 @@ provider settings do not authorize Commander.
 ## Internal Model-Profile Contract
 
 Branch 9W4B0 defines the internal configuration vocabulary, and 9W4B1 activates
-validated snapshots in an immutable RuntimeServer registry. It is still not a
-CLI, TUI, persistent configuration, or discovery feature. A model connection contains only bounded
+validated snapshots in an immutable RuntimeServer registry. Branch 9W4E adds a
+credential-free append-only setup surface over that same vocabulary. A model connection contains only bounded
 provider/account authority identifiers, a model profile selects an exact model,
 and independent role bindings select profiles for `commander` and `executor`.
 The Executor role means the primary tactical OpenCode model only, not small,
@@ -38,6 +38,26 @@ that binds the exact OpenCode provider ID, including any explicit aliases, to
 the connection's provider kind. Its policy identity is part of the Executor
 projection hash. OpenCode discovery and authentication cannot populate this
 registry.
+
+## First-run Recipes
+
+The setup catalog contains exactly three Commander and three primary Executor
+recipes: Anthropic Claude Sonnet 4.5, Google Gemini 2.5 Flash, and OpenAI
+GPT-4.1 mini. Commander uses the existing native Messages, Generative AI, and
+Responses conformance entries. Executor uses the existing static provider
+mapping. Either role may be explicitly unconfigured.
+
+Setup stores recipe identities and semantic hashes only. It never stores a
+credential, environment name, endpoint, header, provider object, OpenCode auth
+record, or catalog payload. Connector and credential readiness remain
+role-owned. A setup commit is pending until restart and cannot mutate the
+active registry.
+
+Executor readiness is observed by the packaged
+`opencode nexusloop executor-readiness-v1` command using the exact executable
+configured for Executor launch. Availability and credential connection remain
+independent, and unknown is not ready. The command cannot select a model,
+create provider mapping, authorize Commander, or change either projection.
 
 The kernel accepts no endpoint, base-URL, header, package, plugin, provider
 option, environment-variable, OAuth, credential, or catalog authority field.

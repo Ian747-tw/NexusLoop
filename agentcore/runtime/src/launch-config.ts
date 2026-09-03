@@ -4,8 +4,11 @@ import { readExternalApiConnectorsFromEnv } from "./external-api/api-connector-r
 import { readReasoningProviderConfigFromEnv } from "./reasoning/reasoning-provider-config"
 import { readCommanderInvestigationProviderConfigFromEnv } from "./commander-agent"
 import type { WakeSchedulerBootstrapConfig } from "./schedules/wake-scheduler-bootstrap-types"
+import { locateProjectRoot } from "./project/project-root"
+import { readPersistedModelSetupAuthority } from "./model-configuration/model-setup"
+import { createPackagedOpenCodeExecutorReadinessResolver, snapshotPackagedOpenCodeAdapterConfig } from "./model-configuration/opencode-executor-readiness-resolver"
 
-export interface RuntimeServerLaunchConfig extends RuntimeServerOptions {
+export interface RuntimeServerLaunchConfig extends Omit<RuntimeServerOptions, "executorModelReadinessResolver"> {
   env?: Record<string, string | undefined>
 }
 
@@ -13,6 +16,7 @@ export function readRuntimeServerLaunchOptionsFromEnv(
   env: Record<string, string | undefined>,
   baseOptions: RuntimeServerOptions = {},
 ): RuntimeServerOptions {
+  rejectExecutorObserverEnvironment(env)
   const options: RuntimeServerOptions = { ...baseOptions }
   if (options.modelProfileRuntimeRegistry && hasLegacyCommanderEnvironmentAuthority(env)) {
     throw new Error("explicit model-profile registry cannot be combined with legacy Commander environment authority")
@@ -56,8 +60,65 @@ function hasLegacyCommanderEnvironmentAuthority(env: Record<string, string | und
 }
 
 export function createRuntimeServerFromLaunchConfig(config: RuntimeServerLaunchConfig = {}): RuntimeServer {
-  const { env, ...baseOptions } = config
-  return new RuntimeServer(env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions)
+  if (Object.prototype.hasOwnProperty.call(config, "executorModelReadinessResolver")) {
+    throw new Error("custom Executor readiness resolver is not supported by production launch configuration")
+  }
+  const { env, ...providedOptions } = config
+  if (env) rejectExecutorObserverEnvironment(env)
+  const projectDir = locateProjectRoot(providedOptions.projectDir)
+  const persisted = readPersistedModelSetupAuthorityBeforeLock(projectDir)
+  if (persisted && providedOptions.modelProfileRuntimeRegistry) {
+    throw new Error("persisted model setup cannot be combined with an explicit model-profile registry")
+  }
+  if (persisted && providedOptions.commanderInvestigationProviderConfig) {
+    throw new Error("persisted model setup cannot be combined with explicit Commander provider authority")
+  }
+  if (persisted && env && hasLegacyCommanderEnvironmentAuthority(env)) {
+    throw new Error("persisted model setup cannot be combined with legacy Commander environment authority")
+  }
+  const baseOptions: RuntimeServerOptions = persisted
+    ? {
+        ...providedOptions,
+        projectDir,
+        revalidatePersistedModelSetupOnStart: true,
+        modelProfileRuntimeRegistry: persisted.registry,
+        modelSetupActiveHash: persisted.setup_hash,
+        modelSetupActiveCandidate: persisted.candidate,
+        ...(persisted.commander_provider_config ? { commanderInvestigationProviderConfig: persisted.commander_provider_config } : {}),
+      }
+    : { ...providedOptions, projectDir, revalidatePersistedModelSetupOnStart: true }
+  const options = env ? readRuntimeServerLaunchOptionsFromEnv(env, baseOptions) : baseOptions
+  if (options.modelProfileRuntimeRegistry?.executorSelection()) {
+    if (options.adapter || options.opencodeLaunchAdapter || options.opencodeLaunchSpawn || options.openCodeAdapterFactoryOptions?.spawn) {
+      throw new Error("Executor model-profile selection requires the same packaged OpenCode execution target for readiness and launch")
+    }
+    if (options.openCodeAdapterConfig?.kind !== "process") {
+      throw new Error("Executor model-profile selection requires a packaged process OpenCode execution target for readiness and launch")
+    }
+    const executionTarget = snapshotPackagedOpenCodeAdapterConfig(options.openCodeAdapterConfig)
+    options.openCodeAdapterConfig = executionTarget
+    options.executorModelReadinessResolver = createPackagedOpenCodeExecutorReadinessResolver({
+      projectDir,
+      openCodeAdapterConfig: executionTarget,
+    })
+  }
+  return new RuntimeServer(options)
+}
+
+function readPersistedModelSetupAuthorityBeforeLock(projectDir: string): ReturnType<typeof readPersistedModelSetupAuthority> {
+  try {
+    return readPersistedModelSetupAuthority(projectDir)
+  } catch (error) {
+    if (error instanceof Error && error.message === "model setup journal is malformed") return undefined
+    throw error
+  }
+}
+
+function rejectExecutorObserverEnvironment(env: Record<string, string | undefined>): void {
+  if (env.NXL_OPENCODE_EXECUTOR_READINESS_COMMAND !== undefined
+    || env.NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON !== undefined) {
+    throw new Error("custom Executor readiness observer environment configuration is not supported")
+  }
 }
 
 export function readWakeSchedulerBootstrapConfigFromEnv(env: Record<string, string | undefined>): WakeSchedulerBootstrapConfig | undefined {

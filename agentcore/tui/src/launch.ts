@@ -1,4 +1,4 @@
-import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
+import { applyKeyCommandWithModelSetupStartupGate, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { type RuntimeClient } from "./runtime"
@@ -52,16 +52,30 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
     else await close
   }
 
+  if (noStartInspectionScript && state.screen !== "init" && state.screen !== "model-setup") {
+    state = await applyRuntimeUiEffect(state, runtime, {
+      type: "load-model-setup",
+      enterIfMissing: true,
+    })
+  }
+
   if (noStartInspectionScript && !needsExplicitRuntimeResume && state.screen === "resume") {
     state = { ...state, screen: "main", focus: "message-box" }
   }
 
-  if (!noStartInspectionScript) {
+  if (!noStartInspectionScript && state.screen !== "init" && state.screen !== "model-setup") {
     state = await refreshRuntimeRecords(state, runtime)
   }
 
   for (const command of commands) {
-    const result = applyKeyCommandWithEffects(state, command)
+    const gate = state.screen === "init"
+      ? "clear"
+      : state.modelSetup.startupCheckStatus === "required"
+        ? "required"
+        : state.modelSetup.startupCheckStatus === "clear"
+          ? "clear"
+          : "blocked"
+    const result = applyKeyCommandWithModelSetupStartupGate(state, command, gate)
     state = result.state
     for (const effect of result.effects) {
       state = await applyRuntimeUiEffect(state, runtime, effect)

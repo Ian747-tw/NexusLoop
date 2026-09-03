@@ -51,7 +51,9 @@ export type ExecutorModelReadinessObservation = Readonly<{
 }>
 
 export interface ExecutorModelReadinessResolver {
+  start?(): Promise<void> | void
   observe(selection: ExecutorModelSelectionProjection): Promise<unknown> | unknown
+  shutdown?(): Promise<void> | void
 }
 
 export type CommanderModelReadinessInput = CommanderInvestigationProviderReadiness

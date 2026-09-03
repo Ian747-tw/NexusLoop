@@ -157,8 +157,22 @@ selection assertion, consults only bounded schema-validated local OpenCode catal
 configuration, and authentication state, and returns enum-only readiness
 evidence. Dynamic or remote authority is reported as unknown without plugin,
 network, provider, or mutation activity. Runtime source execution under
-`agentcore/upstream` is not a supported boundary. See ADR-039. First-run setup
-and Runtime integration remain 9W4E work.
+`agentcore/upstream` is not a supported boundary. See ADR-039.
+
+Branch 9W4E adds the code-owned six-recipe setup catalog and one append-only
+`runtime_model_setup_committed` transition. Runtime reconstructs the existing
+ADR-035 configuration and ADR-036 registry only at the next process
+construction; commits never hot-reload an active registry. Persisted setup,
+explicit registry authority, and legacy Commander environment authority are
+pairwise exclusive.
+
+Executor readiness invokes the exact configured OpenCode launch executable
+with the fixed packaged arguments `nexusloop executor-readiness-v1`. Runtime
+validates the exact projection/provider/model/binding echo and tri-state
+evidence under fixed process, byte, timeout, concurrency, cancellation, and
+shutdown limits. The observation remains evidence only. OpenTUI stages
+independent Commander/Executor choices, previews exact hashes, requires
+confirmation, and renders active versus pending-next-start state. See ADR-040.
 
 ```text
 NexusLoop domain control plane
@@ -533,3 +547,5 @@ The target architecture is **not**:
 - `agentcore/adr/ADR-034-commander-model-provider-protocols.md`
 - `agentcore/adr/ADR-035-unified-model-profiles-and-role-bindings.md`
 - `agentcore/adr/ADR-036-runtime-model-profile-registry-and-role-readiness.md`
+- `agentcore/adr/ADR-039-opencode-owned-executor-readiness-command.md`
+- `agentcore/adr/ADR-040-first-run-model-setup-and-role-selection.md`

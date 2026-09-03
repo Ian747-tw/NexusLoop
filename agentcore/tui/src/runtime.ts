@@ -8,6 +8,7 @@ import { ModelCapabilityRegistry } from "../../runtime/src/context/model-capabil
 import { ContextBudgetService } from "../../runtime/src/context/context-budget-service"
 import { COMMAND_AUTHORITY_REGISTRY } from "../../runtime/src/authority/command-authority-registry"
 import { containsConcreteCredentialPayload } from "../../runtime/src/security/redaction"
+import { buildModelSetupCandidate, modelSetupCatalog } from "../../runtime/src/model-configuration/model-setup"
 import type { CommanderApplyPreviewSummary, CommanderApplyResultSummary, CommanderAuditEventSummary, CommanderAuthorityChainSummary, CommanderCyclePreviewSummary, CommanderCycleRecordSummary, CommanderCycleResultSummary, CommanderExecutorReviewPreviewSummary, CommanderExecutorReviewRecordSummary, CommanderExecutorReviewResultSummary, CommanderPlaybookDraftSummary, CommanderPlaybookSummary, CommanderProposalBundleSummary, CommanderProposalSummary, CommanderQueueItemSummary, CommanderQueueKind, CommanderQueueSummary, CommanderTargetContextSummary, CommanderTargetType, CommanderWorkbenchDraftSummary, CommanderWorkbenchReadinessSummary, CommanderWorkbenchStatusSummary, ContextBudgetAllocationSummary, ContextBudgetPreviewSummary, ContextBudgetProfileSummary, ContextBudgetSummaryState, ContinuationPlanPreviewSummary, ContinuationPlanRecordSummary, ContinuationPlanSummary, ContinuationStepResultSummary, ExecutorClaimSummary, ExecutorReviewProposalApplyReadinessPreviewSummary, ExecutorReviewProposalApplyReadinessRecordSummary, ExecutorReviewProposalApplyReadinessSummary, ExecutorReviewProposalCreatePreviewSummary, ExecutorReviewProposalCreateRecordSummary, ExecutorReviewProposalCreateResultSummary, ExecutorReviewProposalDraftCandidateSummary, ExecutorReviewProposalDraftPreviewSummary, ExecutorReviewProposalDraftSummary, ExecutorReviewProposalNarrowApplyPreviewSummary, ExecutorReviewProposalNarrowApplyRecordSummary, ExecutorReviewProposalNarrowApplyResultSummary, ExecutorReviewProposalReviewDecisionPreviewSummary, ExecutorReviewProposalReviewDecisionRecordSummary, ExecutorReviewProposalReviewDecisionResultSummary, ExecutorReviewProposalReviewRequestPreviewSummary, ExecutorReviewProposalReviewRequestRecordSummary, ExecutorReviewProposalReviewRequestResultSummary, ExternalApiAuditRecordSummary, ExternalApiConnectorSummary, ExternalApiResearchIngestionPreviewSummary, ExternalApiResearchIngestionRecordSummary, ExternalApiResearchIngestionResultSummary, ExternalApiRequestPreviewSummary, ExternalApiRequestResultSummary, MiniMaxLiveValidationPreviewSummary, MiniMaxLiveValidationRecordSummary, MiniMaxLiveValidationResultSummary, MiniMaxLiveValidationSurfaceResultSummary, MissionProgressSummary, MissionRecord, MissionResultSummary, ModelCapabilitySummary, OpenCodeHandoffFollowupCounts, OpenCodeHandoffFollowupQueueKind, OpenCodeHandoffFollowupSummary, OpenCodeHandoffPreviewSummary, OpenCodeHandoffReadinessPreviewSummary, OpenCodeHandoffReadinessSummary, OpenCodeHandoffRecordSummary, OpenCodeHandoffResultSummary, OpenCodeProcessSmokePreviewSummary, OpenCodeProcessSmokeRecordSummary, OpenCodeProcessSmokeResultSummary, OpenCodeResultReviewPacketSummary, OpenCodeResultReviewSummary, OpenCodeSessionPlanSummary, OpenCodeSessionPreviewSummary, OpenCodeSessionRecordSummary, OpenCodeSessionSummary, ProposalBundleReadinessSummary, ResearchSynthesisPreviewSummary, ResearchSynthesisRecordSummary, ResearchSynthesisResultSummary, ReviewRequestSummary, RuntimeCheckpointPreviewSummary, RuntimeCheckpointRecordSummary, RuntimeCheckpointScope, RuntimeCheckpointSummary, RuntimeRestorePreviewSummary, RuntimeResumeAnchorSummary, WakeAssessmentPreviewSummary, WakeAssessmentRecordSummary, WakeAssessmentSummary, WakeSchedulePreviewSummary, WakeScheduleRecordSummary, WakeScheduleSummary, WakeSchedulerAuditChainSummary, WakeSchedulerAuditCommandSummary, WakeSchedulerAuditIncidentSummary, WakeSchedulerAuditSummarySummary, WakeSchedulerAuditTimelineEntrySummary, WakeSchedulerBootstrapStatusSummary, WakeSchedulerEventRecordSummary, WakeSchedulerNavigationBoardSummary, WakeSchedulerNavigationCardSummary, WakeSchedulerNavigationCheckpointApprovalUsageSummaryState, WakeSchedulerNavigationCheckpointWriteGroupSummary, WakeSchedulerNavigationCheckpointWriteHistorySummary, WakeSchedulerNavigationCheckpointWritePairComparisonSummary, WakeSchedulerNavigationCheckpointWriteRunPreviewSummary, WakeSchedulerNavigationCheckpointWriteRunRecordSummary, WakeSchedulerNavigationCheckpointWriteRunResultSummary, WakeSchedulerNavigationCheckpointWriteStaleItemSummary, WakeSchedulerNavigationCommandPreviewSummary, WakeSchedulerNavigationStagePreviewSummary, WakeSchedulerNavigationStagedReadGroupSummary, WakeSchedulerNavigationStagedReadHistorySummary, WakeSchedulerNavigationStagedReadPairComparisonSummary, WakeSchedulerNavigationStagedReadStaleItemSummary, WakeSchedulerNavigationStagedRunPreviewSummary, WakeSchedulerNavigationStagedRunRecordSummary, WakeSchedulerNavigationStagedRunResultSummary, WakeSchedulerNavigationStagedCommandRecordSummary, WakeSchedulerNavigationStagedCommandSummary, WakeSchedulerNavigationStagedWriteCommandRecordSummary, WakeSchedulerNavigationStagedWriteCommandSummary, WakeSchedulerNavigationTargetKindSummary, WakeSchedulerNavigationTargetSummary, WakeSchedulerNavigationWriteApprovalRecordSummary, WakeSchedulerNavigationWriteApprovalSummary, WakeSchedulerNavigationWriteReadinessPreviewSummary, WakeSchedulerNavigationWriteBoardSummary, WakeSchedulerNavigationWritePreviewSummary, WakeSchedulerNavigationWriteRunGroupSummary, WakeSchedulerNavigationWriteRunHistorySummary, WakeSchedulerNavigationWriteRunPairComparisonSummary, WakeSchedulerNavigationWriteRunPreviewSummary, WakeSchedulerNavigationWriteRunRecordSummary, WakeSchedulerNavigationWriteRunResultSummary, WakeSchedulerNavigationWriteRunStaleItemSummary, WakeSchedulerNavigationWriteStagePreviewSummary, WakeSchedulerPreviewSummary, WakeSchedulerRecoveryPreviewSummary, WakeSchedulerRecoveryRecordSummary, WakeSchedulerRecoverySummary, WakeSchedulerRecoveryWorkflowPreviewSummary, WakeSchedulerRecoveryWorkflowRecordSummary, WakeSchedulerRecoveryWorkflowStepSummary, WakeSchedulerRecoveryWorkflowSummary, WakeSchedulerRecoveryWorkflowVerificationSummary, WakeSchedulerStateSummary, WakeScheduleTickPreviewSummary, WakeScheduleTickResultSummary } from "./state"
 import type { CommandAuthorityRecordSummary, CommandAuthoritySummaryState, CommandAuthorityValidationProfileSummary, CommanderGuidanceDeliveryPreviewSummary, CommanderGuidanceDeliveryRecordSummary, CommanderGuidanceDeliveryResultSummary, CommanderGuidanceDeliverySummaryState, CommanderGuidancePreviewSummary, CommanderGuidanceRecordSummary, CommanderGuidanceResultSummary, CommanderGuidanceSummaryState, ContextPacketPreviewSummary, ContextPacketSectionSummary, ContextPacketSummaryState, OpenCodeCommanderQuestionPreviewSummary, OpenCodeCommanderQuestionRecordSummary, OpenCodeCommanderQuestionResultSummary, OpenCodeCommanderQuestionSummaryState, OpenCodeForcedReportRequestSummary, OpenCodeHumanControlPreviewSummary, OpenCodeHumanControlRecordSummary, OpenCodeHumanControlResultSummary, OpenCodeHumanControlSummaryState, OpenCodeLaunchPreviewSummary, OpenCodeLaunchReadinessCheckSummary, OpenCodeLaunchReadinessPreviewSummary, OpenCodeLaunchReadinessSummaryState, OpenCodeLaunchRecordSummary, OpenCodeLaunchResultSummary, OpenCodeProgressPreviewSummary, OpenCodeProgressRecordSummary, OpenCodeProgressResultSummary, OpenCodeProgressSummaryState, OpenCodeResultReportCommandSummary, OpenCodeResultReportPreviewSummary, OpenCodeResultReportRecordSummary, OpenCodeResultReportResultSummary, OpenCodeResultReportSummaryState, OpenCodeResultReviewGateCommandSummary, OpenCodeResultReviewGatePreviewSummary, OpenCodeResultReviewGateRecordSummary, OpenCodeResultReviewGateResultSummary, OpenCodeResultReviewGateSummaryState, OpenCodeSessionInstructionPackFilePreviewSummary, OpenCodeSessionInstructionPackPreviewSummary, OpenCodeSessionInstructionPackRecordSummary, OpenCodeSessionInstructionPackResultSummary, OpenCodeWakeActionExecutionCommandSummary, OpenCodeWakeActionExecutionEvidenceRefSummary, OpenCodeWakeActionExecutionPreviewSummary, OpenCodeWakeActionExecutionRecordSummary, OpenCodeWakeActionExecutionResultSummary, OpenCodeWakeActionExecutionSummaryState, OpenCodeWakeSupervisorBatchPreviewSummary, OpenCodeWakeSupervisorBatchResultSummary, OpenCodeWakeSupervisorCheckSummary, OpenCodeWakeSupervisorContextSectionSummary, OpenCodeWakeSupervisorEvidenceRefSummary, OpenCodeWakeSupervisorExecutionCommandSummary, OpenCodeWakeSupervisorExecutionEvidenceRefSummary, OpenCodeWakeSupervisorExecutionPreviewSummary, OpenCodeWakeSupervisorExecutionRecordSummary, OpenCodeWakeSupervisorExecutionResultSummary, OpenCodeWakeSupervisorExecutionSummaryState, OpenCodeWakeSupervisorPreviewSummary, OpenCodeWakeSupervisorSessionCardSummary, OpenCodeWakeSupervisorSummaryState, OpenCodeWatchdogPreviewSummary, OpenCodeWatchdogRecordSummary, OpenCodeWatchdogResultSummary, OpenCodeWatchdogSummaryState, ResearchIngestionCommandSummary, ResearchIngestionPreviewSummary, ResearchIngestionProvenanceRefSummary, ResearchIngestionRecordSummary, ResearchIngestionResultSummary, ResearchIngestionSummaryState, ResearchMemoryCandidateSummary, ResearchMemoryInspectionPreviewSummary, ResearchMemoryNearDuplicatePreviewSummary, ResearchMemoryRetrievalPreviewSummary, ResearchMemorySearchProfileState, ResearchMemorySummaryState, ResearchNoveltyPreviewSummary } from "./state"
 import type { CommanderContinuityCommandSummary, CommanderContinuityOpenLoopSummary, CommanderContinuitySectionSummary, CommanderContinuitySourceRefSummary, CommanderContinuitySummaryState, CommanderContinuityThreadCardSummary, CommanderMidMissionContinuityPacketSummary, CommanderProposalContinuityPacketSummary } from "./state"
@@ -20,6 +21,7 @@ export interface SubmitUserMessageResult {
 
 export interface RuntimeClient {
   readonly streamMode?: "finite" | "long-lived"
+  readonly modelSetupAuthority?: "durable" | "fixture" | "restart_required"
   stream(): AsyncIterable<RuntimeEvent>
   command(name: string, payload?: Record<string, unknown>): Promise<unknown>
   sendUserMessage(message: string): Promise<SubmitUserMessageResult | void>
@@ -39,6 +41,7 @@ const COMMANDER_QUEUE_KINDS: CommanderQueueKind[] = [
 ]
 
 export class FakeRuntimeClient implements RuntimeClient {
+  readonly modelSetupAuthority: "fixture" | "restart_required"
   readonly sentMessages: string[] = []
   readonly sentCommands: string[] = []
   private readonly missions: MissionRecord[] = []
@@ -105,11 +108,22 @@ export class FakeRuntimeClient implements RuntimeClient {
   private readonly wakeSchedulerNavigationCheckpointWriteRuns: WakeSchedulerNavigationCheckpointWriteRunResultSummary[] = []
   private projectionRebuilds = 0
   private sequence = 0
+  private fakeModelSetup: { revision: number; setup_hash?: string; active_setup_hash?: string; commander_recipe_id: string | null; executor_recipe_id: string | null; active_commander_recipe_id: string | null; active_executor_recipe_id: string | null } = {
+    revision: 1,
+    setup_hash: "4".repeat(64),
+    active_setup_hash: "4".repeat(64),
+    commander_recipe_id: null,
+    executor_recipe_id: null,
+    active_commander_recipe_id: null,
+    active_executor_recipe_id: null,
+  }
 
   constructor(
     private readonly projectDir: string,
     private readonly projectName: string,
+    modelSetupAuthority: "fixture" | "restart_required" = "fixture",
   ) {
+    this.modelSetupAuthority = modelSetupAuthority
     if (process.env.NXL_TUI_FAKE_WAKE_SCHEDULER_STALE === "1") {
       this.wakeSchedulerRecoveryPreviewRecord = fakeWakeSchedulerRecoveryPreview({
         recovery_id: "fake-recovery-1",
@@ -217,6 +231,23 @@ export class FakeRuntimeClient implements RuntimeClient {
 
   async command(name: string, payload: Record<string, unknown> = {}): Promise<unknown> {
     switch (name) {
+      case "runtime.model_setup_catalog":
+        return modelSetupCatalog()
+      case "runtime.model_setup_status":
+        return {
+          status: this.fakeModelSetup.revision === 0 ? "missing" : "ready",
+          revision: this.fakeModelSetup.revision,
+          setup_hash: this.fakeModelSetup.setup_hash,
+          active_setup_hash: this.fakeModelSetup.active_setup_hash,
+          pending_restart: this.fakeModelSetup.setup_hash !== this.fakeModelSetup.active_setup_hash,
+          ...(this.fakeModelSetup.revision > 0 ? { candidate: buildModelSetupCandidate({ commander_recipe_id: this.fakeModelSetup.commander_recipe_id, executor_recipe_id: this.fakeModelSetup.executor_recipe_id }) } : {}),
+          ...(this.fakeModelSetup.active_setup_hash ? { active_candidate: buildModelSetupCandidate({ commander_recipe_id: this.fakeModelSetup.active_commander_recipe_id, executor_recipe_id: this.fakeModelSetup.active_executor_recipe_id }) } : {}),
+        }
+      case "runtime.preview_model_setup":
+        return { preview_version: 1, expected_revision: this.fakeModelSetup.revision, candidate_hash: "2".repeat(64), catalog_hash: "1".repeat(64), configuration_hash: "3".repeat(64), restart_required: true }
+      case "runtime.confirm_model_setup":
+        this.fakeModelSetup = { ...this.fakeModelSetup, revision: this.fakeModelSetup.revision + 1, setup_hash: "5".repeat(64), commander_recipe_id: typeof payload.commander_recipe_id === "string" ? payload.commander_recipe_id : null, executor_recipe_id: typeof payload.executor_recipe_id === "string" ? payload.executor_recipe_id : null }
+        return { status: "committed", revision: this.fakeModelSetup.revision, setup_hash: this.fakeModelSetup.setup_hash, candidate_hash: String(payload.candidate_hash ?? ""), restart_required: true }
       case "runtime.status":
         return {
           runtimeStatus: "fake runtime connected",

@@ -1,9 +1,45 @@
 import { describe, expect, test } from "bun:test"
-import { reduceRuntimeEvent } from "../src/reducer"
+import {
+  modelSetupStartupGateAllowsInput,
+  modelSetupStartupGateAllowsCommand,
+  reduceRuntimeEvent,
+  reduceRuntimeEventDuringModelSetupGate,
+} from "../src/reducer"
 import { layoutSnapshot } from "../src/snapshot"
 import { initialState } from "../src/state"
 
 describe("TUI runtime event reducer", () => {
+  test("ProjectInitialized cannot expose Resume before model setup authority settles", () => {
+    const boot = initialState("/tmp/demo")
+    const initialized = { type: "ProjectInitialized", projectDir: "/tmp/demo" } as const
+    expect(reduceRuntimeEventDuringModelSetupGate(boot, initialized, "pending")).toMatchObject({
+      screen: "boot",
+      projectDir: "/tmp/demo",
+    })
+
+    const setup = { ...boot, screen: "model-setup" as const, focus: "init-choice" as const }
+    expect(reduceRuntimeEventDuringModelSetupGate(setup, initialized, "required")).toMatchObject({
+      screen: "model-setup",
+      focus: "init-choice",
+    })
+    expect(reduceRuntimeEventDuringModelSetupGate(boot, initialized, "clear")).toMatchObject({
+      screen: "resume",
+      focus: "resume-choice",
+    })
+    expect(modelSetupStartupGateAllowsInput("pending")).toBe(false)
+    expect(modelSetupStartupGateAllowsInput("blocked")).toBe(false)
+    expect(modelSetupStartupGateAllowsInput("required")).toBe(false)
+    expect(modelSetupStartupGateAllowsInput("clear")).toBe(true)
+    expect(modelSetupStartupGateAllowsCommand(setup, { type: "submit" }, "required")).toBe(true)
+    expect(modelSetupStartupGateAllowsCommand({ ...setup, screen: "main" }, { type: "submit" }, "required")).toBe(false)
+    const failed = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup" as const,
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, stage: "loading" as const, commandError: "setup unavailable" },
+    }
+    expect(modelSetupStartupGateAllowsCommand(failed, { type: "submit" }, "blocked")).toBe(true)
+    expect(modelSetupStartupGateAllowsCommand(failed, { type: "insert", text: "x" }, "blocked")).toBe(false)
+  })
   test("ProjectUninitialized routes to init screen", () => {
     const state = reduceRuntimeEvent(initialState("/tmp/demo"), { type: "ProjectUninitialized", projectDir: "/tmp/demo" })
 

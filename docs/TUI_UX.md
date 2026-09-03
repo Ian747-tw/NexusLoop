@@ -29,6 +29,19 @@ When the user opens NexusLoop without an initialized project:
 The init flow should feel like entering a system that is already alive, not a
 detached setup script.
 
+### Model Setup
+
+After project/spec onboarding, a missing durable setup automatically enters
+the existing in-shell model setup view. Commander and primary Executor choices are independent and each
+supports an explicit unconfigured state. The view separates selected,
+connected, and ready status; it never asks for or displays credentials.
+
+OpenTUI requests a Runtime-owned preview, displays bounded role selections and
+hashes, and requires a distinct confirmation bound to the displayed revision
+and candidate hash. A successful commit is append-only and reports restart
+required. Until restart, the active selection and pending-next-start selection
+are rendered separately. Cached TUI state is display evidence only.
+
 ## Resume Flow
 
 When existing runtime state is present:

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
+import { EventEmitter } from "node:events"
 import { existsSync } from "node:fs"
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { delimiter, join } from "node:path"
@@ -8,6 +9,7 @@ import { Database } from "bun:sqlite"
 import { RuntimeServer } from "./server"
 import type { RuntimeResearchDbProjection } from "./server"
 import { createRuntimeServerFromLaunchConfig, readRuntimeServerLaunchOptionsFromEnv, readWakeSchedulerBootstrapConfigFromEnv } from "./launch-config"
+import type { RuntimeServerLaunchConfig } from "./launch-config"
 import { RuntimeServerClient } from "./tui/runtime-server-client"
 import { EventStore } from "./events/event-store"
 import { RuntimeEventBus } from "./events/event-bus"
@@ -34,7 +36,7 @@ import type { CommanderCycleProvider, CommanderCycleProviderInput, CommanderCycl
 import type { CommanderExecutorReviewProvider, CommanderExecutorReviewProviderInput, CommanderExecutorReviewProviderResult } from "./commander-executor-review/commander-executor-review-provider"
 import { SpecService } from "./spec/spec-service"
 import { FakeOpenCodeAdapter } from "./opencode/fake-adapter"
-import { ProcessOpenCodeAdapter, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
+import { ProcessOpenCodeAdapter, type OpenCodeSpawn, type OpenCodeSpawnedProcess, type OpenCodeProcessEventSource } from "./opencode/process-adapter"
 import { createOpenCodeAdapter, readOpenCodeAdapterConfigFromEnv, redactOpenCodeAdapterConfig, validateOpenCodeAdapterConfig } from "./opencode/adapter-config"
 import { buildOpenCodeSessionContract } from "./opencode/session-contract"
 import { OpenCodeSessionInstructionPackService } from "./opencode-session/opencode-session-instruction-pack-service"
@@ -84,6 +86,8 @@ import { CommanderToolService } from "./commander-tools/commander-tool-service"
 import { COMMANDER_TOOL_REGISTRY } from "./commander-tools/commander-tool-registry"
 import { readBoundedDirectoryEntries } from "./commander-tools/commander-repo-read-service"
 import { RestrictedGitReadAdapter, restrictedGitLogArgs, restrictedGitReadEnv } from "./commander-tools/restricted-git-read-adapter"
+import { MODEL_SETUP_EVENT_KIND, ModelSetupService } from "./model-configuration/model-setup"
+import { OpenCodeExecutorModelReadinessResolver } from "./model-configuration/opencode-executor-readiness-resolver"
 
 const cleanup: string[] = []
 const NON_BLOCKING_START_TIMEOUT_MS = 1000
@@ -92,6 +96,92 @@ async function tempProject(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nxl-runtime-"))
   cleanup.push(dir)
   return dir
+}
+
+async function openCodeObservationEnvironment(
+  dir: string,
+  providerId: "anthropic" | "google" | "openai",
+  modelId: string,
+  options: { connected?: boolean; launchCapture?: string; runtimeSession?: boolean } = {},
+): Promise<Record<string, string>> {
+  const commandPath = join(dir, "opencode")
+  await writeFile(commandPath, `#!/usr/bin/env bun
+import { createHash } from "node:crypto"
+import { writeFileSync } from "node:fs"
+if (process.argv[2] !== "nexusloop" || process.argv[3] !== "executor-readiness-v1") {
+  ${options.launchCapture ? `if (process.argv.includes("run") && process.argv.includes("--model")) { writeFileSync(${JSON.stringify(options.launchCapture)}, JSON.stringify(process.argv.slice(2))); process.exit(0) }` : ""}
+  ${options.runtimeSession ? `process.stdin.resume()
+  process.on("SIGTERM", () => process.exit(0))
+  process.on("SIGINT", () => process.exit(0))
+  await new Promise(() => {})` : ""}
+  process.exit(3)
+}
+const input = JSON.parse(await new Response(Bun.stdin.stream()).text())
+const connected = Boolean(process.env.OPENCODE_AUTH_CONTENT)
+const semantic = {
+  policy_version: "nexusloop_opencode_executor_readiness_policy_v1",
+  selection_projection_hash: input.selection_projection_hash,
+  provider_id: input.provider_id,
+  model_id: input.model_id,
+  credential_binding_id: input.credential_binding_id,
+  provider_availability_status: "available",
+  credential_connection_status: connected ? "connected" : "disconnected",
+}
+process.stdout.write(JSON.stringify({
+  observation_version: 1,
+  selection_projection_hash: input.selection_projection_hash,
+  provider_id: input.provider_id,
+  model_id: input.model_id,
+  credential_binding_id: input.credential_binding_id,
+  provider_availability_status: "available",
+  credential_connection_status: connected ? "connected" : "disconnected",
+  evidence_id: "opencode-readiness-v1-" + createHash("sha256").update(JSON.stringify(semantic)).digest("hex"),
+}) + "\\n")
+`, "utf8")
+  await chmod(commandPath, 0o755)
+  const modelsPath = join(dir, `opencode-models-${providerId}.json`)
+  await writeFile(modelsPath, JSON.stringify({
+    [providerId]: {
+      id: providerId,
+      name: providerId,
+      env: [`${providerId.toUpperCase()}_API_KEY`],
+      models: {
+        [modelId]: {
+          id: modelId,
+          name: modelId,
+          release_date: "2025-01-01",
+          attachment: false,
+          reasoning: false,
+          temperature: true,
+          tool_call: true,
+          limit: { context: 128_000, output: 8_192 },
+        },
+      },
+    },
+  }), "utf8")
+  return {
+    PATH: `${dir}${delimiter}${process.env.PATH ?? ""}`,
+    HOME: join(dir, "opencode-home"),
+    XDG_CONFIG_HOME: join(dir, "opencode-config"),
+    XDG_DATA_HOME: join(dir, "opencode-data"),
+    OPENCODE_MODELS_PATH: modelsPath,
+    ...(options.connected === false ? {} : {
+      OPENCODE_AUTH_CONTENT: JSON.stringify({ [providerId]: { type: "api", key: "fixture-secret-never-published" } }),
+    }),
+  }
+}
+
+async function commitUnconfiguredModelSetup(dir: string): Promise<void> {
+  const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+  const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+  const preview = await service.preview(choices)
+  await service.confirm({
+    ...choices,
+    expected_revision: preview.expected_revision,
+    candidate_hash: preview.candidate_hash,
+    confirmed_by: "runtime-test-operator",
+    confirmation: "CONFIRM_MODEL_SETUP",
+  })
 }
 
 function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
@@ -124,6 +214,699 @@ function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
 
 afterEach(async () => {
   while (cleanup.length) await rm(cleanup.pop()!, { recursive: true, force: true })
+})
+
+describe("9W4E runtime model setup", () => {
+  test("production auto-start rejects missing model authority before Runtime lifecycle ownership", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    await expect(client.command("runtime.status")).rejects.toThrow("model setup is required before Runtime startup")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual([])
+  })
+
+  test("startup waits for an active model-setup status readiness inspection", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let observationStarted!: () => void
+    let releaseObservation!: () => void
+    const entered = new Promise<void>((resolve) => { observationStarted = resolve })
+    const gate = new Promise<void>((resolve) => { releaseObservation = resolve })
+    const spawn: OpenCodeSpawn = (_command, _args, _options) => {
+      const child = new EventEmitter() as EventEmitter & OpenCodeSpawnedProcess
+      const stdout = new EventEmitter()
+      const stderr = new EventEmitter()
+      let requestText = ""
+      child.stdout = stdout
+      child.stderr = stderr
+      child.stdin = {
+        write(data: string, callback?: (error?: Error | null) => void) {
+          requestText += data
+          callback?.(null)
+          return true
+        },
+        end() {
+          observationStarted()
+          void gate.then(() => {
+            const request = JSON.parse(requestText) as Record<string, string>
+            const semantic = {
+              policy_version: "nexusloop_opencode_executor_readiness_policy_v1",
+              selection_projection_hash: request.selection_projection_hash,
+              provider_id: request.provider_id,
+              model_id: request.model_id,
+              credential_binding_id: request.credential_binding_id,
+              provider_availability_status: "available",
+              credential_connection_status: "connected",
+            }
+            stdout.emit("data", Buffer.from(JSON.stringify({
+              observation_version: 1,
+              selection_projection_hash: request.selection_projection_hash,
+              provider_id: request.provider_id,
+              model_id: request.model_id,
+              credential_binding_id: request.credential_binding_id,
+              provider_availability_status: "available",
+              credential_connection_status: "connected",
+              evidence_id: `opencode-readiness-v1-${createHash("sha256").update(JSON.stringify(semantic)).digest("hex")}`,
+            }) + "\n"))
+            child.emit("close", 0, null)
+          })
+        },
+        on() { return child.stdin },
+      }
+      child.kill = () => { child.emit("close", null, "SIGTERM"); return true }
+      return child
+    }
+    const resolver = new OpenCodeExecutorModelReadinessResolver({
+      command: "/opt/opencode",
+      cwd: dir,
+      spawn,
+    })
+    const adapter = new LongLivedAdapter()
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter,
+      modelProfileRuntimeRegistry: executorOnlyRuntimeRegistry(),
+      executorModelReadinessResolver: resolver,
+      researchProjectionMode: "disabled",
+    })
+
+    const status = server.command("runtime.model_setup_status") as Promise<Record<string, any>>
+    await entered
+    const starting = server.start()
+    await expect(Promise.race([
+      starting.then(() => "started" as const),
+      Bun.sleep(20).then(() => "waiting" as const),
+    ])).resolves.toBe("waiting")
+    expect(adapter.startCalls).toBe(0)
+
+    releaseObservation()
+    await expect(status).resolves.toMatchObject({ executor_role_readiness: { ready: true } })
+    await expect(starting).resolves.toBeUndefined()
+    expect(adapter.startCalls).toBe(1)
+    expect((await server.eventStore.readAll()).some((event) => event.kind === "runtime_started")).toBe(true)
+    await server.shutdown()
+  })
+
+  test("setup confirmation cannot append across RuntimeServer startup", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const server = new RuntimeServer({
+      projectDir: dir,
+      adapter: new LongLivedAdapter(),
+      executorModelReadinessResolver: {
+        start: async () => {
+          entered()
+          await gate
+        },
+        observe: async () => { throw new Error("readiness is not selected") },
+      },
+    })
+    const starting = server.start()
+    await started
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).rejects.toThrow("runtime lifecycle is starting")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    release()
+    await starting
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("startup owns lifecycle when setup confirmation is already waiting for the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const server = new RuntimeServer({ projectDir: dir, adapter: new LongLivedAdapter() })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const internal = server as unknown as { runLock: { acquire(): Promise<void> } }
+    const originalAcquire = internal.runLock.acquire.bind(internal.runLock)
+    let entered!: () => void
+    let release!: () => void
+    const waiting = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let acquisitions = 0
+    internal.runLock.acquire = async () => {
+      acquisitions += 1
+      if (acquisitions === 1) {
+        entered()
+        await gate
+      }
+      await originalAcquire()
+    }
+    const confirmation = server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })
+    await waiting
+    const starting = server.start()
+    release()
+    await expect(confirmation).rejects.toThrow("runtime lifecycle is starting")
+    await starting
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("pre-start shutdown drains setup lock acquisition and prevents a later append", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" }
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const internal = server as unknown as { runLock: { acquire(): Promise<void> } }
+    const originalAcquire = internal.runLock.acquire.bind(internal.runLock)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    internal.runLock.acquire = async () => {
+      await gate
+      await originalAcquire()
+    }
+    const confirmation = server.command("runtime.confirm_model_setup", { ...choices, expected_revision: preview.expected_revision, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    await Bun.sleep(10)
+    const shutdown = server.shutdown()
+    expect(await Promise.race([shutdown.then(() => "settled"), Bun.sleep(20).then(() => "waiting")])).toBe("waiting")
+    release()
+    await expect(confirmation).rejects.toThrow("stopping")
+    await shutdown
+    expect((await server.eventStore.readAll()).some((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toBe(false)
+    await Bun.sleep(10)
+    expect((await server.eventStore.readAll()).some((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toBe(false)
+  })
+
+  test("shutdown drains an owned setup append before runtime_shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    await server.start()
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" }
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const store = server.eventStore
+    const original = store.appendIfLatestKind.bind(store)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    store.appendIfLatestKind = (async (...args: Parameters<typeof original>) => {
+      await gate
+      return await original(...args)
+    }) as typeof store.appendIfLatestKind
+    const confirmation = server.command("runtime.confirm_model_setup", { ...choices, expected_revision: preview.expected_revision, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    await Bun.sleep(10)
+    const shutdown = server.shutdown()
+    expect(await Promise.race([shutdown.then(() => "settled"), Bun.sleep(20).then(() => "waiting")])).toBe("waiting")
+    release()
+    await confirmation
+    await shutdown
+    expect((await store.readAll()).map((event) => event.kind).slice(-2)).toEqual([MODEL_SETUP_EVENT_KIND, "runtime_shutdown"])
+  })
+  test("routes catalog status preview and pre-start confirmation through RuntimeServer", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const catalog = await server.command("runtime.model_setup_catalog") as { commander_recipes: Array<{ recipe_id: string }> }
+    expect(catalog.commander_recipes).toHaveLength(3)
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({ status: "missing", revision: 0, pending_restart: false })
+    const choices = { commander_recipe_id: "commander-openai-gpt-4-1-mini-responses", executor_recipe_id: "executor-anthropic-claude-sonnet-4-5" }
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const committed = await server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "runtime-test-operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })
+    expect(committed).toMatchObject({ status: "committed", revision: 1, restart_required: true })
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({ status: "ready", revision: 1, pending_restart: true })
+  })
+
+  test("setup status distinguishes active registry authority from missing durable setup", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      modelProfileRuntimeRegistry: executorOnlyRuntimeRegistry(),
+      openCodeAdapterConfig: { kind: "process", command: "/opt/opencode" },
+    })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      status: "missing",
+      revision: 0,
+      pending_restart: false,
+      active_authority_source: "explicit",
+    })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).rejects.toThrow("non-setup model authority is active")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("legacy Commander authority rejects model setup confirmation without appending", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "1",
+        NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND: "anthropic_messages_connector",
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ID: "anthropic-primary",
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_KIND: "anthropic",
+        NXL_COMMANDER_INVESTIGATION_CONNECTOR_ID: "anthropic-main",
+        NXL_COMMANDER_INVESTIGATION_MODEL_ID: "claude-sonnet-4-5-20250929",
+        NXL_COMMANDER_INVESTIGATION_ENABLED_PHASES: "proposal_investigation",
+        NXL_COMMANDER_INVESTIGATION_TIMEOUT_MS: "30000",
+        NXL_COMMANDER_INVESTIGATION_MAX_REQUEST_BYTES: "65536",
+        NXL_COMMANDER_INVESTIGATION_MAX_RESPONSE_BYTES: "65536",
+        NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_BYTES: "48000",
+        NXL_COMMANDER_INVESTIGATION_MAX_CONTEXT_TOKENS: "16000",
+        NXL_COMMANDER_INVESTIGATION_MAX_OUTPUT_TOKENS: "4096",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_TOOLS: "1",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_JSON_SCHEMA: "0",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_LONG_CONTEXT: "1",
+        NXL_COMMANDER_INVESTIGATION_SUPPORTS_LOCAL_EXECUTION: "0",
+      },
+    })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      status: "missing",
+      active_authority_source: "legacy_commander_environment",
+    })
+    const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+    const preview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).rejects.toThrow("non-setup model authority is active")
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(0)
+    await server.shutdown()
+  })
+
+  test("RuntimeServerClient keeps setup preview and confirmation pre-start", async () => {
+    const dir = await tempProject()
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: true })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await client.command("runtime.preview_model_setup", choices)
+    await client.command("runtime.confirm_model_setup", { ...choices, expected_revision: preview.expected_revision, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false, specApproved: false })
+    await client.shutdown()
+  })
+
+  test("activates persisted setup only on the next RuntimeServer construction", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: "commander-google-gemini-2-5-flash", executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "/opt/opencode" },
+    })
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      status: "ready",
+      revision: 1,
+      pending_restart: false,
+      active_candidate: { choices },
+    })
+    const unchangedPreview = await server.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    const eventCount = (await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND).length
+    await expect(server.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: unchangedPreview.expected_revision,
+      candidate_hash: unchangedPreview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })).resolves.toMatchObject({ status: "idempotent", revision: 1, restart_required: false })
+    expect((await server.eventStore.readAll()).filter((event) => event.kind === MODEL_SETUP_EVENT_KIND)).toHaveLength(eventCount)
+    const internal = server as unknown as { modelProfileRuntimeRegistry?: ModelProfileRuntimeRegistry; commanderInvestigationProviderConfig?: { transport_kind: string; model_id: string } }
+    expect(internal.modelProfileRuntimeRegistry?.commanderSelection()).toMatchObject({ provider_kind: "google", model_id: "gemini-2.5-flash" })
+    expect(internal.modelProfileRuntimeRegistry?.executorSelection()).toMatchObject({ provider_kind: "openai", model_id: "gpt-4.1-mini" })
+    expect(internal.commanderInvestigationProviderConfig).toMatchObject({ transport_kind: "google_generative_ai_connector", model_id: "gemini-2.5-flash" })
+
+    const nextChoices = { commander_recipe_id: null, executor_recipe_id: "executor-anthropic-claude-sonnet-4-5" } as const
+    const nextPreview = await server.command("runtime.preview_model_setup", nextChoices) as { expected_revision: number; candidate_hash: string }
+    await server.command("runtime.confirm_model_setup", { ...nextChoices, expected_revision: nextPreview.expected_revision, candidate_hash: nextPreview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    expect(internal.modelProfileRuntimeRegistry?.commanderSelection()?.model_id).toBe("gemini-2.5-flash")
+    expect(await server.command("runtime.model_setup_status")).toMatchObject({
+      revision: 2,
+      pending_restart: true,
+      active_candidate: { choices },
+      candidate: { choices: nextChoices },
+    })
+  })
+
+  test("startup revalidates persisted setup after acquiring the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const staleServer = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: new LongLivedAdapter() })
+    const writer = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await writer.command("runtime.preview_model_setup", choices) as { expected_revision: number; candidate_hash: string }
+    await writer.command("runtime.confirm_model_setup", {
+      ...choices,
+      expected_revision: preview.expected_revision,
+      candidate_hash: preview.candidate_hash,
+      confirmed_by: "operator",
+      confirmation: "CONFIRM_MODEL_SETUP",
+    })
+
+    await expect(staleServer.start()).rejects.toThrow("persisted model setup changed before runtime start")
+    expect((await staleServer.eventStore.readAll()).some((event) => event.kind === "runtime_started")).toBe(false)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
+  test("reports Commander and Executor readiness independently from persisted selection", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: "commander-google-gemini-2-5-flash", executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
+    })
+    const status = await server.command("runtime.model_setup_status") as Record<string, any>
+    expect(status.commander_role_readiness).toMatchObject({ selection_status: "selected", credential_connection_status: "unknown", ready: false })
+    expect(status.executor_role_readiness).toMatchObject({ selection_status: "selected", credential_connection_status: "connected", ready: true })
+    expect(status.commander_role_readiness.readiness_hash).not.toBe(status.executor_role_readiness.readiness_hash)
+  })
+
+  test("shared Commander and Executor setup keeps exact context capability role-isolated and usable", async () => {
+    const dir = await tempProject()
+    const setup = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = {
+      commander_recipe_id: "commander-anthropic-claude-sonnet-4-5",
+      executor_recipe_id: "executor-anthropic-claude-sonnet-4-5",
+    } as const
+    const preview = await setup.preview(choices)
+    await setup.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "anthropic", "claude-sonnet-4-5-20250929", { runtimeSession: true })
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
+      researchProjectionMode: "disabled",
+    })
+    const commander = await server.command("runtime.preview_context_budget", {
+      purpose: "commander_investigation",
+      role: "commander",
+      provider_kind: "anthropic",
+      model_id: "claude-sonnet-4-5-20250929",
+    }) as { blockers: string[] }
+    const executor = await server.command("runtime.preview_context_budget", {
+      purpose: "opencode_executor_session",
+      role: "executor",
+      provider_kind: "anthropic",
+      model_id: "claude-sonnet-4-5-20250929",
+    }) as { blockers: string[] }
+    expect(commander.blockers).not.toContain("selected model capability does not support requested role")
+    expect(executor.blockers).not.toContain("selected model capability does not support requested role")
+    const commanderCapability = await server.command("runtime.get_model_capability", {
+      providerKind: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+      role: "commander",
+    }) as Record<string, unknown>
+    const executorCapability = await server.command("runtime.get_model_capability", {
+      providerKind: "anthropic",
+      modelId: "claude-sonnet-4-5-20250929",
+      role: "executor",
+    }) as Record<string, unknown>
+    expect(commanderCapability).toMatchObject({ role_support: ["commander"], supports_tools: true })
+    expect(executorCapability).toMatchObject({ role_support: ["executor"], supports_tools: "unknown", supports_long_context: "unknown" })
+    expect(executorCapability.capability_id).not.toBe(commanderCapability.capability_id)
+    await server.shutdown()
+  })
+
+  test("launch configuration constructs production Executor readiness without package injection", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { runtimeSession: true })
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
+    })
+    const internal = server as unknown as { executorModelReadinessResolver?: { constructor: { name: string } } }
+    expect(internal.executorModelReadinessResolver?.constructor.name).toBe("OpenCodeExecutorModelReadinessResolver")
+    await server.shutdown()
+  })
+
+  test("production Executor readiness observes process-adapter environment and working-directory authority", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const launchCwd = join(dir, "opencode-launch-cwd")
+    await mkdir(launchCwd, { recursive: true })
+    const observationEnv = await openCodeObservationEnvironment(launchCwd, "google", "gemini-2.5-flash", { connected: false })
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        GOOGLE_GENERATIVE_AI_API_KEY: "parent-credential-must-be-overridden",
+        NXL_DETACHED_EXECUTOR_CREDENTIAL: "detached-config-must-not-reach-child",
+      },
+      openCodeAdapterConfig: {
+        kind: "process",
+        command: "opencode",
+        cwd: launchCwd,
+        env: { ...observationEnv, GOOGLE_GENERATIVE_AI_API_KEY: "" },
+      },
+    })
+
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({
+      ready: false,
+      provider_availability_status: "available",
+      credential_connection_status: "disconnected",
+    })
+    await server.shutdown()
+  })
+
+  test("startup defers a torn setup snapshot until strict projection under the run lock", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    const committed = await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const complete = await readFile(eventsPath, "utf8")
+    await writeFile(eventsPath, complete.slice(0, -2), "utf8")
+
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: new LongLivedAdapter() })
+    await writeFile(eventsPath, complete, "utf8")
+
+    await expect(server.start()).rejects.toThrow("persisted model setup changed before runtime start")
+    expect(committed).toMatchObject({ status: "committed" })
+    expect((await server.eventStore.readAll()).some((event) => event.kind === "runtime_started")).toBe(false)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
+  test("startup fails closed when a corrupt setup journal remains corrupt", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const eventsPath = join(dir, ".nxl", "events.jsonl")
+    const complete = await readFile(eventsPath, "utf8")
+    await writeFile(eventsPath, complete.slice(0, -2), "utf8")
+
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: new LongLivedAdapter() })
+    await expect(server.start()).rejects.toThrow("model setup journal is malformed")
+    expect((await server.eventStore.readAll().catch(() => [])).some((event) => event.kind === "runtime_started")).toBe(false)
+    expect(existsSync(join(dir, ".nxl", "run.lock"))).toBe(false)
+  })
+
+  test("environment input cannot replace the code-owned production Executor readiness observer", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const marker = join(dir, "forged-observer-ran")
+    const forged = join(dir, "forged-observer.ts")
+    await writeFile(forged, `await Bun.write(${JSON.stringify(marker)}, "forged");`, "utf8")
+    for (const env of [
+      { NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath },
+      { NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([forged]) },
+      {
+        NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath,
+        NXL_OPENCODE_EXECUTOR_READINESS_ARGS_JSON: JSON.stringify([forged]),
+      },
+    ]) {
+      expect(() => createRuntimeServerFromLaunchConfig({ projectDir: dir, env })).toThrow("not supported")
+    }
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: { NXL_OPENCODE_EXECUTOR_READINESS_COMMAND: process.execPath },
+      executorModelReadinessResolver: { observe: () => { throw new Error("must not run") } },
+    } as unknown as RuntimeServerLaunchConfig)).toThrow("not supported")
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      executorModelReadinessResolver: { observe: () => { throw new Error("must not run") } },
+    } as unknown as RuntimeServerLaunchConfig)).toThrow("not supported")
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  test("persisted Executor setup rejects alternate production launch process seams", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const base = { projectDir: dir, env: {}, openCodeAdapterConfig: { kind: "process" as const, command: "/opt/opencode" } }
+    const directAdapter = new LongLivedAdapter()
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      adapter: directAdapter,
+    })).toThrow("same packaged OpenCode execution target")
+    expect(directAdapter.startCalls).toBe(0)
+    let injectedReadinessCalls = 0
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      executorModelReadinessResolver: {
+        observe: () => {
+          injectedReadinessCalls += 1
+          throw new Error("must not run")
+        },
+      },
+    } as unknown as RuntimeServerLaunchConfig)).toThrow("custom Executor readiness resolver is not supported")
+    expect(injectedReadinessCalls).toBe(0)
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+    })).toThrow("requires a packaged process OpenCode execution target")
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "fake" },
+    })).toThrow("requires a packaged process OpenCode execution target")
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      opencodeLaunchAdapter: {} as never,
+    })).toThrow("same packaged OpenCode execution target")
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      opencodeLaunchSpawn: (() => { throw new Error("must not run") }) as never,
+    })).toThrow("same packaged OpenCode execution target")
+    let aliasedSpawnCalls = 0
+    expect(() => createRuntimeServerFromLaunchConfig({
+      ...base,
+      openCodeAdapterFactoryOptions: {
+        spawn: (() => {
+          aliasedSpawnCalls += 1
+          throw new Error("must not run")
+        }) as never,
+      },
+    })).toThrow("same packaged OpenCode execution target")
+    expect(aliasedSpawnCalls).toBe(0)
+    expect(await readEventKinds(dir)).not.toContain("runtime_started")
+  })
+
+  test("shutdown terminates and drains production Executor observation before runtime_shutdown", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash")
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    const pending = server.previewExecutorModelRoleReadiness()
+    await server.shutdown()
+    await expect(pending).resolves.toMatchObject({ ready: false, provider_availability_status: "unknown" })
+    const events = await server.eventStore.readAll()
+    expect(events.at(-1)?.kind).toBe("runtime_shutdown")
+    const internal = server as unknown as { executorModelReadinessResolver?: { activeCount(): number } }
+    expect(internal.executorModelReadinessResolver?.activeCount()).toBe(0)
+  })
+
+  test("RuntimeServer restart reactivates the production Executor readiness observer", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { runtimeSession: true })
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      openCodeAdapterConfig: { kind: "process", command: "opencode", env: observationEnv },
+      researchProjectionMode: "disabled",
+    })
+    await server.start()
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({ ready: true })
+    await server.shutdown()
+    await server.start()
+    await expect(server.previewExecutorModelRoleReadiness()).resolves.toMatchObject({ ready: true })
+    await server.shutdown()
+  })
+
+  test("persisted setup conflicts with explicit registry and legacy Commander environment authority", async () => {
+    const dir = await tempProject()
+    const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: "commander-anthropic-claude-sonnet-4-5", executor_recipe_id: null } as const
+    const preview = await service.preview(choices)
+    await service.confirm({ ...choices, expected_revision: 0, candidate_hash: preview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    expect(() => createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, modelProfileRuntimeRegistry: executorOnlyRuntimeRegistry() })).toThrow("persisted model setup")
+    expect(() => createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {
+        NXL_COMMANDER_INVESTIGATION_PROVIDER_ENABLED: "1",
+        NXL_COMMANDER_INVESTIGATION_TRANSPORT_KIND: "anthropic_messages_connector",
+      },
+    })).toThrow("persisted model setup")
+  })
 })
 
 function timeout(ms: number): Promise<"timeout"> {
@@ -1043,6 +1826,7 @@ describe("CommandAuthorityService", () => {
 
   test("registry classifies critical authority and risk boundaries", () => {
     const service = new CommandAuthorityService(() => "2026-06-19T00:00:00.000Z")
+    expect(service.get("/model-setup")).toMatchObject({ runtime_command: "runtime.confirm_model_setup", risk: "medium_risk_write", gate: "model_setup_runtime", owner: "model_setup", mutates_events: true, creates_external_process: false, calls_provider: false, requires_active_runtime: false, requires_run_lock: true, requires_approval: true, blocked_by_default: true, expected_event_kinds: ["runtime_model_setup_committed"] })
     expect(service.get("/commander-recoveries")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.list_commander_investigation_recoveries", owner: "commander_recovery", mutates_events: false, calls_provider: false })
     expect(service.get("/commander-recovery-show")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.get_commander_investigation_recovery", owner: "commander_recovery", mutates_events: false })
     expect(service.get("/commander-recovery-preview")).toMatchObject({ risk: "safe_read", runtime_command: "runtime.preview_commander_investigation_recovery", mutates_events: false, calls_provider: false })
@@ -7952,9 +8736,13 @@ describe("RuntimeServer core", () => {
     const first = service.executeStep({ plan_id: "plan_continue_concurrent_1", index: 0, requested_by: "operator" })
     await readStarted
     const second = service.executeStep({ plan_id: "plan_continue_concurrent_1", index: 0, requested_by: "operator" })
+    const secondResult = second.then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    )
     releaseRead([])
     await expect(first).resolves.toMatchObject({ status: "succeeded", command: "/missions" })
-    await expect(second).rejects.toThrow("continuation plan is completed")
+    expect((await secondResult).error).toEqual(new Error("continuation plan is completed"))
 
     expect(readCalls).toBe(1)
     const events = await eventStore.readAll()
@@ -11882,6 +12670,7 @@ describe("RuntimeServer core", () => {
 
     timers.shift()?.()
     await waitForCondition(() => service.status().tick_count === 1, "first failed scheduler tick did not settle")
+    await waitForCondition(() => timers.length === 1, "failed scheduler tick did not schedule its replacement timer")
     expect(service.status()).toMatchObject({ status: "running", tick_count: 1 })
     expect(timers).toHaveLength(1)
 
@@ -14324,6 +15113,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("no env config preserves fake default launch behavior", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
 
     expect(server.adapter).toBeInstanceOf(FakeOpenCodeAdapter)
@@ -14335,6 +15125,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env fake explicitly selects fake adapter", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const options = readRuntimeServerLaunchOptionsFromEnv({ NXL_OPENCODE_ADAPTER: "fake" }, { projectDir: dir })
     const server = createRuntimeServerFromLaunchConfig({ ...options })
 
@@ -14370,6 +15161,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env external API config and credentials are wired through launch boundary", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: "{\"ok\":true}" }])
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -14416,6 +15208,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env process config starts runtime with fake spawn and writes session start", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const process = new FakeSpawnedProcess()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -14444,6 +15237,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env process config allows submitUserMessage and writes mission packet", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const process = new FakeSpawnedProcess()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -14500,6 +15294,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("secret-looking env launch values do not leak into runtime status events or errors", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const process = new FakeSpawnedProcess()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -14526,6 +15321,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("direct adapter injection still takes precedence over env launch config", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const adapter = new LongLivedAdapter()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -21079,6 +21875,7 @@ describe("OpenCode launch readiness", () => {
   test("launch config env opt-in reaches real launch gate", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
     db.createTopic({ id: "topic_launch_config", title: "Launch config" })
     db.proposeResearchResult({
@@ -21238,6 +22035,37 @@ describe("OpenCode launch readiness", () => {
     expect(spawnedArgs).toHaveLength(1)
     expect(spawnedArgs[0].filter((argument) => argument === "--model")).toHaveLength(1)
     expect(spawnedArgs[0][spawnedArgs[0].indexOf("--model") + 1]).toBe("anthropic/claude-sonnet-4-5-20250929")
+    await server.shutdown()
+  })
+
+  test("persisted 9W4E Executor selection reaches production launch as one exact primary model argument", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const setup = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+    const choices = { commander_recipe_id: null, executor_recipe_id: "executor-google-gemini-2-5-flash" } as const
+    const setupPreview = await setup.preview(choices)
+    await setup.confirm({ ...choices, expected_revision: 0, candidate_hash: setupPreview.candidate_hash, confirmed_by: "operator", confirmation: "CONFIRM_MODEL_SETUP" })
+    const launchCapture = join(dir, "opencode-launch-args.json")
+    const observationEnv = await openCodeObservationEnvironment(dir, "google", "gemini-2.5-flash", { launchCapture, runtimeSession: true })
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      researchProjectionMode: "disabled",
+      openCodeAdapterConfig: { kind: "process", command: "opencode", args: ["--format", "json"], env: observationEnv },
+      opencodeLaunchEnv: { NXL_REAL_OPENCODE_LAUNCH: "1" },
+      opencodeLaunchId: () => "launch_persisted_setup",
+    })
+    await server.start()
+    const session = await server.command("runtime.create_opencode_session_plan", { objective: "persisted setup launch" }) as { session_id: string }
+    const pack = await server.command("runtime.write_opencode_session_instruction_pack", { sessionId: session.session_id }) as { pack_id: string }
+    await expect(server.command("runtime.launch_opencode_session", { sessionId: session.session_id, packId: pack.pack_id })).resolves.toMatchObject({ status: "launch_started" })
+    for (let attempt = 0; attempt < 50 && !existsSync(launchCapture); attempt += 1) await Bun.sleep(5)
+    const spawnedArgs = JSON.parse(await readFile(launchCapture, "utf8")) as string[]
+    const modelIndex = spawnedArgs.indexOf("--model")
+    expect(modelIndex).toBeGreaterThan(-1)
+    expect(spawnedArgs.filter((argument) => argument === "--model" || argument === "-m")).toHaveLength(1)
+    expect(spawnedArgs[modelIndex + 1]).toBe("google/gemini-2.5-flash")
+    expect(spawnedArgs.join(" ")).not.toMatch(/small_model|title|summary|compaction|agent|subagent/)
     await server.shutdown()
   })
 

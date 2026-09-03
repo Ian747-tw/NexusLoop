@@ -2,9 +2,18 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises"
 import { tmpdir } from "os"
 import { join } from "path"
-import { FakeOpenCodeAdapter, RuntimeServer } from "../../runtime/src/index"
+import {
+  createRuntimeServerFromLaunchConfig,
+  buildModelSetupCandidate,
+  EventStore,
+  FakeOpenCodeAdapter,
+  ModelSetupService,
+  RuntimeServer,
+  RuntimeServerClient,
+  modelSetupCatalog,
+} from "../../runtime/src/index"
 import type { RuntimeEvent } from "../src/events"
-import { runTuiEntrypoint } from "../src/launch"
+import { buildHeadlessSnapshot, runTuiEntrypoint } from "../src/launch"
 import type { RuntimeClient } from "../src/runtime"
 import { createTuiRuntimeClient } from "../src/runtime-client-factory"
 
@@ -27,6 +36,16 @@ class TestRuntimeClient implements RuntimeClient {
 
   async command(name: string, payload?: Record<string, unknown>): Promise<unknown> {
     this.commandNames.push(name)
+    if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
+    if (name === "runtime.model_setup_status") return {
+      status: "ready",
+      revision: 1,
+      setup_hash: "5".repeat(64),
+      active_setup_hash: "5".repeat(64),
+      pending_restart: false,
+      candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+      active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+    }
     if (name === "runtime.status") {
       return {
         runtimeStatus: "started",
@@ -827,6 +846,19 @@ async function makeApprovedProject(dir: string): Promise<void> {
   )
 }
 
+async function commitUnconfiguredModelSetup(dir: string): Promise<void> {
+  const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+  const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+  const preview = await service.preview(choices)
+  await service.confirm({
+    ...choices,
+    expected_revision: preview.expected_revision,
+    candidate_hash: preview.candidate_hash,
+    confirmed_by: "tui-test-operator",
+    confirmation: "CONFIRM_MODEL_SETUP",
+  })
+}
+
 async function readEventKinds(dir: string): Promise<string[]> {
   try {
     return (await readFile(join(dir, ".nxl", "events.jsonl"), "utf8"))
@@ -877,6 +909,7 @@ describe("TUI launch boundary", () => {
   test("real headless runtime client shows status and mission summary", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const output: string[] = []
 
     await runTuiEntrypoint({
@@ -894,9 +927,202 @@ describe("TUI launch boundary", () => {
     expect(snapshot).toContain("recent_missions")
   })
 
+  test("default approved-project setup commits through RuntimeServer persistence", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const output: string[] = []
+    const keys = [
+      { type: "select-next" },
+      { type: "submit" },
+      { type: "select-next" },
+      { type: "submit" },
+      { type: "submit" },
+      { type: "submit" },
+    ]
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify(keys), NXL_OPENCODE_ADAPTER: "fake" },
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+    const snapshot = output.join("\n")
+    expect(snapshot).toContain("stage=committed")
+    expect(snapshot).toContain("pending_restart=true")
+    expect(snapshot).not.toContain("screen=main")
+    const eventKinds = await readEventKinds(dir)
+    expect(eventKinds).toEqual(["runtime_model_setup_committed"])
+  })
+
+  test("real RuntimeServerClient keeps first-run setup before every runtime lifecycle boundary", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify([{ type: "submit" }, { type: "submit" }, { type: "submit" }, { type: "submit" }]) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("stage=committed")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual(["runtime_model_setup_committed"])
+    await client.shutdown()
+    expect(await readEventKinds(dir)).toEqual(["runtime_model_setup_committed"])
+
+    const nextAdapter = new SpyOpenCodeAdapter()
+    const nextServer = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter: nextAdapter })
+    const nextClient = new RuntimeServerClient({ server: nextServer, autoStart: true, ownsServer: true })
+    await nextClient.command("runtime.status")
+    expect(nextAdapter.startCalls).toBe(1)
+    expect(await readEventKinds(dir)).toContain("runtime_started")
+    await nextClient.shutdown()
+  })
+
+  test("headless explicit-resume inspection cannot bypass missing model setup", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify([
+          { type: "submit" },
+          { type: "insert", text: "/opencode-session-plan objective=must not start" },
+          { type: "submit" },
+        ]),
+      },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("screen=model-setup")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual([])
+  })
+
+  test("headless cancel cannot escape required model setup and start Runtime", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify([
+          { type: "cancel" },
+          { type: "insert", text: "must not start" },
+          { type: "submit" },
+        ]),
+      },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("screen=model-setup")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual([])
+  })
+
+  test("real first-run TUI never reaches the configured process spawn seam", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    let spawnCalls = 0
+    const runtime = createTuiRuntimeClient({
+      projectDir: dir,
+      env: {
+        NXL_RUNTIME_CLIENT: "real",
+        NXL_OPENCODE_ADAPTER: "process",
+        NXL_OPENCODE_COMMAND: "opencode",
+      },
+      openCodeAdapterFactoryOptions: {
+        spawn: (() => {
+          spawnCalls += 1
+          throw new Error("first-run setup must not spawn OpenCode")
+        }) as never,
+      },
+    })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: { NXL_TUI_HEADLESS: "1", NXL_TUI_KEYS: JSON.stringify([{ type: "submit" }, { type: "submit" }, { type: "submit" }, { type: "submit" }]) },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("stage=committed")
+    expect(spawnCalls).toBe(0)
+    expect(await readEventKinds(dir)).toEqual(["runtime_model_setup_committed"])
+  })
+
+  test("same-process spec approval cannot open model setup through the bootstrap fake client", async () => {
+    const dir = await tempProject()
+    const runtime = createTuiRuntimeClient({ projectDir: dir, env: {} })
+    await makeApprovedProject(dir)
+
+    const snapshot = await buildHeadlessSnapshot(runtime, dir, {
+      NXL_TUI_KEYS: JSON.stringify([
+        { type: "submit" },
+        { type: "insert", text: "/model-setup" },
+        { type: "submit" },
+      ]),
+    })
+
+    expect(snapshot).toContain("Restart NexusLoop after spec approval before opening model setup")
+    expect(snapshot).not.toContain("stage=committed")
+    expect(await readEventKinds(dir)).not.toContain("runtime_model_setup_committed")
+  })
+
   test("real headless runtime client submits a message and refreshes mission records", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const output: string[] = []
     const keys = [
       { type: "submit" },
@@ -926,6 +1152,7 @@ describe("TUI launch boundary", () => {
   test("status and missions commands update runtime panels", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const output: string[] = []
     const keys = [
       { type: "submit" },
@@ -1083,6 +1310,7 @@ describe("TUI launch boundary", () => {
   test("real headless runtime client loads projection and topics through research command", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const output: string[] = []
     const keys = [
       { type: "submit" },
@@ -1110,6 +1338,7 @@ describe("TUI launch boundary", () => {
   test("real headless runtime client renders empty commander queue surface", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const output: string[] = []
     const keys = [
       { type: "submit" },
@@ -1995,8 +2224,9 @@ describe("TUI launch boundary", () => {
   test("headless executor review on stopped real runtime does not start OpenCode", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const adapter = new SpyOpenCodeAdapter()
-    const server = new RuntimeServer({ projectDir: dir, adapter })
+    const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {}, adapter })
     const runtime = createTuiRuntimeClient({ projectDir: dir, server, env: {} })
     const output: string[] = []
     const keys = [
@@ -2022,6 +2252,7 @@ describe("TUI launch boundary", () => {
   test("shutdown command does not report a false post-shutdown refresh error", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)
+    await commitUnconfiguredModelSetup(dir)
     const output: string[] = []
     const keys = [
       { type: "submit" },

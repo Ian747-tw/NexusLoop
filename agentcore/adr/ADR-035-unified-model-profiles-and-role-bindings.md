@@ -194,3 +194,7 @@ Branch 9W4D adds OpenAI Responses as a Commander conformance-policy-v3
 selection. The model-configuration schema and Executor mapping stay v1, and
 the compatibility matrix remains descriptive evidence rather than profile,
 conformance, mapping, or readiness authority.
+
+Branch 9W4E constructs this unchanged vocabulary from a fixed six-recipe
+catalog and persists only credential-free recipe identities and semantic
+hashes. It does not introduce a second selection schema.

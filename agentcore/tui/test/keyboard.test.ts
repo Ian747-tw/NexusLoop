@@ -1,8 +1,30 @@
 import { describe, expect, test } from "bun:test"
-import { applyKeyCommand, applyKeyCommandWithEffects, parseRuntimeCommand } from "../src/keyboard"
+import { applyKeyCommand, applyKeyCommandWithEffects, applyKeyCommandWithModelSetupStartupGate, parseRuntimeCommand } from "../src/keyboard"
 import { initialState, type UiState } from "../src/state"
 
 describe("TUI keyboard command model", () => {
+  test("startup setup authority gates direct submit dispatch", () => {
+    const state = { ...initialState("/tmp/demo"), screen: "main" as const, focus: "message-box" as const, messageDraft: "start mission" }
+    for (const gate of ["pending", "blocked"] as const) {
+      expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, gate)).toEqual({ state, effects: [] })
+    }
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, "required")).toEqual({ state, effects: [] })
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, "clear").effects).toEqual([
+      { type: "send-user-message", message: "start mission" },
+    ])
+  })
+  test("failed startup setup inspection exposes only a no-start retry", () => {
+    const base = initialState("/tmp/demo")
+    const state = {
+      ...base,
+      screen: "model-setup" as const,
+      modelSetup: { ...base.modelSetup, stage: "loading" as const, commandError: "setup unavailable" },
+    }
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, "blocked")).toMatchObject({
+      effects: [{ type: "load-model-setup", enterIfMissing: true, continueInitializationIfActive: true }],
+    })
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "insert", text: "start" }, "blocked")).toEqual({ state, effects: [] })
+  })
   test("recovery approval slash parsing preserves the terminal raw note suffix", () => {
     expect(parseRuntimeCommand("/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  ")).toEqual({
       command: "commander-recovery-approve",
@@ -17,13 +39,14 @@ describe("TUI keyboard command model", () => {
       args: ["/commander-recovery-approve investigation_id=inv confirm=APPROVE human_note=a  b  "],
     })
   })
-  test("select Initialize enters onboarding shell", () => {
+  test("select Initialize enters spec onboarding before model setup", () => {
     const state = { ...initialState("/tmp/demo"), screen: "init" as const, focus: "init-choice" as const }
-    const next = applyKeyCommand(state, { type: "submit" })
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
 
-    expect(next.screen).toBe("main")
-    expect(next.lastCommand).toBe("initialize")
-    expect(next.commander.workIntent).toBe("TUI onboarding shell")
+    expect(result.state.screen).toBe("main")
+    expect(result.state.focus).toBe("message-box")
+    expect(result.state.lastCommand).toBe("initialize")
+    expect(result.effects).toEqual([{ type: "send-command", command: "initialize" }])
   })
 
   test("submit message from message box", () => {
@@ -46,24 +69,139 @@ describe("TUI keyboard command model", () => {
     expect(state.focus).toBe("message-box")
   })
 
-  test("initialize submit followed by message submit does not resend initialize", () => {
-    let state: UiState = { ...initialState("/tmp/demo"), screen: "init", focus: "init-choice" }
-    const effects: string[] = []
+  test("model setup keeps Commander and Executor choices independent", () => {
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        origin: "main",
+        stage: "commander",
+        commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }, { id: "commander-a", label: "Commander A" }],
+        executorChoices: [{ id: "", label: "Leave Executor unconfigured" }, { id: "executor-b", label: "Executor B" }],
+      },
+    }
+    state = applyKeyCommand(state, { type: "select-next" })
+    state = applyKeyCommand(state, { type: "submit" })
+    expect(state.modelSetup.stage).toBe("executor")
+    expect(state.modelSetup.commanderSelection).toBe(1)
+    state = applyKeyCommand(state, { type: "submit" })
+    expect(state.modelSetup.stage).toBe("preview")
+  })
 
-    let result = applyKeyCommandWithEffects(state, { type: "submit" })
-    state = result.state
-    effects.push(...result.effects.map((effect) => `${effect.type}:${"command" in effect ? effect.command : effect.message}`))
+  test("model setup clears stale preview authority while a changed selection is being previewed", () => {
+    let state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        stage: "preview",
+        commanderChoices: [{ id: "", label: "Leave Commander unconfigured" }],
+        executorChoices: [
+          { id: "executor-a", label: "Executor A" },
+          { id: "executor-b", label: "Executor B" },
+        ],
+        executorSelection: 0,
+        expectedRevision: 4,
+        candidateHash: "a".repeat(64),
+        configurationHash: "b".repeat(64),
+      },
+    }
 
-    result = applyKeyCommandWithEffects(state, { type: "insert", text: "hello runtime" })
-    state = result.state
-    effects.push(...result.effects.map((effect) => `${effect.type}:${"command" in effect ? effect.command : effect.message}`))
+    state = applyKeyCommand(state, { type: "cancel" })
+    state = applyKeyCommand(state, { type: "select-next" })
+    const requested = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(requested.state.modelSetup).toMatchObject({ stage: "preview", executorSelection: 1 })
+    expect(requested.state.modelSetup.expectedRevision).toBeUndefined()
+    expect(requested.state.modelSetup.candidateHash).toBeUndefined()
+    expect(requested.state.modelSetup.configurationHash).toBeUndefined()
+    expect(requested.effects).toEqual([{
+      type: "preview-model-setup",
+      commanderRecipeId: null,
+      executorRecipeId: "executor-b",
+    }])
 
-    result = applyKeyCommandWithEffects(state, { type: "submit" })
-    state = result.state
-    effects.push(...result.effects.map((effect) => `${effect.type}:${"command" in effect ? effect.command : effect.message}`))
+    expect(applyKeyCommandWithEffects(requested.state, { type: "submit" })).toEqual({
+      state: requested.state,
+      effects: [],
+    })
+  })
 
-    expect(effects).toEqual(["send-command:initialize", "send-user-message:hello runtime"])
-    expect(state.submittedMessages).toEqual(["hello runtime"])
+  test("committed first-run setup cannot enter the main shell before restart", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, stage: "committed", pendingRestart: true },
+    }
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(result.state.screen).toBe("model-setup")
+    expect(result.state.modelSetup).toMatchObject({ stage: "committed", pendingRestart: true })
+    expect(result.effects).toEqual([])
+    expect(applyKeyCommandWithEffects(state, { type: "cancel" })).toEqual({ state, effects: [] })
+  })
+
+  test("unchanged committed setup returns to its originating main screen", () => {
+    const state: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        origin: "main",
+        stage: "committed",
+        pendingRestart: false,
+      },
+    }
+    const result = applyKeyCommandWithEffects(state, { type: "submit" })
+    expect(result.state).toMatchObject({ screen: "main", focus: "message-box" })
+    expect(result.effects).toEqual([])
+  })
+
+  test("model setup cancellation returns to the screen that opened it", () => {
+    const fromInit: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, origin: "init", stage: "commander" },
+    }
+    expect(applyKeyCommandWithEffects(fromInit, { type: "cancel" }).state).toMatchObject({ screen: "init", focus: "init-choice" })
+
+    const fromMain: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: { ...initialState("/tmp/demo").modelSetup, origin: "main", stage: "committed" },
+    }
+    expect(applyKeyCommandWithEffects(fromMain, { type: "cancel" }).state).toMatchObject({ screen: "main", focus: "message-box" })
+  })
+
+  test("required first-run setup cannot escape from the Commander stage", () => {
+    const base = initialState("/tmp/demo")
+    const state: UiState = {
+      ...base,
+      screen: "model-setup",
+      modelSetup: {
+        ...base.modelSetup,
+        origin: "main",
+        stage: "commander",
+        startupCheckStatus: "required",
+      },
+    }
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "cancel" }, "required")).toEqual({ state, effects: [] })
+  })
+
+  test("model setup confirmation owns cancellation until the durable result settles", () => {
+    const confirmation: UiState = {
+      ...initialState("/tmp/demo"),
+      screen: "model-setup",
+      modelSetup: {
+        ...initialState("/tmp/demo").modelSetup,
+        stage: "confirmation",
+        expectedRevision: 0,
+        candidateHash: "a".repeat(64),
+      },
+    }
+    const submitted = applyKeyCommandWithEffects(confirmation, { type: "submit" })
+    expect(submitted.state.modelSetup.stage).toBe("confirming")
+    expect(submitted.effects).toHaveLength(1)
+    expect(applyKeyCommandWithEffects(submitted.state, { type: "cancel" })).toEqual({ state: submitted.state, effects: [] })
   })
 
   test("message box keeps API keys out of TUI state while sending original message", () => {

@@ -89,17 +89,9 @@ def test_user_previews_context_packet_compiler_without_launching_or_mutating(san
     assert "vendor-secret" not in result.stdout
     assert "model-secret" not in result.stdout
 
-    events_path = project / ".nxl" / "events.jsonl"
-    events = (
-        [
-            json.loads(line)
-            for line in events_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        if events_path.exists()
-        else []
-    )
+    events = sandbox.list_events(project)
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_model_setup_committed") == 1
     assert event_kinds.count("runtime_started") == 0
     assert event_kinds.count("opencode_session_planned") == 0
     forbidden = {

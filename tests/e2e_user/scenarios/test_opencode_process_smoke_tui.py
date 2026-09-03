@@ -77,13 +77,9 @@ def test_user_inspects_opencode_process_smoke_without_live_process(sandbox) -> N
     assert "opencode-smoke-secret" not in result.stdout
     assert "opencode-smoke-secret-abc123" not in result.stdout
 
-    events_path = project / ".nxl" / "events.jsonl"
-    events = [
-        json.loads(line)
-        for line in events_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    events = sandbox.list_events(project)
     event_kinds = [event["kind"] for event in events]
+    assert event_kinds.count("runtime_model_setup_committed") == 1
     assert "runtime_started" not in event_kinds
     assert "opencode_process_smoke_blocked" in event_kinds
     assert "opencode_process_smoke_started" not in event_kinds

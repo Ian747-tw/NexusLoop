@@ -1,6 +1,8 @@
-import { basename } from "path"
+import { readFileSync } from "fs"
+import { basename, join } from "path"
 import {
   createRuntimeServerFromLaunchConfig,
+  locateProjectRoot,
   RuntimeServer,
   RuntimeServerClient,
   type OpenCodeAdapterFactoryOptions,
@@ -8,7 +10,7 @@ import {
 import { supportedRuntimeEventTypes, type RuntimeEvent } from "./events"
 import { FakeRuntimeClient, type RuntimeClient, type SubmitUserMessageResult } from "./runtime"
 
-export type TuiRuntimeClientKind = "fake" | "real"
+export type TuiRuntimeClientKind = "auto" | "fake" | "real"
 
 export interface TuiRuntimeClientFactoryOptions {
   projectDir: string
@@ -30,9 +32,15 @@ export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions):
   }
   const env = options.env ?? {}
   const kind = readRuntimeClientKind(env)
-  if (kind === "fake") return new FakeRuntimeClient(options.projectDir, options.projectName ?? basename(options.projectDir))
+  const projectDir = locateProjectRoot(options.projectDir)
+  if (kind === "fake") {
+    return new FakeRuntimeClient(projectDir, options.projectName ?? basename(projectDir))
+  }
+  if (kind === "auto" && !hasApprovedSpec(projectDir)) {
+    return new FakeRuntimeClient(projectDir, options.projectName ?? basename(projectDir), "restart_required")
+  }
   const server = createRuntimeServerFromLaunchConfig({
-    projectDir: options.projectDir,
+    projectDir,
     env,
     openCodeAdapterFactoryOptions: options.openCodeAdapterFactoryOptions,
   })
@@ -45,9 +53,24 @@ export function createTuiRuntimeClient(options: TuiRuntimeClientFactoryOptions):
 
 export function readRuntimeClientKind(env: Record<string, string | undefined>): TuiRuntimeClientKind {
   const raw = env.NXL_RUNTIME_CLIENT
-  if (raw === undefined || raw.trim() === "") return "fake"
+  if (raw === undefined || raw.trim() === "") return "auto"
   if (raw === "fake" || raw === "real") return raw
   throw new Error(`unknown runtime client kind in NXL_RUNTIME_CLIENT: ${raw}`)
+}
+
+function hasApprovedSpec(projectDir: string): boolean {
+  const file = join(projectDir, ".nxl", "spec", "current.json")
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown
+    return parsed !== null
+      && typeof parsed === "object"
+      && !Array.isArray(parsed)
+      && Object.getPrototypeOf(parsed) === Object.prototype
+      && Object.hasOwn(parsed, "status")
+      && (parsed as { status?: unknown }).status === "approved"
+  } catch {
+    return false
+  }
 }
 
 export function isTuiRuntimeEvent(event: unknown): event is RuntimeEvent {
@@ -58,12 +81,20 @@ export function isTuiRuntimeEvent(event: unknown): event is RuntimeEvent {
 
 export class TuiRuntimeServerClient implements RuntimeClient {
   readonly streamMode = "long-lived" as const
+  readonly modelSetupAuthority = "durable" as const
 
   constructor(readonly runtime: RuntimeServerClient) {}
 
   async *stream(): AsyncIterable<RuntimeEvent> {
     for await (const event of this.runtime.stream()) {
-      if (isTuiRuntimeEvent(event)) yield event
+      if (!isTuiRuntimeEvent(event)) continue
+      yield event
+      if (event.type === "RuntimeReady") {
+        const status = await this.runtime.server.status()
+        if (!status.specApproved && status.runtimeStatus !== "started") {
+          yield { type: "ProjectUninitialized", projectDir: status.projectDir }
+        }
+      }
     }
   }
 
