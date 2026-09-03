@@ -6,7 +6,7 @@ import { FakeRuntimeClient } from "../src/runtime"
 import { reduceRuntimeEvent } from "../src/reducer"
 import { initialState } from "../src/state"
 import { createTuiRuntimeClient, isTuiRuntimeEvent, readRuntimeClientKind, TuiRuntimeServerClient } from "../src/runtime-client-factory"
-import { EventStore, ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
+import { EventStore, ExternalApiConnectorRegistry, FakeExternalApiTransport, FakeOpenCodeAdapter, ModelSetupService, ResearchDb, RuntimeServer, type OpenCodeProcessEventSource, type OpenCodeSpawnedProcess } from "../../runtime/src/index"
 import { applyRuntimeUiEffect } from "../src/runtime-effects"
 
 const cleanup: string[] = []
@@ -43,6 +43,16 @@ async function makeApprovedProject(dir: string): Promise<void> {
       2,
     ),
   )
+  const setup = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+  const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+  const preview = await setup.preview(choices)
+  await setup.confirm({
+    ...choices,
+    expected_revision: preview.expected_revision,
+    candidate_hash: preview.candidate_hash,
+    confirmed_by: "tui-runtime-test-operator",
+    confirmation: "CONFIRM_MODEL_SETUP",
+  })
 }
 
 function minimaxConnector() {

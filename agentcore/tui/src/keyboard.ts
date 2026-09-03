@@ -153,6 +153,10 @@ export function applyKeyCommandWithEffects(state: UiState, command: KeyCommand):
           || (state.modelSetup.stage === "committed" && state.modelSetup.pendingRestart)) {
           return { state, effects: [] }
         }
+        if (state.modelSetup.startupCheckStatus === "required"
+          && (state.modelSetup.stage === "loading" || state.modelSetup.stage === "commander")) {
+          return { state, effects: [] }
+        }
         if (state.modelSetup.stage === "executor") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(state.modelSetup), stage: "commander" } }, effects: [] }
         if (state.modelSetup.stage === "preview" || state.modelSetup.stage === "confirmation") return { state: { ...state, modelSetup: { ...clearModelSetupPreview(state.modelSetup), stage: "executor" } }, effects: [] }
         const screen = state.modelSetup.origin

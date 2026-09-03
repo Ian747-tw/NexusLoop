@@ -171,6 +171,19 @@ process.stdout.write(JSON.stringify({
   }
 }
 
+async function commitUnconfiguredModelSetup(dir: string): Promise<void> {
+  const service = new ModelSetupService({ eventStore: new EventStore(join(dir, ".nxl", "events.jsonl")) })
+  const choices = { commander_recipe_id: null, executor_recipe_id: null } as const
+  const preview = await service.preview(choices)
+  await service.confirm({
+    ...choices,
+    expected_revision: preview.expected_revision,
+    candidate_hash: preview.candidate_hash,
+    confirmed_by: "runtime-test-operator",
+    confirmation: "CONFIRM_MODEL_SETUP",
+  })
+}
+
 function executorOnlyRuntimeRegistry(): ModelProfileRuntimeRegistry {
   return new ModelProfileRuntimeRegistry({
     authority_source: "explicit",
@@ -204,6 +217,30 @@ afterEach(async () => {
 })
 
 describe("9W4E runtime model setup", () => {
+  test("production auto-start rejects missing model authority before Runtime lifecycle ownership", async () => {
+    const dir = await tempProject()
+    await makeProject(dir, { approvedSpec: true })
+    const adapter = new LongLivedAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const client = new RuntimeServerClient({ server, autoStart: true, ownsServer: false })
+
+    await expect(client.command("runtime.status")).rejects.toThrow("model setup is required before Runtime startup")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual([])
+  })
+
   test("startup waits for an active model-setup status readiness inspection", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
@@ -387,6 +424,7 @@ describe("9W4E runtime model setup", () => {
   test("shutdown drains an owned setup append before runtime_shutdown", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
     await server.start()
     const choices = { commander_recipe_id: null, executor_recipe_id: "executor-openai-gpt-4-1-mini" }
@@ -15075,6 +15113,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("no env config preserves fake default launch behavior", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const server = createRuntimeServerFromLaunchConfig({ projectDir: dir, env: {} })
 
     expect(server.adapter).toBeInstanceOf(FakeOpenCodeAdapter)
@@ -15086,6 +15125,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env fake explicitly selects fake adapter", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const options = readRuntimeServerLaunchOptionsFromEnv({ NXL_OPENCODE_ADAPTER: "fake" }, { projectDir: dir })
     const server = createRuntimeServerFromLaunchConfig({ ...options })
 
@@ -15121,6 +15161,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env external API config and credentials are wired through launch boundary", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const transport = new FakeExternalApiTransport([{ status_code: 200, body: "{\"ok\":true}" }])
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -15167,6 +15208,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env process config starts runtime with fake spawn and writes session start", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const process = new FakeSpawnedProcess()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -15195,6 +15237,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("env process config allows submitUserMessage and writes mission packet", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const process = new FakeSpawnedProcess()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -15251,6 +15294,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("secret-looking env launch values do not leak into runtime status events or errors", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const process = new FakeSpawnedProcess()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -15277,6 +15321,7 @@ describe("RuntimeServer launch OpenCode env wiring", () => {
   test("direct adapter injection still takes precedence over env launch config", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const adapter = new LongLivedAdapter()
     const server = createRuntimeServerFromLaunchConfig({
       projectDir: dir,
@@ -21830,6 +21875,7 @@ describe("OpenCode launch readiness", () => {
   test("launch config env opt-in reaches real launch gate", async () => {
     const dir = await tempProject()
     await makeProject(dir, { approvedSpec: true })
+    await commitUnconfiguredModelSetup(dir)
     const db = ResearchDb.open(dir, { appendEvents: true, idFactory: () => "unused" })
     db.createTopic({ id: "topic_launch_config", title: "Launch config" })
     db.proposeResearchResult({

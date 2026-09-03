@@ -767,6 +767,9 @@ export class RuntimeServer {
   private requireCurrentPersistedModelSetupAuthority(): void {
     if (!this.revalidatePersistedModelSetupOnStart) return
     const current = readPersistedModelSetupAuthority(this.projectDir)
+    if (!current && !this.modelSetupActiveHash && !this.modelProfileRuntimeRegistry) {
+      throw new Error("model setup is required before Runtime startup")
+    }
     const currentHash = current?.setup_hash
     const currentCandidateHash = current?.candidate.candidate_hash
     if (currentHash !== this.modelSetupActiveHash

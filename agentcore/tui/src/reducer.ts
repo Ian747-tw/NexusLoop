@@ -217,16 +217,20 @@ export function reduceRuntimeEvent(state: UiState, event: RuntimeEvent): UiState
 export type ModelSetupStartupGate = "pending" | "required" | "clear" | "blocked"
 
 export function modelSetupStartupGateAllowsInput(gate: ModelSetupStartupGate): boolean {
-  return gate === "required" || gate === "clear"
+  return gate === "clear"
 }
 
 export function modelSetupStartupGateAllowsCommand(state: UiState, command: KeyCommand, gate: ModelSetupStartupGate): boolean {
-  return modelSetupStartupGateAllowsInput(gate)
-    || (gate === "blocked"
+  if (gate === "clear") return true
+  if (gate === "required") {
+    return state.screen === "model-setup"
+      && !(command.type === "cancel" && (state.modelSetup.stage === "loading" || state.modelSetup.stage === "commander"))
+  }
+  return gate === "blocked"
       && command.type === "submit"
       && state.screen === "model-setup"
       && state.modelSetup.stage === "loading"
-      && state.modelSetup.commandError !== undefined)
+      && state.modelSetup.commandError !== undefined
 }
 
 export function reduceRuntimeEventDuringModelSetupGate(

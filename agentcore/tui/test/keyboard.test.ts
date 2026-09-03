@@ -8,11 +8,10 @@ describe("TUI keyboard command model", () => {
     for (const gate of ["pending", "blocked"] as const) {
       expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, gate)).toEqual({ state, effects: [] })
     }
-    for (const gate of ["required", "clear"] as const) {
-      expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, gate).effects).toEqual([
-        { type: "send-user-message", message: "start mission" },
-      ])
-    }
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, "required")).toEqual({ state, effects: [] })
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "submit" }, "clear").effects).toEqual([
+      { type: "send-user-message", message: "start mission" },
+    ])
   })
   test("failed startup setup inspection exposes only a no-start retry", () => {
     const base = initialState("/tmp/demo")
@@ -171,6 +170,21 @@ describe("TUI keyboard command model", () => {
       modelSetup: { ...initialState("/tmp/demo").modelSetup, origin: "main", stage: "committed" },
     }
     expect(applyKeyCommandWithEffects(fromMain, { type: "cancel" }).state).toMatchObject({ screen: "main", focus: "message-box" })
+  })
+
+  test("required first-run setup cannot escape from the Commander stage", () => {
+    const base = initialState("/tmp/demo")
+    const state: UiState = {
+      ...base,
+      screen: "model-setup",
+      modelSetup: {
+        ...base.modelSetup,
+        origin: "main",
+        stage: "commander",
+        startupCheckStatus: "required",
+      },
+    }
+    expect(applyKeyCommandWithModelSetupStartupGate(state, { type: "cancel" }, "required")).toEqual({ state, effects: [] })
   })
 
   test("model setup confirmation owns cancellation until the durable result settles", () => {

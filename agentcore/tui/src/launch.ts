@@ -1,4 +1,4 @@
-import { applyKeyCommandWithEffects, type KeyCommand } from "./keyboard"
+import { applyKeyCommandWithModelSetupStartupGate, type KeyCommand } from "./keyboard"
 import { reduceRuntimeEvent } from "./reducer"
 import { applyRuntimeUiEffect, refreshRuntimeRecords } from "./runtime-effects"
 import { type RuntimeClient } from "./runtime"
@@ -68,7 +68,14 @@ export async function buildHeadlessSnapshot(runtime: RuntimeClient, projectDir: 
   }
 
   for (const command of commands) {
-    const result = applyKeyCommandWithEffects(state, command)
+    const gate = state.screen === "init"
+      ? "clear"
+      : state.modelSetup.startupCheckStatus === "required"
+        ? "required"
+        : state.modelSetup.startupCheckStatus === "clear"
+          ? "clear"
+          : "blocked"
+    const result = applyKeyCommandWithModelSetupStartupGate(state, command, gate)
     state = result.state
     for (const effect of result.effects) {
       state = await applyRuntimeUiEffect(state, runtime, effect)

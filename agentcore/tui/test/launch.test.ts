@@ -1032,6 +1032,44 @@ describe("TUI launch boundary", () => {
     expect(await readEventKinds(dir)).toEqual([])
   })
 
+  test("headless cancel cannot escape required model setup and start Runtime", async () => {
+    const dir = await tempProject()
+    await makeApprovedProject(dir)
+    const adapter = new SpyOpenCodeAdapter()
+    const server = createRuntimeServerFromLaunchConfig({
+      projectDir: dir,
+      env: {},
+      adapter,
+      wakeSchedulerBootstrapConfig: {
+        autostart_enabled: true,
+        interval_ms: 1_000,
+        max_due_items: 1,
+        dry_run: true,
+        stop_on_error: true,
+      },
+    })
+    const runtime = createTuiRuntimeClient({ projectDir: dir, server })
+    const output: string[] = []
+    await runTuiEntrypoint({
+      projectDir: dir,
+      env: {
+        NXL_TUI_HEADLESS: "1",
+        NXL_TUI_KEYS: JSON.stringify([
+          { type: "cancel" },
+          { type: "insert", text: "must not start" },
+          { type: "submit" },
+        ]),
+      },
+      runtime,
+      writeOutput: (snapshot) => output.push(snapshot),
+    })
+
+    expect(output.join("\n")).toContain("screen=model-setup")
+    expect(adapter.startCalls).toBe(0)
+    expect(await server.status()).toMatchObject({ runtimeStatus: "created", lockHeld: false })
+    expect(await readEventKinds(dir)).toEqual([])
+  })
+
   test("real first-run TUI never reaches the configured process spawn seam", async () => {
     const dir = await tempProject()
     await makeApprovedProject(dir)

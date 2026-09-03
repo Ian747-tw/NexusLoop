@@ -2338,6 +2338,13 @@ export async function applyRuntimeUiEffect(
       }
       case "send-command": {
         const next = await applyNamedRuntimeCommand(state, runtime, effect.command, effect.args ?? [])
+        if (effect.command === "initialize") {
+          return await applyRuntimeUiEffect(next, runtime, {
+            type: "load-model-setup",
+            enterIfMissing: true,
+            continueInitializationIfActive: true,
+          })
+        }
         return shouldRefreshAfterCommand(effect.command) ? await refreshRuntimeRecordsOrRecordError(next, runtime) : next
       }
     }

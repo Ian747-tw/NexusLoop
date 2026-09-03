@@ -28,8 +28,10 @@ describe("TUI runtime event reducer", () => {
     })
     expect(modelSetupStartupGateAllowsInput("pending")).toBe(false)
     expect(modelSetupStartupGateAllowsInput("blocked")).toBe(false)
-    expect(modelSetupStartupGateAllowsInput("required")).toBe(true)
+    expect(modelSetupStartupGateAllowsInput("required")).toBe(false)
     expect(modelSetupStartupGateAllowsInput("clear")).toBe(true)
+    expect(modelSetupStartupGateAllowsCommand(setup, { type: "submit" }, "required")).toBe(true)
+    expect(modelSetupStartupGateAllowsCommand({ ...setup, screen: "main" }, { type: "submit" }, "required")).toBe(false)
     const failed = {
       ...initialState("/tmp/demo"),
       screen: "model-setup" as const,

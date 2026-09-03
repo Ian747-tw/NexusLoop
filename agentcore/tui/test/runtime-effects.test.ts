@@ -45,8 +45,18 @@ class RejectingRuntime implements RuntimeClient {
     this.sendCommandCalls += 1
     throw new Error("runtime should not receive init command")
   }
-  async command(): Promise<unknown> {
+  async command(name: string): Promise<unknown> {
     this.commandCalls += 1
+    if (name === "runtime.model_setup_catalog") return modelSetupCatalog()
+    if (name === "runtime.model_setup_status") return {
+      status: "ready",
+      revision: 1,
+      setup_hash: "5".repeat(64),
+      active_setup_hash: "5".repeat(64),
+      pending_restart: false,
+      candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+      active_candidate: buildModelSetupCandidate({ commander_recipe_id: null, executor_recipe_id: null }),
+    }
     throw new Error("runtime should not receive init command")
   }
 }
@@ -1380,7 +1390,7 @@ describe("runtime UI effects", () => {
     ])
   })
 
-  test("init-only commands are handled locally without runtime dispatch", async () => {
+  test("init-only commands inspect setup without dispatching an init command", async () => {
     const runtime = new RejectingRuntime()
     const state = initialState("/tmp/demo")
 
@@ -1388,7 +1398,7 @@ describe("runtime UI effects", () => {
 
     expect(next.lastCommand).toBe("initialize")
     expect(next.runtimeCommandError).toBeUndefined()
-    expect(runtime.commandCalls).toBe(0)
+    expect(runtime.commandCalls).toBe(2)
     expect(runtime.sendCommandCalls).toBe(0)
   })
 
